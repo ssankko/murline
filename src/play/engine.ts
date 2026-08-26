@@ -3,7 +3,14 @@
 
 import type { PlaySettings } from '@/play/settings';
 import { WaitState } from '@/play/wait';
-import { TICKS_PER_QUARTER, bpmAt, type Hand, type Note, type Score } from '@/score/types';
+import {
+  TICKS_PER_QUARTER,
+  bpmAt,
+  type Hand,
+  type Measure,
+  type Note,
+  type Score,
+} from '@/score/types';
 
 /** Where a play stands. A Wait mode stop is the clock standing still inside `running`. */
 export type PlayState = 'idle' | 'counting-in' | 'running' | 'paused' | 'ended';
@@ -46,6 +53,13 @@ export interface PlayNote {
   note: Note;
 }
 
+/** What one finished practice leaves for the library: its start in Unix time and its motion. */
+export interface PracticeRecord {
+  startedAt: number;
+  /** Time the clock actually moved, count-in and pauses left out. */
+  seconds: number;
+}
+
 /** How a note reads in the lane. */
 export type NoteState = 'pending' | 'hit' | 'miss';
 
@@ -81,6 +95,8 @@ export class Engine {
   readonly settings: PlaySettings;
   /** Every written note in played order: the lane draws these and a strike matches one of them. */
   readonly notes: PlayNote[];
+  /** Played ticks of the beats being counted in, before the tick the count-in leads to. */
+  countInBeats: number[] = [];
   kind: PlayKind = 'practice';
 
   private state: PlayState = 'idle';
@@ -103,6 +119,26 @@ export class Engine {
   /** Wait mode: the play order step the cursor waits at, or null while it glides. */
   private stopStep: number | null = null;
 
+  /** Every beat of the play in played ticks, the grid the metronome clicks on. */
+  private readonly beatGrid: number[];
+  /** First beat of the grid the clock has not passed yet. */
+  private beatNext = 0;
+  /** Clicks owed to the screen, taken by `beats()`. */
+  private clicks = 0;
+  /** First count-in beat the clock has not passed yet. */
+  private countInNext = 0;
+  /** Played tick the count-in leads to, which is where motion starts. */
+  private countInTo = 0;
+
+  /** Milliseconds the clock has moved since the play started: what a practice row stores. */
+  private motionMs = 0;
+  /** Unix milliseconds of the first motion of this play. */
+  private startedAt = 0;
+  /** Step the play started at, against which "the cursor passed an Onset" is read. */
+  private startStep = 0;
+  private passedOnset = false;
+  private record: PracticeRecord | null = null;
+
   constructor(score: Score, settings: PlaySettings) {
     this.score = score;
     this.settings = settings;
@@ -110,6 +146,7 @@ export class Engine {
     this.notes = playNotesOf(score);
     this.states = this.notes.map(() => 'pending');
     this.resolved = this.notes.map(() => 0);
+    this.beatGrid = beatGridOf(score);
   }
 
   noteState(index: number): NoteState {
@@ -136,6 +173,31 @@ export class Engine {
     const events = this.pending;
     this.pending = [];
     return events;
+  }
+
+  /**
+   * Takes the clicks the metronome owes since the last call: a beat of the grid the clock crossed
+   * while the metronome is on, and every count-in beat whether it is on or not.
+   */
+  beats(): number {
+    const clicks = this.clicks;
+    this.clicks = 0;
+    return clicks;
+  }
+
+  /** Seconds the clock has moved in this play, count-in and pauses left out. */
+  get motionSeconds(): number {
+    return this.motionMs / 1000;
+  }
+
+  /**
+   * Takes the practice a stop left to be stored, if any. A play that never passed an Onset leaves
+   * nothing, and nothing is left twice.
+   */
+  takePractice(): PracticeRecord | null {
+    const record = this.record;
+    this.record = null;
+    return record;
   }
 
   /** Played tick the play stops at: the last written duration plus the matching window. */
@@ -172,28 +234,45 @@ export class Engine {
     this.closed = 0;
     this.wait.reset();
     this.stopStep = null;
-    // Ticket 07 sends the play through `counting-in` here when `settings.countInBars` is set.
-    this.state = 'running';
+    this.motionMs = 0;
+    this.startedAt = 0;
+    this.startStep = this.stepAt(this.startTick);
+    this.passedOnset = false;
+    this.beginMotion(this.startTick);
   }
 
   /** Practice only: the clock freezes and the cursor drops back to the bar it stands in. */
   pause(): void {
+    // A count-in is not motion to pause: the play drops back to Idle where the count-in led, which
+    // is a stop, so what it had already played is stored.
+    if (this.state === 'counting-in') {
+      this.stopRecord();
+      this.tick = this.countInTo;
+      this.countInBeats = [];
+      this.state = 'idle';
+      this.syncBeats();
+      return;
+    }
     if (this.state !== 'running') return;
     this.tick = this.barStartOf(this.tick);
     this.state = 'paused';
     this.forgetSatisfied(this.stepAt(this.tick));
+    this.syncBeats();
   }
 
   resume(): void {
     if (this.state !== 'paused') return;
-    this.state = 'running';
+    this.beginMotion(this.tick);
   }
 
   /** Back to Idle at the start point, whatever the play was doing. */
   abort(): void {
+    this.stopRecord();
     this.state = 'idle';
     this.tick = this.startTick;
     this.stopStep = null;
+    this.countInBeats = [];
+    this.syncBeats();
   }
 
   /** Wait mode asks for every Onset from a play order step again, and waits at it if it must. */
@@ -213,7 +292,11 @@ export class Engine {
    */
   advance(ms: number, wallMs?: number): void {
     this.wall = wallMs ?? this.wall + ms;
-    if (this.state !== 'running') return;
+    if (this.state === 'counting-in') ms = this.advanceCountIn(ms);
+    if (this.state !== 'running' || ms <= 0) return;
+    // A Wait mode stop is time at the piano, so it counts as practice; a count-in and a pause do not.
+    if (this.startedAt === 0) this.startedAt = this.wall;
+    this.motionMs += ms;
     // A play switched to Flow glides on from wherever Wait mode was holding it.
     if (this.settings.mode !== 'wait') this.stopStep = null;
     if (this.stopStep !== null) {
@@ -232,11 +315,13 @@ export class Engine {
       const want = this.tick + left * rate;
       if (want < limit) {
         this.tick = want;
+        this.crossGrid();
         this.closeWindows();
         return;
       }
       left -= (limit - this.tick) / rate;
       this.tick = limit;
+      this.crossGrid();
       this.closeWindows();
       if (this.tick >= end) {
         // A practice ends back where it started; a performance stays for its summary card.
@@ -249,6 +334,89 @@ export class Engine {
         return;
       }
     }
+  }
+
+  /**
+   * Starts motion at a played tick, through the count-in when it is on. Everything that starts the
+   * clock goes through here, so the count-in runs before each of them.
+   */
+  private beginMotion(to: number): void {
+    const bars = Math.floor(this.settings.countInBars);
+    const measure = this.measureAt(to);
+    this.countInTo = to;
+    if (bars >= 1 && measure) {
+      const beat = beatOf(measure);
+      this.countInBeats = [];
+      for (let left = bars * beat.perBar; left > 0; left--) {
+        this.countInBeats.push(to - left * beat.ticks);
+      }
+      this.countInNext = 0;
+      this.tick = this.countInBeats[0]!;
+      this.state = 'counting-in';
+    } else {
+      this.state = 'running';
+    }
+    this.syncBeats();
+  }
+
+  /**
+   * The count-in phase of the clock, at the tempo of the tick it leads to. Returns the milliseconds
+   * left over once it is done, which are the play's first motion.
+   */
+  private advanceCountIn(ms: number): number {
+    const rate = this.ticksPerMs(this.countInTo);
+    const want = this.tick + ms * rate;
+    this.tick = Math.min(want, this.countInTo);
+    while (
+      this.countInNext < this.countInBeats.length &&
+      this.countInBeats[this.countInNext]! <= this.tick
+    ) {
+      this.countInNext++;
+      this.clicks++;
+    }
+    if (want < this.countInTo) return 0;
+    this.countInBeats = [];
+    this.syncBeats();
+    this.state = 'running';
+    return (want - this.countInTo) / rate;
+  }
+
+  /** What the clock sets off by moving: the metronome's beats and the first Onset it passes. */
+  private crossGrid(): void {
+    while (this.beatNext < this.beatGrid.length && this.beatGrid[this.beatNext]! <= this.tick) {
+      this.beatNext++;
+      if (this.settings.metronome) this.clicks++;
+    }
+    if (!this.passedOnset && this.stepAt(this.tick) > this.startStep) this.passedOnset = true;
+  }
+
+  /**
+   * Puts the metronome back on the grid after the tick moved by itself, without a click. A beat the
+   * clock stands exactly on is still owed, so a play starting on a bar line clicks its downbeat.
+   */
+  private syncBeats(): void {
+    let lo = 0;
+    let hi = this.beatGrid.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (this.beatGrid[mid]! < this.tick) lo = mid + 1;
+      else hi = mid;
+    }
+    this.beatNext = lo;
+  }
+
+  /** A stop keeps the practice's motion for the library; a play that passed no Onset keeps none. */
+  private stopRecord(): void {
+    if (this.kind !== 'practice' || !this.passedOnset || this.motionMs <= 0) return;
+    this.record = { startedAt: this.startedAt, seconds: this.motionMs / 1000 };
+    this.motionMs = 0;
+    this.passedOnset = false;
+  }
+
+  private measureAt(playedTick: number): Measure | undefined {
+    const step = this.score.playOrder[this.stepAt(playedTick)];
+    const onset = step ? this.score.onsets[step.onsetIndex] : undefined;
+    return onset ? this.score.measures[onset.measureIndex] : undefined;
   }
 
   /**
@@ -560,6 +728,40 @@ function playNotesOf(score: Score): PlayNote[] {
     }
   }
   return notes;
+}
+
+/**
+ * The beat the metronome clicks and how many of them a full bar holds: the time signature's unit,
+ * a dotted quarter in the compound meters 6/8, 9/8 and 12/8.
+ */
+export function beatOf(measure: Measure): { ticks: number; perBar: number } {
+  const unit = (TICKS_PER_QUARTER * 4) / measure.beatUnit;
+  const compound =
+    measure.beatUnit === 8 && measure.beatsPerBar > 3 && measure.beatsPerBar % 3 === 0;
+  return compound
+    ? { ticks: unit * 3, perBar: measure.beatsPerBar / 3 }
+    : { ticks: unit, perBar: measure.beatsPerBar };
+}
+
+/**
+ * Every beat of the play in played ticks, one pass per repeat. A pickup bar's beats are laid from
+ * its bar line backwards, so its last beat lands on the next bar line.
+ */
+function beatGridOf(score: Score): number[] {
+  const ticks: number[] = [];
+  for (const step of score.playOrder) {
+    const onset = score.onsets[step.onsetIndex];
+    const measure = onset ? score.measures[onset.measureIndex] : undefined;
+    if (!onset || !measure) continue;
+    const barTick = step.tick - (onset.tick - measure.startTick);
+    if (ticks.length > 0 && ticks[ticks.length - 1]! >= barTick) continue;
+    const { ticks: beat } = beatOf(measure);
+    const end = barTick + measure.durationTicks;
+    for (let tick = barTick + (measure.durationTicks % beat); tick < end - 1e-9; tick += beat) {
+      ticks.push(tick);
+    }
+  }
+  return ticks;
 }
 
 export function create(score: Score, settings: PlaySettings): Engine {

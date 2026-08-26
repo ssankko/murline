@@ -76,8 +76,9 @@ function withRepeat(): Score {
   return score;
 }
 
+/** The count-in is off unless a test asks for it, so a play starts on the first beat. */
 function engine(score: Score, settings: Partial<PlaySettings> = {}) {
-  return create(score, { ...DEFAULT_PLAY_SETTINGS, ...settings });
+  return create(score, { ...DEFAULT_PLAY_SETTINGS, countInBars: 0, ...settings });
 }
 
 describe('the clock', () => {
@@ -655,5 +656,236 @@ describe('Wait mode', () => {
     play.advance(2000);
 
     expect(play.snapshot()).toMatchObject({ playedTick: TICKS_PER_QUARTER, stopped: true });
+  });
+});
+
+/** Two bars of 6/8, one Onset on each bar line: a compound meter beats in dotted quarters. */
+function compound(): Score {
+  const score = scoreOf(2);
+  const bar = 6 * (TICKS_PER_QUARTER / 2);
+  score.measures = [0, 1].map((index) => ({
+    index,
+    number: index + 1,
+    startTick: index * bar,
+    durationTicks: bar,
+    beatsPerBar: 6,
+    beatUnit: 8,
+  }));
+  score.onsets = [0, 1].map((index) => ({
+    tick: index * bar,
+    measureIndex: index,
+    notes: [{ ...note(index * bar, index), durationTicks: bar }],
+    timestamp: undefined as never,
+  }));
+  score.playOrder = score.onsets.map((onset, i) => ({ onsetIndex: i, tick: onset.tick }));
+  score.totalTicks = 2 * bar;
+  return score;
+}
+
+describe('the metronome', () => {
+  test('clicks every beat of the bar, and nothing while it is off', () => {
+    const play = engine(scoreOf(2), { metronome: true, countInBars: 0 });
+    play.start();
+
+    // Four beats of 4/4 at 60 BPM: one click a second, the first on the downbeat.
+    play.advance(500);
+    expect(play.beats()).toBe(1);
+    play.advance(1000);
+    expect(play.beats()).toBe(1);
+
+    play.settings.metronome = false;
+    play.advance(2000);
+    expect(play.beats()).toBe(0);
+  });
+
+  test('a compound meter beats in dotted quarters', () => {
+    const play = engine(compound(), { metronome: true, countInBars: 0 });
+    play.start();
+
+    // 6/8 at 60 BPM: a dotted quarter is 1.5 s, so two beats to the bar.
+    play.advance(3000);
+    expect(play.beats()).toBe(3);
+    play.advance(1500);
+    expect(play.beats()).toBe(1);
+  });
+
+  test('the clock standing still freezes it mid-beat and leaves the grid where it was', () => {
+    const play = engine(scoreOf(2), { metronome: true, countInBars: 0 });
+    play.start();
+    play.advance(1500);
+    expect(play.beats()).toBe(2);
+
+    // The clock stands still half a beat in: no click, and the grid is not moved on.
+    for (let i = 0; i < 5; i++) play.advance(0);
+    expect(play.beats()).toBe(0);
+
+    play.advance(499);
+    expect(play.beats()).toBe(0);
+    play.advance(2);
+    expect(play.beats()).toBe(1);
+    expect(play.snapshot().playedTick).toBeCloseTo(2 * TICKS_PER_QUARTER + 0.96, 6);
+  });
+
+  test('a Wait mode stop freezes it mid-beat and starts no count-in of its own', () => {
+    const play = waiting(CHORD, { metronome: true, countInBars: 1 });
+
+    // The count-in first, then the downbeat and the beat the cursor stops at.
+    play.advance(4000);
+    expect(play.beats()).toBe(4);
+    play.advance(1500);
+    expect(play.beats()).toBe(2);
+    expect(play.snapshot()).toMatchObject({ state: 'running', stopped: true });
+
+    // Standing at the stop: no click, no state of its own, and the grid stays where it was.
+    play.advance(3000);
+    expect(play.beats()).toBe(0);
+    expect(play.snapshot()).toMatchObject({
+      state: 'running',
+      stopped: true,
+      playedTick: TICKS_PER_QUARTER,
+    });
+
+    down(play, 60, 8500);
+    down(play, 64, 8500);
+    play.advance(1000);
+    expect(play.beats()).toBe(1);
+    expect(play.snapshot().playedTick).toBeCloseTo(2 * TICKS_PER_QUARTER, 6);
+  });
+
+  test('a pause clicks nothing and the bar it resumes into clicks its beats again', () => {
+    const play = engine(scoreOf(2), { metronome: true, countInBars: 0 });
+    play.start();
+    play.advance(1500);
+    expect(play.beats()).toBe(2);
+
+    play.pause();
+    play.advance(3000);
+    expect(play.beats()).toBe(0);
+
+    // The cursor fell back to the bar line, so the played tick meets those beats a second time.
+    play.resume();
+    play.advance(1000);
+    expect(play.beats()).toBe(2);
+  });
+});
+
+describe('the count-in', () => {
+  test('runs its bar of beats before the play moves, and clicks them with the metronome off', () => {
+    const play = engine(scoreOf(2), { countInBars: 1, metronome: false });
+    play.start();
+
+    expect(play.snapshot()).toMatchObject({ state: 'counting-in', playedTick: -4 * TICKS_PER_QUARTER });
+    play.advance(3999);
+    expect(play.beats()).toBe(4);
+    expect(play.snapshot().state).toBe('counting-in');
+
+    play.advance(2);
+    expect(play.snapshot().state).toBe('running');
+    expect(play.snapshot().playedTick).toBeCloseTo(0.96, 6);
+  });
+
+  test('offsets the expected times: a strike lands on its note a count-in later', () => {
+    const play = engine(scoreFrom([{ tick: TICKS_PER_QUARTER, notes: [{}] }]), { countInBars: 1 });
+    play.start();
+
+    // A strike during the count-in reaches no note; it only lights its key.
+    play.advance(2000);
+    down(play, 60, 2000);
+    expect(play.events()).toEqual([]);
+    expect(play.keyState(60)).toBe('grey');
+    up(play, 60, 2100);
+
+    // The Onset of the second beat now falls a count-in bar later than the play began.
+    play.advance(2000 + BEAT_MS);
+    down(play, 60, 5000);
+    expect(play.events()).toEqual([{ verdict: 'hit', midi: 60, noteIndex: 0, time: 5000 }]);
+  });
+
+  test('a pause during it returns to Idle where it was counting to', () => {
+    const play = engine(scoreOf(2), { countInBars: 1 });
+    play.start();
+    play.advance(1000);
+    play.pause();
+
+    expect(play.snapshot()).toMatchObject({ state: 'idle', playedTick: 0 });
+  });
+
+  test('runs again before a resume', () => {
+    const play = engine(scoreOf(2), { countInBars: 1 });
+    play.start();
+    play.advance(4000);
+    play.advance(1000);
+    play.pause();
+    play.resume();
+
+    expect(play.snapshot().state).toBe('counting-in');
+  });
+});
+
+describe('what a practice leaves behind', () => {
+  test('nothing when the cursor never passed an Onset', () => {
+    const play = engine(scoreOf(2), { countInBars: 0 });
+    play.start();
+    play.advance(100);
+    play.abort();
+
+    expect(play.takePractice()).toBeNull();
+  });
+
+  test('its motion once the cursor passed one', () => {
+    const play = engine(scoreOf(2), { countInBars: 0 });
+    play.start();
+    play.advance(1100);
+    play.abort();
+
+    expect(play.takePractice()).toEqual({ startedAt: 1100, seconds: 1.1 });
+  });
+
+  test('nothing at a pause, which is not a stop', () => {
+    const play = engine(scoreOf(2), { countInBars: 0 });
+    play.start();
+    play.advance(1100);
+    play.pause();
+
+    expect(play.takePractice()).toBeNull();
+  });
+
+  test('a duration that leaves out the count-in and the pauses', () => {
+    const play = engine(scoreOf(2), { countInBars: 1 });
+    play.start();
+    play.advance(4000);
+    play.advance(2000);
+    play.pause();
+    play.advance(5000);
+    play.resume();
+    play.advance(4000);
+    play.advance(1000);
+    play.abort();
+
+    expect(play.takePractice()?.seconds).toBeCloseTo(3, 6);
+  });
+
+  test('its motion when a pause during a later count-in ends the play', () => {
+    const play = engine(scoreOf(2), { countInBars: 1 });
+    play.start();
+    play.advance(4000);
+    play.advance(2000);
+    play.pause();
+    play.resume();
+    play.advance(1000);
+    play.pause();
+
+    expect(play.snapshot().state).toBe('idle');
+    expect(play.takePractice()?.seconds).toBeCloseTo(2, 6);
+  });
+
+  test('nothing twice, and nothing for a fresh play', () => {
+    const play = engine(scoreOf(2), { countInBars: 0 });
+    play.start();
+    play.advance(1100);
+    play.abort();
+
+    expect(play.takePractice()).not.toBeNull();
+    expect(play.takePractice()).toBeNull();
   });
 });

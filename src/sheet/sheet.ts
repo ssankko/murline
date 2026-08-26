@@ -12,13 +12,10 @@ import {
   type MusicSystem,
   type Note as OsmdNote,
 } from 'opensheetmusicdisplay';
+import { applyTheme, applyTiers, noteheadEl, paintHead } from './paint';
 
 /** Paper kept above the top staff line, the strip ticket 12's chord bubbles sit in. */
 const BUBBLE_STRIP = 28;
-
-// The SVG groups VexFlow emits for duration marks. Everything else it draws is scaffolding.
-const DURATION_GROUPS =
-  '.vf-stem, .vf-beam, .vf-flag, .vf-stavetie, .vf-slur, .vf-tuplet, .vf-modifiers';
 
 /** The ring drawn around the noteheads of the Onset the cursor stands at. */
 const OUTLINE = '#ffffff';
@@ -358,61 +355,7 @@ function makeOsmd(host: HTMLElement, dark: boolean): OpenSheetMusicDisplay {
     renderSingleHorizontalStaffline: true,
   });
   applyTheme(osmd, dark);
-  return osmd;
-}
-
-/** The two ink tiers and the paper, as engraving rules. Everything else is a DOM pass. */
-function applyTheme(osmd: OpenSheetMusicDisplay, dark: boolean): void {
-  const rules = osmd.EngravingRules;
-  const scaffold = tone(INK.scaffolding, dark);
-  const duration = tone(INK.duration, dark);
-  rules.ColorStemsLikeNoteheads = false;
-  rules.ColorBeams = false;
-  rules.PageBackgroundColor = tone(PAPER, dark);
-  rules.StaffLineColor = scaffold;
-  rules.LedgerLineColorDefault = scaffold;
-  rules.DefaultColorLabel = scaffold;
-  rules.DefaultColorStem = duration;
-  rules.DefaultColorRest = duration;
-  rules.DefaultColorNotehead = duration;
-  rules.MetronomeMarkYShift = 2.5;
   // Nothing prints above the staff but the tempo mark, so the page margin is dead space.
-  rules.PageTopMargin = 0;
-}
-
-/** Lifts the duration marks out of the scaffolding tier. Runs after every render. */
-function applyTiers(host: HTMLElement, dark: boolean): void {
-  const colour = tone(INK.duration, dark);
-  const svg = host.querySelector('svg');
-  if (!svg) return;
-  for (const group of svg.querySelectorAll(DURATION_GROUPS)) {
-    for (const el of group.querySelectorAll('path, rect, line, polygon, text')) {
-      if (el.getAttribute('fill') !== 'none') el.setAttribute('fill', colour);
-      if (el.hasAttribute('stroke') && el.getAttribute('stroke') !== 'none') {
-        el.setAttribute('stroke', colour);
-      }
-    }
-  }
-}
-
-/** Notehead group of one note, picked out of its chord's group by `vfnoteIndex`. */
-export function noteheadEl(
-  osmd: OpenSheetMusicDisplay,
-  note: OsmdNote,
-): HTMLElement | undefined {
-  const g = osmd.EngravingRules.GNote(note) as VFNote | undefined;
-  if (!g?.getNoteheadSVGs) return undefined;
-  const heads = g.getNoteheadSVGs();
-  return heads[g.vfnoteIndex] ?? heads[0];
-}
-
-/** A notehead group carries no paint of its own, so every write goes to its child paths. */
-export function paintHead(head: HTMLElement, attrs: Record<string, string | null>): void {
-  for (const path of head.children) {
-    for (const name in attrs) {
-      const value = attrs[name];
-      if (value === null) path.removeAttribute(name);
-      else path.setAttribute(name, value);
-    }
-  }
+  osmd.EngravingRules.PageTopMargin = 0;
+  return osmd;
 }

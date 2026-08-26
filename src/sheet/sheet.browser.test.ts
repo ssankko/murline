@@ -1,6 +1,7 @@
 import { colorOf } from '@/look/color';
 import { expect, test } from 'vitest';
-import { Sheet, noteheadEl } from './sheet';
+import { noteheadEl } from './paint';
+import { Sheet } from './sheet';
 
 // Vite serves the fixture files as URLs, the closest a browser test gets to the bytes the app
 // reads from the library folder.

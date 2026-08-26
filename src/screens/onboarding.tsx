@@ -1,0 +1,78 @@
+import { Button } from '@/components/ui/button';
+import { setSetting } from '@/db/db';
+import { Input } from '@/components/ui/input';
+import { useMidiStatus } from '@/midi/useMidiStatus';
+import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
+import { useEffect, useState } from 'react';
+
+/** First launch asks one question: which folder holds the scores. */
+export function Onboarding({ onDone }: { onDone: (folder: string) => void }) {
+  const [folder, setFolder] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const midi = useMidiStatus();
+
+  useEffect(() => {
+    invoke<string>('home_dir').then((home) => setFolder(`${home}/Music/Piano`));
+  }, []);
+
+  async function choose() {
+    const picked = await open({ directory: true, defaultPath: folder });
+    if (typeof picked === 'string') setFolder(picked);
+  }
+
+  async function proceed() {
+    setBusy(true);
+    setError(null);
+    try {
+      await invoke('ensure_dir', { path: folder });
+      await setSetting('library_folder', folder);
+      await setSetting('onboarding_done', true);
+      onDone(folder);
+    } catch (e) {
+      setError(String(e));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex h-full items-center justify-center">
+      <div className="flex w-[520px] flex-col gap-6">
+        <div className="flex flex-col gap-2">
+          <h1 className="text-[28px] leading-tight font-semibold tracking-tight">Piano</h1>
+          <p className="text-muted-ink text-[13px]">
+            Pick the folder that holds your scores. The app reads and writes MusicXML files there
+            and touches nothing else.
+          </p>
+        </div>
+
+        <div className="flex gap-2">
+          <Input
+            value={folder}
+            onChange={(e) => setFolder(e.target.value)}
+            spellCheck={false}
+            aria-label="Library folder"
+          />
+          <Button variant="outline" onClick={choose}>
+            Choose…
+          </Button>
+        </div>
+
+        <div className="flex items-center justify-between">
+          <p className="text-muted-ink text-[12px]">{midiLine(midi)}</p>
+          <Button onClick={proceed} disabled={busy || folder.trim() === ''}>
+            Continue
+          </Button>
+        </div>
+
+        {error && <p className="text-[12px]">{error}</p>}
+      </div>
+    </div>
+  );
+}
+
+function midiLine({ devices }: ReturnType<typeof useMidiStatus>): string {
+  if (devices.length === 0) return 'No MIDI device found, plug one in any time';
+  return `${devices.join(', ')} connected`;
+}

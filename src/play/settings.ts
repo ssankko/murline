@@ -3,6 +3,9 @@
 
 export type TempoMode = 'percent' | 'bpm';
 
+/** Flow runs the cursor at tempo whatever the player does; Wait stops it at every unsatisfied Onset. */
+export type PlayMode = 'flow' | 'wait';
+
 /** Which hand the play expects. The other hand's notes are context only. */
 export type HandsSetting = 'both' | 'left' | 'right';
 
@@ -14,6 +17,7 @@ export interface PlaySettings {
   /** Percent of every written tempo mark (25 to 200), or a flat quarter-note BPM (40 to 240). */
   tempoValue: number;
   hands: HandsSetting;
+  mode: PlayMode;
   metronome: boolean;
   /** Bars of count-in before every start of motion; 0 turns the count-in off. */
   countInBars: number;
@@ -30,6 +34,7 @@ export const DEFAULT_PLAY_SETTINGS: PlaySettings = {
   tempoMode: 'percent',
   tempoValue: 100,
   hands: 'both',
+  mode: 'flow',
   metronome: false,
   countInBars: 1,
   keyboardPreset: 'piece',

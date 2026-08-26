@@ -152,5 +152,6 @@ function snapshot(playedTick: number): Snapshot {
     stepIndex: 0,
     onsetIndex: 0,
     measureIndex: 0,
+    stopped: false,
   };
 }

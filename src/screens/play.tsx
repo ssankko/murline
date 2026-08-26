@@ -16,7 +16,7 @@ import { reindexIfChanged } from '@/library/scan';
 import { flipTheme, useDark } from '@/look/use-dark';
 import { useMidiStatus } from '@/midi/useMidiStatus';
 import { create, type Engine, type PlayState } from '@/play/engine';
-import { DEFAULT_PLAY_SETTINGS, type HandsSetting } from '@/play/settings';
+import { DEFAULT_PLAY_SETTINGS, type HandsSetting, type PlayMode } from '@/play/settings';
 import { useFrameLoop } from '@/play/use-frame-loop';
 import { ScoreError, type Note } from '@/score/types';
 import { Sheet } from '@/sheet/sheet';
@@ -86,6 +86,9 @@ export function PlayScreen({
   const [tempo, setTempo] = useState(DEFAULT_PLAY_SETTINGS.tempoValue);
   const tempoRef = useRef(tempo);
   tempoRef.current = tempo;
+  const [mode, setMode] = useState<PlayMode>(DEFAULT_PLAY_SETTINGS.mode);
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
   const [split, setSplit] = useState(DEFAULT_SPLIT);
   const [hands, setHands] = useState(DEFAULT_PLAY_SETTINGS.hands);
   /** A one-staff piece is all right hand, so it has no choice of hands to offer. */
@@ -113,6 +116,7 @@ export function PlayScreen({
         const engine = create(sheet.score, {
           ...DEFAULT_PLAY_SETTINGS,
           tempoValue: tempoRef.current,
+          mode: modeRef.current,
         });
         engineRef.current = engine;
         laneRef.current = new Lane(canvasRef.current!, engine, look.lane, darkRef.current);
@@ -153,6 +157,12 @@ export function PlayScreen({
     const engine = engineRef.current;
     if (engine) engine.settings.tempoValue = tempo;
   }, [tempo]);
+
+  // Switching mode is live: Wait mode takes hold from the Onset the cursor is at, Flow lets go.
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (engine) engine.settings.mode = mode;
+  }, [mode]);
 
   useFrameLoop((delta, now) => {
     const engine = engineRef.current;
@@ -274,10 +284,20 @@ export function PlayScreen({
               <Hand {...ICON} className={`scale-x-[-1] ${handGlyph(hands, 'right')}`} />
             </BarButton>
             <div className="flex items-center">
-              <BarButton label="Flow mode" off pressed={true}>
+              <BarButton
+                label="Flow mode"
+                segment
+                pressed={mode === 'flow'}
+                onClick={() => setMode('flow')}
+              >
                 <FastForward {...ICON} />
               </BarButton>
-              <BarButton label="Wait mode" off pressed={false}>
+              <BarButton
+                label="Wait mode"
+                segment
+                pressed={mode === 'wait'}
+                onClick={() => setMode('wait')}
+              >
                 <Hand {...ICON} />
               </BarButton>
             </div>
@@ -356,7 +376,8 @@ function Split({ value, onChange }: { value: number; onChange: (value: number) =
 
 /**
  * One 32 px shape for every control of the bar. An action is plain ink; a control that is only
- * placed here is `off`, dimmed and inert; a toggle also says whether it is on.
+ * placed here is `off`, dimmed and inert; a toggle says whether it is on with an under-bar, and one
+ * `segment` of a pair says it by filling instead.
  */
 function BarButton({
   label,
@@ -365,6 +386,7 @@ function BarButton({
   pressed,
   disc,
   wide,
+  segment,
   children,
 }: {
   label: string;
@@ -373,11 +395,13 @@ function BarButton({
   pressed?: boolean;
   disc?: boolean;
   wide?: boolean;
+  segment?: boolean;
   children: React.ReactNode;
 }) {
+  const filled = segment && pressed;
   const shape = disc
     ? 'size-[34px] rounded-full bg-ink text-paper mx-1 hover:bg-ink/85'
-    : `h-8 ${wide ? 'px-1.5' : 'w-8'} ${off ? 'text-ink/35' : 'hover:bg-ink/8'}`;
+    : `h-8 ${wide ? 'px-1.5' : 'w-8'} ${off ? 'text-ink/35' : filled ? 'bg-ink text-paper' : 'hover:bg-ink/8'}`;
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -389,7 +413,7 @@ function BarButton({
           className={`relative flex flex-none items-center justify-center transition-colors duration-150 ${shape}`}
         >
           {children}
-          {pressed && <i className="bg-current absolute right-2 bottom-0.5 left-2 h-0.5" />}
+          {pressed && !segment && <i className="bg-current absolute right-2 bottom-0.5 left-2 h-0.5" />}
         </button>
       </TooltipTrigger>
       <TooltipContent side="bottom">{label}</TooltipContent>

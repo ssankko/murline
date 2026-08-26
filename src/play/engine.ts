@@ -2,6 +2,7 @@
 // DOM, no React, no timer of its own. The screen owns the frame loop and feeds it wall time.
 
 import type { PlaySettings } from '@/play/settings';
+import { WaitState } from '@/play/wait';
 import { TICKS_PER_QUARTER, bpmAt, type Hand, type Note, type Score } from '@/score/types';
 
 /** Where a play stands. A Wait mode stop is the clock standing still inside `running`. */
@@ -61,7 +62,13 @@ export interface Snapshot {
   stepIndex: number;
   onsetIndex: number;
   measureIndex: number;
+  /** Wait mode: the clock stands still at `stepIndex` until the player satisfies its Onset. */
+  stopped: boolean;
 }
+
+/** What `held` says a strike matched: nothing, so it blocks, or a note that took it in silence. */
+const BLOCKING = -1;
+const ABSORBED = -2;
 
 /** The tempo the piece is written at, before the play's own tempo setting. */
 function writtenBpm(score: Score, sheetTick: number): number {
@@ -87,11 +94,14 @@ export class Engine {
   private states: NoteState[];
   /** Wall-clock time each note became a hit or a miss, which is what the feedback fades from. */
   private resolved: number[];
-  /** Keys down now: pitch to the note its strike matched, -1 when it matched nothing. */
+  /** Keys down now: pitch to the note its strike matched, or `BLOCKING` / `ABSORBED`. */
   private readonly held = new Map<number, number>();
   private pending: PlayEvent[] = [];
   /** First note whose matching window is still open; everything before it is settled. */
   private closed = 0;
+  private readonly wait = new WaitState();
+  /** Wait mode: the play order step the cursor waits at, or null while it glides. */
+  private stopStep: number | null = null;
 
   constructor(score: Score, settings: PlaySettings) {
     this.score = score;
@@ -149,6 +159,7 @@ export class Engine {
       stepIndex,
       onsetIndex: step?.onsetIndex ?? 0,
       measureIndex: onset?.measureIndex ?? 0,
+      stopped: this.stopStep !== null,
     };
   }
 
@@ -159,6 +170,8 @@ export class Engine {
     this.resolved.fill(0);
     this.pending = [];
     this.closed = 0;
+    this.wait.reset();
+    this.stopStep = null;
     // Ticket 07 sends the play through `counting-in` here when `settings.countInBars` is set.
     this.state = 'running';
   }
@@ -168,6 +181,7 @@ export class Engine {
     if (this.state !== 'running') return;
     this.tick = this.barStartOf(this.tick);
     this.state = 'paused';
+    this.forgetSatisfied(this.stepAt(this.tick));
   }
 
   resume(): void {
@@ -179,6 +193,13 @@ export class Engine {
   abort(): void {
     this.state = 'idle';
     this.tick = this.startTick;
+    this.stopStep = null;
+  }
+
+  /** Wait mode asks for every Onset from a play order step again, and waits at it if it must. */
+  forgetSatisfied(fromStep = 0): void {
+    this.wait.forgetFrom(fromStep);
+    this.stopStep = null;
   }
 
   restart(): void {
@@ -193,11 +214,21 @@ export class Engine {
   advance(ms: number, wallMs?: number): void {
     this.wall = wallMs ?? this.wall + ms;
     if (this.state !== 'running') return;
+    // A play switched to Flow glides on from wherever Wait mode was holding it.
+    if (this.settings.mode !== 'wait') this.stopStep = null;
+    if (this.stopStep !== null) {
+      // A live hands change can leave the Onset the cursor waits at asking for less, or nothing.
+      if (this.requiredOf(this.stopStep).length === 0) this.stopStep = null;
+      else this.settleWait();
+      if (this.stopStep !== null) return;
+    }
     const end = this.endTick;
     let left = ms;
     for (let guard = 0; left > 1e-9 && guard < 10_000; guard++) {
       const rate = this.ticksPerMs(this.tick);
-      const limit = Math.min(this.nextBoundary(this.tick), end);
+      const stop = this.nextStop();
+      const stopTick = stop < 0 ? Infinity : this.score.playOrder[stop]!.tick;
+      const limit = Math.min(this.nextBoundary(this.tick), end, stopTick);
       const want = this.tick + left * rate;
       if (want < limit) {
         this.tick = want;
@@ -213,6 +244,10 @@ export class Engine {
         else this.state = 'ended';
         return;
       }
+      if (this.tick === stopTick) {
+        this.stopStep = stop;
+        return;
+      }
     }
   }
 
@@ -224,11 +259,18 @@ export class Engine {
   strike(event: StrikeEvent): void {
     if (!event.on) {
       this.held.delete(event.midi);
+      this.wait.release(event.midi);
+      // A blocking or a required key coming up may be the last thing a stop was waiting for.
+      if (this.waiting) this.settleWait();
       return;
     }
     // Outside a running play a key lights the keyboard and reaches no note.
     if (this.state !== 'running') {
-      this.held.set(event.midi, -1);
+      this.held.set(event.midi, BLOCKING);
+      return;
+    }
+    if (this.waiting) {
+      this.strikeWaiting(event);
       return;
     }
     const at = this.tickAt(event.time);
@@ -242,7 +284,7 @@ export class Engine {
       return;
     }
     const absorbed = this.nearest(event.midi, at, window, false) >= 0;
-    this.held.set(event.midi, -1);
+    this.held.set(event.midi, absorbed ? ABSORBED : BLOCKING);
     this.pending.push({
       verdict: absorbed ? 'absorbed' : 'extra',
       midi: event.midi,
@@ -368,6 +410,129 @@ export class Engine {
       else hi = mid - 1;
     }
     return lo;
+  }
+
+  // Wait mode. The cursor glides at tempo and stands at every Onset the player has not satisfied.
+
+  /** Wait mode only bites while the play is moving through the Score. */
+  private get waiting(): boolean {
+    return this.settings.mode === 'wait' && this.state === 'running';
+  }
+
+  /** A held key whose strike matched nothing blocks every Onset until it comes up. */
+  private get blocked(): boolean {
+    for (const matched of this.held.values()) if (matched === BLOCKING) return true;
+    return false;
+  }
+
+  /**
+   * A strike goes to the earliest unsatisfied Onset whose window has opened and which asks for that
+   * pitch. A grace or inactive-hand note of the current or next Onset absorbs it instead; anything
+   * else is an extra, which costs nothing but blocks while the key is held.
+   */
+  private strikeWaiting(event: StrikeEvent): void {
+    // While the cursor stands still a strike lands where the cursor is, however late it comes.
+    const at = this.stopStep === null ? this.tickAt(event.time) : this.tick;
+    const step = this.openStepFor(event.midi, at);
+    if (step >= 0) {
+      const index = this.noteAt(step, event.midi);
+      this.wait.count(step, event.midi, event.time);
+      this.states[index] = 'hit';
+      this.resolved[index] = event.time;
+      this.held.set(event.midi, index);
+      this.pending.push({ verdict: 'hit', midi: event.midi, noteIndex: index, time: event.time });
+    } else {
+      const absorbed = this.absorbs(event.midi);
+      this.held.set(event.midi, absorbed ? ABSORBED : BLOCKING);
+      this.pending.push({
+        verdict: absorbed ? 'absorbed' : 'extra',
+        midi: event.midi,
+        noteIndex: -1,
+        time: event.time,
+      });
+    }
+    this.settleWait();
+  }
+
+  /** Adds up every Onset holding strikes; satisfying the one the cursor stands at ends the stop. */
+  private settleWait(): void {
+    const { blocked } = this;
+    for (const step of this.wait.open()) {
+      if (!this.wait.settle(step, this.requiredOf(step), this.settings.togethernessMs, blocked)) {
+        continue;
+      }
+      if (this.stopStep === step) this.stopStep = null;
+    }
+  }
+
+  /** The earliest step open at a played tick that requires the pitch, -1 when no step does. */
+  private openStepFor(midi: number, at: number): number {
+    const order = this.score.playOrder;
+    const window = this.msToTicks(this.settings.matchingWindowMs, at);
+    for (let i = this.stopStep ?? this.stepAt(Math.min(at, this.tick)); i < order.length; i++) {
+      if (order[i]!.tick - window > at) break;
+      if (this.wait.satisfied(i)) continue;
+      if (this.requiredOf(i).includes(midi)) return i;
+    }
+    return -1;
+  }
+
+  /** Whether a note the play never asks for, at the current or the next Onset, takes the strike. */
+  private absorbs(midi: number): boolean {
+    const current = this.stopStep ?? this.stepAt(this.tick);
+    for (const step of [current, current + 1]) {
+      const [from, to] = this.noteRange(step);
+      for (let i = from; i < to; i++) {
+        const note = this.notes[i]!;
+        if (note.midi === midi && !this.isExpected(note)) return true;
+      }
+    }
+    return false;
+  }
+
+  /** The next step the cursor must wait at, at or after the tick; -1 when nothing stops it. */
+  private nextStop(): number {
+    if (!this.waiting) return -1;
+    const order = this.score.playOrder;
+    for (let i = this.stepAt(this.tick); i < order.length; i++) {
+      if (order[i]!.tick < this.tick) continue;
+      if (this.wait.satisfied(i) || this.requiredOf(i).length === 0) continue;
+      return i;
+    }
+    return -1;
+  }
+
+  /** What an Onset asks for: the pitches of its strikeable notes of the active hand, graces aside. */
+  private requiredOf(step: number): number[] {
+    const [from, to] = this.noteRange(step);
+    const pitches: number[] = [];
+    for (let i = from; i < to; i++) {
+      const note = this.notes[i]!;
+      if (this.isExpected(note)) pitches.push(note.midi);
+    }
+    return pitches;
+  }
+
+  /** The note of that pitch the strike marks: the first one of the Onset still pending. */
+  private noteAt(step: number, midi: number): number {
+    const [from, to] = this.noteRange(step);
+    let fallback = -1;
+    for (let i = from; i < to; i++) {
+      if (this.notes[i]!.midi !== midi || !this.isExpected(this.notes[i]!)) continue;
+      if (this.states[i] === 'pending') return i;
+      if (fallback < 0) fallback = i;
+    }
+    return fallback;
+  }
+
+  /** The stretch of `notes` one Onset of the play order covers, as `[from, to)`. */
+  private noteRange(step: number): [number, number] {
+    const tick = this.score.playOrder[step]?.tick;
+    if (tick === undefined) return [0, 0];
+    const from = this.firstNoteFrom(tick);
+    let to = from;
+    while (to < this.notes.length && this.notes[to]!.tick === tick) to++;
+    return [from, to];
   }
 }
 

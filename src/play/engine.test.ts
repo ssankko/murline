@@ -424,3 +424,236 @@ describe('the colour of a held key', () => {
     expect(play.keyState(50)).toBe('grey');
   });
 });
+
+/** A Wait mode play over hand-written Onsets, already running. */
+function waiting(
+  spec: { tick: number; notes: Partial<Note>[] }[],
+  settings: Partial<PlaySettings> = {},
+) {
+  const play = engine(scoreFrom(spec), { mode: 'wait', ...settings });
+  play.start();
+  return play;
+}
+
+/** One Onset on the second beat asking for a C major third. */
+const CHORD = [{ tick: TICKS_PER_QUARTER, notes: [{ midi: 60 }, { midi: 64 }] }];
+
+describe('Wait mode', () => {
+  test('the cursor stops at an Onset the player has not satisfied', () => {
+    const play = waiting(CHORD);
+    play.advance(2 * BEAT_MS);
+
+    expect(play.snapshot()).toMatchObject({
+      state: 'running',
+      playedTick: TICKS_PER_QUARTER,
+      stopped: true,
+    });
+  });
+
+  test('the tick stands still however long the stop lasts', () => {
+    const play = waiting(CHORD);
+    play.advance(2 * BEAT_MS);
+    play.advance(10 * BEAT_MS);
+
+    expect(play.snapshot().playedTick).toBe(TICKS_PER_QUARTER);
+  });
+
+  test('a chord struck inside the togetherness window releases the stop', () => {
+    const play = waiting(CHORD);
+    play.advance(1500);
+    down(play, 60, 1500);
+    down(play, 64, 1700);
+
+    expect(play.snapshot().stopped).toBe(false);
+    play.advance(500);
+    expect(play.snapshot().playedTick).toBe(TICKS_PER_QUARTER + 480);
+  });
+
+  test('a chord spread wider than the togetherness window waits for a re-strike', () => {
+    const play = waiting(CHORD);
+    play.advance(1500);
+    down(play, 60, 1500);
+    down(play, 64, 1800);
+    expect(play.snapshot().stopped).toBe(true);
+
+    up(play, 60, 1900);
+    up(play, 64, 1900);
+    down(play, 60, 2000);
+    down(play, 64, 2100);
+    expect(play.snapshot().stopped).toBe(false);
+  });
+
+  test('a stray key held blocks the Onset until it comes up', () => {
+    const play = waiting(CHORD);
+    play.advance(1500);
+    down(play, 67, 1500);
+    down(play, 60, 1600);
+    down(play, 64, 1600);
+    expect(play.snapshot().stopped).toBe(true);
+
+    up(play, 67, 1700);
+    expect(play.snapshot().stopped).toBe(false);
+  });
+
+  test('a key held from an earlier Onset does not block', () => {
+    const play = waiting([
+      { tick: TICKS_PER_QUARTER, notes: [{ midi: 60 }] },
+      { tick: 2 * TICKS_PER_QUARTER, notes: [{ midi: 64 }] },
+    ]);
+    play.advance(1500);
+    down(play, 60, 1500);
+    play.advance(1000);
+    expect(play.snapshot()).toMatchObject({ playedTick: 2 * TICKS_PER_QUARTER, stopped: true });
+
+    // 60 is still down and never comes up.
+    down(play, 64, 2500);
+    expect(play.snapshot().stopped).toBe(false);
+  });
+
+  test('an Onset of tie continuations only is not a stop', () => {
+    const play = waiting([
+      { tick: TICKS_PER_QUARTER, notes: [{ midi: 60, tiedFrom: true, strikeable: false }] },
+      { tick: 2 * TICKS_PER_QUARTER, notes: [{ midi: 64 }] },
+    ]);
+    play.advance(3000);
+
+    expect(play.snapshot()).toMatchObject({ playedTick: 2 * TICKS_PER_QUARTER, stopped: true });
+  });
+
+  test('an Onset of the inactive hand alone is not a stop', () => {
+    const play = waiting(
+      [
+        { tick: TICKS_PER_QUARTER, notes: [{ midi: 50, hand: 'left', staff: 1 }] },
+        { tick: 2 * TICKS_PER_QUARTER, notes: [{ midi: 64 }] },
+      ],
+      { hands: 'right' },
+    );
+    play.advance(3000);
+
+    expect(play.snapshot()).toMatchObject({ playedTick: 2 * TICKS_PER_QUARTER, stopped: true });
+  });
+
+  test('a strike on an inactive-hand note at the stop is absorbed', () => {
+    const play = waiting(
+      [
+        {
+          tick: TICKS_PER_QUARTER,
+          notes: [{ midi: 60 }, { midi: 50, hand: 'left', staff: 1 }],
+        },
+      ],
+      { hands: 'right' },
+    );
+    play.advance(1500);
+    down(play, 50, 1500);
+
+    expect(play.events().at(-1)).toMatchObject({ verdict: 'absorbed', midi: 50 });
+    // An absorbed key is not a blocking key.
+    down(play, 60, 1600);
+    expect(play.snapshot().stopped).toBe(false);
+  });
+
+  test('a strike before the window opens is an extra', () => {
+    const play = waiting([{ tick: TICKS_PER_QUARTER, notes: [{ midi: 60 }] }]);
+    play.advance(800);
+    down(play, 60, 800);
+
+    expect(play.events().at(-1)).toMatchObject({ verdict: 'extra', midi: 60, noteIndex: -1 });
+    play.advance(400);
+    expect(play.snapshot().stopped).toBe(true);
+  });
+
+  test('an Onset satisfied before the cursor arrives is not a stop', () => {
+    const play = waiting([{ tick: TICKS_PER_QUARTER, notes: [{ midi: 60 }] }]);
+    play.advance(900);
+    down(play, 60, 900);
+    play.advance(200);
+
+    expect(play.snapshot()).toMatchObject({ playedTick: 1056, stopped: false });
+  });
+
+  test('a stop does not open the next Onset window', () => {
+    const play = waiting([
+      { tick: TICKS_PER_QUARTER, notes: [{ midi: 60 }] },
+      { tick: 2 * TICKS_PER_QUARTER, notes: [{ midi: 64 }] },
+    ]);
+    play.advance(1500);
+    down(play, 64, 1500);
+
+    expect(play.events().at(-1)).toMatchObject({ verdict: 'extra', midi: 64 });
+  });
+
+  test('a repeated pitch needs a fresh strike', () => {
+    const play = waiting([
+      { tick: TICKS_PER_QUARTER, notes: [{ midi: 60 }] },
+      { tick: 2 * TICKS_PER_QUARTER, notes: [{ midi: 60 }] },
+    ]);
+    play.advance(1500);
+    down(play, 60, 1500);
+    play.advance(1000);
+    expect(play.snapshot()).toMatchObject({ playedTick: 2 * TICKS_PER_QUARTER, stopped: true });
+
+    up(play, 60, 2600);
+    down(play, 60, 2700);
+    expect(play.snapshot().stopped).toBe(false);
+  });
+
+  test('a Flow mode play switched to Wait stops at the Onsets from there on', () => {
+    const play = engine(
+      scoreFrom([
+        { tick: TICKS_PER_QUARTER, notes: [{ midi: 60 }] },
+        { tick: 2 * TICKS_PER_QUARTER, notes: [{ midi: 64 }] },
+      ]),
+    );
+    play.start();
+    play.advance(1500);
+    expect(play.snapshot().stopped).toBe(false);
+
+    play.settings.mode = 'wait';
+    play.advance(1000);
+    expect(play.snapshot()).toMatchObject({ playedTick: 2 * TICKS_PER_QUARTER, stopped: true });
+  });
+
+  test('switching to Flow releases the stop', () => {
+    const play = waiting(CHORD);
+    play.advance(2 * BEAT_MS);
+    expect(play.snapshot().stopped).toBe(true);
+
+    play.settings.mode = 'flow';
+    play.advance(500);
+    expect(play.snapshot()).toMatchObject({ playedTick: TICKS_PER_QUARTER + 480, stopped: false });
+  });
+
+  test('taking the hand off a stop lets the cursor go on', () => {
+    const play = waiting([
+      { tick: TICKS_PER_QUARTER, notes: [{ midi: 50, hand: 'left', staff: 1 }] },
+    ]);
+    play.advance(1500);
+    expect(play.snapshot().stopped).toBe(true);
+
+    play.settings.hands = 'right';
+    play.advance(200);
+    expect(play.snapshot()).toMatchObject({ playedTick: TICKS_PER_QUARTER + 192, stopped: false });
+  });
+
+  test('the window the cursor band draws is the matching window at play tempo', () => {
+    // The band the sheet and the lane draw is this many ticks wide: at 60 BPM 150 ms is 144 ticks,
+    // and at twice the tempo the same milliseconds cover twice the ticks.
+    expect(engine(scoreFrom(CHORD)).windowTicks).toBe(144);
+    expect(engine(scoreFrom(CHORD), { tempoValue: 200 }).windowTicks).toBe(288);
+  });
+
+  test('pause makes the Onsets of the bar it drops back to stops again', () => {
+    const play = waiting([
+      { tick: TICKS_PER_QUARTER, notes: [{ midi: 60 }] },
+      { tick: 2 * TICKS_PER_QUARTER, notes: [{ midi: 64 }] },
+    ]);
+    play.advance(1500);
+    down(play, 60, 1500);
+    play.advance(400);
+    play.pause();
+    play.resume();
+    play.advance(2000);
+
+    expect(play.snapshot()).toMatchObject({ playedTick: TICKS_PER_QUARTER, stopped: true });
+  });
+});

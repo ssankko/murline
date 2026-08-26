@@ -32,8 +32,9 @@ import {
   type PlaySettings,
   type TempoMode,
 } from '@/play/settings';
+import { clampSection, sectionLabel, type Section } from '@/play/section';
 import { useFrameLoop } from '@/play/use-frame-loop';
-import { bpmAt, ScoreError, type Note } from '@/score/types';
+import { bpmAt, ScoreError, type Measure, type Note } from '@/score/types';
 import { Button } from '@/components/ui/button';
 import { Sheet } from '@/sheet/sheet';
 import { invoke } from '@tauri-apps/api/core';
@@ -114,6 +115,11 @@ export function PlayScreen({
     null,
   );
 
+  /** The Section and the toggle that gives it force. Both die with the screen. */
+  const [section, setSection] = useState<Section | null>(null);
+  const [loop, setLoop] = useState(false);
+  const [measures, setMeasures] = useState<Measure[]>([]);
+
   const [split, setSplit] = useState(DEFAULT_SPLIT);
   const [hands, setHands] = useState(DEFAULT_PLAY_SETTINGS.hands);
   /** A one-staff piece is all right hand, so it has no choice of hands to offer. */
@@ -164,6 +170,13 @@ export function PlayScreen({
         });
         if (intent === 'performance') engine.arm();
         engineRef.current = engine;
+        // The sheet knows where a click landed; the screen decides what it means.
+        sheet.onSeek = (target) => engine.seek(target);
+        sheet.onSection = (picked) => {
+          if (engine.kind !== 'practice') return;
+          setSection(picked && clampSection(sheet.score.measures, picked));
+        };
+        setMeasures(sheet.score.measures);
         laneRef.current = new Lane(canvasRef.current!, engine, look.lane, darkRef.current);
         setSplit(look.split);
         setOneStaff(sheet.score.staffCount < 2);
@@ -205,6 +218,15 @@ export function PlayScreen({
     if (!engine || midi.devices.length > 0) return;
     if (engine.snapshot().state === 'running') engine.pause();
   }, [midi.devices]);
+
+  // The Section and Loop are screen state: the engine gives them force and the sheet draws them.
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    engine.setSection(section);
+    engine.setLoop(loop);
+    sheetRef.current?.setSection(section);
+  }, [section, loop]);
 
   // Every one of them is live: Wait mode takes hold from the Onset the cursor is at, Flow lets go,
   // and a tempo or a metronome change reaches the clock on the next frame.
@@ -253,6 +275,7 @@ export function PlayScreen({
         sheet.markNote(note, 'miss');
       }
     }
+    sheet.setWalk(engine.walk);
     sheet.frame(snapshot, engine.windowTicks, now);
     lane.notice = midiRef.current.devices.length === 0 ? 'no MIDI device' : null;
     lane.frame(snapshot, engine.windowTicks, now);
@@ -276,7 +299,9 @@ export function PlayScreen({
         event.preventDefault();
         toggle();
       } else if (event.key === 'Escape') {
-        engineRef.current?.abort();
+        // Escape clears the Section only when the play is already still; otherwise it aborts.
+        if (engineRef.current?.snapshot().state === 'idle') setSection(null);
+        else engineRef.current?.abort();
       } else if (event.key === 'd') {
         flipTheme();
       }
@@ -360,7 +385,11 @@ export function PlayScreen({
               {running ? <Pause {...ICON} /> : <Play {...ICON} />}
             </BarButton>
             {!performing && (
-              <BarButton label="Loop" off pressed={false}>
+              <BarButton
+                label={sectionLabel(measures, section)}
+                pressed={loop}
+                onClick={() => setLoop((on) => !on)}
+              >
                 <Repeat {...ICON} />
               </BarButton>
             )}

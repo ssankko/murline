@@ -413,7 +413,7 @@ export class Engine {
   }
 
   setSection(section: Section | null): void {
-    this.sectionRange = section ? clampSection(this.score, section) : null;
+    this.sectionRange = section ? clampSection(this.score.measures, section) : null;
     this.applyLoop();
   }
 
@@ -433,7 +433,7 @@ export class Engine {
   loopSpan(): LoopSpan | null {
     if (!this.loop || this.kind !== 'practice') return null;
     const range = this.sectionRange
-      ? sectionTicks(this.score, this.sectionRange)
+      ? sectionTicks(this.score.measures, this.sectionRange)
       : { from: 0, to: this.endTick };
     const bars = Math.floor(this.settings.countInBars);
     const measure = this.measureAt(range.from);

@@ -167,10 +167,10 @@ export class Lane {
     ctx.beginPath();
     ctx.rect(0, 0, width, laneH);
     ctx.clip();
-    this.drawGrid(width, laneH, pxPerTick, loop?.to ?? Infinity);
+    this.drawGrid(width, laneH, pxPerTick, -Infinity, loop?.to ?? Infinity);
     this.drawSection(width, laneH, pxPerTick);
     this.drawCountIn(width, laneH, pxPerTick, this.engine.countInBeats);
-    this.drawNotes(laneH, pxPerTick, loop?.to ?? Infinity, true);
+    this.drawNotes(laneH, pxPerTick, -Infinity, loop?.to ?? Infinity, true);
     if (loop) this.drawNextLap(width, laneH, pxPerTick, loop);
     this.drawJumps(width, laneH, pxPerTick, loop);
     ctx.restore();
@@ -186,13 +186,19 @@ export class Lane {
     return laneH - (tick - this.playedTick) * pxPerTick;
   }
 
-  private drawGrid(width: number, laneH: number, pxPerTick: number, ceiling: number): void {
+  private drawGrid(
+    width: number,
+    laneH: number,
+    pxPerTick: number,
+    floor: number,
+    ceiling: number,
+  ): void {
     const ctx = this.ctx;
     const top = Math.min(this.playedTick + laneH / pxPerTick, ceiling);
     ctx.font = '11px ui-monospace, monospace';
     ctx.lineWidth = 1;
     for (const bar of this.bars) {
-      if (bar.endTick < this.playedTick) continue;
+      if (bar.endTick < this.playedTick || bar.tick < floor) continue;
       if (bar.tick >= top) break;
       for (let tick = bar.tick; tick < bar.endTick - 1e-9; tick += bar.beatTicks) {
         const y = Math.round(this.y(tick, laneH, pxPerTick)) + 0.5;
@@ -241,8 +247,8 @@ export class Lane {
     // Drawing the lap one lap lower than the clock puts it one lap higher in the lane.
     const played = this.playedTick;
     this.playedTick -= loop.lap;
-    this.drawGrid(width, laneH, pxPerTick, loop.to);
-    this.drawNotes(laneH, pxPerTick, loop.to, false);
+    this.drawGrid(width, laneH, pxPerTick, loop.from, loop.to);
+    this.drawNotes(laneH, pxPerTick, loop.from, loop.to, false);
     this.playedTick = played;
     this.drawCountIn(width, laneH, pxPerTick, beats);
   }
@@ -292,7 +298,13 @@ export class Lane {
     }
   }
 
-  private drawNotes(laneH: number, pxPerTick: number, ceiling: number, live: boolean): void {
+  private drawNotes(
+    laneH: number,
+    pxPerTick: number,
+    floor: number,
+    ceiling: number,
+    live: boolean,
+  ): void {
     const ctx = this.ctx;
     const engine = this.engine;
     const top = Math.min(this.playedTick + laneH / pxPerTick, ceiling);
@@ -300,6 +312,7 @@ export class Lane {
     for (let i = 0; i < engine.notes.length; i++) {
       const note = engine.notes[i]!;
       if (note.tick >= top) break;
+      if (note.tick < floor) continue;
       const bottom = this.y(note.tick, laneH, pxPerTick);
       if (bottom < -10) continue;
       const key = this.layout.byMidi.get(note.midi);

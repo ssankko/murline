@@ -424,7 +424,8 @@ export class Sheet {
     const height = this.system.bottom - top;
     const ink = tone(INK.duration, this.dark);
     this.tint.style.cssText =
-      `position:absolute;left:${from.left}px;top:${top}px;width:${to.right - from.left}px;` +
+      `position:absolute;display:block;left:${from.left}px;top:${top}px;` +
+      `width:${to.right - from.left}px;` +
       `height:${height}px;background:color-mix(in srgb, ${ink} 9%, transparent)`;
     for (const [i, handle] of this.handles.entries()) {
       handle.style.left = `${(i === 0 ? from.left : to.right) - 2}px`;

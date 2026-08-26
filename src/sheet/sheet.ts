@@ -3,7 +3,9 @@
 // OSMD; the clock lives in src/play/engine.ts and only arrives as a snapshot once a frame.
 
 import { CURSOR, INK, PAPER, colorOf, tone } from '@/look/color';
+import { reducedMotion } from '@/look/motion';
 import type { Snapshot } from '@/play/engine';
+import type { HandsSetting } from '@/play/settings';
 import { buildScore } from '@/score/build';
 import { ScoreError, type Note, type Score } from '@/score/types';
 import {
@@ -91,6 +93,8 @@ export class Sheet {
   private offsetY = 0;
 
   private misses = new Set<OsmdNote>();
+  /** Which hand the play expects; the other hand's noteheads read as scaffolding. */
+  private hands: HandsSetting = 'both';
   private outlined: Note[] = [];
   private drawn = { scale: 0, onset: -1, step: -1, jumpAt: -Infinity, jumpBar: 0, running: true };
 
@@ -103,6 +107,8 @@ export class Sheet {
     this.scale = child(this.scroll, 'position:relative');
     this.content = child(this.scale, 'position:relative;width:max-content;transform-origin:0 0');
     this.paper = child(this.content, '');
+    // The class carries the fade a recolouring rides on; src/index.css holds it.
+    this.paper.className = 'sheet-paper';
     const overlay = child(this.content, 'position:absolute;inset:0;pointer-events:none');
     this.bubbles = child(overlay, 'position:absolute;inset:0');
     this.cursor = child(overlay, 'position:absolute;border-radius:12px');
@@ -147,6 +153,14 @@ export class Sheet {
     this.layout();
     this.drawn.onset = -1;
     this.drawn.scale = 0;
+  }
+
+  /** Takes the pitch colour off the hand the play no longer expects, and puts it back. */
+  setHands(hands: HandsSetting): void {
+    if (hands === this.hands) return;
+    this.hands = hands;
+    for (const onset of this.score.onsets) for (const note of onset.notes) this.paintNote(note);
+    for (const note of this.outlined) this.markNote(note, 'current');
   }
 
   /** Miss red or the current Onset's outline; `none` puts the pitch colour back. */
@@ -380,12 +394,18 @@ export class Sheet {
     return onset ? (this.score.measures[onset.measureIndex]?.number ?? 0) : 0;
   }
 
-  /** The pitch colour of a note, or the miss red once it has been marked. */
+  /**
+   * The pitch colour of a note, or the miss red once it has been marked. A note of the inactive
+   * hand is context only: it drops to the scaffolding tier and takes no mark.
+   */
   private paintNote(note: Note, head = noteheadEl(this.osmd, note.source)): void {
     if (!head) return;
-    const colour = this.misses.has(note.source)
-      ? tone(INK.miss, this.dark)
-      : colorOf(note.midi, 'muted', this.dark);
+    const colour =
+      this.hands !== 'both' && this.hands !== note.hand
+        ? tone(INK.scaffolding, this.dark)
+        : this.misses.has(note.source)
+          ? tone(INK.miss, this.dark)
+          : colorOf(note.midi, 'muted', this.dark);
     paintHead(head, { fill: colour, stroke: colour, 'stroke-width': null, opacity: null });
   }
 }
@@ -408,10 +428,6 @@ function child(parent: HTMLElement, style: string): HTMLElement {
   el.style.cssText = style;
   parent.append(el);
   return el;
-}
-
-function reducedMotion(): boolean {
-  return matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
 function makeOsmd(host: HTMLElement, dark: boolean): OpenSheetMusicDisplay {

@@ -1,4 +1,4 @@
-import { colorOf } from '@/look/color';
+import { INK, colorOf, tone } from '@/look/color';
 import type { Snapshot } from '@/play/engine';
 import { expect, test } from 'vitest';
 import { noteheadEl } from './paint';
@@ -46,6 +46,24 @@ test('every notehead carries the pitch colour of its note', async () => {
   // The C of the first chord, in the palette's red, and its E in yellow-green.
   expect(colorOf(60, 'muted', false)).toBe('#cc3b33');
   expect(colorOf(64, 'muted', false)).toBe('#adcc33');
+
+  sheet.dispose();
+}, 60_000);
+
+test('the inactive hand drops to the scaffolding tier and the active hand keeps its colour', async () => {
+  const sheet = await open();
+  const notes = sheet.score.onsets.flatMap((onset) => onset.notes);
+  const right = notes.find((note) => note.hand === 'right')!;
+  const left = notes.find((note) => note.hand === 'left')!;
+
+  sheet.setHands('left');
+  const fill = (note: typeof right) =>
+    noteheadEl(sheet.osmd, note.source)?.firstElementChild?.getAttribute('fill');
+  expect(fill(right)).toBe(tone(INK.scaffolding, false));
+  expect(fill(left)).toBe(colorOf(left.midi, 'muted', false));
+
+  sheet.setHands('both');
+  expect(fill(right)).toBe(colorOf(right.midi, 'muted', false));
 
   sheet.dispose();
 }, 60_000);

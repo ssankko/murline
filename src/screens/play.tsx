@@ -16,7 +16,7 @@ import { reindexIfChanged } from '@/library/scan';
 import { flipTheme, useDark } from '@/look/use-dark';
 import { useMidiStatus } from '@/midi/useMidiStatus';
 import { create, type Engine, type PlayState } from '@/play/engine';
-import { DEFAULT_PLAY_SETTINGS } from '@/play/settings';
+import { DEFAULT_PLAY_SETTINGS, type HandsSetting } from '@/play/settings';
 import { useFrameLoop } from '@/play/use-frame-loop';
 import { ScoreError, type Note } from '@/score/types';
 import { Sheet } from '@/sheet/sheet';
@@ -42,6 +42,13 @@ const ICON = { size: 18, strokeWidth: 1.75 } as const;
 
 /** Height of the top bar, the strip the split does not divide. */
 const TOP_BAR = 48;
+
+/** The order the hands button cycles in. */
+const NEXT_HANDS: Record<HandsSetting, HandsSetting> = {
+  both: 'left',
+  left: 'right',
+  right: 'both',
+};
 
 const TEMPO_STEP = 5;
 const TEMPO_MIN = 25;
@@ -80,6 +87,9 @@ export function PlayScreen({
   const tempoRef = useRef(tempo);
   tempoRef.current = tempo;
   const [split, setSplit] = useState(DEFAULT_SPLIT);
+  const [hands, setHands] = useState(DEFAULT_PLAY_SETTINGS.hands);
+  /** A one-staff piece is all right hand, so it has no choice of hands to offer. */
+  const [oneStaff, setOneStaff] = useState(false);
 
   const midi = useMidiStatus((event) => engineRef.current?.strike(event));
   const midiRef = useRef(midi);
@@ -107,6 +117,8 @@ export function PlayScreen({
         engineRef.current = engine;
         laneRef.current = new Lane(canvasRef.current!, engine, look.lane, darkRef.current);
         setSplit(look.split);
+        setOneStaff(sheet.score.staffCount < 2);
+        setHands(engine.settings.hands);
         setTitle(sheet.score.title || fileName);
       } catch (error) {
         // The play screen has no error state: the library says what went wrong instead.
@@ -199,6 +211,16 @@ export function PlayScreen({
     }
   }
 
+  /** The next hands setting, on the engine and on the sheet; the lane reads the engine itself. */
+  function cycleHands(): void {
+    const engine = engineRef.current;
+    if (!engine) return;
+    const next = NEXT_HANDS[engine.settings.hands];
+    engine.settings.hands = next;
+    sheetRef.current?.setHands(next);
+    setHands(next);
+  }
+
   const running = state === 'running' || state === 'counting-in';
   const stepTempo = (by: number) =>
     setTempo((value) => Math.min(TEMPO_MAX, Math.max(TEMPO_MIN, value + by)));
@@ -246,9 +268,10 @@ export function PlayScreen({
                 <Plus {...ICON} />
               </BarButton>
             </div>
-            <BarButton label="Hands: both" off wide>
-              <Hand {...ICON} />
-              <Hand {...ICON} className="scale-x-[-1]" />
+            {/* The left glyph is the left hand; the hand the play does not expect is dimmed. */}
+            <BarButton label={`Hands: ${hands}`} off={oneStaff} onClick={cycleHands} wide>
+              <Hand {...ICON} className={handGlyph(hands, 'left')} />
+              <Hand {...ICON} className={`scale-x-[-1] ${handGlyph(hands, 'right')}`} />
             </BarButton>
             <div className="flex items-center">
               <BarButton label="Flow mode" off pressed={true}>
@@ -281,6 +304,11 @@ export function PlayScreen({
       </div>
     </TooltipProvider>
   );
+}
+
+/** A hand the play does not expect is dimmed, and fades as the setting changes. */
+function handGlyph(hands: HandsSetting, hand: 'left' | 'right'): string {
+  return `transition-opacity duration-200 ${hands === 'both' || hands === hand ? '' : 'opacity-30'}`;
 }
 
 /** The global settings the lane and the split open with. The gear writes them; ticket 13 draws it. */

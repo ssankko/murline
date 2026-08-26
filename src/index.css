@@ -92,6 +92,17 @@
   }
 }
 
+/* Noteheads of the sheet. Their colours come from src/sheet/sheet.ts; only the fade a change of
+   hands rides on lives here, where the motion setting can switch it off. */
+.sheet-paper path {
+  transition: fill 200ms linear;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sheet-paper path {
+    transition: none;
+  }
+}
+
 @layer base {
   * {
     @apply border-border;

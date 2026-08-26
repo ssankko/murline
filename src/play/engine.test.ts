@@ -326,6 +326,22 @@ describe('matching a strike in Flow mode', () => {
     expect(play.noteState(0)).toBe('pending');
   });
 
+  test('with hands left a right-hand strike is absorbed and its note never misses', () => {
+    const play = onBeatTwo([{ midi: 60, hand: 'right', staff: 0 }], { hands: 'left' });
+    play.advance(BEAT_MS);
+    down(play, 60, BEAT_MS);
+
+    expect(play.events()).toEqual([
+      { verdict: 'absorbed', midi: 60, noteIndex: -1, time: BEAT_MS },
+    ]);
+    expect(play.keyState(60)).toBe('grey');
+
+    // The window closes over a note nobody was asked to play, and nothing comes of it.
+    play.advance(BEAT_MS);
+    expect(play.events()).toEqual([]);
+    expect(play.noteState(0)).toBe('pending');
+  });
+
   test('the same note is a hit when its hand is active', () => {
     const play = onBeatTwo([{ midi: 50, hand: 'left', staff: 1 }], { hands: 'both' });
     play.advance(BEAT_MS);

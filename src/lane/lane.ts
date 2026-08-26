@@ -4,8 +4,10 @@
 
 import { KEYBOARD_H, drawKeyboard, keyLayout, keyRange, type KeyLayout } from '@/lane/keyboard';
 import { INK, PAPER, colorOf, tone } from '@/look/color';
+import { reducedMotion } from '@/look/motion';
 import type { Engine, PlayEvent, Snapshot } from '@/play/engine';
-import { TICKS_PER_QUARTER } from '@/score/types';
+import type { HandsSetting } from '@/play/settings';
+import { TICKS_PER_QUARTER, type Hand } from '@/score/types';
 
 /** Look knobs, all global settings the gear writes to. */
 export interface LaneLook {
@@ -45,6 +47,8 @@ const MISS_FLASH_MS = 300;
 const RING_MS = 300;
 /** The inactive hand is context: its notes fall as ghosts and never take feedback. */
 const GHOST_ALPHA = 0.25;
+/** How long a change of hands takes to cross-fade the blocks it turns into ghosts, and back. */
+const HANDS_FADE_MS = 200;
 
 /** One ring or blink playing out at a key. */
 interface Effect {
@@ -84,6 +88,10 @@ export class Lane {
   private effects: Effect[] = [];
   private now = 0;
   private playedTick = 0;
+  /** The hands setting the blocks are drawn for, the one before it, and when it changed. */
+  private hands: HandsSetting;
+  private handsBefore: HandsSetting;
+  private handsAt = -Infinity;
 
   constructor(canvas: HTMLCanvasElement, engine: Engine, look: LaneLook, dark: boolean) {
     this.canvas = canvas;
@@ -93,6 +101,9 @@ export class Lane {
     this.dark = dark;
     this.bars = barsOf(engine);
     this.jumps = jumpsOf(engine);
+    this.hands = engine.settings.hands;
+    this.handsBefore = this.hands;
+    // The range spans both hands, so a change of hands never re-lays the keyboard out.
     this.range = keyRange(engine.notes, engine.settings);
     this.layout = keyLayout(this.range[0], this.range[1], canvas.clientWidth || 1);
   }
@@ -111,6 +122,11 @@ export class Lane {
   frame(snap: Snapshot, windowTicks: number, now: number): void {
     this.now = now;
     this.playedTick = snap.playedTick;
+    if (this.engine.settings.hands !== this.hands) {
+      this.handsBefore = this.hands;
+      this.hands = this.engine.settings.hands;
+      this.handsAt = reducedMotion() ? -Infinity : now;
+    }
     const ctx = this.ctx;
     const width = this.canvas.clientWidth;
     const height = this.canvas.clientHeight;
@@ -204,8 +220,8 @@ export class Lane {
   private drawNotes(laneH: number, pxPerTick: number): void {
     const ctx = this.ctx;
     const engine = this.engine;
-    const hands = engine.settings.hands;
     const top = this.playedTick + laneH / pxPerTick;
+    const fade = Math.min(1, (this.now - this.handsAt) / HANDS_FADE_MS);
     for (let i = 0; i < engine.notes.length; i++) {
       const note = engine.notes[i]!;
       if (note.tick > top) break;
@@ -219,51 +235,67 @@ export class Lane {
       const width = key.w * (this.look.noteWidthPct / 100);
       const x = key.x + (key.w - width) / 2;
       const height = Math.max(bottom - y - this.look.gapPx, 3);
-      const ghost = hands !== 'both' && hands !== note.hand;
-      const state = engine.noteState(i);
-      const age = this.now - engine.resolvedAt(i);
-
-      let fill = colorOf(note.midi, 'muted', this.dark);
-      let glow = 0;
-      if (state === 'miss') fill = tone(INK.miss, this.dark);
-      else if (state === 'hit' && age < HIT_FLASH_MS) {
-        fill = '#ffffff';
-        glow = 14 * (1 - age / HIT_FLASH_MS);
-      }
+      const radius = Math.min(NOTE_RADIUS, width / 3, height / 3);
+      // How much of a ghost the note is now: a change of hands cross-fades it over the two looks.
+      const ghost = isGhost(this.hands, note.hand)
+        ? fade
+        : isGhost(this.handsBefore, note.hand)
+          ? 1 - fade
+          : 0;
 
       ctx.save();
-      if (ghost) ctx.globalAlpha = GHOST_ALPHA;
-      if (glow > 0) {
-        ctx.shadowColor = colorOf(note.midi, 'muted', this.dark);
-        ctx.shadowBlur = glow;
-      }
-      const radius = Math.min(NOTE_RADIUS, width / 3, height / 3);
-      ctx.fillStyle = fill;
-      ctx.beginPath();
-      ctx.roundRect(x, y, width, height, radius);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-
-      // The left hand carries a dark border and a dot, the right hand a thin light one, so the
-      // hand a block belongs to reads without colour.
-      if (note.hand === 'left') {
-        ctx.strokeStyle = 'rgba(0,0,0,0.65)';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.roundRect(x + 1, y + 1, width - 2, height - 2, Math.max(radius - 1, 1));
-        ctx.stroke();
-        if (height > 10 && width > 8) {
-          ctx.fillStyle = 'rgba(0,0,0,0.65)';
-          ctx.beginPath();
-          ctx.arc(x + width / 2, y + 5, 2, 0, Math.PI * 2);
-          ctx.fill();
+      if (ghost < 1) {
+        const state = engine.noteState(i);
+        const age = this.now - engine.resolvedAt(i);
+        let fill = colorOf(note.midi, 'muted', this.dark);
+        let glow = 0;
+        if (state === 'miss') fill = tone(INK.miss, this.dark);
+        else if (state === 'hit' && age < HIT_FLASH_MS) {
+          fill = '#ffffff';
+          glow = 14 * (1 - age / HIT_FLASH_MS);
         }
-      } else {
-        ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-        ctx.lineWidth = 1;
+
+        ctx.globalAlpha = 1 - ghost;
+        if (glow > 0) {
+          ctx.shadowColor = colorOf(note.midi, 'muted', this.dark);
+          ctx.shadowBlur = glow;
+        }
+        ctx.fillStyle = fill;
         ctx.beginPath();
-        ctx.roundRect(x + 0.5, y + 0.5, width - 1, height - 1, radius);
-        ctx.stroke();
+        ctx.roundRect(x, y, width, height, radius);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        // The left hand carries a dark border and a dot, the right hand a thin light one, so the
+        // hand a block belongs to reads without colour.
+        if (note.hand === 'left') {
+          ctx.strokeStyle = 'rgba(0,0,0,0.65)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.roundRect(x + 1, y + 1, width - 2, height - 2, Math.max(radius - 1, 1));
+          ctx.stroke();
+          if (height > 10 && width > 8) {
+            ctx.fillStyle = 'rgba(0,0,0,0.65)';
+            ctx.beginPath();
+            ctx.arc(x + width / 2, y + 5, 2, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        } else {
+          ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.roundRect(x + 0.5, y + 0.5, width - 1, height - 1, radius);
+          ctx.stroke();
+        }
+      }
+
+      // A ghost is rhythm alone: the lane's ink, no pitch colour, no hand border, no dot.
+      if (ghost > 0) {
+        ctx.globalAlpha = GHOST_ALPHA * ghost;
+        ctx.fillStyle = tone(INK.duration, this.dark);
+        ctx.beginPath();
+        ctx.roundRect(x, y, width, height, radius);
+        ctx.fill();
       }
       ctx.restore();
     }
@@ -328,6 +360,11 @@ export class Lane {
     ctx.fillText(this.notice!, width / 2, laneH + KEYBOARD_H / 2 + 4);
     ctx.textAlign = 'left';
   }
+}
+
+/** A note of the hand the play does not expect. */
+function isGhost(hands: HandsSetting, hand: Hand): boolean {
+  return hands !== 'both' && hands !== hand;
 }
 
 // Dash patterns as constants, because setLineDash takes a fresh array otherwise on every frame.

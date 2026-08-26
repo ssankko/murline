@@ -1,8 +1,11 @@
-mod library;
-
 use std::path::Path;
 
 use tauri_plugin_sql::{Migration, MigrationKind};
+
+mod finder;
+mod kernscores;
+mod library;
+mod pdmx;
 
 /// Creates the library folder, parents included. Already existing is success, so onboarding and a
 /// later folder change both call it without checking first.
@@ -43,11 +46,17 @@ pub fn run() {
                 .add_migrations("sqlite:piano.db", migrations())
                 .build(),
         )
+        .setup(|_app| {
+            finder::warm();
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             ensure_dir,
             home_dir,
             library::list_library,
-            library::read_file
+            library::read_file,
+            finder::finder_search,
+            finder::finder_download
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

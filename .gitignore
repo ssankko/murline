@@ -9,3 +9,4 @@ node_modules/.tmp/
 test-results/
 .vitest-attachments/
 __screenshots__/
+scripts/cache/

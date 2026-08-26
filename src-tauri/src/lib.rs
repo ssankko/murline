@@ -1,3 +1,5 @@
+mod library;
+
 use std::path::Path;
 
 use tauri_plugin_sql::{Migration, MigrationKind};
@@ -41,7 +43,12 @@ pub fn run() {
                 .add_migrations("sqlite:piano.db", migrations())
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![ensure_dir, home_dir])
+        .invoke_handler(tauri::generate_handler![
+            ensure_dir,
+            home_dir,
+            library::list_library,
+            library::read_file
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

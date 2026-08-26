@@ -8,9 +8,11 @@ type Route = { at: 'loading' } | { at: 'onboarding' } | { at: 'library'; folder:
 export function App() {
   const [route, setRoute] = useState<Route>({ at: 'loading' });
 
+  // A database that will not open leaves onboarding to report the failure when Continue retries it.
   useEffect(() => {
     Promise.all([getSetting('onboarding_done'), getSetting('library_folder')]).then(
       ([done, folder]) => setRoute(done ? { at: 'library', folder } : { at: 'onboarding' }),
+      () => setRoute({ at: 'onboarding' }),
     );
   }, []);
 

@@ -72,7 +72,8 @@ export function Onboarding({ onDone }: { onDone: (folder: string) => void }) {
   );
 }
 
-function midiLine({ devices }: ReturnType<typeof useMidiStatus>): string {
+function midiLine({ devices, error }: ReturnType<typeof useMidiStatus>): string {
+  if (error) return `MIDI unavailable: ${error}`;
   if (devices.length === 0) return 'No MIDI device found, plug one in any time';
   return `${devices.join(', ')} connected`;
 }

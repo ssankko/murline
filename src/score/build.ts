@@ -9,6 +9,7 @@ import {
   type Note as OsmdNote,
   type Staff as OsmdStaff,
 } from 'opensheetmusicdisplay';
+import { analyzeHarmony } from './harmony';
 import {
   ticksOf,
   type ChordSymbol,
@@ -103,7 +104,7 @@ export function buildScore(sheet: MusicSheet): Score {
   }));
 
   const tempoMap = tempoMapOf(sheet);
-  return {
+  const score: Score = {
     title: sheet.TitleString ?? '',
     composer: sheet.ComposerString ?? '',
     partName: instrument.Name ?? '',
@@ -118,7 +119,10 @@ export function buildScore(sheet: MusicSheet): Score {
     measures,
     keys: keysOf(sheet),
     chords: chordsOf(sheet, instrument.Staves),
+    harmony: [],
   };
+  score.harmony = analyzeHarmony(score);
+  return score;
 }
 
 /** Cue notes and notes the file hides are printed nowhere and played by nobody. */

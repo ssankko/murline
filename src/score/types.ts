@@ -98,6 +98,19 @@ export interface ChordSymbol {
   bass?: number;
 }
 
+/**
+ * One chord of the harmony display, at the Onset where the harmony changes. `absolute` is the name
+ * as a musician writes it ("G7/B"); `degree` is the same chord against the key in force ("5⁷/7").
+ */
+export interface ChordEvent {
+  onsetIndex: number;
+  /** Sheet tick of the Onset, so a repeated bar carries the chord again. */
+  tick: number;
+  measureIndex: number;
+  absolute: string;
+  degree: string;
+}
+
 export interface Score {
   title: string;
   composer: string;
@@ -117,6 +130,8 @@ export interface Score {
   measures: Measure[];
   keys: KeyChange[];
   chords: ChordSymbol[];
+  /** The chord names along the sheet, one per Onset where the harmony changes. */
+  harmony: ChordEvent[];
 }
 
 /** The tempo in force at a sheet tick. The first entry also covers everything before it. */

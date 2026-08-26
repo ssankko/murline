@@ -54,6 +54,7 @@ function scoreOf(onsetNotes: Note[][]): Score {
     ],
     keys: [{ measureIndex: 0, measureNumber: 1, sharps: -3, mode: 1 }],
     chords: [],
+    harmony: [],
   };
 }
 

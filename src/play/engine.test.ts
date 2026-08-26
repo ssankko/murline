@@ -1,7 +1,7 @@
 import { DEFAULT_PLAY_SETTINGS, type PlaySettings } from '@/play/settings';
 import { TICKS_PER_QUARTER, type Measure, type Note, type Onset, type Score } from '@/score/types';
 import { describe, expect, test } from 'vitest';
-import { create } from './engine';
+import { create, type Engine } from './engine';
 
 const BAR = 4 * TICKS_PER_QUARTER;
 
@@ -210,5 +210,201 @@ describe('the lifecycle', () => {
 
     // Eight quarter notes, then 150 ms of window, which at 60 BPM is 0.15 of a quarter note.
     expect(play.endTick).toBeCloseTo(8 * TICKS_PER_QUARTER + 0.15 * TICKS_PER_QUARTER, 6);
+  });
+});
+
+/** A Score of one Onset per entry, over the bars of `scoreOf`. */
+function scoreFrom(spec: { tick: number; notes: Partial<Note>[] }[], bars = 2): Score {
+  const score = scoreOf(bars);
+  score.onsets = spec.map((entry) => {
+    const measureIndex = Math.floor(entry.tick / BAR);
+    return {
+      tick: entry.tick,
+      measureIndex,
+      notes: entry.notes.map((n) => ({ ...note(entry.tick, measureIndex), ...n })),
+      timestamp: undefined as never,
+    };
+  });
+  score.playOrder = score.onsets.map((onset, i) => ({ onsetIndex: i, tick: onset.tick }));
+  return score;
+}
+
+/** At 60 BPM one quarter note is a second, so 150 ms of matching window is 144 ticks. */
+const BEAT_MS = 1000;
+
+function down(play: Engine, midi: number, ms: number): void {
+  play.strike({ midi, velocity: 80, time: ms, on: true });
+}
+
+function up(play: Engine, midi: number, ms: number): void {
+  play.strike({ midi, velocity: 0, time: ms, on: false });
+}
+
+/** One Onset on the second beat, which puts a whole window on either side of it. */
+function onBeatTwo(notes: Partial<Note>[] = [{}], settings: Partial<PlaySettings> = {}) {
+  const play = engine(scoreFrom([{ tick: TICKS_PER_QUARTER, notes }]), settings);
+  play.start();
+  return play;
+}
+
+describe('matching a strike in Flow mode', () => {
+  test('the nearest unmatched note of that pitch takes the strike', () => {
+    const play = onBeatTwo();
+    play.advance(BEAT_MS);
+    down(play, 60, BEAT_MS);
+
+    expect(play.events()).toEqual([
+      { verdict: 'hit', midi: 60, noteIndex: 0, time: BEAT_MS },
+    ]);
+    expect(play.noteState(0)).toBe('hit');
+  });
+
+  test('a strike on the far edge of the window still counts', () => {
+    for (const at of [BEAT_MS - 150, BEAT_MS + 150]) {
+      const play = onBeatTwo();
+      play.advance(at);
+      down(play, 60, at);
+      expect(play.events()[0]).toMatchObject({ verdict: 'hit', noteIndex: 0 });
+    }
+  });
+
+  test('a strike one millisecond past the edge is an extra', () => {
+    for (const at of [BEAT_MS - 151, BEAT_MS + 151]) {
+      const play = onBeatTwo();
+      play.advance(at);
+      down(play, 60, at);
+      expect(play.events().at(-1)).toMatchObject({ verdict: 'extra', noteIndex: -1 });
+    }
+  });
+
+  test('with two notes of the pitch in the window the nearer one takes it', () => {
+    const play = engine(
+      scoreFrom([
+        { tick: TICKS_PER_QUARTER, notes: [{}] },
+        { tick: TICKS_PER_QUARTER + 96, notes: [{}] },
+      ]),
+    );
+    play.start();
+    play.advance(1060);
+    down(play, 60, 1060);
+
+    expect(play.events()[0]).toMatchObject({ verdict: 'hit', noteIndex: 1 });
+  });
+
+  test('a match is final, so the same key again is an extra', () => {
+    const play = onBeatTwo();
+    play.advance(BEAT_MS);
+    down(play, 60, BEAT_MS);
+    up(play, 60, BEAT_MS + 10);
+    down(play, 60, BEAT_MS + 20);
+
+    expect(play.events().map((e) => e.verdict)).toEqual(['hit', 'extra']);
+  });
+
+  test('a key no note asks for is an extra', () => {
+    const play = onBeatTwo();
+    play.advance(BEAT_MS);
+    down(play, 67, BEAT_MS);
+
+    expect(play.events()[0]).toMatchObject({ verdict: 'extra', midi: 67, noteIndex: -1 });
+  });
+
+  test('a grace note absorbs its strike instead of counting it', () => {
+    const play = onBeatTwo([{ midi: 61, grace: true, durationTicks: 0 }]);
+    play.advance(BEAT_MS);
+    down(play, 61, BEAT_MS);
+
+    expect(play.events()[0]).toMatchObject({ verdict: 'absorbed', midi: 61 });
+  });
+
+  test('an inactive-hand note absorbs its strike', () => {
+    const play = onBeatTwo([{ midi: 50, hand: 'left', staff: 1 }], { hands: 'right' });
+    play.advance(BEAT_MS);
+    down(play, 50, BEAT_MS);
+
+    expect(play.events()[0]).toMatchObject({ verdict: 'absorbed', midi: 50 });
+    expect(play.noteState(0)).toBe('pending');
+  });
+
+  test('the same note is a hit when its hand is active', () => {
+    const play = onBeatTwo([{ midi: 50, hand: 'left', staff: 1 }], { hands: 'both' });
+    play.advance(BEAT_MS);
+    down(play, 50, BEAT_MS);
+
+    expect(play.events()[0]).toMatchObject({ verdict: 'hit', noteIndex: 0 });
+  });
+
+  test('a strike before the play runs lights the key and nothing else', () => {
+    const play = engine(scoreFrom([{ tick: TICKS_PER_QUARTER, notes: [{}] }]));
+    down(play, 60, 0);
+
+    expect(play.events()).toEqual([]);
+    expect(play.keyState(60)).toBe('grey');
+  });
+});
+
+describe('a window that closes unmatched', () => {
+  test('marks the note a miss once', () => {
+    const play = onBeatTwo();
+    play.advance(BEAT_MS + 149);
+    expect(play.events()).toEqual([]);
+
+    play.advance(2);
+    expect(play.events()).toEqual([
+      { verdict: 'miss', midi: 60, noteIndex: 0, time: BEAT_MS + 151 },
+    ]);
+    expect(play.noteState(0)).toBe('miss');
+
+    play.advance(500);
+    expect(play.events()).toEqual([]);
+  });
+
+  test('never fires for the inactive hand', () => {
+    const play = onBeatTwo([{ midi: 50, hand: 'left', staff: 1 }], { hands: 'right' });
+    play.advance(BEAT_MS + 200);
+
+    expect(play.events()).toEqual([]);
+    expect(play.noteState(0)).toBe('pending');
+  });
+
+  test('never fires for a grace note', () => {
+    const play = onBeatTwo([{ midi: 61, grace: true, durationTicks: 0 }]);
+    play.advance(BEAT_MS + 200);
+
+    expect(play.events()).toEqual([]);
+  });
+});
+
+describe('the colour of a held key', () => {
+  test('is the pitch colour while the matched note sounds, then grey', () => {
+    const play = onBeatTwo();
+    play.advance(BEAT_MS);
+    down(play, 60, BEAT_MS);
+    expect(play.keyState(60)).toBe('color');
+
+    // The note is a quarter note, so it stops sounding a second after its Onset.
+    play.advance(999);
+    expect(play.keyState(60)).toBe('color');
+    play.advance(2);
+    expect(play.keyState(60)).toBe('grey');
+
+    up(play, 60, 3000);
+    expect(play.keyState(60)).toBe('base');
+  });
+
+  test('is grey from the first frame for an extra', () => {
+    const play = onBeatTwo();
+    play.advance(BEAT_MS);
+    down(play, 67, BEAT_MS);
+
+    expect(play.keyState(67)).toBe('grey');
+  });
+
+  test('is grey for an absorbed inactive-hand strike', () => {
+    const play = onBeatTwo([{ midi: 50, hand: 'left', staff: 1 }], { hands: 'right' });
+    play.advance(BEAT_MS);
+    down(play, 50, BEAT_MS);
+
+    expect(play.keyState(50)).toBe('grey');
   });
 });

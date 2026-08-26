@@ -16,8 +16,9 @@
   --amber: #c9922e;
 }
 
+/* The system chooses the paper until the `d` key pins one, which puts a class on the root. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not(.light) {
     --paper: #202020;
     --chrome: #161616;
     --surface: #1c1c1c;
@@ -27,6 +28,17 @@
     --edge-soft: #2b2b2b;
     --amber: #d9a83c;
   }
+}
+
+:root.dark {
+  --paper: #202020;
+  --chrome: #161616;
+  --surface: #1c1c1c;
+  --ink: #e8e8e8;
+  --muted: #8f8f8f;
+  --edge: #3d3d3d;
+  --edge-soft: #2b2b2b;
+  --amber: #d9a83c;
 }
 
 /* shadcn's token names over the same greys, so its components need no per-component styling. */

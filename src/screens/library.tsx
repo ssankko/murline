@@ -47,9 +47,18 @@ const SORTS: [SortOrder, string][] = [
 ];
 
 /** The library page: every piece of the folder on the left, the selected piece's facts on the right. */
-export function Library({ folder }: { folder: string | null }) {
+export function Library({
+  folder,
+  selected: opened,
+  onPractice,
+}: {
+  folder: string | null;
+  /** The piece the play screen came back from, so leaving a play lands on it again. */
+  selected?: string;
+  onPractice: (path: string) => void;
+}) {
   const [pieces, setPieces] = useState<PieceRow[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(opened ?? null);
   const [sort, setSort] = useState<SortOrder>('title');
   const [folderGone, setFolderGone] = useState(false);
   const [notice, dismissNotice] = useNotice();
@@ -215,6 +224,7 @@ export function Library({ folder }: { folder: string | null }) {
           folder={folder}
           onFavorite={() => void toggleFavorite(piece)}
           onDelete={() => void remove(piece)}
+          onPractice={onPractice}
         />
       ) : (
         <div className="flex flex-1 items-center justify-center px-12">
@@ -312,11 +322,13 @@ function Detail({
   folder,
   onFavorite,
   onDelete,
+  onPractice,
 }: {
   piece: PieceRow;
   folder: string | null;
   onFavorite: () => void;
   onDelete: () => void;
+  onPractice: (path: string) => void;
 }) {
   const broken = !!piece.error;
   const fullPath = folder ? `${folder}/${piece.path}` : piece.path;
@@ -391,7 +403,12 @@ function Detail({
           <Button variant="outline" size="sm" disabled>
             Preview
           </Button>
-          <Button variant="outline" size="sm" disabled>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={broken || !folder}
+            onClick={() => onPractice(piece.path)}
+          >
             Practice
           </Button>
           <Button size="sm" disabled>

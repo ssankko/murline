@@ -1,9 +1,12 @@
-//! The library folder as the frontend sees it: what score files are in it, and their bytes.
+//! The library folder as the frontend sees it: what score files are in it, their bytes, and the
+//! file operations the library page runs on them.
 
 use std::path::Path;
+use std::process::Command;
 use std::time::UNIX_EPOCH;
 
 use serde::Serialize;
+use trash::macos::TrashContextExtMacos;
 
 const EXTENSIONS: [&str; 3] = ["musicxml", "xml", "mxl"];
 
@@ -12,6 +15,13 @@ const EXTENSIONS: [&str; 3] = ["musicxml", "xml", "mxl"];
 #[derive(Debug, Serialize)]
 pub struct FileEntry {
     pub rel_path: String,
+    pub mtime: i64,
+    pub size: i64,
+}
+
+/// What a file was when it was last read: enough to tell whether it changed.
+#[derive(Debug, Serialize)]
+pub struct Stamp {
     pub mtime: i64,
     pub size: i64,
 }
@@ -28,6 +38,53 @@ pub fn read_file(path: String) -> Result<tauri::ipc::Response, String> {
     std::fs::read(&path)
         .map(tauri::ipc::Response::new)
         .map_err(|e| e.to_string())
+}
+
+/// Copies an imported file into the library folder, overwriting whatever is at `dst`. The stamp of
+/// the written file goes back so the caller can index it without listing the folder again.
+#[tauri::command]
+pub fn copy_file(src: String, dst: String) -> Result<Stamp, String> {
+    copy(Path::new(&src), Path::new(&dst)).map_err(|e| e.to_string())
+}
+
+/// Opens the file's folder in the Finder with the file selected.
+#[tauri::command]
+pub fn reveal_in_finder(path: String) -> Result<(), String> {
+    Command::new("open")
+        .args(["-R", &path])
+        .status()
+        .map_err(|e| e.to_string())
+        .and_then(|s| s.success().then_some(()).ok_or_else(|| s.to_string()))
+}
+
+/// Moves the file to the macOS Trash, which is the only undo a delete has. `NSFileManager` does the
+/// move instead of the Finder, so deleting never asks the user for automation rights; the cost is
+/// that the Trash may not offer "Put Back" for the file.
+#[tauri::command]
+pub fn trash_file(path: String) -> Result<(), String> {
+    let mut context = trash::TrashContext::default();
+    context.set_delete_method(trash::macos::DeleteMethod::NsFileManager);
+    context.delete(&path).map_err(|e| e.to_string())
+}
+
+fn copy(src: &Path, dst: &Path) -> std::io::Result<Stamp> {
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::copy(src, dst)?;
+    Ok(stamp(&std::fs::metadata(dst)?))
+}
+
+fn stamp(meta: &std::fs::Metadata) -> Stamp {
+    Stamp {
+        mtime: meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0),
+        size: meta.len() as i64,
+    }
 }
 
 fn list_dir(root: &Path) -> std::io::Result<Vec<FileEntry>> {
@@ -51,16 +108,11 @@ fn list_dir(root: &Path) -> std::io::Result<Vec<FileEntry>> {
             let Ok(rel) = path.strip_prefix(root) else {
                 continue;
             };
-            let meta = entry.metadata()?;
+            let Stamp { mtime, size } = stamp(&entry.metadata()?);
             out.push(FileEntry {
                 rel_path: rel.to_string_lossy().into_owned(),
-                mtime: meta
-                    .modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                    .map(|d| d.as_millis() as i64)
-                    .unwrap_or(0),
-                size: meta.len() as i64,
+                mtime,
+                size,
             });
         }
     }
@@ -69,7 +121,7 @@ fn list_dir(root: &Path) -> std::io::Result<Vec<FileEntry>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{list_dir, FileEntry};
+    use super::{copy, list_dir, trash_file, FileEntry};
     use std::path::Path;
 
     fn write(root: &Path, rel: &str, body: &str) {
@@ -117,6 +169,29 @@ mod tests {
 
         write(root.path(), "piece.musicxml", "short");
         assert!(find(&list_dir(root.path()).unwrap(), "piece.musicxml").is_some());
+    }
+
+    #[test]
+    fn copy_creates_the_folder_and_reports_the_written_size() {
+        let root = tempfile::tempdir().unwrap();
+        write(root.path(), "away/piece.musicxml", "sixteen letters!");
+
+        let dst = root.path().join("library").join("piece.musicxml");
+        let stamp = copy(&root.path().join("away/piece.musicxml"), &dst).unwrap();
+
+        assert_eq!(stamp.size, 16);
+        assert_eq!(std::fs::read_to_string(&dst).unwrap(), "sixteen letters!");
+    }
+
+    #[test]
+    fn trash_takes_the_file_off_its_path() {
+        let root = tempfile::tempdir().unwrap();
+        write(root.path(), "doomed.musicxml", "bytes");
+        let path = root.path().join("doomed.musicxml");
+
+        trash_file(path.to_string_lossy().into_owned()).unwrap();
+
+        assert!(!path.exists());
     }
 
     #[test]

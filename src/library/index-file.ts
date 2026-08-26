@@ -8,12 +8,21 @@ import { invoke } from '@tauri-apps/api/core';
 
 /** Reads a score file and summarises it. Every failure arrives as a `ScoreError`. */
 export async function indexFile(absolutePath: string): Promise<PieceIndex> {
-  const fileName = absolutePath.split('/').pop() || absolutePath;
-  const osmd = await loadSheet(await readFile(absolutePath), fileName);
+  const fileName = baseNameOf(absolutePath);
+  return indexBytes(await readScoreFile(absolutePath), fileName);
+}
+
+/** Summarises the bytes of a score file. The file name only fills in a missing title or composer. */
+export async function indexBytes(bytes: Uint8Array, fileName: string): Promise<PieceIndex> {
+  const osmd = await loadSheet(bytes, fileName);
   return summarize(buildScore(osmd.Sheet), fileName);
 }
 
-async function readFile(path: string): Promise<Uint8Array> {
+export function baseNameOf(path: string): string {
+  return path.split('/').pop() || path;
+}
+
+export async function readScoreFile(path: string): Promise<Uint8Array> {
   try {
     return new Uint8Array(await invoke<ArrayBuffer>('read_file', { path }));
   } catch (error) {

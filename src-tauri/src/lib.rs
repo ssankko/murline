@@ -53,8 +53,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ensure_dir,
             home_dir,
+            library::copy_file,
             library::list_library,
             library::read_file,
+            library::reveal_in_finder,
+            library::trash_file,
             finder::finder_search,
             finder::finder_download
         ])

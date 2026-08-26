@@ -17,6 +17,8 @@ export type Settings = {
   /** Gap between two blocks of the same key, in pixels. */
   lane_gap: number;
   keyboard_labels: boolean;
+  /** Loudness of the metronome click, 0 to 100. */
+  click_volume: number;
 };
 
 let opening: Promise<Database> | undefined;

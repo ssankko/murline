@@ -157,6 +157,7 @@ export class Lane {
     ctx.rect(0, 0, width, laneH);
     ctx.clip();
     this.drawGrid(width, laneH, pxPerTick);
+    this.drawCountIn(width, laneH, pxPerTick);
     this.drawJumps(width, laneH, pxPerTick);
     this.drawNotes(laneH, pxPerTick);
     ctx.restore();
@@ -193,6 +194,26 @@ export class Lane {
           ctx.fillText(`bar ${bar.number}`, 6, y - 5);
         }
       }
+    }
+  }
+
+  /** The count-in: one line per beat left, falling to the now-line where the music starts. */
+  private drawCountIn(width: number, laneH: number, pxPerTick: number): void {
+    const beats = this.engine.countInBeats;
+    if (beats.length === 0) return;
+    const ctx = this.ctx;
+    ctx.font = '600 15px system-ui, sans-serif';
+    ctx.strokeStyle = tone(NOW_LINE, this.dark);
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.lineWidth = 1;
+    for (let i = 0; i < beats.length; i++) {
+      const y = Math.round(this.y(beats[i]!, laneH, pxPerTick)) + 0.5;
+      if (y < -20 || y > laneH) continue;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+      ctx.stroke();
+      ctx.fillText(String(beats.length - i), 10, y - 6);
     }
   }
 

@@ -1,6 +1,7 @@
 // The play screen: one 48 px bar of controls over the sheet, with the lane under it. One clock,
 // one frame loop, no state of the play in React beyond what the bar has to draw.
 
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { getSettingOr, setSetting } from '@/db/db';
 import {
@@ -12,13 +13,20 @@ import {
   type LaneLook,
 } from '@/lane/lane';
 import { setNotice } from '@/library/notice';
+import { insertPlay } from '@/library/queries';
 import { reindexIfChanged } from '@/library/scan';
 import { flipTheme, useDark } from '@/look/use-dark';
 import { useMidiStatus } from '@/midi/useMidiStatus';
+import { click, setClickVolume } from '@/play/click';
 import { create, type Engine, type PlayState } from '@/play/engine';
-import { DEFAULT_PLAY_SETTINGS, type HandsSetting, type PlayMode } from '@/play/settings';
+import {
+  DEFAULT_PLAY_SETTINGS,
+  type HandsSetting,
+  type PlayMode,
+  type TempoMode,
+} from '@/play/settings';
 import { useFrameLoop } from '@/play/use-frame-loop';
-import { ScoreError, type Note } from '@/score/types';
+import { bpmAt, ScoreError, type Note } from '@/score/types';
 import { Sheet } from '@/sheet/sheet';
 import { invoke } from '@tauri-apps/api/core';
 import {
@@ -50,9 +58,15 @@ const NEXT_HANDS: Record<HandsSetting, HandsSetting> = {
   right: 'both',
 };
 
+/** The stepper's step, and the span of each tempo mode's slider. */
 const TEMPO_STEP = 5;
-const TEMPO_MIN = 25;
-const TEMPO_MAX = 200;
+const TEMPO_RANGE: Record<TempoMode, [number, number]> = {
+  percent: [25, 200],
+  bpm: [40, 240],
+};
+
+/** Bars the count-in runs when it is on. The gear owns the number; the bar owns the on and off. */
+const COUNT_IN_BARS = 1;
 
 /** What the screen was opened for. A performance is armed at bar one; ticket 11 arms it. */
 export type PlayIntent = 'practice' | 'performance';
@@ -83,16 +97,30 @@ export function PlayScreen({
   const [title, setTitle] = useState(path.split('/').pop() ?? path);
   const [state, setState] = useState<PlayState>('idle');
   const stateRef = useRef<PlayState>('idle');
-  const [tempo, setTempo] = useState(DEFAULT_PLAY_SETTINGS.tempoValue);
-  const tempoRef = useRef(tempo);
-  tempoRef.current = tempo;
-  const [mode, setMode] = useState<PlayMode>(DEFAULT_PLAY_SETTINGS.mode);
-  const modeRef = useRef(mode);
-  modeRef.current = mode;
+
   const [split, setSplit] = useState(DEFAULT_SPLIT);
   const [hands, setHands] = useState(DEFAULT_PLAY_SETTINGS.hands);
   /** A one-staff piece is all right hand, so it has no choice of hands to offer. */
   const [oneStaff, setOneStaff] = useState(false);
+
+  // The piece settings the bar holds. They are the play's live settings: the engine reads the same
+  // object every frame, so a change reaches the clock at once.
+  const [tempoMode, setTempoMode] = useState<TempoMode>(DEFAULT_PLAY_SETTINGS.tempoMode);
+  const [tempo, setTempo] = useState(DEFAULT_PLAY_SETTINGS.tempoValue);
+  const [metronome, setMetronome] = useState(DEFAULT_PLAY_SETTINGS.metronome);
+  const [countIn, setCountIn] = useState(DEFAULT_PLAY_SETTINGS.countInBars > 0);
+  const [mode, setMode] = useState<PlayMode>(DEFAULT_PLAY_SETTINGS.mode);
+  /** The score's own tempo, and whether it has only one, which is what BPM mode needs. */
+  const [written, setWritten] = useState({ bpm: 120, constant: false });
+  const live = {
+    tempoMode,
+    tempoValue: tempo,
+    metronome,
+    countInBars: countIn ? COUNT_IN_BARS : 0,
+    mode,
+  };
+  const liveRef = useRef(live);
+  liveRef.current = live;
 
   const midi = useMidiStatus((event) => engineRef.current?.strike(event));
   const midiRef = useRef(midi);
@@ -113,16 +141,17 @@ export function PlayScreen({
         const sheet = await Sheet.open(hostRef.current!, bytes, fileName, darkRef.current);
         if (!live) return sheet.dispose();
         sheetRef.current = sheet;
-        const engine = create(sheet.score, {
-          ...DEFAULT_PLAY_SETTINGS,
-          tempoValue: tempoRef.current,
-          mode: modeRef.current,
-        });
+        const engine = create(sheet.score, { ...DEFAULT_PLAY_SETTINGS, ...liveRef.current });
         engineRef.current = engine;
         laneRef.current = new Lane(canvasRef.current!, engine, look.lane, darkRef.current);
         setSplit(look.split);
         setOneStaff(sheet.score.staffCount < 2);
         setHands(engine.settings.hands);
+        setClickVolume(look.clickVolume);
+        setWritten({
+          bpm: sheet.score.hasTempo ? Math.round(bpmAt(sheet.score, 0)) : 120,
+          constant: sheet.score.constantTempo,
+        });
         setTitle(sheet.score.title || fileName);
       } catch (error) {
         // The play screen has no error state: the library says what went wrong instead.
@@ -133,7 +162,9 @@ export function PlayScreen({
     })();
     return () => {
       live = false;
+      // Leaving the screen is a stop, so the practice it ends is stored on the way out.
       engineRef.current?.abort();
+      savePractice();
       sheetRef.current?.dispose();
       sheetRef.current = null;
       engineRef.current = null;
@@ -153,16 +184,18 @@ export function PlayScreen({
     if (engine.kind === 'practice' && engine.snapshot().state === 'running') engine.pause();
   }, [midi.devices]);
 
+  // Every one of them is live: Wait mode takes hold from the Onset the cursor is at, Flow lets go,
+  // and a tempo or a metronome change reaches the clock on the next frame.
   useEffect(() => {
     const engine = engineRef.current;
-    if (engine) engine.settings.tempoValue = tempo;
-  }, [tempo]);
+    if (engine) Object.assign(engine.settings, liveRef.current);
+  }, [tempoMode, tempo, metronome, countIn, mode]);
 
-  // Switching mode is live: Wait mode takes hold from the Onset the cursor is at, Flow lets go.
-  useEffect(() => {
-    const engine = engineRef.current;
-    if (engine) engine.settings.mode = mode;
-  }, [mode]);
+  /** Nothing on screen announces the save; the library's History is where it shows. */
+  function savePractice(): void {
+    const done = engineRef.current?.takePractice();
+    if (done) void insertPlay(path, 'practice', done.startedAt, done.seconds);
+  }
 
   useFrameLoop((delta, now) => {
     const engine = engineRef.current;
@@ -171,6 +204,8 @@ export function PlayScreen({
     if (!engine || !sheet || !lane) return;
     // Strikes carry the plugin's Unix timestamp, so the clock takes wall time on the same timeline.
     engine.advance(delta, performance.timeOrigin + now);
+    if (engine.beats() > 0) click();
+    savePractice();
     const snapshot = engine.snapshot();
     for (const event of engine.events()) {
       lane.effect(event, now);
@@ -211,7 +246,8 @@ export function PlayScreen({
     const engine = engineRef.current;
     if (!engine) return;
     const { state: at } = engine.snapshot();
-    if (at === 'running') engine.pause();
+    // Pausing a count-in drops the play back to Idle, so the same key stops it as stops the clock.
+    if (at === 'running' || at === 'counting-in') engine.pause();
     else if (at === 'paused') engine.resume();
     else {
       // Marks and colours of the last run stay on the sheet until motion starts again.
@@ -232,8 +268,18 @@ export function PlayScreen({
   }
 
   const running = state === 'running' || state === 'counting-in';
+  const [tempoMin, tempoMax] = TEMPO_RANGE[tempoMode];
   const stepTempo = (by: number) =>
-    setTempo((value) => Math.min(TEMPO_MAX, Math.max(TEMPO_MIN, value + by)));
+    setTempo((value) => Math.min(tempoMax, Math.max(tempoMin, value + by)));
+
+  /** The two modes read the same piece at the same speed, so a switch carries the value over. */
+  function switchMode(next: TempoMode): void {
+    if (next === tempoMode) return;
+    const [min, max] = TEMPO_RANGE[next];
+    const value = next === 'bpm' ? (written.bpm * tempo) / 100 : (tempo / written.bpm) * 100;
+    setTempoMode(next);
+    setTempo(Math.min(max, Math.max(min, Math.round(value))));
+  }
 
   return (
     <TooltipProvider>
@@ -249,7 +295,7 @@ export function PlayScreen({
 
           {/* The play disc keeps the window's midline whatever the two sides hold. */}
           <div className="absolute left-1/2 flex -translate-x-1/2 items-center gap-0.5">
-            <BarButton label="Count-in" off pressed={false}>
+            <BarButton label="Count-in" pressed={countIn} onClick={() => setCountIn((on) => !on)}>
               <Tally4 {...ICON} />
             </BarButton>
             <BarButton label="Restart" onClick={() => engineRef.current?.restart()}>
@@ -261,7 +307,11 @@ export function PlayScreen({
             <BarButton label="Loop" off pressed={false}>
               <Repeat {...ICON} />
             </BarButton>
-            <BarButton label="Metronome" off pressed={false}>
+            <BarButton
+              label="Metronome"
+              pressed={metronome}
+              onClick={() => setMetronome((on) => !on)}
+            >
               <Metronome {...ICON} />
             </BarButton>
           </div>
@@ -271,9 +321,13 @@ export function PlayScreen({
               <BarButton label="Slower" onClick={() => stepTempo(-TEMPO_STEP)}>
                 <Minus {...ICON} />
               </BarButton>
-              <BarButton label="Tempo" off wide>
-                <span className="text-[13px] font-medium tabular-nums">{tempo} %</span>
-              </BarButton>
+              <TempoPopover
+                mode={tempoMode}
+                value={tempo}
+                constantTempo={written.constant}
+                onMode={switchMode}
+                onValue={setTempo}
+              />
               <BarButton label="Faster" onClick={() => stepTempo(TEMPO_STEP)}>
                 <Plus {...ICON} />
               </BarButton>
@@ -332,17 +386,19 @@ function handGlyph(hands: HandsSetting, hand: 'left' | 'right'): string {
 }
 
 /** The global settings the lane and the split open with. The gear writes them; ticket 13 draws it. */
-async function laneLook(): Promise<{ lane: LaneLook; split: number }> {
-  const [lookaheadBeats, noteWidthPct, gapPx, keyLabels, split] = await Promise.all([
+async function laneLook(): Promise<{ lane: LaneLook; split: number; clickVolume: number }> {
+  const [lookaheadBeats, noteWidthPct, gapPx, keyLabels, split, clickVolume] = await Promise.all([
     getSettingOr('lane_lookahead', DEFAULT_LANE_LOOK.lookaheadBeats),
     getSettingOr('lane_note_width', DEFAULT_LANE_LOOK.noteWidthPct),
     getSettingOr('lane_gap', DEFAULT_LANE_LOOK.gapPx),
     getSettingOr('keyboard_labels', DEFAULT_LANE_LOOK.keyLabels),
     getSettingOr('sheet_split', DEFAULT_SPLIT),
+    getSettingOr('click_volume', 70),
   ]);
   return {
     lane: { lookaheadBeats, noteWidthPct, gapPx, keyLabels },
     split: Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, split)),
+    clickVolume,
   };
 }
 
@@ -375,6 +431,78 @@ function Split({ value, onChange }: { value: number; onChange: (value: number) =
 }
 
 /**
+ * The tempo readout and its popover: the mode switch and the slider of the active mode. The
+ * readout shows the value the clock runs at, `100 %` or `♩ = 96`.
+ */
+function TempoPopover({
+  mode,
+  value,
+  constantTempo,
+  onMode,
+  onValue,
+}: {
+  mode: TempoMode;
+  value: number;
+  /** BPM mode is offered only for a piece written at one tempo; a flat BPM would flatten the rest. */
+  constantTempo: boolean;
+  onMode: (mode: TempoMode) => void;
+  onValue: (value: number) => void;
+}) {
+  const [min, max] = TEMPO_RANGE[mode];
+  const label = mode === 'bpm' ? `♩ = ${value}` : `${value} %`;
+  return (
+    <Popover>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <button
+              aria-label="Tempo"
+              className="hover:bg-ink/8 relative flex h-8 flex-none items-center justify-center px-1.5 transition-colors duration-150"
+            >
+              <span className="text-[13px] font-medium tabular-nums">{label}</span>
+            </button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Tempo</TooltipContent>
+      </Tooltip>
+      <PopoverContent side="bottom" align="center" className="flex w-56 flex-col gap-3 p-3">
+        <div className="border-edge flex self-start border">
+          {(['percent', 'bpm'] as const).map((each) => (
+            <button
+              key={each}
+              aria-label={each === 'bpm' ? 'BPM' : 'Percent'}
+              aria-pressed={mode === each}
+              aria-disabled={each === 'bpm' && !constantTempo ? true : undefined}
+              disabled={each === 'bpm' && !constantTempo}
+              onClick={() => onMode(each)}
+              className={`h-6 px-3 text-[12px] font-medium transition-colors duration-150 disabled:text-ink/35 ${
+                mode === each ? 'bg-ink text-paper' : 'hover:bg-ink/8'
+              }`}
+            >
+              {each === 'bpm' ? 'BPM' : '%'}
+            </button>
+          ))}
+        </div>
+        <input
+          type="range"
+          aria-label={mode === 'bpm' ? 'Tempo in BPM' : 'Tempo in percent'}
+          min={min}
+          max={max}
+          step={1}
+          value={value}
+          onChange={(event) => onValue(Number(event.target.value))}
+          className="accent-ink w-full"
+        />
+        <div className="text-muted-ink flex justify-between text-[11px] tabular-nums">
+          <span>{min}</span>
+          <span>{max}</span>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/**
  * One 32 px shape for every control of the bar. An action is plain ink; a control that is only
  * placed here is `off`, dimmed and inert; a toggle says whether it is on with an under-bar, and one
  * `segment` of a pair says it by filling instead.
@@ -398,10 +526,16 @@ function BarButton({
   segment?: boolean;
   children: React.ReactNode;
 }) {
+  // A segment pair fills its active side; every other toggle is dimmed while it is off and full
+  // ink with an under-bar while it is on. A control only placed here is `off`: dimmed and inert.
   const filled = segment && pressed;
+  const dim = off || (!segment && pressed === false);
+  const paint = filled
+    ? 'bg-ink text-paper'
+    : `${dim ? 'text-ink/35' : ''} ${off ? '' : 'hover:bg-ink/8'}`;
   const shape = disc
     ? 'size-[34px] rounded-full bg-ink text-paper mx-1 hover:bg-ink/85'
-    : `h-8 ${wide ? 'px-1.5' : 'w-8'} ${off ? 'text-ink/35' : filled ? 'bg-ink text-paper' : 'hover:bg-ink/8'}`;
+    : `h-8 ${wide ? 'px-1.5' : 'w-8'} ${paint}`;
   return (
     <Tooltip>
       <TooltipTrigger asChild>

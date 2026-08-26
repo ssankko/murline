@@ -1056,3 +1056,244 @@ describe('a performance', () => {
     expect(play.noteState(0)).toBe('pending');
   });
 });
+
+describe('seek', () => {
+  test('a bar click while Idle moves the start point', () => {
+    const play = engine(scoreOf(3));
+    play.seek({ measure: 1 });
+
+    expect(play.snapshot().playedTick).toBe(BAR);
+    play.start();
+    play.advance(1000);
+    play.abort();
+    expect(play.snapshot().playedTick).toBe(BAR);
+  });
+
+  test('a note click goes to its Onset', () => {
+    const play = engine(scoreOf(3));
+    play.seek({ onset: 6 });
+
+    expect(play.snapshot().playedTick).toBe(BAR + 2 * TICKS_PER_QUARTER);
+  });
+
+  test('the clock carries on at once while Running', () => {
+    const play = engine(scoreOf(3));
+    play.start();
+    play.advance(1000);
+    play.seek({ measure: 2 });
+
+    expect(play.snapshot().state).toBe('running');
+    play.advance(1000);
+    expect(play.snapshot().playedTick).toBe(2 * BAR + TICKS_PER_QUARTER);
+  });
+
+  test('a repeated bar goes to the occurrence nearest the played tick', () => {
+    const play = engine(withRepeat());
+    play.start();
+    play.advance(9000);
+    play.seek({ measure: 0 });
+
+    // Bar 1 is played at tick 0 and again at 2 bars in; the cursor stood past the second one.
+    expect(play.snapshot().playedTick).toBe(2 * BAR);
+  });
+
+  test('the first occurrence on a tie', () => {
+    const play = engine(withRepeat());
+    play.start();
+    // Exactly between the two passes of bar 1.
+    play.advance(4000);
+    play.seek({ measure: 0 });
+
+    expect(play.snapshot().playedTick).toBe(0);
+  });
+
+  test('closes nothing behind it: a note passed over is neither missed nor expected', () => {
+    const play = engine(scoreOf(3));
+    play.start();
+    play.advance(100);
+    // Bar 3 opens at note 8; the seven notes jumped over stay open and unmarked.
+    play.seek({ measure: 2 });
+    play.advance(1000);
+
+    const missed = play.events().filter((event) => event.verdict === 'miss');
+    expect(missed.every((event) => event.noteIndex >= 8)).toBe(true);
+    expect(play.noteState(4)).toBe('pending');
+  });
+
+  test('nothing happens during a performance', () => {
+    const play = engine(scoreOf(3));
+    play.arm();
+    play.start();
+    play.advance(1000);
+    play.seek({ measure: 2 });
+
+    expect(play.snapshot().playedTick).toBe(TICKS_PER_QUARTER);
+  });
+
+  test('Wait mode stands at the Onset it lands on', () => {
+    const play = engine(scoreOf(3), { mode: 'wait' });
+    play.start();
+    play.seek({ measure: 1 });
+
+    expect(play.snapshot().stopped).toBe(true);
+    expect(play.snapshot().playedTick).toBe(BAR);
+  });
+});
+
+describe('Section and Loop', () => {
+  test('a Section is inert while Loop is off', () => {
+    const play = engine(withRepeat());
+    play.setSection({ from: 1, to: 1 });
+
+    expect(play.snapshot().playedTick).toBe(0);
+    expect(play.walk).toBe(play.score.playOrder);
+  });
+
+  test('Loop walks the bars linearly, with no repeat and no jump', () => {
+    const score = withRepeat();
+    const play = engine(score);
+    play.setLoop(true);
+
+    expect(play.walk.map((step) => step.tick)).toEqual(score.onsets.map((onset) => onset.tick));
+    expect(play.walk).toHaveLength(score.onsets.length);
+  });
+
+  test('creating a Section while Idle parks the cursor at its start', () => {
+    const play = engine(scoreOf(4));
+    play.setLoop(true);
+    play.setSection({ from: 2, to: 3 });
+
+    expect(play.snapshot().playedTick).toBe(2 * BAR);
+  });
+
+  test('a Section clamped to the piece', () => {
+    const play = engine(scoreOf(3));
+    play.setSection({ from: 7, to: -2 });
+
+    expect(play.section).toEqual({ from: 0, to: 2 });
+  });
+
+  test('the wrap lands on the closing bar line and keeps the rest of the frame', () => {
+    const play = engine(scoreOf(3));
+    play.setLoop(true);
+    play.setSection({ from: 0, to: 1 });
+    play.start();
+    play.advance(8500);
+
+    // Two bars are eight seconds at 60 BPM: half a second of the ninth is the new lap's.
+    expect(play.snapshot().playedTick).toBeCloseTo(TICKS_PER_QUARTER / 2, 6);
+  });
+
+  test('the wrap runs the count-in when it is on', () => {
+    const play = engine(scoreOf(3), { countInBars: 1 });
+    play.setLoop(true);
+    play.setSection({ from: 1, to: 1 });
+    play.start();
+    play.advance(4000);
+    expect(play.snapshot().playedTick).toBe(BAR);
+
+    play.advance(4000);
+    expect(play.snapshot().state).toBe('counting-in');
+    expect(play.snapshot().playedTick).toBe(0);
+
+    play.advance(4000);
+    expect(play.snapshot().state).toBe('running');
+    expect(play.snapshot().playedTick).toBe(BAR);
+  });
+
+  test('the tick jumps on the beat when the count-in is off', () => {
+    const play = engine(scoreOf(3));
+    play.setLoop(true);
+    play.setSection({ from: 1, to: 1 });
+    play.start();
+    play.advance(4000);
+
+    expect(play.snapshot().state).toBe('running');
+    expect(play.snapshot().playedTick).toBe(BAR);
+  });
+
+  test('a Section skips the repeat its bars carry', () => {
+    const play = engine(withRepeat());
+    play.setLoop(true);
+    play.setSection({ from: 0, to: 1 });
+    play.start();
+    // Both bars once, then the wrap: the written repeat never plays.
+    play.advance(8000);
+
+    expect(play.snapshot().playedTick).toBe(0);
+    expect(play.snapshot().measureIndex).toBe(0);
+  });
+
+  test('Loop with no Section wraps from the end of the piece to bar one', () => {
+    const play = engine(scoreOf(2));
+    play.setLoop(true);
+    play.start();
+    // The end tick is the last written duration plus the matching window at play tempo.
+    play.advance(8150);
+
+    expect(play.snapshot().state).toBe('running');
+    expect(play.snapshot().playedTick).toBe(0);
+  });
+
+  test('a running cursor is never yanked, and Restart goes to the Section start', () => {
+    const play = engine(scoreOf(4));
+    play.start();
+    play.advance(1000);
+    play.setSection({ from: 2, to: 3 });
+    play.setLoop(true);
+
+    expect(play.snapshot().state).toBe('running');
+    expect(play.snapshot().playedTick).toBe(TICKS_PER_QUARTER);
+
+    play.restart();
+    expect(play.snapshot().state).toBe('idle');
+    expect(play.snapshot().playedTick).toBe(2 * BAR);
+  });
+
+  test('Restart goes to the start bar while Loop is off', () => {
+    const play = engine(scoreOf(4));
+    play.setSection({ from: 2, to: 3 });
+    play.start();
+    play.advance(1000);
+    play.restart();
+
+    expect(play.snapshot().playedTick).toBe(0);
+  });
+
+  test('Wait mode asks for every Onset of the Section again on the next lap', () => {
+    const play = engine(scoreOf(2), { mode: 'wait' });
+    play.setLoop(true);
+    play.setSection({ from: 0, to: 0 });
+    play.start();
+    for (let beat = 0; beat < 4; beat++) {
+      play.advance(1000);
+      expect(play.snapshot().stopped).toBe(true);
+      play.strike({ midi: 60, velocity: 80, time: 0, on: true });
+      play.strike({ midi: 60, velocity: 80, time: 0, on: false });
+      expect(play.snapshot().stopped).toBe(false);
+    }
+    play.advance(1000);
+
+    expect(play.snapshot().playedTick).toBe(0);
+    expect(play.snapshot().stopped).toBe(true);
+  });
+
+  test('a key held from the last lap blocks nothing on the next one', () => {
+    const play = engine(scoreOf(2), { mode: 'wait' });
+    play.setLoop(true);
+    play.setSection({ from: 0, to: 0 });
+    play.start();
+    for (let beat = 0; beat < 4; beat++) {
+      play.advance(1000);
+      play.strike({ midi: 60, velocity: 80, time: 0, on: true });
+      play.strike({ midi: 60, velocity: 80, time: 0, on: false });
+      // A wrong key goes down in the last beat of the lap and stays down over the wrap.
+      if (beat === 3) play.strike({ midi: 61, velocity: 80, time: 0, on: true });
+    }
+    play.advance(1000);
+    expect(play.snapshot().stopped).toBe(true);
+
+    play.strike({ midi: 60, velocity: 80, time: 0, on: true });
+    expect(play.snapshot().stopped).toBe(false);
+  });
+});

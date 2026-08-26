@@ -2,6 +2,7 @@
 // DOM, no React, no timer of its own. The screen owns the frame loop and feeds it wall time.
 
 import { playGrade, type NoteStrike, type PlayGrade } from '@/play/grade';
+import { clampSection, linearWalk, sectionTicks, type Section } from '@/play/section';
 import type { HandsSetting, PlaySettings, TempoMode } from '@/play/settings';
 import { WaitState } from '@/play/wait';
 import {
@@ -10,11 +11,24 @@ import {
   type Hand,
   type Measure,
   type Note,
+  type PlayStep,
   type Score,
 } from '@/score/types';
 
 /** Where a play stands. A Wait mode stop is the clock standing still inside `running`. */
 export type PlayState = 'idle' | 'counting-in' | 'running' | 'paused' | 'ended';
+
+/** What a click on the sheet asks for: a bar's opening line, or one Onset. */
+export type SeekTarget = { measure: number } | { onset: number };
+
+/** The stretch of played time one lap of the loop runs over, and where the next lap starts. */
+export interface LoopSpan {
+  from: number;
+  /** The bar line the lap wraps at: the Section's closing one, or the end of the piece. */
+  to: number;
+  /** Played ticks from one lap's start to the next, the count-in between them included. */
+  lap: number;
+}
 
 /** A practice may pause, seek and change settings; a performance may not and is graded. */
 export type PlayKind = 'practice' | 'performance';
@@ -94,7 +108,7 @@ export interface Snapshot {
   kind: PlayKind;
   /** The clock, in played ticks: a repeated bar comes round again at a later tick. */
   playedTick: number;
-  /** Index into `score.playOrder`, which names both the Onset and the pass it belongs to. */
+  /** Index into `walk`, which names both the Onset and the pass it belongs to. */
   stepIndex: number;
   onsetIndex: number;
   measureIndex: number;
@@ -115,8 +129,13 @@ export class Engine {
   readonly score: Score;
   /** The live settings of the play. A change to them applies from the next `advance`. */
   readonly settings: PlaySettings;
-  /** Every written note in played order: the lane draws these and a strike matches one of them. */
-  readonly notes: PlayNote[];
+  /**
+   * The played timeline the clock runs along: the Score's play order with its repeats, or the
+   * linear walk while Loop is on. Everything derived from it is rebuilt when it changes.
+   */
+  walk: PlayStep[];
+  /** Every written note in walk order: the lane draws these and a strike matches one of them. */
+  notes: PlayNote[];
   /** Played ticks of the beats being counted in, before the tick the count-in leads to. */
   countInBeats: number[] = [];
   kind: PlayKind = 'practice';
@@ -125,7 +144,11 @@ export class Engine {
   private tick = 0;
   /** Played tick the play parks at when Idle, and returns to on restart. */
   private startTick = 0;
-  private readonly lastSoundingTick: number;
+  private lastSoundingTick: number;
+  private sectionRange: Section | null = null;
+  private loop = false;
+  /** The linear walk, built once, because Loop swaps to it and back. */
+  private linear: PlayStep[] | null = null;
 
   /** Wall-clock milliseconds of the last `advance`: what a strike's timestamp is measured against. */
   private wall = 0;
@@ -138,11 +161,11 @@ export class Engine {
   /** First note whose matching window is still open; everything before it is settled. */
   private closed = 0;
   private readonly wait = new WaitState();
-  /** Wait mode: the play order step the cursor waits at, or null while it glides. */
+  /** Wait mode: the walk step the cursor waits at, or null while it glides. */
   private stopStep: number | null = null;
 
   /** Every beat of the play in played ticks, the grid the metronome clicks on. */
-  private readonly beatGrid: number[];
+  private beatGrid: number[];
   /** First beat of the grid the clock has not passed yet. */
   private beatNext = 0;
   /** Clicks owed to the screen, taken by `beats()`. */
@@ -171,11 +194,12 @@ export class Engine {
   constructor(score: Score, settings: PlaySettings) {
     this.score = score;
     this.settings = settings;
-    this.lastSoundingTick = lastSoundingTickOf(score);
-    this.notes = playNotesOf(score);
+    this.walk = score.playOrder;
+    this.lastSoundingTick = lastSoundingTickOf(score, this.walk);
+    this.notes = playNotesOf(score, this.walk);
     this.states = this.notes.map(() => 'pending');
     this.resolved = this.notes.map(() => 0);
-    this.beatGrid = beatGridOf(score);
+    this.beatGrid = beatGridOf(score, this.walk);
   }
 
   /** What the clock and the matching run on: a performance keeps the settings it started at. */
@@ -256,7 +280,7 @@ export class Engine {
 
   snapshot(): Snapshot {
     const stepIndex = this.stepAt(this.tick);
-    const step = this.score.playOrder[stepIndex];
+    const step = this.walk[stepIndex];
     const onset = step ? this.score.onsets[step.onsetIndex] : undefined;
     return {
       state: this.state,
@@ -271,6 +295,9 @@ export class Engine {
 
   start(): void {
     if (this.state !== 'idle' && this.state !== 'ended') return;
+    // Loop takes motion to the Section when the start point stands outside it.
+    const span = this.loopSpan();
+    if (span && (this.startTick < span.from || this.startTick >= span.to)) this.startTick = span.from;
     this.tick = this.startTick;
     this.states.fill('pending');
     this.resolved.fill(0);
@@ -299,6 +326,8 @@ export class Engine {
   arm(): void {
     this.abort();
     this.kind = 'performance';
+    // A performance plays the whole piece in play order, whatever Loop and the Section say.
+    this.applyLoop();
     this.startTick = 0;
     this.tick = 0;
     this.syncBeats();
@@ -345,16 +374,173 @@ export class Engine {
     this.stopStep = null;
     this.countInBeats = [];
     this.syncBeats();
+    this.applyLoop();
   }
 
-  /** Wait mode asks for every Onset from a play order step again, and waits at it if it must. */
+  /** Wait mode asks for every Onset from a walk step again, and waits at it if it must. */
   forgetSatisfied(fromStep = 0): void {
     this.wait.forgetFrom(fromStep);
     this.stopStep = null;
   }
 
   restart(): void {
+    // The Section is where a restart lands only while Loop is on; a Section alone is inert.
+    const span = this.loopSpan();
+    if (span) this.startTick = span.from;
     this.abort();
+  }
+
+  /**
+   * Moves the play to a bar's opening line or to an Onset. While Running the clock carries straight
+   * on from there; while Idle or Paused the start point moves with it. Nothing behind the target is
+   * closed on the way: the notes passed over are neither missed nor expected.
+   */
+  seek(target: SeekTarget): void {
+    // A performance is one clean run: it takes no seek, and no Section has force during it.
+    if (this.kind !== 'practice') return;
+    const to = this.occurrenceOf(target);
+    if (to === null) return;
+    this.moveTo(to);
+    if (this.state === 'counting-in') this.beginMotion(to);
+    else if (this.state !== 'running') this.startTick = to;
+  }
+
+  /** The Section, whatever Loop says about it: the range the sheet and the lane tint. */
+  get section(): Section | null {
+    return this.sectionRange;
+  }
+
+  setSection(section: Section | null): void {
+    this.sectionRange = section ? clampSection(this.score, section) : null;
+    this.applyLoop();
+  }
+
+  get looping(): boolean {
+    return this.loop;
+  }
+
+  setLoop(on: boolean): void {
+    this.loop = on;
+    this.applyLoop();
+  }
+
+  /**
+   * The lap the clock is running, or null while Loop is off. With Loop on the walk is linear, so a
+   * played tick is a sheet tick and the Section's bar lines are the lap's own ticks.
+   */
+  loopSpan(): LoopSpan | null {
+    if (!this.loop || this.kind !== 'practice') return null;
+    const range = this.sectionRange
+      ? sectionTicks(this.score, this.sectionRange)
+      : { from: 0, to: this.endTick };
+    return { ...range, lap: range.to - range.from + this.countInTicks(range.from) };
+  }
+
+  /**
+   * Swaps the walk Loop asks for and parks an idle cursor at the Section. A running cursor is never
+   * yanked: the wrap picks it up when it reaches the Section's closing bar line or the end.
+   */
+  private applyLoop(): void {
+    const looping = this.loop && this.kind === 'practice';
+    const walk = looping ? (this.linear ??= linearWalk(this.score)) : this.score.playOrder;
+    if (walk !== this.walk) this.setWalk(walk);
+    const span = this.loopSpan();
+    if (!span || (this.state !== 'idle' && this.state !== 'paused')) return;
+    if (this.tick >= span.from && this.tick < span.to) return;
+    this.moveTo(span.from);
+    this.startTick = span.from;
+  }
+
+  /** Puts the clock on another walk at the written moment it stands at now. */
+  private setWalk(walk: PlayStep[]): void {
+    const sheetTick = this.sheetTickOf(this.tick);
+    const startSheetTick = this.sheetTickOf(this.startTick);
+    this.walk = walk;
+    this.notes = playNotesOf(this.score, walk);
+    this.states = this.notes.map(() => 'pending');
+    this.resolved = this.notes.map(() => 0);
+    this.beatGrid = beatGridOf(this.score, walk);
+    this.lastSoundingTick = lastSoundingTickOf(this.score, walk);
+    this.startTick = this.nearestTick(this.playedTicksOf(startSheetTick), this.startTick);
+    this.moveTo(this.nearestTick(this.playedTicksOf(sheetTick), this.tick));
+  }
+
+  /** Takes the clock to a played tick: nothing behind it closes, everything from it is open again. */
+  private moveTo(to: number): void {
+    this.tick = to;
+    this.closed = this.firstNoteFrom(to);
+    for (let i = this.closed; i < this.notes.length; i++) {
+      this.states[i] = 'pending';
+      this.resolved[i] = 0;
+    }
+    this.forgetSatisfied(this.stepAt(to));
+    // Wait mode stands at the Onset it lands on when that Onset asks for anything.
+    const stop = this.nextStop();
+    if (stop >= 0 && this.walk[stop]!.tick <= to) this.stopStep = stop;
+    this.syncBeats();
+  }
+
+  /** A new lap: back to the Section start, or to bar one when Loop runs with no Section. */
+  private wrap(): void {
+    const span = this.loopSpan();
+    this.moveTo(span ? span.from : 0);
+    // A key held across the wrap blocks nothing and colours nothing; the new lap wants a fresh strike.
+    for (const midi of this.held.keys()) this.held.set(midi, ABSORBED);
+    this.beginMotion(this.tick);
+  }
+
+  /** Played ticks of a count-in at a played tick, 0 while the count-in is off. */
+  private countInTicks(playedTick: number): number {
+    const bars = Math.floor(this.settings.countInBars);
+    const measure = this.measureAt(playedTick);
+    if (bars < 1 || !measure) return 0;
+    const beat = beatOf(measure);
+    return bars * beat.perBar * beat.ticks;
+  }
+
+  /** Every played tick a seek target stands at: once per pass through it. */
+  private playedTicksOf(target: SeekTarget | number): number[] {
+    const ticks: number[] = [];
+    for (let i = 0; i < this.walk.length; i++) {
+      const step = this.walk[i]!;
+      const onset = this.score.onsets[step.onsetIndex];
+      if (!onset) continue;
+      if (typeof target === 'number') {
+        if (onset.tick === target) ticks.push(step.tick);
+        continue;
+      }
+      if ('onset' in target) {
+        if (step.onsetIndex === target.onset) ticks.push(step.tick);
+        continue;
+      }
+      if (onset.measureIndex !== target.measure) continue;
+      // One candidate per pass: the bar line before the bar's first Onset in this run.
+      const before = this.walk[i - 1];
+      const previous = before ? this.score.onsets[before.onsetIndex] : undefined;
+      if (previous?.measureIndex === target.measure) continue;
+      const measure = this.score.measures[target.measure]!;
+      ticks.push(step.tick - (onset.tick - measure.startTick));
+    }
+    return ticks;
+  }
+
+  /** Where a seek lands: the occurrence in the walk nearest the played tick, the first on a tie. */
+  private occurrenceOf(target: SeekTarget): number | null {
+    const ticks = this.playedTicksOf(target);
+    return ticks.length === 0 ? null : this.nearestTick(ticks, this.tick);
+  }
+
+  /** The tick of the list nearest a played tick, the first of them on a tie. */
+  private nearestTick(ticks: number[], to: number): number {
+    let best = to;
+    let distance = Infinity;
+    for (const tick of ticks) {
+      if (Math.abs(tick - to) < distance) {
+        distance = Math.abs(tick - to);
+        best = tick;
+      }
+    }
+    return best;
   }
 
   /**
@@ -377,12 +563,15 @@ export class Engine {
       else this.settleWait();
       if (this.stopStep !== null) return;
     }
-    const end = this.endTick;
+    // A lap ends at the Section's closing bar line; a cursor already past it runs to the end of the
+    // piece and wraps there.
+    const span = this.loopSpan();
+    const end = span && this.tick < span.to ? span.to : this.endTick;
     let left = ms;
     for (let guard = 0; left > 1e-9 && guard < 10_000; guard++) {
       const rate = this.ticksPerMs(this.tick);
       const stop = this.nextStop();
-      const stopTick = stop < 0 ? Infinity : this.score.playOrder[stop]!.tick;
+      const stopTick = stop < 0 ? Infinity : this.walk[stop]!.tick;
       const limit = Math.min(this.nextBoundary(this.tick), end, stopTick);
       const want = this.tick + left * rate;
       if (want < limit) {
@@ -396,7 +585,14 @@ export class Engine {
       this.crossGrid();
       this.closeWindows();
       if (this.tick >= end) {
-        // A practice ends back where it started; a performance stays for its summary card.
+        // Loop takes the next lap from here, which carries the rest of the frame when no count-in
+        // stands between the laps. Otherwise a practice ends back where it started and a
+        // performance stays for its summary card.
+        if (span) {
+          this.wrap();
+          if (this.state !== 'running') return;
+          continue;
+        }
         if (this.kind === 'practice') this.abort();
         else {
           this.state = 'ended';
@@ -522,7 +718,7 @@ export class Engine {
   }
 
   private measureAt(playedTick: number): Measure | undefined {
-    const step = this.score.playOrder[this.stepAt(playedTick)];
+    const step = this.walk[this.stepAt(playedTick)];
     const onset = step ? this.score.onsets[step.onsetIndex] : undefined;
     return onset ? this.score.measures[onset.measureIndex] : undefined;
   }
@@ -640,7 +836,7 @@ export class Engine {
 
   /** Sheet tick of the played tick: the same bar played twice reads the same written moment. */
   private sheetTickOf(playedTick: number): number {
-    const step = this.score.playOrder[this.stepAt(playedTick)];
+    const step = this.walk[this.stepAt(playedTick)];
     if (!step) return playedTick;
     return (this.score.onsets[step.onsetIndex]?.tick ?? 0) + (playedTick - step.tick);
   }
@@ -662,9 +858,9 @@ export class Engine {
    */
   private nextBoundary(playedTick: number): number {
     const index = this.stepAt(playedTick);
-    const step = this.score.playOrder[index];
+    const step = this.walk[index];
     if (!step) return Infinity;
-    const nextStep = this.score.playOrder[index + 1]?.tick ?? Infinity;
+    const nextStep = this.walk[index + 1]?.tick ?? Infinity;
     const sheetTick = this.sheetTickOf(playedTick);
     let next = Infinity;
     for (const entry of this.score.tempoMap) {
@@ -678,7 +874,7 @@ export class Engine {
 
   /** Played tick of the bar line that opens the bar the played tick stands in. */
   private barStartOf(playedTick: number): number {
-    const step = this.score.playOrder[this.stepAt(playedTick)];
+    const step = this.walk[this.stepAt(playedTick)];
     if (!step) return playedTick;
     const onset = this.score.onsets[step.onsetIndex];
     const measure = onset ? this.score.measures[onset.measureIndex] : undefined;
@@ -686,9 +882,9 @@ export class Engine {
     return step.tick - (onset.tick - measure.startTick);
   }
 
-  /** The last step at or before a played tick. `playOrder` ticks never go back. */
+  /** The last step at or before a played tick. A walk's ticks never go back. */
   private stepAt(playedTick: number): number {
-    const order = this.score.playOrder;
+    const order = this.walk;
     let lo = 0;
     let hi = order.length - 1;
     while (lo < hi) {
@@ -754,7 +950,7 @@ export class Engine {
 
   /** The earliest step open at a played tick that requires the pitch, -1 when no step does. */
   private openStepFor(midi: number, at: number): number {
-    const order = this.score.playOrder;
+    const order = this.walk;
     const window = this.msToTicks(this.settings.matchingWindowMs, at);
     for (let i = this.stopStep ?? this.stepAt(Math.min(at, this.tick)); i < order.length; i++) {
       if (order[i]!.tick - window > at) break;
@@ -780,7 +976,7 @@ export class Engine {
   /** The next step the cursor must wait at, at or after the tick; -1 when nothing stops it. */
   private nextStop(): number {
     if (!this.waiting) return -1;
-    const order = this.score.playOrder;
+    const order = this.walk;
     for (let i = this.stepAt(this.tick); i < order.length; i++) {
       if (order[i]!.tick < this.tick) continue;
       if (this.wait.satisfied(i) || this.requiredOf(i).length === 0) continue;
@@ -814,7 +1010,7 @@ export class Engine {
 
   /** The stretch of `notes` one Onset of the play order covers, as `[from, to)`. */
   private noteRange(step: number): [number, number] {
-    const tick = this.score.playOrder[step]?.tick;
+    const tick = this.walk[step]?.tick;
     if (tick === undefined) return [0, 0];
     const from = this.firstNoteFrom(tick);
     let to = from;
@@ -830,9 +1026,9 @@ const EMPTY_EVENTS: PlayEvent[] = [];
  * Every note of the piece in played order. A repeated bar appears once per pass; a tie
  * continuation appears not at all, because the note that starts the tie carries the whole chain.
  */
-function playNotesOf(score: Score): PlayNote[] {
+function playNotesOf(score: Score, walk: PlayStep[]): PlayNote[] {
   const notes: PlayNote[] = [];
-  for (const step of score.playOrder) {
+  for (const step of walk) {
     for (const note of score.onsets[step.onsetIndex]?.notes ?? []) {
       if (!note.strikeable) continue;
       notes.push({
@@ -866,9 +1062,9 @@ export function beatOf(measure: Measure): { ticks: number; perBar: number } {
  * Every beat of the play in played ticks, one pass per repeat. A pickup bar's beats are laid from
  * its bar line backwards, so its last beat lands on the next bar line.
  */
-function beatGridOf(score: Score): number[] {
+function beatGridOf(score: Score, walk: PlayStep[]): number[] {
   const ticks: number[] = [];
-  for (const step of score.playOrder) {
+  for (const step of walk) {
     const onset = score.onsets[step.onsetIndex];
     const measure = onset ? score.measures[onset.measureIndex] : undefined;
     if (!onset || !measure) continue;
@@ -887,10 +1083,10 @@ export function create(score: Score, settings: PlaySettings): Engine {
   return new Engine(score, settings);
 }
 
-/** End of the last written duration over the whole play order, both hands. */
-function lastSoundingTickOf(score: Score): number {
+/** End of the last written duration over the whole walk, both hands. */
+function lastSoundingTickOf(score: Score, walk: PlayStep[]): number {
   let last = 0;
-  for (const step of score.playOrder) {
+  for (const step of walk) {
     for (const note of score.onsets[step.onsetIndex]?.notes ?? []) {
       last = Math.max(last, step.tick + note.durationTicks);
     }

@@ -78,6 +78,20 @@
   --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 }
 
+/* The chord bubbles of the sheet. Their colours and places come from src/sheet/sheet.ts; only the
+   fade of a chord the cursor has passed lives here, where the motion setting can switch it off. */
+.chord-bubble {
+  transition: opacity 200ms ease;
+}
+.chord-bubble.past {
+  opacity: 0.4;
+}
+@media (prefers-reduced-motion: reduce) {
+  .chord-bubble {
+    transition: none;
+  }
+}
+
 @layer base {
   * {
     @apply border-border;

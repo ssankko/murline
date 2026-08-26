@@ -14,8 +14,14 @@ import {
 } from 'opensheetmusicdisplay';
 import { applyTheme, applyTiers, noteheadEl, paintHead } from './paint';
 
-/** Paper kept above the top staff line, the strip ticket 12's chord bubbles sit in. */
+/** Paper kept above the top staff line, the strip the chord bubbles sit in. */
 const BUBBLE_STRIP = 28;
+
+/** Height of one row of bubbles, half the strip. */
+const BUBBLE_ROW = 13;
+
+/** Clear paper kept between two bubbles of one row. */
+const BUBBLE_GAP = 6;
 
 /** The ring drawn around the noteheads of the Onset the cursor stands at. */
 const OUTLINE = '#ffffff';
@@ -70,9 +76,13 @@ export class Sheet {
   private readonly paper: HTMLElement;
   private readonly cursor: HTMLElement;
   private readonly marker: HTMLElement;
+  private readonly bubbles: HTMLElement;
+  private bubbleEls: HTMLElement[] = [];
 
   private placed: Placed[] = [];
   private system: Box = { top: 0, bottom: 200 };
+  /** The top staff line of the first system: the bubble strip ends here. */
+  private stafflineY = BUBBLE_STRIP;
   /** Steps whose next step goes back in the written sheet: the cursor snaps instead of sliding. */
   private jumpAfter: boolean[] = [];
   private contentWidth = 1200;
@@ -94,6 +104,7 @@ export class Sheet {
     this.content = child(this.scale, 'position:relative;width:max-content;transform-origin:0 0');
     this.paper = child(this.content, '');
     const overlay = child(this.content, 'position:absolute;inset:0;pointer-events:none');
+    this.bubbles = child(overlay, 'position:absolute;inset:0');
     this.cursor = child(overlay, 'position:absolute;border-radius:12px');
     this.marker = child(
       overlay,
@@ -175,6 +186,7 @@ export class Sheet {
       for (const note of this.outlined) this.paintNote(note);
       this.outlined = this.score.onsets[at.onsetIndex]?.notes ?? [];
       for (const note of this.outlined) this.markNote(note, 'current');
+      this.dimBubbles(at.onsetIndex);
       this.drawn.onset = at.onsetIndex;
     }
 
@@ -235,6 +247,7 @@ export class Sheet {
         const box = system.PositionAndShape;
         systems.set(system, systems.size);
         if (systems.size === 1) {
+          this.stafflineY = (system.StaffLines[0]?.PositionAndShape.AbsolutePosition.y ?? 0) * unit;
           this.system = {
             top: (box.AbsolutePosition.y + box.BorderTop) * unit,
             bottom: (box.AbsolutePosition.y + box.BorderBottom) * unit,
@@ -276,19 +289,66 @@ export class Sheet {
 
     // Paper above the top staff line is dead space apart from the strip the bubbles need. The lift
     // stops short of the highest label, so the tempo mark and the bar numbers survive it.
-    let topLabel = this.system.top;
+    let topLabel = this.stafflineY;
     for (const text of this.paper.querySelectorAll('svg text')) {
       const box = (text as SVGGraphicsElement).getBBox();
       if (box.y < topLabel) topLabel = box.y;
     }
-    this.offsetY = Math.max(0, Math.min(this.system.top - BUBBLE_STRIP, topLabel - 4));
+    this.offsetY = Math.max(0, Math.min(this.stafflineY - BUBBLE_STRIP, topLabel - 4));
     this.contentHeight = bottom - this.offsetY + 8;
     this.contentWidth = Number(this.paper.querySelector('svg')?.getAttribute('width')) || 1200;
+
+    this.placeBubbles();
 
     this.cursor.style.background = `color-mix(in srgb, ${tone(CURSOR, this.dark)} 26%, transparent)`;
     this.cursor.style.boxShadow = `inset 0 0 0 1px color-mix(in srgb, ${tone(CURSOR, this.dark)} 55%, transparent)`;
     this.marker.style.background = tone(INK.duration, this.dark);
     this.marker.style.color = tone(PAPER, this.dark);
+  }
+
+  /**
+   * One bubble per chord event of the Score, standing over its Onset in the strip of paper above
+   * the top staff. A bubble that would print over the one before it drops to a second row rather
+   * than sliding away from its Onset. Widths are measured unscaled, as the x values are, so the
+   * rows hold at every scale.
+   */
+  private placeBubbles(): void {
+    this.bubbles.replaceChildren();
+    this.bubbleEls = this.score.harmony.map((event) => {
+      const el = child(
+        this.bubbles,
+        'position:absolute;transform:translateX(-50%);display:flex;align-items:baseline;' +
+          `gap:4px;white-space:nowrap;font-size:11px;font-weight:600;line-height:${BUBBLE_ROW}px`,
+      );
+      el.className = 'chord-bubble';
+      el.style.left = `${this.xOfOnset(event.onsetIndex)}px`;
+      el.style.color = tone(INK.duration, this.dark);
+      const degree = document.createElement('i');
+      degree.style.cssText = `font-style:normal;font-weight:400;font-size:8.5px;line-height:${BUBBLE_ROW}px`;
+      degree.style.color = tone(INK.scaffolding, this.dark);
+      degree.textContent = event.degree;
+      el.append(event.absolute, degree);
+      return el;
+    });
+
+    // Two rows fill the strip, the lower one stopping just short of the top staff line. A piece
+    // whose paper above the staff is thinner than the strip keeps both rows on the paper it has.
+    const top = Math.max(this.offsetY, this.stafflineY - BUBBLE_STRIP);
+    const rows = [top, Math.max(this.offsetY, top + BUBBLE_ROW)];
+    const places = this.bubbleEls.map((el, i) => ({
+      x: this.xOfOnset(this.score.harmony[i]!.onsetIndex),
+      width: el.offsetWidth,
+    }));
+    bubbleRows(places).forEach((row, i) => {
+      this.bubbleEls[i]!.style.top = `${rows[row]!}px`;
+    });
+  }
+
+  /** Every chord the cursor has left behind reads dimmed; the CSS says how fast. */
+  private dimBubbles(onsetIndex: number): void {
+    this.bubbleEls.forEach((el, i) => {
+      el.classList.toggle('past', this.score.harmony[i]!.onsetIndex < onsetIndex);
+    });
   }
 
   /** Scales the content so the staff line fills the sheet block, and lifts the dead paper away. */
@@ -328,6 +388,19 @@ export class Sheet {
       : colorOf(note.midi, 'muted', this.dark);
     paintHead(head, { fill: colour, stroke: colour, 'stroke-width': null, opacity: null });
   }
+}
+
+/**
+ * Which row each bubble takes, reading left to right: the second row for one that would print over
+ * the bubble before it. A third bubble over the same place shares the second row with the second.
+ */
+export function bubbleRows(bubbles: { x: number; width: number }[]): number[] {
+  let filled = -Infinity;
+  return bubbles.map(({ x, width }) => {
+    if (x - width / 2 < filled) return 1;
+    filled = x + width / 2 + BUBBLE_GAP;
+    return 0;
+  });
 }
 
 function child(parent: HTMLElement, style: string): HTMLElement {

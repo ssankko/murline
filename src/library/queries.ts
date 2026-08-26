@@ -26,6 +26,18 @@ export interface PieceRow {
   practised_s: number | null;
 }
 
+/** One play of a piece, as the History ledger reads it. A practice leaves the last columns NULL. */
+export interface PlayRow {
+  id: number;
+  kind: 'practice' | 'performance';
+  started_at: number;
+  duration_s: number;
+  tempo_mode: string | null;
+  tempo_value: number | null;
+  hands: string | null;
+  grade: number | null;
+}
+
 /** What the file was when it was last indexed, and whether it is still there. */
 export interface KnownFile {
   path: string;
@@ -82,6 +94,30 @@ export async function getPiece(path: string): Promise<PieceRow | null> {
     [path],
   );
   return rows[0] ?? null;
+}
+
+/** The last plays of a piece, newest first: the History ledger of the detail pane. */
+export async function recentPlays(path: string, limit = 6): Promise<PlayRow[]> {
+  const db = await getDb();
+  return db.select<PlayRow[]>(
+    `SELECT id, kind, started_at, duration_s, tempo_mode, tempo_value, hands, grade
+     FROM play WHERE piece_path = $1 ORDER BY started_at DESC LIMIT $2`,
+    [path, limit],
+  );
+}
+
+/** Stores one finished play. Nothing on screen announces it. */
+export async function insertPlay(
+  path: string,
+  kind: PlayRow['kind'],
+  startedAt: number,
+  durationS: number,
+): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    'INSERT INTO play (piece_path, kind, started_at, duration_s) VALUES ($1, $2, $3, $4)',
+    [path, kind, Math.round(startedAt), durationS],
+  );
 }
 
 export async function knownFiles(): Promise<KnownFile[]> {

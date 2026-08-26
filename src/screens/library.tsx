@@ -25,8 +25,10 @@ import { setNotice, useNotice } from '@/library/notice';
 import {
   deletePiece,
   listPieces,
+  recentPlays,
   setFavorite,
   type PieceRow,
+  type PlayRow,
   type SortOrder,
 } from '@/library/queries';
 import { scanLibrary } from '@/library/scan';
@@ -453,10 +455,7 @@ function Detail({
         </div>
 
         <div className="mt-12 grid grid-cols-[3fr_2fr] gap-12">
-          <section className="flex flex-col gap-3">
-            <h3 className="text-[13px] font-semibold">History</h3>
-            <p className="text-muted-ink text-[12px]">Never played.</p>
-          </section>
+          <History piece={piece} />
           <section className="flex flex-col gap-3">
             <h3 className="text-[13px] font-semibold">Play settings</h3>
             <p className="text-muted-ink text-[12px]">Global defaults.</p>
@@ -465,6 +464,77 @@ function Detail({
       </div>
     </div>
   );
+}
+
+/**
+ * What the piece has been played: the summary over the ledger of the last six plays. A practice
+ * shows its time, a performance the settings it ran at and its grade.
+ */
+function History({ piece }: { piece: PieceRow }) {
+  const [plays, setPlays] = useState<PlayRow[]>([]);
+
+  useEffect(() => {
+    let live = true;
+    void recentPlays(piece.path).then((rows) => {
+      if (live) setPlays(rows);
+    });
+    return () => {
+      live = false;
+    };
+  }, [piece.path]);
+
+  return (
+    <section className="flex flex-col gap-3">
+      <h3 className="text-[13px] font-semibold">History</h3>
+      {plays.length === 0 ? (
+        <p className="text-muted-ink text-[12px]">Never played.</p>
+      ) : (
+        <>
+          <p className="text-[12px]">
+            <span className="tabular-nums">{duration(piece.practised_s ?? 0)}</span> practised
+            <span className="text-muted-ink"> · best </span>
+            <span className="tabular-nums">{piece.best_grade ?? '—'}</span>
+            <span className="text-muted-ink"> · last played {day(piece.last_played)}</span>
+          </p>
+          <ul className="divide-edge-soft border-edge-soft divide-y border-y">
+            {plays.map((play) => (
+              <li
+                key={play.id}
+                className={`grid grid-cols-[4.5rem_1fr_auto_2.5rem] items-baseline gap-3 py-1.5 text-[12px] ${
+                  play.kind === 'practice' ? 'text-muted-ink' : ''
+                }`}
+              >
+                <span>{play.kind === 'practice' ? 'Practice' : 'Performance'}</span>
+                <span>{day(play.started_at)}</span>
+                <span className="tabular-nums">
+                  {play.kind === 'practice' ? duration(play.duration_s) : settingsOf(play)}
+                </span>
+                <span className="text-right tabular-nums">
+                  {play.grade ?? <span className="text-edge">—</span>}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
+  );
+}
+
+/** The tempo and hands a performance ran at, which is what makes two grades comparable. */
+function settingsOf(play: PlayRow): string {
+  const { tempo_value: value, tempo_mode: mode } = play;
+  const tempo = value === null ? '' : mode === 'bpm' ? `♩ = ${value}` : `${value} %`;
+  return [tempo, play.hands === 'both' ? '' : play.hands].filter(Boolean).join(' · ');
+}
+
+/** Today and yesterday by name, anything older by date. */
+function day(at: number | null): string {
+  if (at === null) return '—';
+  const date = new Date(at).toDateString();
+  if (date === new Date().toDateString()) return 'today';
+  if (date === new Date(Date.now() - 86_400_000).toDateString()) return 'yesterday';
+  return new Date(at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 }
 
 /** Muted label over value: what the piece is, before it is opened. */
@@ -545,7 +615,9 @@ function tempoText(piece: PieceRow): string | null {
 }
 
 function duration(seconds: number): string {
-  return `${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, '0')}`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = `${minutes % 60}:${String(Math.round(seconds % 60)).padStart(2, '0')}`;
+  return minutes < 60 ? rest : `${Math.floor(minutes / 60)}:${rest.padStart(5, '0')}`;
 }
 
 function reasonOf(error: string): string {

@@ -1,14 +1,16 @@
 import { getSetting } from '@/db/db';
 import { Library } from '@/screens/library';
 import { Onboarding } from '@/screens/onboarding';
-import { PlayScreen } from '@/screens/play';
+import { PlayScreen, type PlayIntent } from '@/screens/play';
+import { PreviewScreen } from '@/screens/preview';
 import { useEffect, useState } from 'react';
 
 type Route =
   | { at: 'loading' }
   | { at: 'onboarding' }
   | { at: 'library'; folder: string | null; selected?: string }
-  | { at: 'play'; folder: string; path: string };
+  | { at: 'preview'; folder: string; path: string }
+  | { at: 'play'; folder: string; path: string; intent: PlayIntent };
 
 export function App() {
   const [route, setRoute] = useState<Route>({ at: 'loading' });
@@ -32,8 +34,24 @@ export function App() {
           folder={route.folder}
           selected={route.selected}
           onPractice={(path) => {
-            if (route.folder) setRoute({ at: 'play', folder: route.folder, path });
+            if (route.folder) {
+              setRoute({ at: 'play', folder: route.folder, path, intent: 'practice' });
+            }
           }}
+          onPreview={(path) => {
+            if (route.folder) setRoute({ at: 'preview', folder: route.folder, path });
+          }}
+        />
+      );
+    case 'preview':
+      return (
+        <PreviewScreen
+          folder={route.folder}
+          path={route.path}
+          onBack={() => setRoute({ at: 'library', folder: route.folder, selected: route.path })}
+          onPlay={(intent) =>
+            setRoute({ at: 'play', folder: route.folder, path: route.path, intent })
+          }
         />
       );
     case 'play':
@@ -41,6 +59,7 @@ export function App() {
         <PlayScreen
           folder={route.folder}
           path={route.path}
+          intent={route.intent}
           onBack={() => setRoute({ at: 'library', folder: route.folder, selected: route.path })}
         />
       );

@@ -53,11 +53,13 @@ export function Library({
   folder,
   selected: opened,
   onPractice,
+  onPreview,
 }: {
   folder: string | null;
   /** The piece the play screen came back from, so leaving a play lands on it again. */
   selected?: string;
   onPractice: (path: string) => void;
+  onPreview: (path: string) => void;
 }) {
   const [pieces, setPieces] = useState<PieceRow[]>([]);
   const [selected, setSelected] = useState<string | null>(opened ?? null);
@@ -204,6 +206,7 @@ export function Library({
               row={row}
               selected={row === piece}
               onSelect={() => setSelected(row.path)}
+              onOpen={() => !row.error && folder && onPreview(row.path)}
             />
           ))}
           {pieces.length === 0 && (
@@ -233,6 +236,7 @@ export function Library({
           onFavorite={() => void toggleFavorite(piece)}
           onDelete={() => void remove(piece)}
           onPractice={onPractice}
+          onPreview={onPreview}
         />
       ) : (
         <div className="flex flex-1 items-center justify-center px-12">
@@ -306,14 +310,18 @@ function Row({
   row,
   selected,
   onSelect,
+  onOpen,
 }: {
   row: PieceRow;
   selected: boolean;
   onSelect: () => void;
+  /** A double-click reads the piece through: the same Preview the detail's button opens. */
+  onOpen: () => void;
 }) {
   return (
     <button
       onClick={onSelect}
+      onDoubleClick={onOpen}
       className={`relative flex w-full items-center gap-3 px-4 py-2 text-left transition-colors duration-[120ms] motion-reduce:transition-none ${
         selected ? 'bg-[color-mix(in_srgb,var(--ink)_9%,transparent)]' : 'hover:bg-[color-mix(in_srgb,var(--ink)_4%,transparent)]'
       }`}
@@ -344,12 +352,14 @@ function Detail({
   onFavorite,
   onDelete,
   onPractice,
+  onPreview,
 }: {
   piece: PieceRow;
   folder: string | null;
   onFavorite: () => void;
   onDelete: () => void;
   onPractice: (path: string) => void;
+  onPreview: (path: string) => void;
 }) {
   const broken = !!piece.error;
   const fullPath = folder ? `${folder}/${piece.path}` : piece.path;
@@ -421,7 +431,12 @@ function Detail({
         )}
 
         <div className="mt-8 flex gap-2">
-          <Button variant="outline" size="sm" disabled>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={broken || !folder}
+            onClick={() => onPreview(piece.path)}
+          >
             Preview
           </Button>
           <Button

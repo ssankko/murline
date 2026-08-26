@@ -37,6 +37,9 @@ const TEMPO_STEP = 5;
 const TEMPO_MIN = 25;
 const TEMPO_MAX = 200;
 
+/** What the screen was opened for. A performance is armed at bar one; ticket 11 arms it. */
+export type PlayIntent = 'practice' | 'performance';
+
 export function PlayScreen({
   folder,
   path,
@@ -44,6 +47,7 @@ export function PlayScreen({
 }: {
   folder: string;
   path: string;
+  intent?: PlayIntent;
   onBack: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);

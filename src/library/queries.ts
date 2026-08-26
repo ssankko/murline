@@ -39,15 +39,37 @@ const HISTORY = `
   (SELECT MAX(started_at) FROM play WHERE piece_path = piece.path) AS last_played,
   (SELECT SUM(duration_s) FROM play WHERE piece_path = piece.path) AS practised_s`;
 
+/** How the list pane is ordered. The choice lives in the page, never in the database. */
+export type SortOrder = 'recent' | 'title' | 'composer' | 'grade' | 'favorites';
+
+const BY_TITLE = 'title COLLATE NOCASE';
+
+// SQLite sorts NULL below every value, so a descending sort puts the never-played and the
+// ungraded last on its own.
+const SORTS: Record<SortOrder, { where: string; order: string }> = {
+  recent: { where: '', order: `last_played DESC, ${BY_TITLE}` },
+  title: { where: '', order: BY_TITLE },
+  composer: { where: '', order: `composer COLLATE NOCASE, ${BY_TITLE}` },
+  grade: { where: '', order: `best_grade DESC, ${BY_TITLE}` },
+  favorites: { where: 'AND favorite = 1', order: BY_TITLE },
+};
+
 /** Every piece whose file is in the folder. A missing file hides its piece until it is back. */
-export async function listPieces(): Promise<PieceRow[]> {
+export async function listPieces(sort: SortOrder = 'title'): Promise<PieceRow[]> {
   const db = await getDb();
+  const { where, order } = SORTS[sort];
   return db.select<PieceRow[]>(
     `SELECT path, title, composer, measure_count, duration_s, midi_lo, midi_hi, has_tempo,
             constant_tempo, key_sharps, key_mode, part_count, part_name, favorite, error,
             ${HISTORY}
-     FROM piece WHERE present = 1 ORDER BY title COLLATE NOCASE`,
+     FROM piece WHERE present = 1 ${where} ORDER BY ${order}`,
   );
+}
+
+/** The one thing the library writes about a piece. */
+export async function setFavorite(path: string, favorite: boolean): Promise<void> {
+  const db = await getDb();
+  await db.execute('UPDATE piece SET favorite = $2 WHERE path = $1', [path, favorite ? 1 : 0]);
 }
 
 export async function getPiece(path: string): Promise<PieceRow | null> {

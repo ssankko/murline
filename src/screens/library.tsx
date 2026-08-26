@@ -1,5 +1,12 @@
 import { Button } from '@/components/ui/button';
-import { listPieces, type PieceRow } from '@/library/queries';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { listPieces, setFavorite, type PieceRow, type SortOrder } from '@/library/queries';
 import { scanLibrary } from '@/library/scan';
 import { colorOf, noteName } from '@/look/color';
 import { useDark } from '@/look/use-dark';
@@ -7,11 +14,20 @@ import { RangeStrip } from '@/screens/range-strip';
 import { Settings } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
+const SORTS: [SortOrder, string][] = [
+  ['recent', 'Recently played'],
+  ['title', 'Title'],
+  ['composer', 'Composer'],
+  ['grade', 'Best grade'],
+  ['favorites', 'Favorites'],
+];
+
 /** The library page: every piece of the folder on the left, the selected piece's facts on the right. */
 export function Library({ folder }: { folder: string | null }) {
   const [pieces, setPieces] = useState<PieceRow[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [sort, setSort] = useState<SortOrder>('title');
 
   // The scan runs once, at launch. Nothing watches the folder and the page never rescans.
   useEffect(() => {
@@ -30,6 +46,17 @@ export function Library({ folder }: { folder: string | null }) {
     };
   }, [folder]);
 
+  function chooseSort(next: SortOrder) {
+    setSort(next);
+    void listPieces(next).then(setPieces);
+  }
+
+  // Favorites is a sort, so a toggle can add or remove a row: re-read rather than patch one.
+  async function toggleFavorite(row: PieceRow) {
+    await setFavorite(row.path, !row.favorite);
+    setPieces(await listPieces(sort));
+  }
+
   const piece = pieces.find((p) => p.path === selected) ?? pieces[0];
 
   return (
@@ -37,9 +64,25 @@ export function Library({ folder }: { folder: string | null }) {
       <div className="border-edge-soft flex w-[340px] flex-none flex-col border-r">
         <div className="flex items-center gap-2 px-4 pt-3.5 pb-2.5">
           <h1 className="mr-auto text-[15px] font-semibold">Library</h1>
-          <Button variant="ghost" size="sm" className="text-muted-ink text-[12px]" disabled>
-            Title
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="text-muted-ink text-[12px]">
+                {SORTS.find(([key]) => key === sort)![1]}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuRadioGroup
+                value={sort}
+                onValueChange={(value) => chooseSort(value as SortOrder)}
+              >
+                {SORTS.map(([key, label]) => (
+                  <DropdownMenuRadioItem key={key} value={key} className="text-[13px]">
+                    {label}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button variant="ghost" size="icon" aria-label="Settings">
             <Settings />
           </Button>
@@ -77,7 +120,7 @@ export function Library({ folder }: { folder: string | null }) {
       </div>
 
       {piece ? (
-        <Detail piece={piece} folder={folder} />
+        <Detail piece={piece} folder={folder} onFavorite={() => void toggleFavorite(piece)} />
       ) : (
         <div className="flex flex-1 items-center justify-center px-12">
           <div className="flex max-w-[420px] flex-col gap-2 text-center">
@@ -103,11 +146,15 @@ function Row({
   return (
     <button
       onClick={onSelect}
-      className={`relative flex w-full items-center gap-3 px-4 py-2 text-left transition-colors duration-[120ms] ${
+      className={`relative flex w-full items-center gap-3 px-4 py-2 text-left transition-colors duration-[120ms] motion-reduce:transition-none ${
         selected ? 'bg-[color-mix(in_srgb,var(--ink)_9%,transparent)]' : 'hover:bg-[color-mix(in_srgb,var(--ink)_4%,transparent)]'
       }`}
     >
-      {row.favorite ? <i className="bg-ink absolute top-2 bottom-2 left-0 w-[2px]" /> : null}
+      <i
+        className={`bg-ink absolute top-2 bottom-2 left-0 w-[2px] transition-opacity duration-100 motion-reduce:transition-none ${
+          row.favorite ? 'opacity-100' : 'opacity-0'
+        }`}
+      />
       <span className="flex min-w-0 flex-col gap-px">
         <b className={`truncate text-[13px] font-medium ${row.error ? 'text-muted-ink' : ''}`}>
           {row.title ?? row.path}
@@ -123,7 +170,15 @@ function Row({
   );
 }
 
-function Detail({ piece, folder }: { piece: PieceRow; folder: string | null }) {
+function Detail({
+  piece,
+  folder,
+  onFavorite,
+}: {
+  piece: PieceRow;
+  folder: string | null;
+  onFavorite: () => void;
+}) {
   const broken = !!piece.error;
   return (
     <div className="flex-1 overflow-y-auto px-12 py-10">
@@ -150,7 +205,13 @@ function Detail({ piece, folder }: { piece: PieceRow; folder: string | null }) {
             </div>
           </div>
           <div className="flex flex-none gap-1">
-            <Button variant="outline" size="sm" disabled>
+            <Button
+              variant={piece.favorite ? 'default' : 'outline'}
+              size="sm"
+              className="duration-100 motion-reduce:transition-none"
+              aria-pressed={!!piece.favorite}
+              onClick={onFavorite}
+            >
               Favorite
             </Button>
             <Button variant="outline" size="sm" disabled>

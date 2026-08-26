@@ -116,6 +116,7 @@ export function buildScore(sheet: MusicSheet): Score {
     tempoMap,
     hasTempo: sheet.HasBPMInfo,
     constantTempo: tempoMap.length <= 1 && !hasContinuousTempo(sheet),
+    hasDynamics: dynamics.some((marks) => marks.length > 0),
     measures,
     keys: keysOf(sheet),
     chords: chordsOf(sheet, instrument.Staves),

@@ -54,13 +54,13 @@ const SORTS: [SortOrder, string][] = [
 export function Library({
   folder,
   selected: opened,
-  onPractice,
+  onPlay,
   onPreview,
 }: {
   folder: string | null;
   /** The piece the play screen came back from, so leaving a play lands on it again. */
   selected?: string;
-  onPractice: (path: string) => void;
+  onPlay: (path: string, intent: 'practice' | 'performance') => void;
   onPreview: (path: string) => void;
 }) {
   const [pieces, setPieces] = useState<PieceRow[]>([]);
@@ -237,7 +237,7 @@ export function Library({
           folder={folder}
           onFavorite={() => void toggleFavorite(piece)}
           onDelete={() => void remove(piece)}
-          onPractice={onPractice}
+          onPlay={onPlay}
           onPreview={onPreview}
         />
       ) : (
@@ -353,14 +353,14 @@ function Detail({
   folder,
   onFavorite,
   onDelete,
-  onPractice,
+  onPlay,
   onPreview,
 }: {
   piece: PieceRow;
   folder: string | null;
   onFavorite: () => void;
   onDelete: () => void;
-  onPractice: (path: string) => void;
+  onPlay: (path: string, intent: 'practice' | 'performance') => void;
   onPreview: (path: string) => void;
 }) {
   const broken = !!piece.error;
@@ -445,11 +445,15 @@ function Detail({
             variant="outline"
             size="sm"
             disabled={broken || !folder}
-            onClick={() => onPractice(piece.path)}
+            onClick={() => onPlay(piece.path, 'practice')}
           >
             Practice
           </Button>
-          <Button size="sm" disabled>
+          <Button
+            size="sm"
+            disabled={broken || !folder}
+            onClick={() => onPlay(piece.path, 'performance')}
+          >
             Perform
           </Button>
         </div>

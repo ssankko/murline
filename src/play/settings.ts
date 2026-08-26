@@ -28,6 +28,26 @@ export interface PlaySettings {
   matchingWindowMs: number;
   /** How far apart the first and last strike of one chord may be, in milliseconds. */
   togethernessMs: number;
+
+  // Grade knobs. Always global, never per piece, so two grades of one piece stay comparable.
+
+  /** Timing: full marks up to this offset in milliseconds, nothing left at `timingZeroMs`. */
+  timingFlatMs: number;
+  timingZeroMs: number;
+  /** Velocity: full marks up to this distance from the ideal, nothing left at `velocityZero`. */
+  velocityFlat: number;
+  velocityZero: number;
+  /** Release: full marks between the two flat ratios, nothing left outside the two zero ratios. */
+  releaseFlatLo: number;
+  releaseFlatHi: number;
+  releaseZeroLo: number;
+  releaseZeroHi: number;
+  /** What each curve is worth in a note's grade. Grade normalises them. */
+  weightTiming: number;
+  weightVelocity: number;
+  weightRelease: number;
+  /** Added to every strike's velocity before it meets the ideal, to true up a keyboard. */
+  velocityOffset: number;
 }
 
 export const DEFAULT_PLAY_SETTINGS: PlaySettings = {
@@ -42,4 +62,16 @@ export const DEFAULT_PLAY_SETTINGS: PlaySettings = {
   keyboardHi: 108,
   matchingWindowMs: 150,
   togethernessMs: 250,
+  timingFlatMs: 25,
+  timingZeroMs: 150,
+  velocityFlat: 8,
+  velocityZero: 16,
+  releaseFlatLo: 0.5,
+  releaseFlatHi: 1.3,
+  releaseZeroLo: 0.2,
+  releaseZeroHi: 2,
+  weightTiming: 0.7,
+  weightVelocity: 0.1,
+  weightRelease: 0.2,
+  velocityOffset: 0,
 };

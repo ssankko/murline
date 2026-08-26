@@ -33,10 +33,8 @@ export function App() {
         <Library
           folder={route.folder}
           selected={route.selected}
-          onPractice={(path) => {
-            if (route.folder) {
-              setRoute({ at: 'play', folder: route.folder, path, intent: 'practice' });
-            }
+          onPlay={(path, intent) => {
+            if (route.folder) setRoute({ at: 'play', folder: route.folder, path, intent });
           }}
           onPreview={(path) => {
             if (route.folder) setRoute({ at: 'preview', folder: route.folder, path });

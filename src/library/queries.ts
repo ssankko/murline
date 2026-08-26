@@ -2,6 +2,7 @@
 // nothing derived is stored.
 
 import { getDb } from '@/db/db';
+import type { PerformanceRecord } from '@/play/engine';
 import type { PieceIndex } from '@/score/summarize';
 
 /** A piece as the library page reads it: its index columns, its file facts and its history. */
@@ -117,6 +118,35 @@ export async function insertPlay(
   await db.execute(
     'INSERT INTO play (piece_path, kind, started_at, duration_s) VALUES ($1, $2, $3, $4)',
     [path, kind, Math.round(startedAt), durationS],
+  );
+}
+
+/**
+ * Stores one complete performance: what it ran at, then what it earned. A run with nothing to grade
+ * leaves the grade columns empty.
+ */
+export async function insertPerformance(path: string, run: PerformanceRecord): Promise<void> {
+  const db = await getDb();
+  const g = run.grade;
+  await db.execute(
+    `INSERT INTO play (piece_path, kind, started_at, duration_s, tempo_mode, tempo_value, hands,
+                       grade, expected, matched, extras, mean_timing, mean_velocity, mean_release)
+     VALUES ($1, 'performance', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+    [
+      path,
+      Math.round(run.startedAt),
+      run.seconds,
+      run.tempoMode,
+      run.tempoValue,
+      run.hands,
+      g?.grade ?? null,
+      g?.expected ?? null,
+      g?.matched ?? null,
+      g?.extras ?? null,
+      g?.meanTiming ?? null,
+      g?.meanVelocity ?? null,
+      g?.meanRelease ?? null,
+    ],
   );
 }
 

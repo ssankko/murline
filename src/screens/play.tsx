@@ -13,20 +13,28 @@ import {
   type LaneLook,
 } from '@/lane/lane';
 import { setNotice } from '@/library/notice';
-import { insertPlay } from '@/library/queries';
+import { getPiece, insertPerformance, insertPlay } from '@/library/queries';
 import { reindexIfChanged } from '@/library/scan';
 import { flipTheme, useDark } from '@/look/use-dark';
 import { useMidiStatus } from '@/midi/useMidiStatus';
 import { click, setClickVolume } from '@/play/click';
-import { create, type Engine, type PlayState } from '@/play/engine';
+import {
+  create,
+  type Engine,
+  type PerformanceRecord,
+  type PlayKind,
+  type PlayState,
+} from '@/play/engine';
 import {
   DEFAULT_PLAY_SETTINGS,
   type HandsSetting,
   type PlayMode,
+  type PlaySettings,
   type TempoMode,
 } from '@/play/settings';
 import { useFrameLoop } from '@/play/use-frame-loop';
 import { bpmAt, ScoreError, type Note } from '@/score/types';
+import { Button } from '@/components/ui/button';
 import { Sheet } from '@/sheet/sheet';
 import { invoke } from '@tauri-apps/api/core';
 import {
@@ -41,6 +49,7 @@ import {
   Repeat,
   RotateCcw,
   Settings,
+  Square,
   Tally4,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -68,12 +77,13 @@ const TEMPO_RANGE: Record<TempoMode, [number, number]> = {
 /** Bars the count-in runs when it is on. The gear owns the number; the bar owns the on and off. */
 const COUNT_IN_BARS = 1;
 
-/** What the screen was opened for. A performance is armed at bar one; ticket 11 arms it. */
+/** What the screen was opened for: a practice Idle, or a performance armed at bar one. */
 export type PlayIntent = 'practice' | 'performance';
 
 export function PlayScreen({
   folder,
   path,
+  intent = 'practice',
   onBack,
 }: {
   folder: string;
@@ -97,6 +107,12 @@ export function PlayScreen({
   const [title, setTitle] = useState(path.split('/').pop() ?? path);
   const [state, setState] = useState<PlayState>('idle');
   const stateRef = useRef<PlayState>('idle');
+  const [kind, setKind] = useState<PlayKind>('practice');
+  const kindRef = useRef<PlayKind>('practice');
+  /** The card of the performance that just ended, with the piece's best before this run. */
+  const [summary, setSummary] = useState<{ record: PerformanceRecord; best: number | null } | null>(
+    null,
+  );
 
   const [split, setSplit] = useState(DEFAULT_SPLIT);
   const [hands, setHands] = useState(DEFAULT_PLAY_SETTINGS.hands);
@@ -137,11 +153,16 @@ export function PlayScreen({
         const bytes = new Uint8Array(
           await invoke<ArrayBuffer>('read_file', { path: `${folder}/${path}` }),
         );
-        const look = await laneLook();
+        const [look, knobs] = await Promise.all([laneLook(), gradeKnobs()]);
         const sheet = await Sheet.open(hostRef.current!, bytes, fileName, darkRef.current);
         if (!live) return sheet.dispose();
         sheetRef.current = sheet;
-        const engine = create(sheet.score, { ...DEFAULT_PLAY_SETTINGS, ...liveRef.current });
+        const engine = create(sheet.score, {
+          ...DEFAULT_PLAY_SETTINGS,
+          ...knobs,
+          ...liveRef.current,
+        });
+        if (intent === 'performance') engine.arm();
         engineRef.current = engine;
         laneRef.current = new Lane(canvasRef.current!, engine, look.lane, darkRef.current);
         setSplit(look.split);
@@ -170,18 +191,19 @@ export function PlayScreen({
       engineRef.current = null;
       laneRef.current = null;
     };
-  }, [folder, path]);
+  }, [folder, path, intent]);
 
   useEffect(() => {
     sheetRef.current?.setDark(dark);
     laneRef.current?.setDark(dark);
   }, [dark]);
 
-  // An unplugged cable must not run the cursor away from a player who cannot answer it.
+  // An unplugged cable must not run the cursor away from a player who cannot answer it. A practice
+  // pauses; a performance the player cannot finish ends there.
   useEffect(() => {
     const engine = engineRef.current;
     if (!engine || midi.devices.length > 0) return;
-    if (engine.kind === 'practice' && engine.snapshot().state === 'running') engine.pause();
+    if (engine.snapshot().state === 'running') engine.pause();
   }, [midi.devices]);
 
   // Every one of them is live: Wait mode takes hold from the Onset the cursor is at, Flow lets go,
@@ -197,6 +219,21 @@ export function PlayScreen({
     if (done) void insertPlay(path, 'practice', done.startedAt, done.seconds);
   }
 
+  /** A complete performance leaves a row, and the card that says what it earned. */
+  function savePerformance(): void {
+    const done = engineRef.current?.takePerformance();
+    if (!done) return;
+    void (async () => {
+      // The best is read before the row goes in, so the card holds this run against the ones before.
+      const best = await getPiece(path).then(
+        (row) => row?.best_grade ?? null,
+        () => null,
+      );
+      setSummary({ record: done, best });
+      await insertPerformance(path, done);
+    })();
+  }
+
   useFrameLoop((delta, now) => {
     const engine = engineRef.current;
     const sheet = sheetRef.current;
@@ -206,6 +243,7 @@ export function PlayScreen({
     engine.advance(delta, performance.timeOrigin + now);
     if (engine.beats() > 0) click();
     savePractice();
+    savePerformance();
     const snapshot = engine.snapshot();
     for (const event of engine.events()) {
       lane.effect(event, now);
@@ -221,6 +259,12 @@ export function PlayScreen({
     if (snapshot.state !== stateRef.current) {
       stateRef.current = snapshot.state;
       setState(snapshot.state);
+      // The card belongs to the run that ended; anything that moves the play again takes it away.
+      if (snapshot.state !== 'ended') setSummary(null);
+    }
+    if (snapshot.kind !== kindRef.current) {
+      kindRef.current = snapshot.kind;
+      setKind(snapshot.kind);
     }
   });
 
@@ -267,6 +311,15 @@ export function PlayScreen({
     setHands(next);
   }
 
+  /** Perform arms a performance; Stop takes it off, running or not, and it leaves no row. */
+  function togglePerform(): void {
+    const engine = engineRef.current;
+    if (!engine) return;
+    if (engine.kind === 'performance') engine.abort();
+    else engine.arm();
+  }
+
+  const performing = kind === 'performance';
   const running = state === 'running' || state === 'counting-in';
   const [tempoMin, tempoMax] = TEMPO_RANGE[tempoMode];
   const stepTempo = (by: number) =>
@@ -298,15 +351,19 @@ export function PlayScreen({
             <BarButton label="Count-in" pressed={countIn} onClick={() => setCountIn((on) => !on)}>
               <Tally4 {...ICON} />
             </BarButton>
-            <BarButton label="Restart" onClick={() => engineRef.current?.restart()}>
-              <RotateCcw {...ICON} />
-            </BarButton>
+            {!performing && (
+              <BarButton label="Restart" onClick={() => engineRef.current?.restart()}>
+                <RotateCcw {...ICON} />
+              </BarButton>
+            )}
             <BarButton label={running ? 'Pause' : 'Play'} disc onClick={toggle}>
               {running ? <Pause {...ICON} /> : <Play {...ICON} />}
             </BarButton>
-            <BarButton label="Loop" off pressed={false}>
-              <Repeat {...ICON} />
-            </BarButton>
+            {!performing && (
+              <BarButton label="Loop" off pressed={false}>
+                <Repeat {...ICON} />
+              </BarButton>
+            )}
             <BarButton
               label="Metronome"
               pressed={metronome}
@@ -317,66 +374,147 @@ export function PlayScreen({
           </div>
 
           <div className="ml-auto flex items-center gap-2.5">
-            <div className="flex items-center">
-              <BarButton label="Slower" onClick={() => stepTempo(-TEMPO_STEP)}>
-                <Minus {...ICON} />
-              </BarButton>
-              <TempoPopover
-                mode={tempoMode}
-                value={tempo}
-                constantTempo={written.constant}
-                onMode={switchMode}
-                onValue={setTempo}
-              />
-              <BarButton label="Faster" onClick={() => stepTempo(TEMPO_STEP)}>
-                <Plus {...ICON} />
-              </BarButton>
-            </div>
-            {/* The left glyph is the left hand; the hand the play does not expect is dimmed. */}
-            <BarButton label={`Hands: ${hands}`} off={oneStaff} onClick={cycleHands} wide>
-              <Hand {...ICON} className={handGlyph(hands, 'left')} />
-              <Hand {...ICON} className={`scale-x-[-1] ${handGlyph(hands, 'right')}`} />
-            </BarButton>
-            <div className="flex items-center">
-              <BarButton
-                label="Flow mode"
-                segment
-                pressed={mode === 'flow'}
-                onClick={() => setMode('flow')}
-              >
-                <FastForward {...ICON} />
-              </BarButton>
-              <BarButton
-                label="Wait mode"
-                segment
-                pressed={mode === 'wait'}
-                onClick={() => setMode('wait')}
-              >
-                <Hand {...ICON} />
-              </BarButton>
-            </div>
+            {/* A performance runs at one tempo, one hands setting and in Flow, so they all go. */}
+            {!performing && (
+              <>
+                <div className="flex items-center">
+                  <BarButton label="Slower" onClick={() => stepTempo(-TEMPO_STEP)}>
+                    <Minus {...ICON} />
+                  </BarButton>
+                  <TempoPopover
+                    mode={tempoMode}
+                    value={tempo}
+                    constantTempo={written.constant}
+                    onMode={switchMode}
+                    onValue={setTempo}
+                  />
+                  <BarButton label="Faster" onClick={() => stepTempo(TEMPO_STEP)}>
+                    <Plus {...ICON} />
+                  </BarButton>
+                </div>
+                {/* The left glyph is the left hand; the hand the play does not expect is dimmed. */}
+                <BarButton label={`Hands: ${hands}`} off={oneStaff} onClick={cycleHands} wide>
+                  <Hand {...ICON} className={handGlyph(hands, 'left')} />
+                  <Hand {...ICON} className={`scale-x-[-1] ${handGlyph(hands, 'right')}`} />
+                </BarButton>
+                <div className="flex items-center">
+                  <BarButton
+                    label="Flow mode"
+                    segment
+                    pressed={mode === 'flow'}
+                    onClick={() => setMode('flow')}
+                  >
+                    <FastForward {...ICON} />
+                  </BarButton>
+                  <BarButton
+                    label="Wait mode"
+                    segment
+                    pressed={mode === 'wait'}
+                    onClick={() => setMode('wait')}
+                  >
+                    <Hand {...ICON} />
+                  </BarButton>
+                </div>
+              </>
+            )}
+            {/* The only worded control: outlined to arm a performance, filled to stop one. */}
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
-                  aria-label="Perform"
-                  aria-disabled
-                  className="border-ink/55 text-ink/35 flex h-[30px] items-center border px-3.5 text-[13px] font-medium"
+                  aria-label={performing ? 'Stop' : 'Perform'}
+                  onClick={togglePerform}
+                  className={`flex h-[30px] flex-none items-center gap-1.5 border px-3.5 text-[13px] font-medium transition-colors duration-150 ${
+                    performing
+                      ? 'border-ink bg-ink text-paper hover:bg-ink/85'
+                      : 'border-ink/55 hover:bg-ink/8'
+                  }`}
                 >
-                  Perform
+                  {performing && <Square size={11} strokeWidth={0} className="fill-current" />}
+                  {performing ? 'Stop' : 'Perform'}
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="bottom">Perform</TooltipContent>
+              <TooltipContent side="bottom">
+                {performing ? 'Stop the performance' : 'Perform'}
+              </TooltipContent>
             </Tooltip>
           </div>
         </div>
 
         <div ref={hostRef} className="bg-paper min-h-0" style={{ flex: `${split} 1 0` }} />
         <Split value={split} onChange={setSplit} />
-        <div className="bg-paper min-h-0" style={{ flex: `${1 - split} 1 0` }}>
+        <div className="bg-paper relative min-h-0" style={{ flex: `${1 - split} 1 0` }}>
           <canvas ref={canvasRef} className="block h-full w-full" />
+          {state === 'ended' && summary && (
+            <Summary
+              record={summary.record}
+              best={summary.best}
+              onAgain={toggle}
+              onClose={() => engineRef.current?.arm()}
+            />
+          )}
         </div>
       </div>
     </TooltipProvider>
+  );
+}
+
+/**
+ * What the performance earned, over the lane with the sheet and its marks still behind it. The
+ * headline is the grade; the line under it says what this run is being held against.
+ */
+function Summary({
+  record,
+  best,
+  onAgain,
+  onClose,
+}: {
+  record: PerformanceRecord;
+  /** The piece's best grade before this run, `null` when this is its first graded one. */
+  best: number | null;
+  onAgain: () => void;
+  onClose: () => void;
+}) {
+  const grade = record.grade;
+  const hitRate =
+    grade && grade.expected > 0 ? Math.round((100 * grade.matched) / grade.expected) : null;
+  const tempo = record.tempoMode === 'bpm' ? `♩ = ${record.tempoValue}` : `${record.tempoValue} %`;
+  return (
+    <div className="bg-paper/95 animate-in fade-in-0 absolute inset-0 flex flex-col items-center justify-center gap-6 duration-200">
+      <div className="text-[64px] leading-none font-semibold tabular-nums">
+        {grade ? grade.grade : '—'}
+      </div>
+      <dl className="flex gap-8">
+        <Cell label="Hit rate" value={hitRate === null ? '—' : `${hitRate} %`} />
+        <Cell label="Timing" value={grade?.meanTiming ?? '—'} />
+        <Cell label="Velocity" value={grade?.meanVelocity ?? '—'} />
+        <Cell label="Release" value={grade?.meanRelease ?? '—'} />
+        <Cell label="Extras" value={grade?.extras ?? '—'} />
+      </dl>
+      <p className="text-muted-ink text-[12px]">
+        best <span className="tabular-nums">{best ?? '—'}</span>
+        <span> · </span>
+        <span className="tabular-nums">{tempo}</span>
+        <span> · hands {record.hands}</span>
+      </p>
+      <div className="flex gap-2">
+        <Button size="sm" onClick={onAgain}>
+          Play again
+        </Button>
+        <Button size="sm" variant="outline" onClick={onClose}>
+          Close
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** One number of the breakdown, muted label over value like the library's facts strip. */
+function Cell({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <dt className="text-muted-ink text-[11px]">{label}</dt>
+      <dd className="text-[15px] font-medium tabular-nums">{value}</dd>
+    </div>
   );
 }
 
@@ -399,6 +537,52 @@ async function laneLook(): Promise<{ lane: LaneLook; split: number; clickVolume:
     lane: { lookaheadBeats, noteWidthPct, gapPx, keyLabels },
     split: Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, split)),
     clickVolume,
+  };
+}
+
+/** Every Grade knob, read once when the piece opens. They are global; ticket 13 draws them. */
+async function gradeKnobs(): Promise<Partial<PlaySettings>> {
+  const d = DEFAULT_PLAY_SETTINGS;
+  const [
+    timingFlatMs,
+    timingZeroMs,
+    velocityFlat,
+    velocityZero,
+    releaseFlatLo,
+    releaseFlatHi,
+    releaseZeroLo,
+    releaseZeroHi,
+    weightTiming,
+    weightVelocity,
+    weightRelease,
+    velocityOffset,
+  ] = await Promise.all([
+    getSettingOr('grade_timing_flat_ms', d.timingFlatMs),
+    getSettingOr('grade_timing_zero_ms', d.timingZeroMs),
+    getSettingOr('grade_velocity_flat', d.velocityFlat),
+    getSettingOr('grade_velocity_zero', d.velocityZero),
+    getSettingOr('grade_release_flat_lo', d.releaseFlatLo),
+    getSettingOr('grade_release_flat_hi', d.releaseFlatHi),
+    getSettingOr('grade_release_zero_lo', d.releaseZeroLo),
+    getSettingOr('grade_release_zero_hi', d.releaseZeroHi),
+    getSettingOr('grade_weight_timing', d.weightTiming),
+    getSettingOr('grade_weight_velocity', d.weightVelocity),
+    getSettingOr('grade_weight_release', d.weightRelease),
+    getSettingOr('velocity_offset', d.velocityOffset),
+  ]);
+  return {
+    timingFlatMs,
+    timingZeroMs,
+    velocityFlat,
+    velocityZero,
+    releaseFlatLo,
+    releaseFlatHi,
+    releaseZeroLo,
+    releaseZeroHi,
+    weightTiming,
+    weightVelocity,
+    weightRelease,
+    velocityOffset,
   };
 }
 

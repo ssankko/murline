@@ -42,6 +42,7 @@ function scoreOf(onsetNotes: Note[][]): Score {
     tempoMap: [{ tick: 0, bpm: 60 }],
     hasTempo: true,
     constantTempo: true,
+    hasDynamics: false,
     measures: [
       {
         index: 0,

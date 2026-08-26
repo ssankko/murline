@@ -64,6 +64,7 @@ function scoreOf(bars: Pitch[][], key = C_MAJOR, chords: ChordSymbol[] = []): Sc
     tempoMap: [{ tick: 0, bpm: 60 }],
     hasTempo: true,
     constantTempo: true,
+    hasDynamics: false,
     measures: bars.map((_, bar) => ({
       index: bar,
       number: bar + 1,

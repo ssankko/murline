@@ -40,6 +40,7 @@ function scoreOf(bars: number, tempoMap = [{ tick: 0, bpm: 60 }], hasTempo = tru
     tempoMap,
     hasTempo,
     constantTempo: tempoMap.length < 2,
+    hasDynamics: true,
     measures,
     keys: [],
     chords: [],
@@ -887,5 +888,171 @@ describe('what a practice leaves behind', () => {
 
     expect(play.takePractice()).not.toBeNull();
     expect(play.takePractice()).toBeNull();
+  });
+});
+
+describe('a performance', () => {
+  /** Two Onsets a beat apart, the second a different pitch, and a bar of room after them. */
+  function twoNotes(settings: Partial<PlaySettings> = {}) {
+    const play = engine(
+      scoreFrom([
+        { tick: 0, notes: [{ midi: 60 }] },
+        { tick: TICKS_PER_QUARTER, notes: [{ midi: 62 }] },
+      ]),
+      settings,
+    );
+    play.arm();
+    return play;
+  }
+
+  test('arms Idle at bar one and stops the practice it interrupted', () => {
+    const play = engine(scoreOf(2));
+    play.start();
+    play.advance(2000);
+    play.arm();
+
+    expect(play.snapshot()).toMatchObject({ state: 'idle', kind: 'performance', playedTick: 0 });
+    expect(play.takePractice()?.seconds).toBeCloseTo(2, 6);
+  });
+
+  test('runs at the tempo it started with, whatever the settings say next', () => {
+    const play = twoNotes();
+    play.start();
+    play.settings.tempoValue = 200;
+    play.advance(1000);
+
+    // The same write on a practice doubles the speed; here the clock keeps the tempo of the start.
+    expect(play.snapshot().playedTick).toBeCloseTo(TICKS_PER_QUARTER, 6);
+  });
+
+  test('ends at the end tick and leaves its numbers', () => {
+    const play = twoNotes();
+    play.start();
+    down(play, 60, 0);
+    play.advance(BEAT_MS);
+    up(play, 60, BEAT_MS);
+    down(play, 62, BEAT_MS);
+    play.advance(BEAT_MS);
+    up(play, 62, 2 * BEAT_MS);
+
+    play.advance(149);
+    expect(play.snapshot().state).toBe('running');
+    play.advance(1);
+    expect(play.snapshot().state).toBe('ended');
+
+    const record = play.takePerformance();
+    expect(record).toMatchObject({ tempoMode: 'percent', tempoValue: 100, hands: 'both' });
+    expect(record?.seconds).toBeCloseTo(2.15, 6);
+    expect(record?.grade).toEqual({
+      grade: 100,
+      expected: 2,
+      matched: 2,
+      extras: 0,
+      meanTiming: 100,
+      meanVelocity: 100,
+      meanRelease: 100,
+    });
+    expect(play.takePerformance()).toBeNull();
+  });
+
+  test('counts a missed note and a stray key against the grade', () => {
+    const play = twoNotes();
+    play.start();
+    down(play, 60, 0);
+    play.advance(BEAT_MS);
+    up(play, 60, BEAT_MS);
+    down(play, 67, BEAT_MS);
+    play.advance(BEAT_MS + 150);
+
+    // One note of two played, one extra: a full note grade over three.
+    expect(play.takePerformance()?.grade).toMatchObject({
+      grade: 33,
+      expected: 2,
+      matched: 1,
+      extras: 1,
+    });
+  });
+
+  test('grades the active hand only', () => {
+    const play = engine(
+      scoreFrom([
+        {
+          tick: 0,
+          notes: [
+            { midi: 60, hand: 'right', staff: 0 },
+            { midi: 50, hand: 'left', staff: 1 },
+          ],
+        },
+      ]),
+      { hands: 'left' },
+    );
+    play.arm();
+    play.start();
+    down(play, 50, 0);
+    play.advance(BEAT_MS);
+    up(play, 50, BEAT_MS);
+    play.advance(150);
+
+    expect(play.takePerformance()?.grade).toMatchObject({
+      grade: 100,
+      expected: 1,
+      matched: 1,
+      extras: 0,
+    });
+  });
+
+  test('a key still down at the end is graded without its release', () => {
+    // The strike is 20 units under the ideal, so velocity grades 0 and the rest carries the note.
+    const held = engine(scoreFrom([{ tick: 0, notes: [{ midi: 60 }] }]));
+    held.arm();
+    held.start();
+    held.strike({ midi: 60, velocity: 60, time: 0, on: true });
+    held.advance(1150);
+
+    expect(held.takePerformance()?.grade).toMatchObject({ grade: 88, meanRelease: 0 });
+
+    const released = engine(scoreFrom([{ tick: 0, notes: [{ midi: 60 }] }]));
+    released.arm();
+    released.start();
+    released.strike({ midi: 60, velocity: 60, time: 0, on: true });
+    released.advance(BEAT_MS);
+    up(released, 60, BEAT_MS);
+    released.advance(150);
+
+    expect(released.takePerformance()?.grade).toMatchObject({ grade: 90, meanRelease: 100 });
+  });
+
+  test('an aborted run leaves no record of any kind', () => {
+    const play = twoNotes();
+    play.start();
+    down(play, 60, 0);
+    play.advance(BEAT_MS);
+    play.abort();
+
+    expect(play.takePerformance()).toBeNull();
+    expect(play.takePractice()).toBeNull();
+    expect(play.snapshot()).toMatchObject({ state: 'idle', kind: 'practice', playedTick: 0 });
+  });
+
+  test('the pause disc ends it the way Stop does', () => {
+    const play = twoNotes();
+    play.start();
+    play.advance(BEAT_MS);
+    play.pause();
+
+    expect(play.snapshot()).toMatchObject({ state: 'idle', kind: 'practice' });
+    expect(play.takePerformance()).toBeNull();
+  });
+
+  test('Play again from the end runs a fresh performance', () => {
+    const play = twoNotes();
+    play.start();
+    play.advance(3000);
+    expect(play.snapshot().state).toBe('ended');
+    play.takePerformance();
+
+    play.start();
+    expect(play.snapshot()).toMatchObject({ state: 'running', kind: 'performance', playedTick: 0 });
+    expect(play.noteState(0)).toBe('pending');
   });
 });

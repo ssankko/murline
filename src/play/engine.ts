@@ -1,7 +1,8 @@
 // The play engine: the clock of one play and where it stands in the Score. Pure TypeScript, no
 // DOM, no React, no timer of its own. The screen owns the frame loop and feeds it wall time.
 
-import type { PlaySettings } from '@/play/settings';
+import { playGrade, type NoteStrike, type PlayGrade } from '@/play/grade';
+import type { HandsSetting, PlaySettings, TempoMode } from '@/play/settings';
 import { WaitState } from '@/play/wait';
 import {
   TICKS_PER_QUARTER,
@@ -58,6 +59,27 @@ export interface PracticeRecord {
   startedAt: number;
   /** Time the clock actually moved, count-in and pauses left out. */
   seconds: number;
+}
+
+/** What one finished performance leaves for the library: its time, its settings and its numbers. */
+export interface PerformanceRecord {
+  startedAt: number;
+  /** Time the clock moved, count-in left out. */
+  seconds: number;
+  tempoMode: TempoMode;
+  tempoValue: number;
+  hands: HandsSetting;
+  /** Null when the run asked nothing of the player, so there was nothing to grade. */
+  grade: PlayGrade | null;
+}
+
+/** What a matched note gathers while the play runs, before Grade reads it. */
+interface Struck {
+  timingMs: number;
+  velocity: number;
+  onMs: number;
+  /** Wall-clock milliseconds the key came up, null while it is still down. */
+  offMs: number | null;
 }
 
 /** How a note reads in the lane. */
@@ -138,6 +160,13 @@ export class Engine {
   private startStep = 0;
   private passedOnset = false;
   private record: PracticeRecord | null = null;
+  /** The settings a performance started at; a live write to `settings` does not reach the run. */
+  private frozen: Pick<PlaySettings, 'tempoMode' | 'tempoValue' | 'hands' | 'mode'> | null = null;
+  /** What each matched note gathered, by index into `notes`. */
+  private struck: (Struck | undefined)[] = [];
+  /** Strikes that matched nothing, which enlarge the denominator of the grade. */
+  private extras = 0;
+  private performance: PerformanceRecord | null = null;
 
   constructor(score: Score, settings: PlaySettings) {
     this.score = score;
@@ -147,6 +176,11 @@ export class Engine {
     this.states = this.notes.map(() => 'pending');
     this.resolved = this.notes.map(() => 0);
     this.beatGrid = beatGridOf(score);
+  }
+
+  /** What the clock and the matching run on: a performance keeps the settings it started at. */
+  private get live(): Pick<PlaySettings, 'tempoMode' | 'tempoValue' | 'hands' | 'mode'> {
+    return this.frozen ?? this.settings;
   }
 
   noteState(index: number): NoteState {
@@ -200,6 +234,16 @@ export class Engine {
     return record;
   }
 
+  /**
+   * Takes the performance the end left to be stored, if any. An aborted performance leaves nothing,
+   * and nothing is left twice.
+   */
+  takePerformance(): PerformanceRecord | null {
+    const record = this.performance;
+    this.performance = null;
+    return record;
+  }
+
   /** Played tick the play stops at: the last written duration plus the matching window. */
   get endTick(): number {
     return this.lastSoundingTick + this.msToTicks(this.settings.matchingWindowMs, this.lastSoundingTick);
@@ -238,11 +282,35 @@ export class Engine {
     this.startedAt = 0;
     this.startStep = this.stepAt(this.startTick);
     this.passedOnset = false;
+    this.struck = [];
+    this.extras = 0;
+    this.performance = null;
+    // A performance runs the whole piece in Flow at the tempo and hands it was started with.
+    const { tempoMode, tempoValue, hands } = this.settings;
+    this.frozen =
+      this.kind === 'performance' ? { tempoMode, tempoValue, hands, mode: 'flow' } : null;
     this.beginMotion(this.startTick);
+  }
+
+  /**
+   * Arms a performance, Idle at bar one. The practice it interrupts stops here, so its time is
+   * stored on the way in.
+   */
+  arm(): void {
+    this.abort();
+    this.kind = 'performance';
+    this.startTick = 0;
+    this.tick = 0;
+    this.syncBeats();
   }
 
   /** Practice only: the clock freezes and the cursor drops back to the bar it stands in. */
   pause(): void {
+    // A performance has no pause: the disc, Stop and Escape all end it, and it leaves no row.
+    if (this.kind === 'performance') {
+      this.abort();
+      return;
+    }
     // A count-in is not motion to pause: the play drops back to Idle where the count-in led, which
     // is a stop, so what it had already played is stored.
     if (this.state === 'counting-in') {
@@ -268,6 +336,10 @@ export class Engine {
   /** Back to Idle at the start point, whatever the play was doing. */
   abort(): void {
     this.stopRecord();
+    // Whatever a performance had reached dies with it; only a complete run leaves a row.
+    this.kind = 'practice';
+    this.frozen = null;
+    this.performance = null;
     this.state = 'idle';
     this.tick = this.startTick;
     this.stopStep = null;
@@ -298,7 +370,7 @@ export class Engine {
     if (this.startedAt === 0) this.startedAt = this.wall;
     this.motionMs += ms;
     // A play switched to Flow glides on from wherever Wait mode was holding it.
-    if (this.settings.mode !== 'wait') this.stopStep = null;
+    if (this.live.mode !== 'wait') this.stopStep = null;
     if (this.stopStep !== null) {
       // A live hands change can leave the Onset the cursor waits at asking for less, or nothing.
       if (this.requiredOf(this.stopStep).length === 0) this.stopStep = null;
@@ -326,7 +398,10 @@ export class Engine {
       if (this.tick >= end) {
         // A practice ends back where it started; a performance stays for its summary card.
         if (this.kind === 'practice') this.abort();
-        else this.state = 'ended';
+        else {
+          this.state = 'ended';
+          this.endRecord();
+        }
         return;
       }
       if (this.tick === stopTick) {
@@ -413,6 +488,39 @@ export class Engine {
     this.passedOnset = false;
   }
 
+  /**
+   * The numbers a complete performance leaves. Only expected notes whose matching window closed
+   * before the end count; a key still down has no release ratio.
+   */
+  private endRecord(): void {
+    const notes: (NoteStrike | null)[] = [];
+    for (let i = 0; i < this.closed; i++) {
+      const note = this.notes[i]!;
+      if (!this.isExpected(note)) continue;
+      const struck = this.struck[i];
+      if (!struck) {
+        notes.push(null);
+        continue;
+      }
+      const held = struck.offMs === null ? null : struck.offMs - struck.onMs;
+      const written = note.durationTicks / this.ticksPerMs(note.tick);
+      notes.push({
+        timingMs: struck.timingMs,
+        velocity: struck.velocity,
+        ideal: note.note.velocity,
+        release: held === null || written <= 0 ? null : held / written,
+      });
+    }
+    this.performance = {
+      startedAt: this.startedAt,
+      seconds: this.motionMs / 1000,
+      tempoMode: this.live.tempoMode,
+      tempoValue: this.live.tempoValue,
+      hands: this.live.hands,
+      grade: playGrade(notes, this.extras, this.settings, this.score.hasDynamics),
+    };
+  }
+
   private measureAt(playedTick: number): Measure | undefined {
     const step = this.score.playOrder[this.stepAt(playedTick)];
     const onset = step ? this.score.onsets[step.onsetIndex] : undefined;
@@ -426,6 +534,9 @@ export class Engine {
    */
   strike(event: StrikeEvent): void {
     if (!event.on) {
+      const matched = this.held.get(event.midi) ?? BLOCKING;
+      const struck = matched < 0 ? undefined : this.struck[matched];
+      if (struck && struck.offMs === null) struck.offMs = event.time;
       this.held.delete(event.midi);
       this.wait.release(event.midi);
       // A blocking or a required key coming up may be the last thing a stop was waiting for.
@@ -445,6 +556,13 @@ export class Engine {
     const window = this.msToTicks(this.settings.matchingWindowMs, at);
     const hit = this.nearest(event.midi, at, window, true);
     if (hit >= 0) {
+      const note = this.notes[hit]!;
+      this.struck[hit] = {
+        timingMs: (at - note.tick) / this.ticksPerMs(note.tick),
+        velocity: event.velocity,
+        onMs: event.time,
+        offMs: null,
+      };
       this.states[hit] = 'hit';
       this.resolved[hit] = event.time;
       this.held.set(event.midi, hit);
@@ -452,6 +570,7 @@ export class Engine {
       return;
     }
     const absorbed = this.nearest(event.midi, at, window, false) >= 0;
+    if (!absorbed) this.extras++;
     this.held.set(event.midi, absorbed ? ABSORBED : BLOCKING);
     this.pending.push({
       verdict: absorbed ? 'absorbed' : 'extra',
@@ -468,7 +587,7 @@ export class Engine {
 
   /** In Flow mode the player is asked for the strikeable notes of the active hand, graces aside. */
   private isExpected(note: PlayNote): boolean {
-    const { hands } = this.settings;
+    const { hands } = this.live;
     return !note.grace && (hands === 'both' || hands === note.hand);
   }
 
@@ -527,7 +646,7 @@ export class Engine {
   }
 
   private ticksPerMs(playedTick: number): number {
-    const { tempoMode, tempoValue } = this.settings;
+    const { tempoMode, tempoValue } = this.live;
     const written = writtenBpm(this.score, this.sheetTickOf(playedTick));
     const bpm = tempoMode === 'bpm' ? tempoValue : (written * tempoValue) / 100;
     return (bpm * TICKS_PER_QUARTER) / 60_000;
@@ -584,7 +703,7 @@ export class Engine {
 
   /** Wait mode only bites while the play is moving through the Score. */
   private get waiting(): boolean {
-    return this.settings.mode === 'wait' && this.state === 'running';
+    return this.live.mode === 'wait' && this.state === 'running';
   }
 
   /** A held key whose strike matched nothing blocks every Onset until it comes up. */

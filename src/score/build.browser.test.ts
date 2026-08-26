@@ -107,11 +107,13 @@ describe('tempo and dynamics on a MuseScore 4 export', () => {
     expect(at(5, 0)).toEqual([96, 96, 96, 96]);
     expect(at(1, 1)).toEqual([64, 64]);
     expect(at(8, 1)).toEqual([64, 64]);
+    expect(built.hasDynamics).toBe(true);
   });
 
   test('a score without a dynamics mark gives every note the middle velocity', async () => {
     const built = await score('JohannSebastianBach_PraeludiumInCDur_BWV846_1.xml');
     expect(built.onsets.flatMap((o) => o.notes).every((n) => n.velocity === 80)).toBe(true);
+    expect(built.hasDynamics).toBe(false);
   });
 });
 

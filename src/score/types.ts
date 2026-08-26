@@ -127,6 +127,8 @@ export interface Score {
   hasTempo: boolean;
   /** One tempo for the whole piece, which is what allows BPM mode. */
   constantTempo: boolean;
+  /** False when the file writes no dynamics mark, which is what drops velocity out of a Grade. */
+  hasDynamics: boolean;
   measures: Measure[];
   keys: KeyChange[];
   chords: ChordSymbol[];

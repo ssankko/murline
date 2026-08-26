@@ -19,6 +19,22 @@ export type Settings = {
   keyboard_labels: boolean;
   /** Loudness of the metronome click, 0 to 100. */
   click_volume: number;
+
+  // Grade knobs. Global only, so two grades of one piece stay comparable.
+
+  grade_timing_flat_ms: number;
+  grade_timing_zero_ms: number;
+  grade_velocity_flat: number;
+  grade_velocity_zero: number;
+  grade_release_flat_lo: number;
+  grade_release_flat_hi: number;
+  grade_release_zero_lo: number;
+  grade_release_zero_hi: number;
+  grade_weight_timing: number;
+  grade_weight_velocity: number;
+  grade_weight_release: number;
+  /** Added to every strike's velocity before Grade reads it, to true up a keyboard. */
+  velocity_offset: number;
 };
 
 let opening: Promise<Database> | undefined;

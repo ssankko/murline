@@ -1,16 +1,40 @@
 import { Button } from '@/components/ui/button';
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { listPieces, setFavorite, type PieceRow, type SortOrder } from '@/library/queries';
+import {
+  importFiles,
+  SCORE_EXTENSIONS,
+  type ClashChoice,
+  type ImportFailure,
+} from '@/library/import';
+import { setNotice, useNotice } from '@/library/notice';
+import {
+  deletePiece,
+  listPieces,
+  setFavorite,
+  type PieceRow,
+  type SortOrder,
+} from '@/library/queries';
 import { scanLibrary } from '@/library/scan';
 import { colorOf, noteName } from '@/look/color';
 import { useDark } from '@/look/use-dark';
 import { RangeStrip } from '@/screens/range-strip';
+import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
+import { open } from '@tauri-apps/plugin-dialog';
 import { Settings } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -26,8 +50,11 @@ const SORTS: [SortOrder, string][] = [
 export function Library({ folder }: { folder: string | null }) {
   const [pieces, setPieces] = useState<PieceRow[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [sort, setSort] = useState<SortOrder>('title');
+  const [folderGone, setFolderGone] = useState(false);
+  const [notice, dismissNotice] = useNotice();
+  const [dragging, setDragging] = useState(false);
+  const [clash, setClash] = useState<Clash | null>(null);
 
   // The scan runs once, at launch. Nothing watches the folder and the page never rescans.
   useEffect(() => {
@@ -36,13 +63,24 @@ export function Library({ folder }: { folder: string | null }) {
       try {
         if (folder) await scanLibrary(folder);
       } catch {
-        if (live) setNotice('Library folder not found');
+        if (live) setFolderGone(true);
       }
       const rows = await listPieces();
       if (live) setPieces(rows);
     })();
     return () => {
       live = false;
+    };
+  }, [folder]);
+
+  // Dropped paths come from the window event: WKWebView never hands the DOM a real file path.
+  useEffect(() => {
+    const listening = getCurrentWebview().onDragDropEvent((event) => {
+      setDragging(event.payload.type === 'enter' || event.payload.type === 'over');
+      if (event.payload.type === 'drop') void runImport(event.payload.paths);
+    });
+    return () => {
+      void listening.then((unlisten) => unlisten());
     };
   }, [folder]);
 
@@ -59,8 +97,47 @@ export function Library({ folder }: { folder: string | null }) {
 
   const piece = pieces.find((p) => p.path === selected) ?? pieces[0];
 
+  /** Asks Replace, Keep both or Cancel and waits for the click. */
+  function askClash(fileName: string): Promise<ClashChoice> {
+    return new Promise((resolve) =>
+      setClash({
+        fileName,
+        decide: (choice) => {
+          setClash(null);
+          resolve(choice);
+        },
+      }),
+    );
+  }
+
+  async function runImport(paths: string[]): Promise<void> {
+    if (!folder) return;
+    const { imported, failures } = await importFiles(folder, paths, askClash);
+    setPieces(await listPieces(sort));
+    if (imported.length) setSelected(imported[imported.length - 1]!);
+    setNotice(failures.length ? failureNotice(failures) : null);
+  }
+
+  async function pickFiles(): Promise<void> {
+    const picked = await open({
+      multiple: true,
+      filters: [{ name: 'Sheet music', extensions: SCORE_EXTENSIONS }],
+    });
+    if (picked) await runImport(picked);
+  }
+
+  /** Trash, row, plays, then the row that took its place in the list. */
+  async function remove(target: PieceRow): Promise<void> {
+    await invoke('trash_file', { path: `${folder}/${target.path}` });
+    await deletePiece(target.path);
+    const at = pieces.findIndex((row) => row.path === target.path);
+    const rows = await listPieces(sort);
+    setPieces(rows);
+    setSelected((rows[at] ?? rows[rows.length - 1])?.path ?? null);
+  }
+
   return (
-    <div className="flex h-full">
+    <div className="relative flex h-full">
       <div className="border-edge-soft flex w-[340px] flex-none flex-col border-r">
         <div className="flex items-center gap-2 px-4 pt-3.5 pb-2.5">
           <h1 className="mr-auto text-[15px] font-semibold">Library</h1>
@@ -88,11 +165,24 @@ export function Library({ folder }: { folder: string | null }) {
           </Button>
         </div>
 
-        {notice && (
+        {folderGone && (
           <p className="border-edge-soft border-y px-4 py-2 text-[12px]">
-            {notice}
+            Library folder not found
             <span className="text-muted-ink"> {folder}</span>
           </p>
+        )}
+
+        {notice && (
+          <div className="border-edge-soft flex items-start gap-2 border-y px-4 py-2 text-[12px]">
+            <p className="whitespace-pre-line">{notice}</p>
+            <button
+              onClick={dismissNotice}
+              aria-label="Dismiss"
+              className="text-muted-ink hover:text-ink ml-auto flex-none"
+            >
+              ✕
+            </button>
+          </div>
         )}
 
         <div className="flex-1 overflow-y-auto">
@@ -110,7 +200,7 @@ export function Library({ folder }: { folder: string | null }) {
         </div>
 
         <div className="border-edge-soft flex gap-2 border-t px-3 py-2.5">
-          <Button variant="outline" size="sm" disabled>
+          <Button variant="outline" size="sm" disabled={!folder} onClick={() => void pickFiles()}>
             Import
           </Button>
           <Button variant="outline" size="sm" disabled>
@@ -120,7 +210,12 @@ export function Library({ folder }: { folder: string | null }) {
       </div>
 
       {piece ? (
-        <Detail piece={piece} folder={folder} onFavorite={() => void toggleFavorite(piece)} />
+        <Detail
+          piece={piece}
+          folder={folder}
+          onFavorite={() => void toggleFavorite(piece)}
+          onDelete={() => void remove(piece)}
+        />
       ) : (
         <div className="flex flex-1 items-center justify-center px-12">
           <div className="flex max-w-[420px] flex-col gap-2 text-center">
@@ -129,8 +224,50 @@ export function Library({ folder }: { folder: string | null }) {
           </div>
         </div>
       )}
+
+      {dragging && (
+        <div className="border-ink/40 bg-paper/80 pointer-events-none absolute inset-3 z-50 flex items-center justify-center rounded border-2 border-dashed text-[15px]">
+          Drop sheet music to import
+        </div>
+      )}
+
+      {clash && (
+        <Dialog open onOpenChange={() => clash.decide('cancel')}>
+          <DialogContent showCloseButton={false} className="sm:max-w-[420px]">
+            <DialogHeader>
+              <DialogTitle className="text-[15px]">{clash.fileName}</DialogTitle>
+              <DialogDescription>
+                The library folder already holds a file of this name.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="ghost" size="sm" onClick={() => clash.decide('cancel')}>
+                Cancel
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => clash.decide('keep-both')}>
+                Keep both
+              </Button>
+              <Button size="sm" onClick={() => clash.decide('replace')}>
+                Replace
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
+}
+
+/** A name already in the folder, waiting on the user's answer. */
+interface Clash {
+  fileName: string;
+  decide: (choice: ClashChoice) => void;
+}
+
+/** One line naming the count, then one line per file with its reason. */
+function failureNotice(failures: ImportFailure[]): string {
+  const head = `${failures.length} file${failures.length === 1 ? '' : 's'} could not be imported`;
+  return [head, ...failures.map((f) => `${f.fileName} — ${f.reason}`)].join('\n');
 }
 
 /** Two lines and a grade. A piece the app could not read shows its reason in place of the composer. */
@@ -174,12 +311,15 @@ function Detail({
   piece,
   folder,
   onFavorite,
+  onDelete,
 }: {
   piece: PieceRow;
   folder: string | null;
   onFavorite: () => void;
+  onDelete: () => void;
 }) {
   const broken = !!piece.error;
+  const fullPath = folder ? `${folder}/${piece.path}` : piece.path;
   return (
     <div className="flex-1 overflow-y-auto px-12 py-10">
       <div className="flex max-w-[640px] flex-col">
@@ -199,9 +339,13 @@ function Detail({
                   {piece.part_name}, 1 of {piece.part_count} parts
                 </span>
               )}
-              <code className="text-[11.5px]">
-                {folder ? `${folder}/${piece.path}` : piece.path}
-              </code>
+              <code className="text-[11.5px]">{fullPath}</code>
+              <button
+                onClick={() => void invoke('reveal_in_finder', { path: fullPath })}
+                className="hover:text-ink underline underline-offset-2"
+              >
+                Reveal in Finder
+              </button>
             </div>
           </div>
           <div className="flex flex-none gap-1">
@@ -214,7 +358,7 @@ function Detail({
             >
               Favorite
             </Button>
-            <Button variant="outline" size="sm" disabled>
+            <Button variant="outline" size="sm" onClick={onDelete}>
               Delete
             </Button>
           </div>
@@ -223,7 +367,12 @@ function Detail({
         {broken ? (
           <div className="mt-7 flex flex-col gap-1.5 text-[13px]">
             <b className="font-semibold">{reasonOf(piece.error!)}</b>
-            <code className="text-muted-ink whitespace-pre-wrap">{detailOf(piece.error!)}</code>
+            <details className="text-muted-ink text-[12px]">
+              <summary className="cursor-pointer select-none">Details</summary>
+              <code className="mt-1 block text-[11.5px] whitespace-pre-wrap">
+                {detailOf(piece.error!)}
+              </code>
+            </details>
           </div>
         ) : (
           <>

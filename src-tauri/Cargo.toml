@@ -21,6 +21,7 @@ tauri = { version = "2.11.5", features = [] }
 tauri-plugin-dialog = "2.7.0"
 tauri-plugin-midi = "0.2.0"
 tauri-plugin-sql = { version = "2.4.0", features = ["sqlite"] }
+trash = { version = "5", default-features = false }
 unicode-normalization = "0.1"
 zip = { version = "4", default-features = false, features = ["deflate-flate2"] }
 

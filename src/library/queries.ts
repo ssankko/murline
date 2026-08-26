@@ -154,3 +154,10 @@ export async function markPresent(path: string): Promise<void> {
   const db = await getDb();
   await db.execute('UPDATE piece SET present = 1 WHERE path = $1', [path]);
 }
+
+/** Drops the piece and its plays. The file itself goes to the Trash first, through `trash_file`. */
+export async function deletePiece(path: string): Promise<void> {
+  const db = await getDb();
+  await db.execute('DELETE FROM play WHERE piece_path = $1', [path]);
+  await db.execute('DELETE FROM piece WHERE path = $1', [path]);
+}

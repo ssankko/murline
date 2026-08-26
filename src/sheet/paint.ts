@@ -28,6 +28,8 @@ export function applyTheme(osmd: OpenSheetMusicDisplay, dark: boolean): void {
   rules.DefaultColorStem = duration;
   rules.DefaultColorRest = duration;
   rules.DefaultColorNotehead = duration;
+  // The credits are only printed by the Preview, and they read as ink rather than as scaffolding.
+  rules.DefaultColorTitle = duration;
   rules.MetronomeMarkYShift = 2.5;
 }
 

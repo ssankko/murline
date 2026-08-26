@@ -22,6 +22,15 @@ export interface PieceRow {
   part_name: string | null;
   favorite: number;
   error: string | null;
+  /** Piece settings. NULL in any of them means the piece inherits the global default. */
+  tempo_mode: string | null;
+  tempo_value: number | null;
+  metronome: number | null;
+  count_in_bars: number | null;
+  hands: string | null;
+  keyboard_preset: string | null;
+  keyboard_lo: number | null;
+  keyboard_hi: number | null;
   best_grade: number | null;
   last_played: number | null;
   practised_s: number | null;
@@ -74,9 +83,50 @@ export async function listPieces(sort: SortOrder = 'title'): Promise<PieceRow[]>
   return db.select<PieceRow[]>(
     `SELECT path, title, composer, measure_count, duration_s, midi_lo, midi_hi, has_tempo,
             constant_tempo, key_sharps, key_mode, part_count, part_name, favorite, error,
+            tempo_mode, tempo_value, metronome, count_in_bars, hands, keyboard_preset,
+            keyboard_lo, keyboard_hi,
             ${HISTORY}
      FROM piece WHERE present = 1 ${where} ORDER BY ${order}`,
   );
+}
+
+/** The piece settings as their columns; a column set to null makes the piece inherit again. */
+export type PieceSettingValues = Partial<{
+  tempo_mode: string | null;
+  tempo_value: number | null;
+  metronome: number | null;
+  count_in_bars: number | null;
+  hands: string | null;
+  keyboard_preset: string | null;
+  keyboard_lo: number | null;
+  keyboard_hi: number | null;
+}>;
+
+/** What "Use global defaults" writes: the piece forgets every setting of its own. */
+export const INHERIT_EVERY_SETTING: Required<PieceSettingValues> = {
+  tempo_mode: null,
+  tempo_value: null,
+  metronome: null,
+  count_in_bars: null,
+  hands: null,
+  keyboard_preset: null,
+  keyboard_lo: null,
+  keyboard_hi: null,
+};
+
+/** Stores what the play screen just changed. Column names come from the type, never from input. */
+export async function updatePieceSettings(
+  path: string,
+  values: PieceSettingValues,
+): Promise<void> {
+  const entries = Object.entries(values);
+  if (entries.length === 0) return;
+  const db = await getDb();
+  const set = entries.map(([column], at) => `${column} = $${at + 2}`).join(', ');
+  await db.execute(`UPDATE piece SET ${set} WHERE path = $1`, [
+    path,
+    ...entries.map(([, value]) => value),
+  ]);
 }
 
 /** The one thing the library writes about a piece. */
@@ -90,6 +140,8 @@ export async function getPiece(path: string): Promise<PieceRow | null> {
   const rows = await db.select<PieceRow[]>(
     `SELECT path, title, composer, measure_count, duration_s, midi_lo, midi_hi, has_tempo,
             constant_tempo, key_sharps, key_mode, part_count, part_name, favorite, error,
+            tempo_mode, tempo_value, metronome, count_in_bars, hands, keyboard_preset,
+            keyboard_lo, keyboard_hi,
             ${HISTORY}
      FROM piece WHERE path = $1`,
     [path],

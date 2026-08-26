@@ -77,6 +77,12 @@ export function keyRange(notes: readonly PlayNote[], settings: PlaySettings): [n
   return [Math.floor(lo / 12) * 12, Math.floor(hi / 12) * 12 + 11];
 }
 
+/** The two strikes of "Detect from keyboard" as a range: the lower key is the low end, whichever
+ * of the two was struck first. */
+export function detectedRange(first: number, second: number): [number, number] {
+  return first <= second ? [first, second] : [second, first];
+}
+
 /**
  * Draws the keys, blacks over whites. `fill` gives each key its face: the base grey, or whatever
  * the play says it is right now.

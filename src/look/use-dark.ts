@@ -1,13 +1,15 @@
 import { useSyncExternalStore } from 'react';
 
+/** System reads `prefers-color-scheme`; the other two pin the paper against it. */
+export type Theme = 'system' | 'light' | 'dark';
+
 const query = window.matchMedia('(prefers-color-scheme: dark)');
 const listeners = new Set<() => void>();
 
-/** Set once the user pins a theme with the `d` key; until then the system decides. */
-let pinned: boolean | null = null;
+let theme: Theme = 'system';
 
 function dark(): boolean {
-  return pinned ?? query.matches;
+  return theme === 'system' ? query.matches : theme === 'dark';
 }
 
 function subscribe(onChange: () => void): () => void {
@@ -24,10 +26,23 @@ export function useDark(): boolean {
   return useSyncExternalStore(subscribe, dark);
 }
 
-/** The other paper. The class pins the CSS variables against the system setting. */
-export function flipTheme(): void {
-  pinned = !dark();
-  document.documentElement.classList.toggle('dark', pinned);
-  document.documentElement.classList.toggle('light', !pinned);
+/** The theme setting as it stands, for the control that shows it. */
+export function useTheme(): Theme {
+  return useSyncExternalStore(subscribe, () => theme);
+}
+
+/** Paints the app in a theme. The class pins the CSS variables; System takes both classes off. */
+export function setTheme(next: Theme): void {
+  theme = next;
+  const root = document.documentElement.classList;
+  root.toggle('dark', next === 'dark');
+  root.toggle('light', next === 'light');
   for (const notify of listeners) notify();
+}
+
+/** The other paper, as an explicit setting. Returns what to store. */
+export function flipTheme(): Theme {
+  const next = dark() ? 'light' : 'dark';
+  setTheme(next);
+  return next;
 }

@@ -6,6 +6,17 @@ export type Settings = {
   /** The folder holding `mxl/` from the unpacked PDMX tarball; NULL until the user picks one. */
   pdmx_folder: string;
   onboarding_done: boolean;
+  /** Id of the one MIDI input port to listen on; NULL listens on every port. */
+  midi_device: string;
+  /** Share of the window height the sheet takes, 0.2 to 0.6. */
+  sheet_split: number;
+  /** Beats of lane visible above the now-line. */
+  lane_lookahead: number;
+  /** Width of a falling block as a percent of its key. */
+  lane_note_width: number;
+  /** Gap between two blocks of the same key, in pixels. */
+  lane_gap: number;
+  keyboard_labels: boolean;
 };
 
 let opening: Promise<Database> | undefined;
@@ -33,4 +44,16 @@ export async function setSetting<K extends keyof Settings>(
     'INSERT INTO setting (key, value) VALUES ($1, $2) ON CONFLICT(key) DO UPDATE SET value = $2',
     [key, JSON.stringify(value)],
   );
+}
+
+/** A global setting, with the default for one never written or a database that will not open. */
+export async function getSettingOr<K extends keyof Settings>(
+  key: K,
+  fallback: Settings[K],
+): Promise<Settings[K]> {
+  try {
+    return (await getSetting(key)) ?? fallback;
+  } catch {
+    return fallback;
+  }
 }

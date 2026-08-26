@@ -2,13 +2,23 @@
 // one frame loop, no state of the play in React beyond what the bar has to draw.
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { getSettingOr, setSetting } from '@/db/db';
+import {
+  DEFAULT_LANE_LOOK,
+  DEFAULT_SPLIT,
+  Lane,
+  SPLIT_MAX,
+  SPLIT_MIN,
+  type LaneLook,
+} from '@/lane/lane';
 import { setNotice } from '@/library/notice';
 import { reindexIfChanged } from '@/library/scan';
 import { flipTheme, useDark } from '@/look/use-dark';
+import { useMidiStatus } from '@/midi/useMidiStatus';
 import { create, type Engine, type PlayState } from '@/play/engine';
 import { DEFAULT_PLAY_SETTINGS } from '@/play/settings';
 import { useFrameLoop } from '@/play/use-frame-loop';
-import { ScoreError } from '@/score/types';
+import { ScoreError, type Note } from '@/score/types';
 import { Sheet } from '@/sheet/sheet';
 import { invoke } from '@tauri-apps/api/core';
 import {
@@ -30,8 +40,8 @@ import { useEffect, useRef, useState } from 'react';
 /** One size and one stroke for every icon in the bar. */
 const ICON = { size: 18, strokeWidth: 1.75 } as const;
 
-/** Share of the window height the sheet takes. Ticket 06 makes it a draggable setting. */
-const SPLIT = 0.35;
+/** Height of the top bar, the strip the split does not divide. */
+const TOP_BAR = 48;
 
 const TEMPO_STEP = 5;
 const TEMPO_MIN = 25;
@@ -51,8 +61,12 @@ export function PlayScreen({
   onBack: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const sheetRef = useRef<Sheet | null>(null);
   const engineRef = useRef<Engine | null>(null);
+  const laneRef = useRef<Lane | null>(null);
+  /** Notes wearing a red miss mark, so the next start of motion can take them all off. */
+  const missedRef = useRef<Note[]>([]);
   const dark = useDark();
   const darkRef = useRef(dark);
   darkRef.current = dark;
@@ -65,6 +79,11 @@ export function PlayScreen({
   const [tempo, setTempo] = useState(DEFAULT_PLAY_SETTINGS.tempoValue);
   const tempoRef = useRef(tempo);
   tempoRef.current = tempo;
+  const [split, setSplit] = useState(DEFAULT_SPLIT);
+
+  const midi = useMidiStatus((event) => engineRef.current?.strike(event));
+  const midiRef = useRef(midi);
+  midiRef.current = midi;
 
   // Opening a piece: bring its index up to date in case the file changed, read the bytes, render
   // the sheet and build the Score of what was rendered. Any failure goes back to the library.
@@ -77,13 +96,17 @@ export function PlayScreen({
         const bytes = new Uint8Array(
           await invoke<ArrayBuffer>('read_file', { path: `${folder}/${path}` }),
         );
+        const look = await laneLook();
         const sheet = await Sheet.open(hostRef.current!, bytes, fileName, darkRef.current);
         if (!live) return sheet.dispose();
         sheetRef.current = sheet;
-        engineRef.current = create(sheet.score, {
+        const engine = create(sheet.score, {
           ...DEFAULT_PLAY_SETTINGS,
           tempoValue: tempoRef.current,
         });
+        engineRef.current = engine;
+        laneRef.current = new Lane(canvasRef.current!, engine, look.lane, darkRef.current);
+        setSplit(look.split);
         setTitle(sheet.score.title || fileName);
       } catch (error) {
         // The play screen has no error state: the library says what went wrong instead.
@@ -98,12 +121,21 @@ export function PlayScreen({
       sheetRef.current?.dispose();
       sheetRef.current = null;
       engineRef.current = null;
+      laneRef.current = null;
     };
   }, [folder, path]);
 
   useEffect(() => {
     sheetRef.current?.setDark(dark);
+    laneRef.current?.setDark(dark);
   }, [dark]);
+
+  // An unplugged cable must not run the cursor away from a player who cannot answer it.
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine || midi.devices.length > 0) return;
+    if (engine.kind === 'practice' && engine.snapshot().state === 'running') engine.pause();
+  }, [midi.devices]);
 
   useEffect(() => {
     const engine = engineRef.current;
@@ -113,10 +145,22 @@ export function PlayScreen({
   useFrameLoop((delta, now) => {
     const engine = engineRef.current;
     const sheet = sheetRef.current;
-    if (!engine || !sheet) return;
-    engine.advance(delta);
+    const lane = laneRef.current;
+    if (!engine || !sheet || !lane) return;
+    // Strikes carry the plugin's Unix timestamp, so the clock takes wall time on the same timeline.
+    engine.advance(delta, performance.timeOrigin + now);
     const snapshot = engine.snapshot();
+    for (const event of engine.events()) {
+      lane.effect(event, now);
+      if (event.verdict === 'miss') {
+        const note = engine.notes[event.noteIndex]!.note;
+        missedRef.current.push(note);
+        sheet.markNote(note, 'miss');
+      }
+    }
     sheet.frame(snapshot, engine.windowTicks, now);
+    lane.notice = midiRef.current.devices.length === 0 ? 'no MIDI device' : null;
+    lane.frame(snapshot, engine.windowTicks, now);
     if (snapshot.state !== stateRef.current) {
       stateRef.current = snapshot.state;
       setState(snapshot.state);
@@ -147,7 +191,12 @@ export function PlayScreen({
     const { state: at } = engine.snapshot();
     if (at === 'running') engine.pause();
     else if (at === 'paused') engine.resume();
-    else engine.start();
+    else {
+      // Marks and colours of the last run stay on the sheet until motion starts again.
+      for (const note of missedRef.current) sheetRef.current?.markNote(note, 'none');
+      missedRef.current.length = 0;
+      engine.start();
+    }
   }
 
   const running = state === 'running' || state === 'counting-in';
@@ -224,13 +273,56 @@ export function PlayScreen({
           </div>
         </div>
 
-        <div ref={hostRef} className="bg-paper min-h-0" style={{ flex: `${SPLIT} 1 0` }} />
-        <div
-          className="bg-paper border-edge-soft min-h-0 border-t"
-          style={{ flex: `${1 - SPLIT} 1 0` }}
-        />
+        <div ref={hostRef} className="bg-paper min-h-0" style={{ flex: `${split} 1 0` }} />
+        <Split value={split} onChange={setSplit} />
+        <div className="bg-paper min-h-0" style={{ flex: `${1 - split} 1 0` }}>
+          <canvas ref={canvasRef} className="block h-full w-full" />
+        </div>
       </div>
     </TooltipProvider>
+  );
+}
+
+/** The global settings the lane and the split open with. The gear writes them; ticket 13 draws it. */
+async function laneLook(): Promise<{ lane: LaneLook; split: number }> {
+  const [lookaheadBeats, noteWidthPct, gapPx, keyLabels, split] = await Promise.all([
+    getSettingOr('lane_lookahead', DEFAULT_LANE_LOOK.lookaheadBeats),
+    getSettingOr('lane_note_width', DEFAULT_LANE_LOOK.noteWidthPct),
+    getSettingOr('lane_gap', DEFAULT_LANE_LOOK.gapPx),
+    getSettingOr('keyboard_labels', DEFAULT_LANE_LOOK.keyLabels),
+    getSettingOr('sheet_split', DEFAULT_SPLIT),
+  ]);
+  return {
+    lane: { lookaheadBeats, noteWidthPct, gapPx, keyLabels },
+    split: Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, split)),
+  };
+}
+
+/**
+ * The hairline between sheet and lane: a 9 px hit area over a 1 px line, with a pill to say it can
+ * be dragged. Dragging it shows more or fewer beats and never changes the beat scale.
+ */
+function Split({ value, onChange }: { value: number; onChange: (value: number) => void }) {
+  const drag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.buttons === 0) return;
+    const share = (event.clientY - TOP_BAR) / Math.max(window.innerHeight - TOP_BAR, 1);
+    onChange(Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, share)));
+  };
+  return (
+    <div
+      role="separator"
+      aria-label="Sheet and lane split"
+      className="group relative h-[9px] flex-none cursor-row-resize"
+      onPointerDown={(event) => {
+        event.currentTarget.setPointerCapture(event.pointerId);
+        drag(event);
+      }}
+      onPointerMove={drag}
+      onPointerUp={() => void setSetting('sheet_split', value)}
+    >
+      <i className="bg-edge-soft absolute inset-x-0 top-1 block h-px" />
+      <i className="bg-edge group-hover:bg-muted-ink absolute top-[2px] left-1/2 block h-[5px] w-9 -translate-x-1/2 rounded-full transition-colors duration-150" />
+    </div>
   );
 }
 

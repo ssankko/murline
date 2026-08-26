@@ -47,6 +47,13 @@ pub fn copy_file(src: String, dst: String) -> Result<Stamp, String> {
     copy(Path::new(&src), Path::new(&dst)).map_err(|e| e.to_string())
 }
 
+/// Deletes a file outright. The finder's temp download is the only caller: a file the user never
+/// saw does not belong in the Trash.
+#[tauri::command]
+pub fn remove_file(path: String) -> Result<(), String> {
+    std::fs::remove_file(&path).map_err(|e| e.to_string())
+}
+
 /// Opens the file's folder in the Finder with the file selected.
 #[tauri::command]
 pub fn reveal_in_finder(path: String) -> Result<(), String> {

@@ -3,6 +3,8 @@ import Database from '@tauri-apps/plugin-sql';
 /** Global settings, one row each in `setting`, stored as JSON. NULL means never written. */
 export type Settings = {
   library_folder: string;
+  /** The folder holding `mxl/` from the unpacked PDMX tarball; NULL until the user picks one. */
+  pdmx_folder: string;
   onboarding_done: boolean;
 };
 

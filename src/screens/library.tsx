@@ -14,6 +14,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { baseNameOf } from '@/library/index-file';
 import {
   importFiles,
   SCORE_EXTENSIONS,
@@ -31,6 +32,7 @@ import {
 import { scanLibrary } from '@/library/scan';
 import { colorOf, noteName } from '@/look/color';
 import { useDark } from '@/look/use-dark';
+import { Finder } from '@/screens/finder';
 import { RangeStrip } from '@/screens/range-strip';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
@@ -64,6 +66,7 @@ export function Library({
   const [notice, dismissNotice] = useNotice();
   const [dragging, setDragging] = useState(false);
   const [clash, setClash] = useState<Clash | null>(null);
+  const [finding, setFinding] = useState(false);
 
   // The scan runs once, at launch. Nothing watches the folder and the page never rescans.
   useEffect(() => {
@@ -212,7 +215,12 @@ export function Library({
           <Button variant="outline" size="sm" disabled={!folder} onClick={() => void pickFiles()}>
             Import
           </Button>
-          <Button variant="outline" size="sm" disabled>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!folder}
+            onClick={() => setFinding(true)}
+          >
             Find online
           </Button>
         </div>
@@ -239,6 +247,19 @@ export function Library({
         <div className="border-ink/40 bg-paper/80 pointer-events-none absolute inset-3 z-50 flex items-center justify-center rounded border-2 border-dashed text-[15px]">
           Drop sheet music to import
         </div>
+      )}
+
+      {finding && folder && (
+        <Finder
+          folder={folder}
+          libraryNames={new Set(pieces.map((row) => baseNameOf(row.path)))}
+          onImported={async (relPath) => {
+            setFinding(false);
+            setPieces(await listPieces(sort));
+            setSelected(relPath);
+          }}
+          close={() => setFinding(false)}
+        />
       )}
 
       {clash && (

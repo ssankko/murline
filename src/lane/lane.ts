@@ -5,9 +5,9 @@
 import { KEYBOARD_H, drawKeyboard, keyLayout, keyRange, type KeyLayout } from '@/lane/keyboard';
 import { INK, PAPER, colorOf, tone } from '@/look/color';
 import { reducedMotion } from '@/look/motion';
-import type { Engine, PlayEvent, Snapshot } from '@/play/engine';
+import type { Engine, LoopSpan, PlayEvent, Snapshot } from '@/play/engine';
 import type { HandsSetting } from '@/play/settings';
-import { TICKS_PER_QUARTER, type Hand } from '@/score/types';
+import { TICKS_PER_QUARTER, type Hand, type PlayStep } from '@/score/types';
 
 /** Look knobs, all global settings the gear writes to. */
 export interface LaneLook {
@@ -61,6 +61,7 @@ interface Effect {
 interface LaneBar {
   tick: number;
   number: number;
+  measure: number;
   beatTicks: number;
   endTick: number;
 }
@@ -80,8 +81,10 @@ export class Lane {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private readonly engine: Engine;
-  private readonly bars: LaneBar[];
-  private readonly jumps: LaneJump[];
+  private bars: LaneBar[];
+  private jumps: LaneJump[];
+  /** The walk the bars and the dividers were read from; Loop swaps it for the linear one. */
+  private walk: PlayStep[];
   private readonly range: [number, number];
   private layout: KeyLayout;
   private dark: boolean;
@@ -99,8 +102,9 @@ export class Lane {
     this.engine = engine;
     this.look = look;
     this.dark = dark;
-    this.bars = barsOf(engine);
-    this.jumps = jumpsOf(engine);
+    this.walk = engine.walk;
+    this.bars = barsOf(engine, this.walk);
+    this.jumps = jumpsOf(engine, this.walk);
     this.hands = engine.settings.hands;
     this.handsBefore = this.hands;
     // The range spans both hands, so a change of hands never re-lays the keyboard out.
@@ -152,14 +156,23 @@ export class Lane {
     ctx.fillStyle = tone(PAPER, this.dark);
     ctx.fillRect(0, 0, width, height);
 
+    if (this.engine.walk !== this.walk) {
+      this.walk = this.engine.walk;
+      this.bars = barsOf(this.engine, this.walk);
+      this.jumps = jumpsOf(this.engine, this.walk);
+    }
+
+    const loop = this.engine.loopSpan();
     ctx.save();
     ctx.beginPath();
     ctx.rect(0, 0, width, laneH);
     ctx.clip();
-    this.drawGrid(width, laneH, pxPerTick);
-    this.drawCountIn(width, laneH, pxPerTick);
-    this.drawJumps(width, laneH, pxPerTick);
-    this.drawNotes(laneH, pxPerTick);
+    this.drawGrid(width, laneH, pxPerTick, loop?.to ?? Infinity);
+    this.drawSection(width, laneH, pxPerTick);
+    this.drawCountIn(width, laneH, pxPerTick, this.engine.countInBeats);
+    this.drawNotes(laneH, pxPerTick, loop?.to ?? Infinity, true);
+    if (loop) this.drawNextLap(width, laneH, pxPerTick, loop);
+    this.drawJumps(width, laneH, pxPerTick, loop);
     ctx.restore();
 
     this.drawNowLine(width, laneH, windowTicks * pxPerTick);
@@ -173,14 +186,14 @@ export class Lane {
     return laneH - (tick - this.playedTick) * pxPerTick;
   }
 
-  private drawGrid(width: number, laneH: number, pxPerTick: number): void {
+  private drawGrid(width: number, laneH: number, pxPerTick: number, ceiling: number): void {
     const ctx = this.ctx;
-    const top = this.playedTick + laneH / pxPerTick;
+    const top = Math.min(this.playedTick + laneH / pxPerTick, ceiling);
     ctx.font = '11px ui-monospace, monospace';
     ctx.lineWidth = 1;
     for (const bar of this.bars) {
       if (bar.endTick < this.playedTick) continue;
-      if (bar.tick > top) break;
+      if (bar.tick >= top) break;
       for (let tick = bar.tick; tick < bar.endTick - 1e-9; tick += bar.beatTicks) {
         const y = Math.round(this.y(tick, laneH, pxPerTick)) + 0.5;
         if (y < -20 || y > laneH + 20) continue;
@@ -198,8 +211,7 @@ export class Lane {
   }
 
   /** The count-in: one line per beat left, falling to the now-line where the music starts. */
-  private drawCountIn(width: number, laneH: number, pxPerTick: number): void {
-    const beats = this.engine.countInBeats;
+  private drawCountIn(width: number, laneH: number, pxPerTick: number, beats: number[]): void {
     if (beats.length === 0) return;
     const ctx = this.ctx;
     ctx.font = '600 15px system-ui, sans-serif';
@@ -217,11 +229,53 @@ export class Lane {
     }
   }
 
-  private drawJumps(width: number, laneH: number, pxPerTick: number): void {
+  /**
+   * The lap above the divider: the same bars again, one lap higher, with the count-in beats that
+   * stand between them. Nothing of it carries feedback, because none of it has been played yet.
+   */
+  private drawNextLap(width: number, laneH: number, pxPerTick: number, loop: LoopSpan): void {
+    const beats: number[] = [];
+    for (let tick = loop.to; loop.beat > 0 && tick < loop.from + loop.lap - 1e-9; tick += loop.beat) {
+      beats.push(tick);
+    }
+    // Drawing the lap one lap lower than the clock puts it one lap higher in the lane.
+    const played = this.playedTick;
+    this.playedTick -= loop.lap;
+    this.drawGrid(width, laneH, pxPerTick, loop.to);
+    this.drawNotes(laneH, pxPerTick, loop.to, false);
+    this.playedTick = played;
+    this.drawCountIn(width, laneH, pxPerTick, beats);
+  }
+
+  /** The Section as a tinted band over its bars, whether or not Loop gives it force. */
+  private drawSection(width: number, laneH: number, pxPerTick: number): void {
+    const section = this.engine.section;
+    if (!section) return;
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalAlpha = 0.09;
+    ctx.fillStyle = tone(INK.duration, this.dark);
+    for (const bar of this.bars) {
+      if (bar.measure < section.from || bar.measure > section.to) continue;
+      const top = Math.round(this.y(bar.endTick, laneH, pxPerTick));
+      const bottom = Math.round(this.y(bar.tick, laneH, pxPerTick));
+      if (bottom < 0 || top > laneH) continue;
+      ctx.fillRect(0, top, width, bottom - top);
+    }
+    ctx.restore();
+  }
+
+  /** The wrap divider: the lap goes back to the bar the Section opens at. */
+  private wrapDivider(loop: LoopSpan): LaneJump {
+    const bar = this.bars.find((each) => each.tick <= loop.from && loop.from < each.endTick);
+    return { tick: loop.to, label: `↺ back to bar ${bar?.number ?? 1}` };
+  }
+
+  private drawJumps(width: number, laneH: number, pxPerTick: number, loop: LoopSpan | null): void {
     const ctx = this.ctx;
     const top = this.playedTick + laneH / pxPerTick;
     ctx.font = '13px system-ui, sans-serif';
-    for (const jump of this.jumps) {
+    for (const jump of loop ? [this.wrapDivider(loop)] : this.jumps) {
       if (jump.tick > top) break;
       const y = this.y(jump.tick, laneH, pxPerTick);
       if (y > laneH + 40) continue;
@@ -238,20 +292,21 @@ export class Lane {
     }
   }
 
-  private drawNotes(laneH: number, pxPerTick: number): void {
+  private drawNotes(laneH: number, pxPerTick: number, ceiling: number, live: boolean): void {
     const ctx = this.ctx;
     const engine = this.engine;
-    const top = this.playedTick + laneH / pxPerTick;
+    const top = Math.min(this.playedTick + laneH / pxPerTick, ceiling);
     const fade = Math.min(1, (this.now - this.handsAt) / HANDS_FADE_MS);
     for (let i = 0; i < engine.notes.length; i++) {
       const note = engine.notes[i]!;
-      if (note.tick > top) break;
+      if (note.tick >= top) break;
       const bottom = this.y(note.tick, laneH, pxPerTick);
       if (bottom < -10) continue;
       const key = this.layout.byMidi.get(note.midi);
       if (!key) continue;
 
-      const y = this.y(note.tick + note.durationTicks, laneH, pxPerTick);
+      // A note hanging over the wrap is cut at the bar line the lap ends on.
+      const y = this.y(Math.min(note.tick + note.durationTicks, ceiling), laneH, pxPerTick);
       if (y > laneH) continue;
       const width = key.w * (this.look.noteWidthPct / 100);
       const x = key.x + (key.w - width) / 2;
@@ -266,8 +321,8 @@ export class Lane {
 
       ctx.save();
       if (ghost < 1) {
-        const state = engine.noteState(i);
-        const age = this.now - engine.resolvedAt(i);
+        const state = live ? engine.noteState(i) : 'pending';
+        const age = live ? this.now - engine.resolvedAt(i) : Infinity;
         let fill = colorOf(note.midi, 'muted', this.dark);
         let glow = 0;
         if (state === 'miss') fill = tone(INK.miss, this.dark);
@@ -393,10 +448,10 @@ const DASH = [7, 5];
 const SOLID: number[] = [];
 
 /** Every bar of the play in played time, one entry per pass of a repeated bar. */
-function barsOf(engine: Engine): LaneBar[] {
+function barsOf(engine: Engine, walk: PlayStep[]): LaneBar[] {
   const { score } = engine;
   const bars: LaneBar[] = [];
-  for (const step of score.playOrder) {
+  for (const step of walk) {
     const onset = score.onsets[step.onsetIndex];
     const measure = onset ? score.measures[onset.measureIndex] : undefined;
     if (!onset || !measure) continue;
@@ -405,6 +460,7 @@ function barsOf(engine: Engine): LaneBar[] {
     bars.push({
       tick,
       number: measure.number,
+      measure: measure.index,
       beatTicks: (TICKS_PER_QUARTER * 4) / measure.beatUnit,
       endTick: tick + measure.durationTicks,
     });
@@ -412,16 +468,16 @@ function barsOf(engine: Engine): LaneBar[] {
   return bars;
 }
 
-/** Where the play order goes back in the sheet, which is where a divider falls. */
-function jumpsOf(engine: Engine): LaneJump[] {
+/** Where the walk goes back in the sheet, which is where a divider falls. */
+function jumpsOf(engine: Engine, walk: PlayStep[]): LaneJump[] {
   const { score } = engine;
   const jumps: LaneJump[] = [];
-  for (let i = 1; i < score.playOrder.length; i++) {
-    const from = score.onsets[score.playOrder[i - 1]!.onsetIndex];
-    const to = score.onsets[score.playOrder[i]!.onsetIndex];
+  for (let i = 1; i < walk.length; i++) {
+    const from = score.onsets[walk[i - 1]!.onsetIndex];
+    const to = score.onsets[walk[i]!.onsetIndex];
     if (!from || !to || to.tick >= from.tick) continue;
     const number = score.measures[to.measureIndex]?.number ?? to.measureIndex + 1;
-    jumps.push({ tick: score.playOrder[i]!.tick, label: `↺ back to bar ${number}` });
+    jumps.push({ tick: walk[i]!.tick, label: `↺ back to bar ${number}` });
   }
   return jumps;
 }

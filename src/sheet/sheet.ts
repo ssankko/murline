@@ -4,10 +4,11 @@
 
 import { CURSOR, INK, PAPER, colorOf, tone } from '@/look/color';
 import { reducedMotion } from '@/look/motion';
-import type { Snapshot } from '@/play/engine';
+import type { SeekTarget, Snapshot } from '@/play/engine';
+import type { Section } from '@/play/section';
 import type { HandsSetting } from '@/play/settings';
 import { buildScore } from '@/score/build';
-import { ScoreError, type Note, type Score } from '@/score/types';
+import { ScoreError, type Note, type PlayStep, type Score } from '@/score/types';
 import {
   OpenSheetMusicDisplay,
   type GraphicalNote,
@@ -31,6 +32,15 @@ const OUTLINE = '#ffffff';
 /** A backward jump names its bar over the sheet for this long. */
 const MARKER_MS = 800;
 
+/** How far from an Onset a click still means that Onset and not its bar, in unscaled pixels. */
+const NOTE_REACH = 11;
+
+/** Pointer travel that turns a click into a Section drag, in screen pixels. */
+const DRAG_SLOP = 4;
+
+/** While Running a scroll detaches the view, and it snaps back this long after the last input. */
+const DETACH_MS = 2000;
+
 /** What a note carries besides its pitch colour. */
 export type MarkKind = 'none' | 'current' | 'miss';
 
@@ -51,6 +61,22 @@ interface Placed {
   system: number;
 }
 
+/** Where a click on the paper landed: what to seek to, and the bar it fell in. */
+export interface SheetHit {
+  seek: SeekTarget;
+  measure: number;
+}
+
+/** A pointer drag on the paper: picking a Section, or moving one of its ends. */
+interface Drag {
+  end: 'pick' | 'from' | 'to';
+  /** The bar the Section keeps while the other end follows the pointer. */
+  anchor: number;
+  hit: SheetHit;
+  x: number;
+  moved: boolean;
+}
+
 type VFNote = GraphicalNote & {
   vfnoteIndex: number;
   getNoteheadSVGs(): HTMLElement[];
@@ -61,6 +87,12 @@ interface Box {
   bottom: number;
 }
 
+/** The left and right edge of one bar, in unscaled pixels. */
+interface BarBox {
+  left: number;
+  right: number;
+}
+
 /**
  * One loaded sheet: its OSMD instance, its Score, the DOM it draws into and the cursor.
  * `open` gives all of it; the screen then only calls `frame` once a frame and `setDark` on a
@@ -69,6 +101,10 @@ interface Box {
 export class Sheet {
   readonly osmd: OpenSheetMusicDisplay;
   score!: Score;
+  /** A click on the paper that picked no Section: the screen decides what a seek does. */
+  onSeek: ((target: SeekTarget) => void) | null = null;
+  /** A drag picked or resized the Section, or the × cleared it. */
+  onSection: ((section: Section | null) => void) | null = null;
 
   private dark: boolean;
   private readonly host: HTMLElement;
@@ -80,6 +116,21 @@ export class Sheet {
   private readonly marker: HTMLElement;
   private readonly bubbles: HTMLElement;
   private bubbleEls: HTMLElement[] = [];
+  /** The Section: one tinted band and a handle at each end, the end one carrying the ×. */
+  private readonly tint: HTMLElement;
+  private readonly handles: [HTMLElement, HTMLElement];
+  private readonly clear: HTMLElement;
+  /** Takes every listener this sheet put on the host off again. */
+  private readonly listeners = new AbortController();
+
+  private section: Section | null = null;
+  private drag: Drag | null = null;
+  /** Wall-clock time of the last free scroll: the view snaps back two seconds after it. */
+  private scrolledAt = -Infinity;
+  /** The played timeline the cursor reads; the engine swaps it when Loop goes on. */
+  private walk: PlayStep[] = [];
+  /** Left and right edge of each bar in unscaled pixels, for the Section a drag picks. */
+  private boxes: (BarBox | undefined)[] = [];
 
   private placed: Placed[] = [];
   private system: Box = { top: 0, bottom: 200 };
@@ -111,6 +162,18 @@ export class Sheet {
     this.paper.className = 'sheet-paper';
     const overlay = child(this.content, 'position:absolute;inset:0;pointer-events:none');
     this.bubbles = child(overlay, 'position:absolute;inset:0');
+    this.tint = child(overlay, 'position:absolute;display:none');
+    this.handles = [
+      child(overlay, 'position:absolute;display:none;width:5px;cursor:ew-resize;pointer-events:auto'),
+      child(overlay, 'position:absolute;display:none;width:5px;cursor:ew-resize;pointer-events:auto'),
+    ];
+    this.clear = child(
+      this.handles[1],
+      'position:absolute;top:-9px;left:-6px;width:16px;height:16px;border-radius:999px;' +
+        'display:flex;align-items:center;justify-content:center;cursor:pointer;' +
+        'font-size:11px;line-height:1;font-weight:700',
+    );
+    this.clear.textContent = '×';
     this.cursor = child(overlay, 'position:absolute;border-radius:12px');
     this.marker = child(
       overlay,
@@ -118,6 +181,22 @@ export class Sheet {
         'font-size:11px;font-weight:600;white-space:nowrap',
     );
     this.osmd = makeOsmd(this.paper, dark);
+
+    const { signal } = this.listeners;
+    host.addEventListener('pointerdown', (event) => this.down(event), { signal });
+    host.addEventListener('pointermove', (event) => this.move(event), { signal });
+    host.addEventListener('pointerup', (event) => this.up(event), { signal });
+    // The paper never scrolls by itself: a drag on it selects, and the wheel moves the view.
+    host.addEventListener(
+      'wheel',
+      (event) => {
+        event.preventDefault();
+        const by = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+        this.scroll.scrollLeft += by;
+        this.scrolledAt = performance.now();
+      },
+      { passive: false, signal },
+    );
   }
 
   /** Loads the bytes, renders them on one line and builds the Score of what was rendered. */
@@ -143,6 +222,40 @@ export class Sheet {
   /** Left edge of an Onset in pixels of the unscaled content. */
   xOfOnset(index: number): number {
     return this.placed[index]?.x ?? 0;
+  }
+
+  /** Follows the engine's walk, so the cursor slides along the timeline the clock runs. */
+  setWalk(walk: PlayStep[]): void {
+    if (walk === this.walk) return;
+    this.walk = walk;
+    this.markJumps();
+    this.drawn.step = -1;
+  }
+
+  /** Draws the Section, or takes it off the paper. The screen owns whether there is one. */
+  setSection(section: Section | null): void {
+    this.section = section;
+    this.drawSection();
+  }
+
+  /**
+   * What a click at a screen x means: the Onset within reach of it, else the bar it fell in. The
+   * bar is the one the Onset before the click belongs to, or the next one past that bar's edge.
+   */
+  hitAt(clientX: number): SheetHit | null {
+    const x = this.contentX(clientX);
+    const onsets = this.score.onsets;
+    if (onsets.length === 0) return null;
+    let i = 0;
+    while (i + 1 < onsets.length && this.placed[i + 1]!.x <= x) i++;
+    const next = i + 1 < onsets.length ? i + 1 : i;
+    const near = Math.abs(this.placed[next]!.x - x) < Math.abs(this.placed[i]!.x - x) ? next : i;
+    if (Math.abs(this.placed[near]!.x - x) <= NOTE_REACH) {
+      return { seek: { onset: near }, measure: onsets[near]!.measureIndex };
+    }
+    const bar = x > this.placed[i]!.measureRight ? next : i;
+    const measure = onsets[bar]!.measureIndex;
+    return { seek: { measure }, measure };
   }
 
   /** Repaints the whole sheet for the other theme. The clock never hears about it. */
@@ -190,6 +303,8 @@ export class Sheet {
     if (running !== this.drawn.running) {
       this.drawn.running = running;
       this.cursor.style.transition = running || reducedMotion() ? 'none' : 'left 220ms ease';
+      // Play snaps the view to the cursor, whatever the reader scrolled to while it was still.
+      this.scrolledAt = -Infinity;
     }
     this.cursor.style.left = `${at.x - at.width / 2}px`;
     this.cursor.style.width = `${at.width}px`;
@@ -213,7 +328,11 @@ export class Sheet {
     }
     this.drawMarker(at, now);
 
-    this.scroll.scrollLeft = at.x * this.drawn.scale - this.scroll.clientWidth * 0.3;
+    // The view is the reader's while the play stands still, and again for two seconds after a
+    // scroll during one; the rest of the time it holds the cursor 30 % from the left edge.
+    if (running && now - this.scrolledAt >= DETACH_MS) {
+      this.scroll.scrollLeft = at.x * this.drawn.scale - this.scroll.clientWidth * 0.3;
+    }
   }
 
   /**
@@ -222,7 +341,7 @@ export class Sheet {
    * snap and never a slide across the whole sheet.
    */
   cursorAt(playedTick: number, hint: number, windowTicks: number): CursorAt {
-    const order = this.score.playOrder;
+    const order = this.walk;
     let i = Math.min(Math.max(hint, 0), order.length - 1);
     while (i + 1 < order.length && order[i + 1]!.tick <= playedTick) i++;
     while (i > 0 && order[i]!.tick > playedTick) i--;
@@ -246,8 +365,84 @@ export class Sheet {
 
   /** Takes only this sheet's own DOM out of the host, which may already hold the next one. */
   dispose(): void {
+    this.listeners.abort();
     this.osmd.clear();
     this.scroll.remove();
+  }
+
+  /** Unscaled content x of a screen x, whatever the view is scrolled and scaled to. */
+  private contentX(clientX: number): number {
+    const left = this.host.getBoundingClientRect().left;
+    return (clientX - left + this.scroll.scrollLeft) / (this.drawn.scale || 1);
+  }
+
+  /** A press on a handle moves that end of the Section; a press on the paper starts a fresh one. */
+  private down(event: PointerEvent): void {
+    if (event.button !== 0) return;
+    if (event.target === this.clear) {
+      this.onSection?.(null);
+      return;
+    }
+    const hit = this.hitAt(event.clientX);
+    if (!hit) return;
+    const end =
+      event.target === this.handles[0] ? 'from' : event.target === this.handles[1] ? 'to' : 'pick';
+    const anchor =
+      end === 'from' ? (this.section?.to ?? hit.measure) : (this.section?.from ?? hit.measure);
+    this.drag = { end, anchor, hit, x: event.clientX, moved: end !== 'pick' };
+    (event.target as Element).setPointerCapture?.(event.pointerId);
+    event.preventDefault();
+  }
+
+  /** A drag across the paper picks whole bars: one bar while it stays in one, more as it leaves. */
+  private move(event: PointerEvent): void {
+    const drag = this.drag;
+    if (!drag || event.buttons === 0) return;
+    if (!drag.moved && Math.abs(event.clientX - drag.x) < DRAG_SLOP) return;
+    drag.moved = true;
+    const hit = this.hitAt(event.clientX);
+    if (!hit) return;
+    this.onSection?.({ from: drag.anchor, to: hit.measure });
+  }
+
+  private up(event: PointerEvent): void {
+    const drag = this.drag;
+    this.drag = null;
+    if (drag && !drag.moved && event.target !== this.clear) this.onSeek?.(drag.hit.seek);
+  }
+
+  /** The tinted band over the Section's bars, with a handle at each end of it. */
+  private drawSection(): void {
+    const section = this.section;
+    const from = this.boxes[section?.from ?? -1];
+    const to = this.boxes[section?.to ?? -1];
+    const show = section && from && to;
+    this.tint.style.display = show ? 'block' : 'none';
+    for (const handle of this.handles) handle.style.display = show ? 'block' : 'none';
+    if (!show) return;
+    const top = this.system.top;
+    const height = this.system.bottom - top;
+    const ink = tone(INK.duration, this.dark);
+    this.tint.style.cssText =
+      `position:absolute;left:${from.left}px;top:${top}px;width:${to.right - from.left}px;` +
+      `height:${height}px;background:color-mix(in srgb, ${ink} 9%, transparent)`;
+    for (const [i, handle] of this.handles.entries()) {
+      handle.style.left = `${(i === 0 ? from.left : to.right) - 2}px`;
+      handle.style.top = `${top}px`;
+      handle.style.height = `${height}px`;
+      handle.style.background = ink;
+    }
+    this.clear.style.background = ink;
+    this.clear.style.color = tone(PAPER, this.dark);
+  }
+
+  /** Steps the cursor snaps after: the step it leads to stands earlier in the written sheet. */
+  private markJumps(): void {
+    this.jumpAfter = this.walk.map((step, i) => {
+      const next = this.walk[i + 1];
+      if (!next) return false;
+      return this.score.onsets[next.onsetIndex]!.tick < this.score.onsets[step.onsetIndex]!.tick;
+    });
   }
 
   /** Pixel geometry, pitch colours and the ink tiers: everything a fresh render wipes. */
@@ -272,6 +467,7 @@ export class Sheet {
     }
 
     const placed: Placed[] = [];
+    this.boxes = [];
     for (const onset of this.score.onsets) {
       // An Onset whose notes are all invisible carries the place of the one before it.
       let where = placed[placed.length - 1] ?? { x: 0, measureRight: 0, system: 0 };
@@ -285,18 +481,18 @@ export class Sheet {
           measureRight: (box.AbsolutePosition.x + box.BorderRight) * unit,
           system: systems.get(measure.ParentMusicSystem) ?? 0,
         };
+        this.boxes[onset.measureIndex] = {
+          left: (box.AbsolutePosition.x + box.BorderLeft) * unit,
+          right: where.measureRight,
+        };
         break;
       }
       placed.push(where);
     }
     this.placed = placed;
 
-    const order = this.score.playOrder;
-    this.jumpAfter = order.map((step, i) => {
-      const next = order[i + 1];
-      if (!next) return false;
-      return this.score.onsets[next.onsetIndex]!.tick < this.score.onsets[step.onsetIndex]!.tick;
-    });
+    if (this.walk.length === 0) this.walk = this.score.playOrder;
+    this.markJumps();
 
     for (const onset of this.score.onsets) for (const note of onset.notes) this.paintNote(note);
     applyTiers(this.paper, this.dark);
@@ -313,6 +509,7 @@ export class Sheet {
     this.contentWidth = Number(this.paper.querySelector('svg')?.getAttribute('width')) || 1200;
 
     this.placeBubbles();
+    this.drawSection();
 
     this.cursor.style.background = `color-mix(in srgb, ${tone(CURSOR, this.dark)} 26%, transparent)`;
     this.cursor.style.boxShadow = `inset 0 0 0 1px color-mix(in srgb, ${tone(CURSOR, this.dark)} 55%, transparent)`;
@@ -389,7 +586,7 @@ export class Sheet {
   }
 
   private barNumberAt(stepIndex: number): number {
-    const step = this.score.playOrder[stepIndex];
+    const step = this.walk[stepIndex];
     const onset = step ? this.score.onsets[step.onsetIndex] : undefined;
     return onset ? (this.score.measures[onset.measureIndex]?.number ?? 0) : 0;
   }

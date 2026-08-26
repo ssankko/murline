@@ -28,6 +28,8 @@ export interface LoopSpan {
   to: number;
   /** Played ticks from one lap's start to the next, the count-in between them included. */
   lap: number;
+  /** The count-in beat at the lap's start, 0 while the count-in is off. */
+  beat: number;
 }
 
 /** A practice may pause, seek and change settings; a performance may not and is graded. */
@@ -433,7 +435,11 @@ export class Engine {
     const range = this.sectionRange
       ? sectionTicks(this.score, this.sectionRange)
       : { from: 0, to: this.endTick };
-    return { ...range, lap: range.to - range.from + this.countInTicks(range.from) };
+    const bars = Math.floor(this.settings.countInBars);
+    const measure = this.measureAt(range.from);
+    const beat = bars >= 1 && measure ? beatOf(measure) : null;
+    const countIn = beat ? bars * beat.perBar * beat.ticks : 0;
+    return { ...range, lap: range.to - range.from + countIn, beat: beat?.ticks ?? 0 };
   }
 
   /**
@@ -487,15 +493,6 @@ export class Engine {
     // A key held across the wrap blocks nothing and colours nothing; the new lap wants a fresh strike.
     for (const midi of this.held.keys()) this.held.set(midi, ABSORBED);
     this.beginMotion(this.tick);
-  }
-
-  /** Played ticks of a count-in at a played tick, 0 while the count-in is off. */
-  private countInTicks(playedTick: number): number {
-    const bars = Math.floor(this.settings.countInBars);
-    const measure = this.measureAt(playedTick);
-    if (bars < 1 || !measure) return 0;
-    const beat = beatOf(measure);
-    return bars * beat.perBar * beat.ticks;
   }
 
   /** Every played tick a seek target stands at: once per pass through it. */

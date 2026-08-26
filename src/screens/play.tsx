@@ -59,6 +59,8 @@ export function PlayScreen({
   const [state, setState] = useState<PlayState>('idle');
   const stateRef = useRef<PlayState>('idle');
   const [tempo, setTempo] = useState(DEFAULT_PLAY_SETTINGS.tempoValue);
+  const tempoRef = useRef(tempo);
+  tempoRef.current = tempo;
 
   // Opening a piece: bring its index up to date in case the file changed, read the bytes, render
   // the sheet and build the Score of what was rendered. Any failure goes back to the library.
@@ -74,7 +76,10 @@ export function PlayScreen({
         const sheet = await Sheet.open(hostRef.current!, bytes, fileName, darkRef.current);
         if (!live) return sheet.dispose();
         sheetRef.current = sheet;
-        engineRef.current = create(sheet.score, { ...DEFAULT_PLAY_SETTINGS });
+        engineRef.current = create(sheet.score, {
+          ...DEFAULT_PLAY_SETTINGS,
+          tempoValue: tempoRef.current,
+        });
         setTitle(sheet.score.title || fileName);
       } catch (error) {
         // The play screen has no error state: the library says what went wrong instead.

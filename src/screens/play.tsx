@@ -2,11 +2,13 @@
 // one frame loop, no state of the play in React beyond what the bar has to draw.
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { setNotice } from '@/library/notice';
 import { reindexIfChanged } from '@/library/scan';
 import { flipTheme, useDark } from '@/look/use-dark';
 import { create, type Engine, type PlayState } from '@/play/engine';
 import { DEFAULT_PLAY_SETTINGS } from '@/play/settings';
 import { useFrameLoop } from '@/play/use-frame-loop';
+import { ScoreError } from '@/score/types';
 import { Sheet } from '@/sheet/sheet';
 import { invoke } from '@tauri-apps/api/core';
 import {
@@ -62,21 +64,22 @@ export function PlayScreen({
   // the sheet and build the Score of what was rendered. Any failure goes back to the library.
   useEffect(() => {
     let live = true;
+    const fileName = path.split('/').pop() ?? path;
     void (async () => {
       try {
         await reindexIfChanged(folder, path);
         const bytes = new Uint8Array(
           await invoke<ArrayBuffer>('read_file', { path: `${folder}/${path}` }),
         );
-        const fileName = path.split('/').pop() ?? path;
         const sheet = await Sheet.open(hostRef.current!, bytes, fileName, darkRef.current);
         if (!live) return sheet.dispose();
         sheetRef.current = sheet;
         engineRef.current = create(sheet.score, { ...DEFAULT_PLAY_SETTINGS });
         setTitle(sheet.score.title || fileName);
       } catch (error) {
-        // Ticket 03 puts "Could not open <title>" in the library's banner slot.
-        console.error(`Could not open ${path}`, error);
+        // The play screen has no error state: the library says what went wrong instead.
+        const reason = error instanceof ScoreError ? error.reason : String(error);
+        setNotice(`Could not open ${fileName}: ${reason}`);
         if (live) backRef.current();
       }
     })();

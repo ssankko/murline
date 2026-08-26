@@ -43,6 +43,7 @@ function scoreOf(bars: number, tempoMap = [{ tick: 0, bpm: 60 }], hasTempo = tru
     measures,
     keys: [],
     chords: [],
+    harmony: [],
   };
 }
 

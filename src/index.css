@@ -13,12 +13,13 @@
   }
 }
 
-/* The Keyboard look: neutral greys only, system sans, flat surfaces with no shadow and the four
-   corner radii 4, 6, 8 and 12 px.
+/* The Keyboard look: neutral greys only, system sans, flat surfaces with no shadow and one corner
+   radius knob, `--radius`, that the sm, md, lg and xl steps offset from.
    Pitch colour is the one colour on screen and comes from src/look/color.ts, never from here.
    Each variable names both papers at once; `color-scheme` picks the one in force. */
 :root {
   color-scheme: light dark;
+  --radius: 0.5rem;
   --paper: light-dark(#f4f4f4, #202020);
   --chrome: light-dark(#e9e9e9, #161616);
   --surface: light-dark(#ebebeb, #1c1c1c);
@@ -65,10 +66,10 @@
   --color-input: var(--edge);
   --color-ring: var(--edge);
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
 
   --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 }

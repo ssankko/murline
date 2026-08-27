@@ -122,3 +122,69 @@ test('the wheel takes the view off the clock and the detach window brings it bac
   expect(line()).not.toBe(tone(PAPER, false));
   lane.dispose();
 });
+
+/** The tick the lane draws from, which a click must leave standing, and the scale it draws at. */
+function viewOf(lane: Lane): number {
+  return (lane as unknown as { view: number }).view;
+}
+function scaleOf(lane: Lane): number {
+  return (lane as unknown as { pxPerTick: number }).pxPerTick;
+}
+
+/** A click at a lane y, in the page's own coordinates. */
+function clickAt(canvas: HTMLCanvasElement, y: number): void {
+  const box = canvas.getBoundingClientRect();
+  canvas.dispatchEvent(
+    new MouseEvent('click', { clientX: box.left + WIDTH / 2, clientY: box.top + y, bubbles: true }),
+  );
+}
+
+test('a click up the lane seeks to the step it points at and the view stands still', () => {
+  const laneH = HEIGHT - KEYBOARD_H;
+  const { engine, lane, canvas, ctx } = mount();
+  const bare = WIDTH / 2;
+  const wall = performance.timeOrigin + performance.now();
+  const frame = (at: number) => lane.frame(engine.snapshot(), engine.windowTicks, wall + at);
+  const asked: number[] = [];
+  lane.onSeek = (target) => {
+    if ('tick' in target) asked.push(target.tick);
+    engine.seek(target);
+  };
+  frame(0);
+  const view = viewOf(lane);
+  // The y the second beat of the bar stands at, one beat of lane above the keyboard line.
+  const beatTwo = laneH - TICKS_PER_QUARTER * scaleOf(lane);
+  expect(beatTwo).toBeGreaterThan(0);
+
+  clickAt(canvas, beatTwo);
+  // The mouse carries whole pixels, so the tick the click names is the beat give or take one.
+  expect(asked[0]).toBeCloseTo(TICKS_PER_QUARTER, -2);
+  expect(engine.snapshot().playedTick).toBe(TICKS_PER_QUARTER);
+
+  // The clock moved a beat on; the view holds, so the now-line has left the keyboard line for the
+  // place that was clicked and the notes have not rolled anywhere. Half a glide later it is still
+  // there: the seek starts none.
+  frame(10);
+  expect(viewOf(lane)).toBe(view);
+  frame(160);
+  expect(viewOf(lane)).toBe(view);
+  expect(hex(ctx, bare, laneH - 1)).toBe(tone(PAPER, false));
+  expect(hex(ctx, bare, Math.round(beatTwo))).not.toBe(tone(PAPER, false));
+  lane.dispose();
+});
+
+test('a click on the keyboard asks for nothing', () => {
+  const laneH = HEIGHT - KEYBOARD_H;
+  const { engine, lane, canvas } = mount();
+  const wall = performance.timeOrigin + performance.now();
+  let asked = 0;
+  lane.onSeek = () => {
+    asked++;
+  };
+  lane.frame(engine.snapshot(), engine.windowTicks, wall);
+
+  clickAt(canvas, laneH + 10);
+  expect(asked).toBe(0);
+  expect(engine.snapshot().playedTick).toBe(0);
+  lane.dispose();
+});

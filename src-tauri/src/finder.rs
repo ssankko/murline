@@ -186,22 +186,34 @@ pub fn search(ix: &Index, query: &str) -> SearchResult {
     }
 
     let more = buckets.iter().map(Vec::len).sum::<usize>().saturating_sub(MAX_ROWS);
-    let mut rows: Vec<Row> = Vec::new();
-    for bucket in buckets.iter().rev() {
+    // One heading per normalised composer name, so both providers land under the same one and a
+    // third spelling of the name between them does not open it twice. Rows of one composer always
+    // share a rank, so the blocks keep the composer-first order.
+    let mut blocks: Vec<(String, Vec<Row>)> = Vec::new();
+    let mut taken = 0;
+    'fill: for bucket in buckets.iter().rev() {
         for &i in bucket {
-            if rows.len() == MAX_ROWS {
-                return SearchResult { rows, more };
+            if taken == MAX_ROWS {
+                break 'fill;
             }
-            let mut row = row_of(ix, i);
-            // One heading per normalised composer name, so both providers land under the same one.
-            if let Some(prev) = rows.last() {
-                if norm(&prev.heading) == norm(&row.heading) {
-                    row.heading = prev.heading.clone();
-                }
+            let row = row_of(ix, i);
+            match blocks.iter_mut().find(|(name, _)| *name == norm(&row.heading)) {
+                Some((_, block)) => block.push(row),
+                None => blocks.push((norm(&row.heading), vec![row])),
             }
-            rows.push(row);
+            taken += 1;
         }
     }
+    let rows: Vec<Row> = blocks
+        .into_iter()
+        .flat_map(|(_, block)| {
+            let spelling = block[0].heading.clone();
+            block.into_iter().map(move |mut row| {
+                row.heading = spelling.clone();
+                row
+            })
+        })
+        .collect();
     SearchResult { rows, more }
 }
 
@@ -490,6 +502,27 @@ Chopin\tFrederic Chopin\tMazurka Op. 50 No. 1\tChopin Mazurka 50/1\t\t103\t9\t3/
         );
     }
 
+    /// The sort puts "J. S. Bach" between "Bach, Johann Sebastian" and "Johann Sebastian Bach",
+    /// and the shipped index splits six composers that way.
+    #[test]
+    fn a_composer_gets_one_heading_even_when_the_sort_splits_its_rows() {
+        let ks = r#"[{"dir":"d","file":"bwv846.krn","composer":"Bach, Johann Sebastian",
+          "surname":"Bach","title":"Prelude in C major","opus":null,"number":null,"movement":null,
+          "movementName":null,"key":"C major","time":"4/4","bars":35}]"#;
+        let pdmx = "Bach\tJ. S. Bach\tInvention 1\tInvention 1\t\t22\t3\t1/1/QmA.mxl\n\
+Bach\tJohann Sebastian Bach\tMinuet in G\tMinuet in G\t\t32\t7\t1/2/QmB.mxl\n";
+        let ix = Index::build(ks, pdmx);
+        let hits = search(&ix, "bach");
+        assert_eq!(
+            hits.rows.iter().map(|r| r.heading.as_str()).collect::<Vec<_>>(),
+            ["Johann Sebastian Bach", "Johann Sebastian Bach", "J. S. Bach"]
+        );
+        assert_eq!(
+            hits.rows.iter().map(|r| r.title.as_str()).collect::<Vec<_>>(),
+            ["Prelude in C major", "Minuet in G", "Invention 1"]
+        );
+    }
+
     #[test]
     fn a_movement_number_answers_its_digit_token() {
         let ks = r#"[{"dir":"d","file":"waldstein.krn","composer":"Beethoven, Ludwig van",
@@ -593,3 +626,4 @@ Chopin\tFrederic Chopin\tMazurka Op. 50 No. 1\tChopin Mazurka 50/1\t\t103\t9\t3/
         assert!(took.as_millis() < 2000, "one letter took {took:?}");
     }
 }
+

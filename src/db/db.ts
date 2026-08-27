@@ -6,6 +6,7 @@ import {
   type KeyboardPreset,
   type PlaySettings,
 } from '@/play/settings';
+import { DEFAULT_SPACING } from '@/sheet/sheet';
 import Database from '@tauri-apps/plugin-sql';
 
 /** Global settings, one row each in `setting`, stored as JSON. NULL means never written. */
@@ -22,7 +23,7 @@ export type Settings = {
   sheet_split: number;
   /** Measures and notes take their width from their duration, so the cursor runs at one speed. */
   sheet_proportional: boolean;
-  /** Width of the time-spaced sheet as a percent of the tightest it allows. */
+  /** Paper a bar spaced by time takes over the tightest bar's pixels per tick, 100 to 300 percent. */
   sheet_spacing: number;
   /** Beats of lane visible above the now-line. */
   lane_lookahead: number;
@@ -143,7 +144,7 @@ export const SETTING_DEFAULTS: Settings = {
   theme: 'system',
   sheet_split: DEFAULT_SPLIT,
   sheet_proportional: false,
-  sheet_spacing: 150,
+  sheet_spacing: DEFAULT_SPACING,
   sheet_harmony: true,
   sheet_colour: true,
   click_volume: 70,

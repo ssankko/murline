@@ -6,10 +6,6 @@
 //! Nothing here is on the audio thread: the render callback is Apple's, and the calls below are the
 //! host-side ones AVFAudio documents as safe off it.
 
-// Notes, pedal and the instrument are what the MIDI and instrument tickets wire to the app; until
-// then the tests at the bottom of this file are their only caller.
-#![allow(dead_code)]
-
 use crate::audio::Status;
 use objc2::AllocAnyThread;
 use objc2::rc::Retained;
@@ -107,6 +103,7 @@ impl Graph {
 
     /// Starts the graph with no device at all, rendering only when `render` asks it to. What the
     /// tests use, and the only way to hear the graph without hardware.
+    #[allow(dead_code)]
     pub fn start_offline(&mut self, max_frames: u32) -> Result<(), String> {
         unsafe {
             self.engine
@@ -123,6 +120,7 @@ impl Graph {
 
     /// Renders `frames` of the offline graph and hands back the loudest sample in them. Silence is
     /// zero, so a test reads sound or its absence off one number.
+    #[allow(dead_code)]
     pub fn render_peak(&self, frames: u32) -> Result<f32, String> {
         unsafe {
             let format = self.engine.manualRenderingFormat();
@@ -164,6 +162,8 @@ impl Graph {
 
     /// Loads a SoundFont or DLS bank's first melodic program into the sampler, which is what makes
     /// the engine playable. Reads from disk, so never from the audio thread.
+    // The instrument ticket is what puts a file in front of this; for now the tests are its caller.
+    #[allow(dead_code)]
     pub fn load_sound_bank(&mut self, path: &Path, name: String) -> Result<(), String> {
         let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
         let _turn = LOADING.lock().unwrap();
@@ -257,9 +257,47 @@ pub fn status() -> Status {
 }
 
 pub fn click(strong: bool, volume: u32) {
+    with(|graph| graph.click(strong, volume));
+}
+
+/// One key of the MIDI keyboard, down or up. Velocity reaches the instrument raw.
+pub fn note(midi: u8, velocity: u8, on: bool) {
+    with(|graph| {
+        if on {
+            graph.note_on(midi, velocity);
+        } else {
+            graph.note_off(midi);
+        }
+    });
+}
+
+/// The sustain pedal, as controller 64 sent it. Half travel and up is down, as every host reads it.
+pub fn pedal(value: u8) {
+    with(|graph| graph.sustain(crate::midi::Message::pedal_down(value)));
+}
+
+/// Ends everything sounding: what a lost MIDI port sends, so no note rings after an unplug.
+pub fn release_all() {
+    with(Graph::release_all);
+}
+
+/// Runs something on the graph, or on nothing at all when the engine never started.
+fn with(act: impl FnOnce(&Graph)) {
     if let Some(graph) = GRAPH.lock().unwrap().as_ref() {
-        graph.click(strong, volume);
+        act(graph);
     }
+}
+
+/// Puts an offline graph where the app's own would be, and reads what it renders. The MIDI tests
+/// play through the engine the way the app does, without an audio device.
+#[cfg(test)]
+pub fn install(graph: Graph) {
+    *GRAPH.lock().unwrap() = Some(graph);
+}
+
+#[cfg(test)]
+pub fn peak(frames: u32) -> f32 {
+    GRAPH.lock().unwrap().as_ref().map_or(0.0, |graph| graph.render_peak(frames).unwrap())
 }
 
 #[cfg(test)]

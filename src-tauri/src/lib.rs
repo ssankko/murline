@@ -4,6 +4,7 @@ mod audio;
 mod finder;
 mod kernscores;
 mod library;
+mod midi;
 mod pdmx;
 
 /// Creates the library folder, parents included. Already existing is success, so onboarding and a
@@ -46,14 +47,16 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_midi::init())
         .plugin(
             tauri_plugin_sql::Builder::default()
                 .add_migrations("sqlite:piano.db", migrations())
                 .build(),
         )
-        .setup(|_app| {
+        .setup(|app| {
             finder::warm();
+            // The MIDI ports open before the webview asks: a key pressed on the boot screen
+            // already sounds, and the pin arrives from the settings a moment later.
+            midi::start(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -61,6 +64,8 @@ pub fn run() {
             audio::audio_start,
             audio::audio_status,
             audio::audio_click,
+            midi::midi_status,
+            midi::midi_pin,
             library::copy_file,
             library::list_library,
             library::read_file,

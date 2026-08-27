@@ -176,6 +176,18 @@ describe('a file with its own chord symbols', () => {
     expect(names(analyzeHarmony(score))).toEqual(['C9 1⁷', 'G7/B 5⁷/7']);
   });
 
+  test('two symbols over one Onset leave the later one', () => {
+    const score = scoreOf([[60, 64, 67], [62, 65, 69]], C_MAJOR, [
+      symbol(0, 'C', 0, ChordSymbolEnum.major),
+      symbol(BAR / 2, 'G7', 7, ChordSymbolEnum.dominant),
+      symbol(BAR, 'Dm', 2, ChordSymbolEnum.minor),
+    ]);
+    expect(analyzeHarmony(score).map((e) => `${e.onsetIndex} ${e.absolute}`)).toEqual([
+      '0 C',
+      '1 Dm',
+    ]);
+  });
+
   test('a sus kind keeps its text and reads "?" in the degree form', () => {
     const score = scoreOf(
       [[60, 65, 67]],

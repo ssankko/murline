@@ -427,7 +427,10 @@ function fromSymbols(score: Score): ChordEvent[] {
     const at = found === -1 ? score.onsets.length - 1 : found;
     const onset = score.onsets[at];
     if (!onset) continue;
-    events.push({ onsetIndex: at, tick: onset.tick, measureIndex: onset.measureIndex, ...named });
+    const event = { onsetIndex: at, tick: onset.tick, measureIndex: onset.measureIndex, ...named };
+    // Two symbols over one Onset are one beat, and the later one is what is heard there.
+    if (last && last.onsetIndex === at) events[events.length - 1] = event;
+    else events.push(event);
   }
   return events;
 }

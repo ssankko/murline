@@ -18,6 +18,7 @@ import {
   type Note,
   type Onset,
   type PlayStep,
+  ScoreError,
   type Score,
   type TempoEntry,
 } from './types';
@@ -38,7 +39,7 @@ const MAX_STEPS = 200_000;
  */
 export function buildScore(sheet: MusicSheet): Score {
   const instrument = sheet.Instruments[0];
-  if (!instrument) throw new Error('the sheet has no part');
+  if (!instrument) throw new ScoreError('No notes in the first part', 'the sheet has no part');
   const staffIndexOf = new Map<OsmdStaff, number>(instrument.Staves.map((s, i) => [s, i]));
   const oneStaff = instrument.Staves.length < 2;
 

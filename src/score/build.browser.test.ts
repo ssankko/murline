@@ -80,6 +80,12 @@ describe('the Score of a piece', () => {
     expect(built.playOrder.map((s) => s.onsetIndex)).toEqual([0, 1, 0, 2]);
     expect(built.playOrder.map((s) => s.tick)).toEqual([0, 1920, 3840, 5760]);
   });
+
+  test('a file with no tempo mark gets the first measure tempo and no tempo of its own', async () => {
+    const built = await score('test_repeat_volta_simple.musicxml');
+    expect(built.hasTempo).toBe(false);
+    expect(built.tempoMap).toEqual([{ tick: 0, bpm: 120 }]);
+  });
 });
 
 describe('tempo and dynamics on a MuseScore 4 export', () => {
@@ -160,5 +166,11 @@ describe('a file OSMD cannot read', () => {
     await expect(loadSheet(bytes, 'notes.txt')).rejects.toMatchObject({
       reason: 'Not a MusicXML file',
     });
+  });
+
+  test('a sheet with no part carries the same reason as a sheet with no note', () => {
+    const sheet = { Instruments: [] } as unknown as Parameters<typeof buildScore>[0];
+    expect(() => buildScore(sheet)).toThrow(ScoreError);
+    expect(() => buildScore(sheet)).toThrow('No notes in the first part');
   });
 });

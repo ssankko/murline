@@ -1,8 +1,8 @@
 //! The score finder's index: both providers in one sorted list, searched by word-start tokens.
 //!
-//! Both index files ship inside the binary. A row keeps only its provider and its line in the
-//! index, so the 199,627 PDMX rows cost one pointer each; the fields are split out of the line
-//! again for the at most 30 rows a search returns.
+//! Both index files ship inside the binary. `Index` holds the sorted list of entries, each an
+//! index line with its normalised haystack; the fields are split out of the line again for the at
+//! most 30 rows a search returns.
 
 use std::borrow::Cow;
 use std::sync::LazyLock;
@@ -578,7 +578,7 @@ Morris\tLelia N. Morris\tThe Fight Is On\tThe Fight Is On\t\t24\t0\t1/3/QmC.mxl\
         );
     }
 
-    /// A name over the POSIX limit fails the write, and one shipped row's title is long enough.
+    /// A name over the POSIX limit fails the write.
     #[test]
     fn a_long_title_stays_inside_the_file_name_limit() {
         let long = "Above the hills of time the cross is gleaming ".repeat(8);

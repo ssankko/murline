@@ -15,6 +15,11 @@ use quick_xml::{Reader, Writer, XmlVersion};
 const TIMEOUT: Duration = Duration::from_secs(15);
 /// Children a `<note>` writes after its `<staff>`.
 const AFTER_STAFF: [&str; 3] = ["beam", "notations", "play"];
+/// The words a KernScores lyric may spell that are dynamics, not text.
+const DYNAMICS: [&str; 17] = [
+    "p", "pp", "ppp", "pppp", "f", "ff", "fff", "ffff", "mp", "mf", "sf", "sfp", "sfz", "fp", "rf",
+    "rfz", "fz",
+];
 /// Element nesting `parse` accepts. MusicXML reaches about ten, and the tree walks that follow
 /// `parse` recurse once per level, so a deeper document is refused instead of overflowing the stack.
 const MAX_DEPTH: usize = 64;
@@ -317,25 +322,7 @@ fn staff_of_clef(clef: &Elem) -> u8 {
 }
 
 fn is_dynamic(word: &str) -> bool {
-    matches!(
-        word,
-        "p" | "pp"
-            | "ppp"
-            | "pppp"
-            | "f"
-            | "ff"
-            | "fff"
-            | "ffff"
-            | "mp"
-            | "mf"
-            | "sf"
-            | "sfp"
-            | "sfz"
-            | "fp"
-            | "rf"
-            | "rfz"
-            | "fz"
-    )
+    DYNAMICS.contains(&word)
 }
 
 fn dynamics(word: &str, staff: &str) -> Elem {

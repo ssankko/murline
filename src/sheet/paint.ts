@@ -23,6 +23,9 @@ export function applyTheme(osmd: OpenSheetMusicDisplay, dark: boolean): void {
   rules.ColorStemsLikeNoteheads = false;
   rules.ColorBeams = false;
   rules.PageBackgroundColor = tone(PAPER, dark);
+  // The ink every glyph VexFlow draws without a colour of its own falls back to: clefs, the key and
+  // time signatures, barlines, the brace and the rehearsal marks.
+  rules.DefaultColorMusic = scaffold;
   rules.StaffLineColor = scaffold;
   rules.LedgerLineColorDefault = scaffold;
   rules.DefaultColorLabel = scaffold;

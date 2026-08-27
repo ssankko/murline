@@ -68,17 +68,21 @@ async function importOne(
   const index = await indexBytes(bytes, fileName);
 
   // APFS is case-insensitive, so a name that differs only in case is the same file to the folder.
-  const taken = new Set(
-    (await invoke<FileEntry[]>('list_library', { folder })).map((file) =>
+  const taken = new Map(
+    (await invoke<FileEntry[]>('list_library', { folder })).map((file) => [
       file.rel_path.toLowerCase(),
-    ),
+      file.rel_path,
+    ]),
   );
   const isTaken = (name: string) => taken.has(name.toLowerCase());
   let relPath = fileName;
   if (isTaken(fileName)) {
     const choice = await onClash(fileName);
     if (choice === 'cancel') return null;
-    if (choice === 'keep-both') relPath = freeName(fileName, isTaken);
+    // Replace writes over the folder's own entry, whose name the copy cannot change, so the path
+    // of the existing piece stays as it is and its settings and history stay with it.
+    relPath =
+      choice === 'keep-both' ? freeName(fileName, isTaken) : taken.get(fileName.toLowerCase())!;
   }
 
   const stamp = await invoke<{ mtime: number; size: number }>('copy_file', {

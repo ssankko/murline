@@ -111,6 +111,18 @@ describe('a file the app can read', () => {
     expect(copies[0]!.dst).toBe('/library/dynamics-and-tempo.musicxml');
   });
 
+  test('Replace over a name that differs only in case keeps the folder\'s own name', async () => {
+    folderFiles = ['Dynamics-And-Tempo.MUSICXML'];
+    const result = await importFiles(
+      '/library',
+      ['/away/dynamics-and-tempo.musicxml'],
+      async () => 'replace',
+    );
+    expect(result.imported).toEqual(['Dynamics-And-Tempo.MUSICXML']);
+    expect(copies[0]!.dst).toBe('/library/Dynamics-And-Tempo.MUSICXML');
+    expect(indexed.map((row) => row.path)).toEqual(['Dynamics-And-Tempo.MUSICXML']);
+  });
+
   test('Cancel at a clash writes nothing and reports no failure', async () => {
     folderFiles = ['dynamics-and-tempo.musicxml'];
     const result = await importFiles(

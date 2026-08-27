@@ -80,8 +80,9 @@ export function reasonOf(error: unknown): string {
 }
 
 /**
- * The finder modal. `libraryNames` are the file names already in the library folder, so a row that
- * is there says "In library" and never downloads; the Replace prompt cannot fire from here.
+ * The finder modal. `libraryNames` are the lower-cased file names of every piece in the library
+ * folder, so a row that is there says "In library" and never downloads; the Replace prompt cannot
+ * fire from here.
  */
 export function Finder({
   folder,
@@ -122,7 +123,7 @@ export function Finder({
 
   const rows = result.rows;
   const selected = rows[Math.min(sel, rows.length - 1)] ?? null;
-  const owned = (r: FinderRow) => libraryNames.has(r.fileName);
+  const owned = (r: FinderRow) => libraryNames.has(r.fileName.toLowerCase());
 
   useEffect(() => {
     list.current?.querySelector('[data-selected]')?.scrollIntoView({ block: 'nearest' });

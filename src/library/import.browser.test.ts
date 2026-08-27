@@ -91,6 +91,12 @@ describe('a file the app can read', () => {
     expect(copies[0]!.dst).toBe('/library/dynamics-and-tempo (3).musicxml');
   });
 
+  test('a name that differs only in case is the same file to the folder', async () => {
+    folderFiles = ['Dynamics-And-Tempo.MUSICXML'];
+    const result = await importOne('dynamics-and-tempo.musicxml');
+    expect(result.imported).toEqual(['dynamics-and-tempo (2).musicxml']);
+  });
+
   test('Replace keeps the path, so the row and its history survive', async () => {
     folderFiles = ['dynamics-and-tempo.musicxml'];
     const result = await importFiles(

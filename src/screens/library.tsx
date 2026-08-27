@@ -23,6 +23,7 @@ import {
 } from '@/library/import';
 import { setNotice, useNotice } from '@/library/notice';
 import {
+  allPiecePaths,
   deletePiece,
   listPieces,
   recentPlays,
@@ -81,7 +82,8 @@ export function Library({
   const [notice, dismissNotice] = useNotice();
   const [dragging, setDragging] = useState(false);
   const [clash, setClash] = useState<Clash | null>(null);
-  const [finding, setFinding] = useState(false);
+  /** The lower-cased file names of every present piece, read when the finder opens. */
+  const [finding, setFinding] = useState<Set<string> | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [defaults, setDefaults] = useState<Partial<PieceSettings>>({});
 
@@ -159,6 +161,12 @@ export function Library({
     if (typeof picked !== 'string') return;
     await setSetting('library_folder', picked);
     onFolder(picked);
+  }
+
+  /** "In library" answers for the whole folder, not for the rows the current sort shows. */
+  async function openFinder(): Promise<void> {
+    const paths = await allPiecePaths();
+    setFinding(new Set(paths.map((path) => baseNameOf(path).toLowerCase())));
   }
 
   async function pickFiles(): Promise<void> {
@@ -267,7 +275,7 @@ export function Library({
             variant="outline"
             size="sm"
             disabled={!folder}
-            onClick={() => setFinding(true)}
+            onClick={() => void openFinder()}
           >
             Find online
           </Button>
@@ -302,13 +310,13 @@ export function Library({
       {finding && folder && (
         <Finder
           folder={folder}
-          libraryNames={new Set(pieces.map((row) => baseNameOf(row.path)))}
+          libraryNames={finding}
           onImported={async (relPath) => {
-            setFinding(false);
+            setFinding(null);
             setPieces(await listPieces(sort));
             setSelected(relPath);
           }}
-          close={() => setFinding(false)}
+          close={() => setFinding(null)}
         />
       )}
 

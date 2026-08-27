@@ -90,6 +90,16 @@ export async function listPieces(sort: SortOrder = 'title'): Promise<PieceRow[]>
   );
 }
 
+/**
+ * The path of every piece whose file is in the folder, whatever the list pane is filtered to. The
+ * finder reads it to know which of its rows are already downloaded.
+ */
+export async function allPiecePaths(): Promise<string[]> {
+  const db = await getDb();
+  const rows = await db.select<{ path: string }[]>('SELECT path FROM piece WHERE present = 1');
+  return rows.map((row) => row.path);
+}
+
 /** The piece settings as their columns; a column set to null makes the piece inherit again. */
 export type PieceSettingValues = Partial<{
   tempo_mode: string | null;

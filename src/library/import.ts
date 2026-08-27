@@ -67,14 +67,18 @@ async function importOne(
   if (bytes.length === 0) throw new ScoreError('Not a MusicXML file', `${fileName} is empty`);
   const index = await indexBytes(bytes, fileName);
 
+  // APFS is case-insensitive, so a name that differs only in case is the same file to the folder.
   const taken = new Set(
-    (await invoke<FileEntry[]>('list_library', { folder })).map((file) => file.rel_path),
+    (await invoke<FileEntry[]>('list_library', { folder })).map((file) =>
+      file.rel_path.toLowerCase(),
+    ),
   );
+  const isTaken = (name: string) => taken.has(name.toLowerCase());
   let relPath = fileName;
-  if (taken.has(fileName)) {
+  if (isTaken(fileName)) {
     const choice = await onClash(fileName);
     if (choice === 'cancel') return null;
-    if (choice === 'keep-both') relPath = freeName(fileName, taken);
+    if (choice === 'keep-both') relPath = freeName(fileName, isTaken);
   }
 
   const stamp = await invoke<{ mtime: number; size: number }>('copy_file', {
@@ -86,12 +90,12 @@ async function importOne(
 }
 
 /** `name.ext` becomes `name (2).ext`, then `name (3).ext`, until the folder has no such file. */
-function freeName(fileName: string, taken: Set<string>): string {
+function freeName(fileName: string, isTaken: (name: string) => boolean): string {
   const dot = fileName.lastIndexOf('.');
   const stem = dot > 0 ? fileName.slice(0, dot) : fileName;
   const extension = dot > 0 ? fileName.slice(dot) : '';
   for (let copy = 2; ; copy++) {
     const candidate = `${stem} (${copy})${extension}`;
-    if (!taken.has(candidate)) return candidate;
+    if (!isTaken(candidate)) return candidate;
   }
 }

@@ -119,8 +119,9 @@ export interface Snapshot {
   stopped: boolean;
 }
 
-/** What `held` says a strike matched: nothing, so it blocks, or nothing the play holds against it. */
+/** A held key whose strike matched nothing, so it blocks every Onset until it comes up. */
 const BLOCKING = -1;
+/** A held key that matched no note and blocks nothing: taken in silence, or struck before motion. */
 const ABSORBED = -2;
 
 /** The tempo the piece is written at, before the play's own tempo setting. */

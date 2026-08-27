@@ -643,7 +643,7 @@ export function PlayScreen({
           <canvas
             ref={canvasRef}
             className="block h-full w-full"
-            onClick={() => kindRef.current === 'practice' && setSection(null)}
+            onClick={() => engineRef.current?.kind === 'practice' && setSection(null)}
           />
           {state === 'ended' && summary && (
             <Summary

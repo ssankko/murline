@@ -147,6 +147,14 @@ describe('the naming rules', () => {
     expect(names(analyzeHarmony(score))).toEqual(['C 1', 'Gm 5m']);
   });
 
+  test('a grace note sounds in no unit, so it names no chord', () => {
+    const score = scoreOf([[60, 64, 67, 70]]);
+    const grace = score.onsets[0]!.notes[3]!;
+    grace.grace = true;
+    grace.durationTicks = 0;
+    expect(names(analyzeHarmony(score))).toEqual(['C 1']);
+  });
+
   test('an event points at the Onset where the harmony changes', () => {
     expect(analyzeHarmony(scoreOf([[60, 64, 67], [62, 65, 69]]))).toEqual([
       { onsetIndex: 0, tick: 0, measureIndex: 0, absolute: 'C', degree: '1' },

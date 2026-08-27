@@ -1,6 +1,6 @@
 import { TICKS_PER_QUARTER, type ChordEvent } from '@/score/types';
 import { describe, expect, test } from 'vitest';
-import { beatsBefore, chordsAt, chordsOf, lerpRect, slotRect, throughWrap } from './lane';
+import { beatsBefore, chordsAt, chordsOf, lerpRect, pulseAt, slotRect, throughWrap } from './lane';
 
 const Q = TICKS_PER_QUARTER;
 /** Three bars of 3/4 in played time, counted in quarters. */
@@ -76,4 +76,25 @@ test('a panel between two slots starts at the one and ends at the other', () => 
   const to = slotRect(0, 300);
   expect(lerpRect(from, to, 0)).toEqual(from);
   expect(lerpRect(from, to, 1)).toEqual(to);
+});
+
+describe('the pulse at the now-line', () => {
+  // The beat is a quarter, so the pulse runs out 12 % of a quarter after each beat.
+  const rise = 0.12 * Q;
+
+  test('is full on the beat and gone a short way into it', () => {
+    expect(pulseAt(BARS, Q)).toEqual({ level: 1, strong: false });
+    expect(pulseAt(BARS, Q + rise / 2).level).toBeCloseTo(0.5);
+    expect(pulseAt(BARS, Q + rise)).toEqual({ level: 0, strong: false });
+  });
+
+  test('is strong on the beat a bar opens with', () => {
+    expect(pulseAt(BARS, 3 * Q)).toEqual({ level: 1, strong: true });
+    expect(pulseAt(BARS, 3 * Q + rise / 2)).toMatchObject({ strong: true });
+  });
+
+  test('is nothing outside the bars of the play', () => {
+    expect(pulseAt(BARS, -Q)).toEqual({ level: 0, strong: false });
+    expect(pulseAt(BARS, 99 * Q)).toEqual({ level: 0, strong: false });
+  });
 });

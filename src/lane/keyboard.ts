@@ -1,7 +1,7 @@
 // The on-screen keyboard at the foot of the lane canvas: where the falling notes land, and the
 // app's only colour legend. Its x axis is the lane's x axis, so a block always falls on its key.
 
-import { INK, NOTE_NAMES, colorOf, isBlackKey, pitchClass, tone } from '@/look/color';
+import { INK, NOTE_NAMES, colorOf, isBlackKey, mix, pitchClass, tone } from '@/look/color';
 import type { PlayNote } from '@/play/engine';
 import type { KeyboardPreset, PlaySettings } from '@/play/settings';
 
@@ -13,6 +13,10 @@ const KEY_BLACK = ['#c3c3c3', '#4c4c4c'] as const;
 
 /** The narrowest key that still has room for a swatch and a name. */
 const LABEL_MIN_W = 11;
+
+/** How far a pressed key sinks, and how far its uncovered top strip mixes toward black. */
+const PRESS_DROP = 2;
+const PRESS_SHADE = 0.25;
 
 export interface Key {
   midi: number;
@@ -74,7 +78,8 @@ export function keyRange(notes: readonly PlayNote[], settings: PlaySettings): [n
 
 /**
  * Draws the keys as flat rects, blacks over whites. `fill` gives each key its face: the base grey,
- * or whatever the play says it is right now.
+ * or whatever the play says it is right now. A key `pressed` calls true for reads as sunk: a white
+ * one drops, leaving a dark strip of its own face where it came from, a black one shortens.
  */
 export function drawKeyboard(
   ctx: CanvasRenderingContext2D,
@@ -83,6 +88,7 @@ export function drawKeyboard(
   dark: boolean,
   labels: boolean,
   fill: (midi: number, base: string) => string,
+  pressed: (midi: number) => boolean = () => false,
 ): void {
   const white = tone(KEY_WHITE, dark);
   const black = tone(KEY_BLACK, dark);
@@ -90,15 +96,22 @@ export function drawKeyboard(
 
   for (const key of layout.keys) {
     if (key.black) continue;
-    ctx.fillStyle = fill(key.midi, white);
+    const face = fill(key.midi, white);
+    const drop = pressed(key.midi) ? PRESS_DROP : 0;
+    if (drop > 0) {
+      ctx.fillStyle = mix(face, '#000000', PRESS_SHADE);
+      ctx.fillRect(key.x, top, key.w - 1, drop);
+    }
+    ctx.fillStyle = face;
     // The face stops one pixel short: that hairline of paper is what tells two white keys apart.
-    ctx.fillRect(key.x, top, key.w - 1, KEYBOARD_H);
+    ctx.fillRect(key.x, top + drop, key.w - 1, KEYBOARD_H - drop);
   }
   for (const key of layout.keys) {
     if (!key.black) continue;
     ctx.fillStyle = fill(key.midi, black);
     ctx.beginPath();
-    ctx.roundRect(key.x, top - 1, key.w, blackH, [0, 0, 2, 2]);
+    const height = blackH - (pressed(key.midi) ? PRESS_DROP : 0);
+    ctx.roundRect(key.x, top - 1, key.w, height, [0, 0, 2, 2]);
     ctx.fill();
   }
   if (labels) drawLabels(ctx, layout, top, blackH, dark);

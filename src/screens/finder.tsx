@@ -98,22 +98,30 @@ export function Finder({
   const [sel, setSel] = useState(0);
   const [dl, setDl] = useState<DownloadState>({ state: 'idle' });
   const [pdmxFolder, setPdmxFolder] = useState<string | null>(null);
+  /** Whether the PDMX folder holds unpacked scores, and so whether a PDMX row can be delivered. */
+  const [pdmx, setPdmx] = useState<boolean | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const list = useRef<HTMLDivElement>(null);
 
   // A setting the database will not give up leaves the folder empty, which a PDMX download reports.
   useEffect(() => {
-    void getSetting('pdmx_folder').then(setPdmxFolder, () => {});
+    void (async () => {
+      const held = await getSetting('pdmx_folder').catch(() => null);
+      setPdmxFolder(held);
+      setPdmx(await invoke<boolean>('pdmx_status', { folder: held ?? '' }).catch(() => false));
+    })();
   }, []);
 
-  // Every keystroke searches; Rust answers in under 20 ms. A late answer to an older query is dropped.
+  // Every keystroke searches; Rust answers in under 20 ms. A late answer to an older query is
+  // dropped. Nothing is asked for until the PDMX status is in, which decides what the answer holds.
   useEffect(() => {
+    if (pdmx === null) return;
     if (query.trim() === '') {
       setResult({ rows: [], more: 0 });
       return;
     }
     let live = true;
-    void invoke<SearchResult>('finder_search', { query }).then(
+    void invoke<SearchResult>('finder_search', { query, pdmx }).then(
       (r) => {
         if (!live) return;
         setResult(r);
@@ -128,7 +136,7 @@ export function Finder({
     return () => {
       live = false;
     };
-  }, [query]);
+  }, [query, pdmx]);
 
   const rows = result.rows;
   const selected = rows[Math.min(sel, rows.length - 1)] ?? null;
@@ -259,6 +267,9 @@ export function Finder({
         )}
 
         <footer className="border-edge-soft text-muted-ink flex flex-none justify-end gap-3 border-t px-4 py-2 text-[12px]">
+          {pdmx === false && (
+            <span className="mr-auto">PDMX not downloaded. Settings › Library.</span>
+          )}
           <span>↑↓ select</span>
           <span>↩ download</span>
           <span>esc close</span>

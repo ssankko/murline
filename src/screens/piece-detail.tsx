@@ -8,6 +8,7 @@ import { splitError } from '@/library/scan';
 import { colorOf, noteName, pitchClass } from '@/look/color';
 import { useDark } from '@/look/use-dark';
 import { resolvePlaySettings, type Inherited, type PieceSettings } from '@/play/resolve';
+import { reasonOf } from '@/screens/finder';
 import { RangeStrip } from '@/screens/range-strip';
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
@@ -33,6 +34,16 @@ export function Detail({
 }) {
   const broken = !!piece.error;
   const fullPath = folder ? pathOf(folder, piece.path) : piece.path;
+  const [revealError, setRevealError] = useState<string | null>(null);
+
+  async function reveal(): Promise<void> {
+    try {
+      await invoke('reveal_in_finder', { path: fullPath });
+      setRevealError(null);
+    } catch (error) {
+      setRevealError(reasonOf(error));
+    }
+  }
   return (
     <div className="flex-1 overflow-y-auto px-12 py-10">
       <div className="flex max-w-[640px] flex-col">
@@ -54,11 +65,14 @@ export function Detail({
               )}
               <code className="text-[11.5px]">{fullPath}</code>
               <button
-                onClick={() => void invoke('reveal_in_finder', { path: fullPath })}
+                onClick={() => void reveal()}
                 className="hover:text-ink underline underline-offset-2"
               >
                 Reveal in Finder
               </button>
+              {revealError && (
+                <span className="text-red-600 dark:text-red-400">{revealError}</span>
+              )}
             </div>
           </div>
           <div className="flex flex-none gap-1">

@@ -13,6 +13,7 @@ const EXTENSIONS: [&str; 3] = ["musicxml", "xml", "mxl"];
 /// One score file of the library folder. `rel_path` is the piece's identity, `mtime` (milliseconds)
 /// and `size` say whether it changed since it was indexed.
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileEntry {
     pub rel_path: String,
     pub mtime: i64,
@@ -21,6 +22,7 @@ pub struct FileEntry {
 
 /// What a file was when it was last read: enough to tell whether it changed.
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Stamp {
     pub mtime: i64,
     pub size: i64,
@@ -51,24 +53,28 @@ pub async fn copy_file(src: String, dst: String) -> Result<Stamp, String> {
 /// belong in the Trash. Nothing outside the OS temp directory is deleted, so the Trash stays the
 /// only way a file of the library folder goes.
 #[tauri::command]
-pub fn remove_temp_file(path: String) -> Result<(), String> {
+pub async fn remove_temp_file(path: String) -> Result<(), String> {
     let path = Path::new(&path);
     let inside = path.starts_with(std::env::temp_dir())
         && !path.components().any(|c| c == std::path::Component::ParentDir);
     if !inside {
-        return Err(format!("not a temp file: {}", path.display()));
+        return Err("not a temp file".to_string());
     }
     std::fs::remove_file(path).map_err(|e| e.to_string())
 }
 
-/// Opens the file's folder in the Finder with the file selected.
+/// Opens the file's folder in the Finder with the file selected. A file that has gone since the
+/// last scan is a reason the caller shows, not a silent no-op.
 #[tauri::command]
 pub async fn reveal_in_finder(path: String) -> Result<(), String> {
-    Command::new("open")
-        .args(["-R", &path])
-        .status()
-        .map_err(|e| e.to_string())
-        .and_then(|s| s.success().then_some(()).ok_or_else(|| s.to_string()))
+    if !Path::new(&path).exists() {
+        return Err("file not found".to_string());
+    }
+    let status = Command::new("open").args(["-R", &path]).status().map_err(|e| e.to_string())?;
+    if !status.success() {
+        return Err("the Finder could not open it".to_string());
+    }
+    Ok(())
 }
 
 /// Moves the file to the macOS Trash, which is the only undo a delete has. `NSFileManager` does the
@@ -139,7 +145,7 @@ fn list_dir(root: &Path) -> std::io::Result<Vec<FileEntry>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{copy, list_dir, remove_temp_file, trash_file, FileEntry};
+    use super::{copy, list_dir, remove_temp_file, reveal_in_finder, trash_file, FileEntry};
     use std::path::Path;
 
     fn write(root: &Path, rel: &str, body: &str) {
@@ -217,14 +223,18 @@ mod tests {
         let temp = tempfile::tempdir_in(std::env::temp_dir()).unwrap();
         write(temp.path(), "download.musicxml", "bytes");
         let path = temp.path().join("download.musicxml");
-        remove_temp_file(path.to_string_lossy().into_owned()).unwrap();
+        let remove = |p: String| tauri::async_runtime::block_on(remove_temp_file(p));
+        remove(path.to_string_lossy().into_owned()).unwrap();
         assert!(!path.exists());
 
         let library = tempfile::tempdir().unwrap();
         write(library.path(), "piece.musicxml", "bytes");
         let outside = library.path().join("..").join("piece.musicxml");
-        assert!(remove_temp_file("/Users/somebody/Music/Piano/piece.musicxml".to_string()).is_err());
-        assert!(remove_temp_file(outside.to_string_lossy().into_owned()).is_err());
+        assert_eq!(
+            remove("/Users/somebody/Music/Piano/piece.musicxml".to_string()),
+            Err("not a temp file".to_string())
+        );
+        assert!(remove(outside.to_string_lossy().into_owned()).is_err());
         assert!(library.path().join("piece.musicxml").exists());
     }
 
@@ -254,6 +264,7 @@ mod tests {
         write(root.path(), "good.musicxml", "bytes");
         let bad = root.path().join(std::ffi::OsStr::from_bytes(b"bad\xff.musicxml"));
         if std::fs::write(&bad, "bytes").is_err() {
+            println!("skipped: this filesystem refuses a name that is not UTF-8");
             return;
         }
 
@@ -261,6 +272,16 @@ mod tests {
 
         let names: Vec<&str> = list.iter().map(|e| e.rel_path.as_str()).collect();
         assert_eq!(names, ["good.musicxml"]);
+    }
+
+    #[test]
+    fn revealing_a_file_that_is_gone_reads_as_a_reason() {
+        let root = tempfile::tempdir().unwrap();
+        let gone = root.path().join("gone.musicxml").to_string_lossy().into_owned();
+        assert_eq!(
+            tauri::async_runtime::block_on(reveal_in_finder(gone)),
+            Err("file not found".to_string())
+        );
     }
 
     #[test]

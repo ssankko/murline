@@ -28,13 +28,13 @@ pub struct Stamp {
 
 /// Every score file under the library folder, at any depth, in no particular order.
 #[tauri::command]
-pub fn list_library(folder: String) -> Result<Vec<FileEntry>, String> {
+pub async fn list_library(folder: String) -> Result<Vec<FileEntry>, String> {
     list_dir(Path::new(&folder)).map_err(|e| e.to_string())
 }
 
 /// The bytes of one file, sent raw so a megabyte of MusicXML does not travel as a JSON number array.
 #[tauri::command]
-pub fn read_file(path: String) -> Result<tauri::ipc::Response, String> {
+pub async fn read_file(path: String) -> Result<tauri::ipc::Response, String> {
     std::fs::read(&path)
         .map(tauri::ipc::Response::new)
         .map_err(|e| e.to_string())
@@ -43,7 +43,7 @@ pub fn read_file(path: String) -> Result<tauri::ipc::Response, String> {
 /// Copies an imported file into the library folder, overwriting whatever is at `dst`. The stamp of
 /// the written file goes back so the caller can index it without listing the folder again.
 #[tauri::command]
-pub fn copy_file(src: String, dst: String) -> Result<Stamp, String> {
+pub async fn copy_file(src: String, dst: String) -> Result<Stamp, String> {
     copy(Path::new(&src), Path::new(&dst)).map_err(|e| e.to_string())
 }
 
@@ -63,7 +63,7 @@ pub fn remove_temp_file(path: String) -> Result<(), String> {
 
 /// Opens the file's folder in the Finder with the file selected.
 #[tauri::command]
-pub fn reveal_in_finder(path: String) -> Result<(), String> {
+pub async fn reveal_in_finder(path: String) -> Result<(), String> {
     Command::new("open")
         .args(["-R", &path])
         .status()
@@ -75,7 +75,7 @@ pub fn reveal_in_finder(path: String) -> Result<(), String> {
 /// move instead of the Finder, so deleting never asks the user for automation rights; the cost is
 /// that the Trash may not offer "Put Back" for the file.
 #[tauri::command]
-pub fn trash_file(path: String) -> Result<(), String> {
+pub async fn trash_file(path: String) -> Result<(), String> {
     let mut context = trash::TrashContext::default();
     context.set_delete_method(trash::macos::DeleteMethod::NsFileManager);
     context.delete(&path).map_err(|e| e.to_string())
@@ -207,7 +207,7 @@ mod tests {
         write(root.path(), "doomed.musicxml", "bytes");
         let path = root.path().join("doomed.musicxml");
 
-        trash_file(path.to_string_lossy().into_owned()).unwrap();
+        tauri::async_runtime::block_on(trash_file(path.to_string_lossy().into_owned())).unwrap();
 
         assert!(!path.exists());
     }

@@ -387,8 +387,10 @@ fn row_at(starts: &[u32], p: u32) -> usize {
     starts.partition_point(|&s| s <= p) - 1
 }
 
+/// Async so the search runs off the main thread. The first call waits for `warm()` to finish
+/// building the index.
 #[tauri::command]
-pub fn finder_search(query: String) -> SearchResult {
+pub async fn finder_search(query: String) -> SearchResult {
     search(&INDEX, &query)
 }
 

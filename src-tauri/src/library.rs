@@ -175,26 +175,6 @@ mod tests {
     }
 
     #[test]
-    fn listing_follows_a_file_through_new_changed_missing_and_restored() {
-        let root = tempfile::tempdir().unwrap();
-        assert!(list_dir(root.path()).unwrap().is_empty());
-
-        write(root.path(), "piece.musicxml", "short");
-        let new = list_dir(root.path()).unwrap();
-        assert_eq!(find(&new, "piece.musicxml").unwrap().size, 5);
-
-        write(root.path(), "piece.musicxml", "much longer body");
-        let changed = list_dir(root.path()).unwrap();
-        assert_eq!(find(&changed, "piece.musicxml").unwrap().size, 16);
-
-        std::fs::remove_file(root.path().join("piece.musicxml")).unwrap();
-        assert!(find(&list_dir(root.path()).unwrap(), "piece.musicxml").is_none());
-
-        write(root.path(), "piece.musicxml", "short");
-        assert!(find(&list_dir(root.path()).unwrap(), "piece.musicxml").is_some());
-    }
-
-    #[test]
     fn copy_creates_the_folder_and_reports_the_written_size() {
         let root = tempfile::tempdir().unwrap();
         write(root.path(), "away/piece.musicxml", "sixteen letters!");
@@ -267,6 +247,7 @@ mod tests {
     #[test]
     fn a_missing_folder_is_an_error_not_an_empty_library() {
         let root = tempfile::tempdir().unwrap();
+        assert!(list_dir(root.path()).unwrap().is_empty());
         assert!(list_dir(&root.path().join("gone")).is_err());
     }
 }

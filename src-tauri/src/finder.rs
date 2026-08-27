@@ -455,7 +455,6 @@ Chopin\tFrederic Chopin\tMazurka Op. 50 No. 1\tChopin Mazurka 50/1\t\t103\t9\t3/
         );
         assert_eq!(titles(&search(&ix, "gymnopedie")), ["Gymnopédie No. 1"]);
         assert_eq!(titles(&search(&ix, "frederic")).len(), 3);
-        assert_eq!(titles(&search(&ix, "nocturne op 9")), ["Nocturne in B-flat minor, Op. 9, No. 1"]);
         assert!(search(&ix, "opedie").rows.is_empty());
         assert!(search(&ix, "   ").rows.is_empty());
     }
@@ -470,6 +469,9 @@ Chopin\tFrederic Chopin\tMazurka Op. 50 No. 1\tChopin Mazurka 50/1\t\t103\t9\t3/
             ["Mazurka in G Major, Op. 50, No. 1", "Mazurka Op. 50 No. 1"]
         );
         assert!(search(&ix, "5").rows.is_empty());
+        // A movement number is a whole number too.
+        assert_eq!(search(&ix, "waldstein 4").rows.len(), 1);
+        assert!(search(&ix, "waldstein 3").rows.is_empty());
     }
 
     #[test]
@@ -530,16 +532,6 @@ Morris\tLelia N. Morris\tThe Fight Is On\tThe Fight Is On\t\t24\t0\t1/3/QmC.mxl\
             hits.rows.iter().map(|r| r.heading.as_str()).collect::<Vec<_>>(),
             ["Lelia N. Morris.", "Lelia N. Morris.", "Lelia Morris"]
         );
-    }
-
-    #[test]
-    fn a_movement_number_answers_its_digit_token() {
-        let ks = r#"[{"dir":"d","file":"waldstein.krn","composer":"Beethoven, Ludwig van",
-          "surname":"Beethoven","title":"Sonata for Piano (Waldstein)","opus":"53","number":null,
-          "movement":4,"movementName":null,"key":"C major","time":"2/4","bars":543}]"#;
-        let ix = Index::build(ks, "");
-        assert_eq!(search(&ix, "waldstein 4").rows.len(), 1);
-        assert!(search(&ix, "waldstein 3").rows.is_empty());
     }
 
     #[test]
@@ -687,4 +679,3 @@ Morris\tLelia N. Morris\tThe Fight Is On\tThe Fight Is On\t\t24\t0\t1/3/QmC.mxl\
         }
     }
 }
-

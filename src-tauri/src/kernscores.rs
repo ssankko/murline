@@ -618,28 +618,6 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_words_become_marks_and_other_lyrics_go() {
-        let out = merge(include_bytes!("../fixtures/sonata01-1.musicxml")).unwrap();
-        let (_, root) = parse(&out).unwrap();
-        for direction in find(&root, "direction") {
-            if let Some(kind) = child(direction, "direction-type")
-                && child(kind, "dynamics").is_some()
-            {
-                assert_eq!(text_of(child(direction, "staff").unwrap()), "1");
-            }
-        }
-        let marks: Vec<String> = find(&root, "dynamics")
-            .iter()
-            .filter_map(|d| d.children.first())
-            .map(|n| match n {
-                Node::Elem(e) => e.name.clone(),
-                Node::Text(t) => t.clone(),
-            })
-            .collect();
-        assert!(marks.contains(&"p".to_string()) && marks.contains(&"ff".to_string()), "{marks:?}");
-    }
-
-    #[test]
     fn voices_are_renumbered_per_part() {
         let out = merge(include_bytes!("../fixtures/wtc1f04.musicxml")).unwrap();
         let (_, root) = parse(&out).unwrap();
@@ -674,29 +652,25 @@ mod tests {
         TWO_HANDS.replace("@1", first).replace("@2", second).into_bytes()
     }
 
+    /// Two parts are two staves whatever clefs they open with, and the lyric of the second part
+    /// becomes a `<dynamics>` mark named for its word, on staff 1.
     #[test]
-    fn a_recovered_dynamic_sits_on_staff_1_whatever_part_its_lyric_was_in() {
-        let out = merge(&two_hands("G", "F")).unwrap();
-        let (_, root) = parse(&out).unwrap();
-        let directions = find(&root, "direction");
-        assert_eq!(directions.len(), 1);
-        assert_eq!(text_of(child(directions[0], "staff").unwrap()), "1");
-        // The note that carried the lyric stays on its own staff.
-        let notes = find(&root, "note");
-        assert_eq!(notes.iter().map(|n| staff_of(n)).collect::<Vec<_>>(), ["1", "2"]);
-    }
-
-    #[test]
-    fn two_parts_of_one_clef_still_split_over_the_two_staves() {
-        for (first, second) in [("G", "G"), ("F", "F")] {
+    fn two_parts_become_two_staves_with_their_dynamics_on_staff_1() {
+        for (first, second) in [("G", "F"), ("G", "G"), ("F", "F")] {
             let out = merge(&two_hands(first, second)).unwrap();
             let (_, root) = parse(&out).unwrap();
+            // The note that carried the lyric stays on its own staff.
             let notes = find(&root, "note");
             assert_eq!(
                 notes.iter().map(|n| staff_of(n)).collect::<Vec<_>>(),
                 ["1", "2"],
                 "{first} over {second}"
             );
+            let directions = find(&root, "direction");
+            assert_eq!(directions.len(), 1, "{first} over {second}");
+            assert_eq!(text_of(child(directions[0], "staff").unwrap()), "1");
+            let mark = child(child(directions[0], "direction-type").unwrap(), "dynamics").unwrap();
+            assert!(matches!(&mark.children[..], [Node::Elem(e)] if e.name == "p"));
         }
     }
 

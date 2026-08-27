@@ -6,6 +6,7 @@ import { KEYBOARD_H, drawKeyboard, keyLayout, keyRange, type KeyLayout } from '@
 import { INK, PAPER, colorOf, tone } from '@/look/color';
 import { reducedMotion } from '@/look/motion';
 import type { Engine, LoopSpan, PlayEvent, Snapshot } from '@/play/engine';
+import type { Section } from '@/play/section';
 import { isInactiveHand, type HandsSetting } from '@/play/settings';
 import { barsOfWalk, beatOf } from '@/score/beat';
 import { TICKS_PER_QUARTER, type PlayStep, type Score } from '@/score/types';
@@ -50,6 +51,10 @@ const RING_MS = 300;
 const GHOST_ALPHA = 0.25;
 /** How long a change of hands takes to cross-fade the blocks it turns into ghosts, and back. */
 const HANDS_FADE_MS = 200;
+
+/** The Section's tint, and how long it takes to come up or go, as on the sheet. */
+const SECTION_ALPHA = 0.09;
+const SECTION_FADE_MS = 200;
 
 /** One ring or blink playing out at a key. */
 interface Effect {
@@ -97,6 +102,13 @@ export class Lane {
   private hands: HandsSetting;
   private handsBefore: HandsSetting;
   private handsAt = -Infinity;
+  /**
+   * The Section the band is drawn for, which a clear leaves in place while it fades out, whether
+   * there is one now, and when that last changed.
+   */
+  private shownSection: Section | null = null;
+  private sectionOn = false;
+  private sectionAt = -Infinity;
   /**
    * Canvas size and window height, taken only when they change. The sheet writes its own styles
    * every frame, so reading them here would make the browser lay the page out again each time.
@@ -159,6 +171,12 @@ export class Lane {
       this.handsBefore = this.hands;
       this.hands = this.engine.settings.hands;
       this.handsAt = reducedMotion() ? -Infinity : now;
+    }
+    const section = this.engine.section;
+    if (section) this.shownSection = section;
+    if (this.sectionOn !== (section !== null)) {
+      this.sectionOn = section !== null;
+      this.sectionAt = reducedMotion() ? -Infinity : now;
     }
     const ctx = this.ctx;
     const { width, height } = this.size;
@@ -281,11 +299,14 @@ export class Lane {
 
   /** The Section as a tinted band over its bars, whether or not Loop gives it force. */
   private drawSection(width: number, laneH: number, pxPerTick: number): void {
-    const section = this.engine.section;
+    const section = this.shownSection;
     if (!section) return;
+    const eased = Math.min(1, (this.now - this.sectionAt) / SECTION_FADE_MS);
+    const alpha = SECTION_ALPHA * (this.sectionOn ? eased : 1 - eased);
+    if (alpha <= 0) return;
     const ctx = this.ctx;
     ctx.save();
-    ctx.globalAlpha = 0.09;
+    ctx.globalAlpha = alpha;
     ctx.fillStyle = tone(INK.duration, this.dark);
     for (const bar of this.bars) {
       if (bar.measure < section.from || bar.measure > section.to) continue;

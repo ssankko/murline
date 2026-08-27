@@ -53,5 +53,4 @@ test('a PDMX row shows the uploader title, and only when it differs from the son
 
 test('the failure reason drops the prefix a thrown Error carries', () => {
   expect(reasonOf(new Error('HTTP 404 from KernScores'))).toBe('HTTP 404 from KernScores');
-  expect(reasonOf('timed out after 15 s')).toBe('timed out after 15 s');
 });

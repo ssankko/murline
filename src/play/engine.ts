@@ -19,8 +19,8 @@ import {
 /** Where a play stands. A Wait mode stop is the clock standing still inside `running`. */
 export type PlayState = 'idle' | 'counting-in' | 'running' | 'paused' | 'ended';
 
-/** What a click on the sheet asks for: a bar's opening line, or one Onset. */
-export type SeekTarget = { measure: number } | { onset: number };
+/** What a click asks for: a bar's opening line, one Onset, or a played tick the lane read off it. */
+export type SeekTarget = { measure: number } | { onset: number } | { tick: number };
 
 /** The stretch of played time one lap of the loop runs over. One lap is `to - from` ticks. */
 export interface LoopSpan {
@@ -397,7 +397,9 @@ export class Engine {
     if (this.kind !== 'practice') return;
     const ticks = this.playedTicksOf(target);
     if (ticks.length === 0) return;
-    const to = this.nearestTick(ticks, this.tick);
+    // A played tick names its pass itself; a bar or an Onset stands in every pass, so the clock
+    // says which of them the click meant.
+    const to = this.nearestTick(ticks, 'tick' in target ? target.tick : this.tick);
     this.moveTo(to);
     if (this.state === 'counting-in') this.beginMotion(to);
     else if (this.state !== 'running') this.startTick = to;
@@ -527,6 +529,8 @@ export class Engine {
 
   /** Every played tick a seek target stands at: once per pass through it. */
   private playedTicksOf(target: SeekTarget): number[] {
+    // A played tick lands on the step nearest it, wherever in the play order that step falls.
+    if ('tick' in target) return this.walk.map((step) => step.tick);
     const ticks: number[] = [];
     for (let i = 0; i < this.walk.length; i++) {
       const step = this.walk[i]!;

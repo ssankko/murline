@@ -195,6 +195,7 @@ export function PlayScreen({
         setMeasures(sheet.score.measures);
         const lane = knobValues(globals, LANE_KNOBS);
         laneRef.current = new Lane(canvasRef.current!, engine, lane, darkRef.current);
+        laneRef.current.onSeek = (target) => engine.seek(target);
         setSplit(clamp(globals.sheet_split, SPLIT_MIN, SPLIT_MAX));
         setLook(lane);
         setOneStaff(sheet.score.staffCount < 2);
@@ -629,12 +630,7 @@ export function PlayScreen({
         <div ref={hostRef} className="bg-paper min-h-0" style={{ flex: `${split} 1 0` }} />
         <Split value={split} onChange={setSplit} />
         <div className="bg-paper relative min-h-0" style={{ flex: `${1 - split} 1 0` }}>
-          {/* A click on the lane is the third way to drop a Section, next to its × and Escape. */}
-          <canvas
-            ref={canvasRef}
-            className="block h-full w-full"
-            onClick={() => engineRef.current?.kind === 'practice' && setSection(null)}
-          />
+          <canvas ref={canvasRef} className="block h-full w-full" />
           {state === 'ended' && summary && (
             <Summary
               record={summary.record}

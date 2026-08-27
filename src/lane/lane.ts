@@ -16,7 +16,7 @@ import {
 import { clamp } from '@/lib/utils';
 import { INK, PAPER, colorOf, mix, tone } from '@/look/color';
 import { reducedMotion } from '@/look/motion';
-import type { Engine, LoopSpan, PlayEvent, Snapshot } from '@/play/engine';
+import type { Engine, LoopSpan, PlayEvent, SeekTarget, Snapshot } from '@/play/engine';
 import type { Section } from '@/play/section';
 import { isInactiveHand, type HandsSetting } from '@/play/settings';
 import { barsOfWalk, beatOf } from '@/score/beat';
@@ -222,12 +222,14 @@ export class Lane {
   readonly look: LaneLook;
   /** Shown over the keys while the app has no MIDI input. */
   notice: string | null = null;
+  /** Where a click in the lane asks the play to go; the screen decides what a seek means. */
+  onSeek: ((target: SeekTarget) => void) | null = null;
 
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private readonly engine: Engine;
   private readonly resize: ResizeObserver;
-  /** Takes the wheel listener off the canvas again. */
+  /** Takes the wheel and click listeners off the canvas again. */
   private readonly listeners = new AbortController();
   private bars: LaneBar[];
   private jumps: LaneJump[];
@@ -257,10 +259,13 @@ export class Lane {
   /** The offset the glide runs from and the wall time it began; `-Infinity` while none runs. */
   private glideFrom = 0;
   private glideAt = -Infinity;
-  /** Wall time of the last wheel, which the detach window is measured from. */
+  /** Wall time of the last wheel or click, which the detach window is measured from. */
   private scrolledAt = -Infinity;
-  /** The scale of the last frame, which is what the wheel turns its pixels into ticks with. */
+  /** The scale and the lane height of the last frame, which turn a wheel or a click into ticks. */
   private pxPerTick = 0;
+  private laneH = 0;
+  /** Set by a click that seeks: its jump goes into the offset and no glide takes the view back. */
+  private holdView = false;
   /** What the engine's counters and its motion read last frame, which is how a seek is spotted. */
   private lastResets: number;
   private lastWraps: number;
@@ -326,6 +331,21 @@ export class Lane {
         if (this.pxPerTick > 0) this.moveView(-event.deltaY / this.pxPerTick);
       },
       { passive: false, signal: this.listeners.signal },
+    );
+    // A click seeks to the step nearest where it landed and leaves the view standing, as a wheel
+    // does. The keyboard under the lane is not time, so a click on it asks for nothing.
+    canvas.addEventListener(
+      'click',
+      (event) => {
+        if (this.pxPerTick <= 0 || this.laneH <= 0) return;
+        const y = event.clientY - canvas.getBoundingClientRect().top;
+        if (y >= this.laneH) return;
+        const resets = this.engine.resets;
+        this.onSeek?.({ tick: this.view + (this.laneH - y) / this.pxPerTick });
+        // Only a seek the play took holds the view: a performance turns the click down.
+        this.holdView = this.engine.resets !== resets;
+      },
+      { signal: this.listeners.signal },
     );
   }
 
@@ -414,6 +434,7 @@ export class Lane {
     while (this.effects.length > 0 && now - this.effects[0]!.start > RING_MS) this.effects.shift();
 
     const laneH = Math.max(height - KEYBOARD_H, 40);
+    this.laneH = laneH;
     // Pixels per beat come from the window, not from the lane, so dragging the split shows more or
     // fewer beats and never stretches a note.
     const reference = Math.max(
@@ -504,7 +525,13 @@ export class Lane {
     this.lastRunning = running;
     const settled = this.glideAt === -Infinity;
     const detached = settled && running && this.now - this.scrolledAt >= DETACH_MS;
-    if (this.offset !== 0 && ((reset && !wrapped) || began || detached)) {
+    if (reset && this.holdView) {
+      // A click seek wants the notes left where they are, so the view detaches as a wheel
+      // leaves it and rides the clock again only after the detach window.
+      this.holdView = false;
+      this.glideAt = -Infinity;
+      this.scrolledAt = this.now;
+    } else if (this.offset !== 0 && ((reset && !wrapped) || began || detached)) {
       this.glideFrom = this.offset;
       this.glideAt = this.now;
     }
@@ -1042,7 +1069,7 @@ export class Lane {
     ctx.textBaseline = 'middle';
     // Every panel comes from the slot below the one it takes, the newest from under the lot.
     const t = Math.min(1, (this.now - this.changeAt) / PANEL_SLIDE_MS);
-    const eased = easeOutBack(t);
+    const eased = easeInOutBack(t);
     const step = (slot: number) =>
       t === 1
         ? slotRect(slot, width)
@@ -1283,14 +1310,27 @@ export function jumpOf(
 
 /**
  * How much of a glide's offset is left `t` of the way through it: all of it at the start, none at
- * the end, easing out in between.
+ * the end, over a curve that pulls away slowly, runs, and settles slowly.
  */
 export function glideLeft(t: number): number {
   if (!(t > 0)) return 1;
-  return t < 1 ? (1 - t) ** 3 : 0;
+  return t < 1 ? 1 - easeInOut(t) : 0;
 }
 
-/** Fast out with a small overshoot, so a panel settles into its slot with a bounce. */
+/** Slow at both ends and fast between them, the shape every movement of the view takes. */
+function easeInOut(t: number): number {
+  return t < 0.5 ? 4 * t ** 3 : 1 - (2 - 2 * t) ** 3 / 2;
+}
+
+/** Fast out with a small overshoot, so a key settles under a finger with a bounce. */
 function easeOutBack(t: number): number {
   return 1 + 2.70158 * (t - 1) ** 3 + 1.70158 * (t - 1) ** 2;
+}
+
+/** The same slow ends, each carried a little past its mark, so the panels swing into their slots. */
+function easeInOutBack(t: number): number {
+  const back = 1.70158 * 1.525;
+  return t < 0.5
+    ? ((2 * t) ** 2 * ((back + 1) * 2 * t - back)) / 2
+    : ((2 * t - 2) ** 2 * ((back + 1) * (2 * t - 2) + back) + 2) / 2;
 }

@@ -139,9 +139,11 @@ describe('the glide back onto the clock', () => {
     expect(glideLeft(2)).toBe(0);
   });
 
-  test('eases out, so most of the way is gone by the middle', () => {
-    expect(glideLeft(0.5)).toBeCloseTo(0.125);
-    expect(glideLeft(0.25)).toBeGreaterThan(glideLeft(0.75));
+  test('eases in and out, so it stands at half way at half time', () => {
+    expect(glideLeft(0.5)).toBeCloseTo(0.5);
+    // Slow at both ends: the first quarter and the last cover the same little ground.
+    expect(1 - glideLeft(0.25)).toBeCloseTo(glideLeft(0.75));
+    expect(glideLeft(0.25)).toBeGreaterThan(glideLeft(0.5));
   });
 });
 

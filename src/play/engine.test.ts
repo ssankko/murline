@@ -1244,6 +1244,16 @@ describe('seek', () => {
     expect(play.snapshot().playedTick).toBe(2 * BAR);
   });
 
+  test('a played tick goes to the step nearest it, in the pass that tick falls in', () => {
+    const play = engine(withRepeat());
+    play.start();
+    // The clock stands in the first pass of bar 1; the tick names the second pass, so it wins
+    // however far it lies from the clock.
+    play.seek({ tick: 2 * BAR + TICKS_PER_QUARTER + 10 });
+
+    expect(play.snapshot().playedTick).toBe(2 * BAR + TICKS_PER_QUARTER);
+  });
+
   test('the first occurrence on a tie', () => {
     const play = engine(withRepeat());
     play.start();

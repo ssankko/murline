@@ -169,7 +169,7 @@ export function Library({
   /** "In library" answers for the whole folder, not for the rows the current sort shows. */
   async function openFinder(): Promise<void> {
     const paths = await allPiecePaths();
-    setFinding(new Set(paths.map((path) => path.toLowerCase())));
+    setFinding(new Set(paths.map((path) => path.toLowerCase().normalize('NFC'))));
   }
 
   async function pickFiles(): Promise<void> {

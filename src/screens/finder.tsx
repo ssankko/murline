@@ -8,7 +8,7 @@ import { getSetting } from '@/db/db';
 import { importFiles } from '@/library/import';
 import { invoke } from '@tauri-apps/api/core';
 import { Download, Search } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 /** One search hit, as `finder_search` returns it. */
 export interface FinderRow {
@@ -80,9 +80,10 @@ export function reasonOf(error: unknown): string {
 }
 
 /**
- * The finder modal. `libraryPaths` are the lower-cased folder-relative paths of every piece, which
- * a download compares its own root-level name against by the rule the import clash check uses. A
- * row already there says "In library" and never downloads, so the Replace prompt cannot fire here.
+ * The finder modal. `libraryPaths` are the lower-cased, NFC folder-relative paths of every piece,
+ * which a download compares its own root-level name against by the rule the import clash check
+ * uses. A row already there says "In library" and never downloads, so the Replace prompt cannot
+ * fire here.
  */
 export function Finder({
   folder,
@@ -136,12 +137,8 @@ export function Finder({
   const rows = result.rows;
   const selected = rows[Math.min(sel, rows.length - 1)] ?? null;
   // A volume that normalises names on write (HFS+, SMB) answers the scan decomposed, so both
-  // sides of the comparison compose first.
-  const paths = useMemo(
-    () => new Set([...libraryPaths].map((path) => path.normalize('NFC'))),
-    [libraryPaths],
-  );
-  const owned = (r: FinderRow) => paths.has(r.fileName.toLowerCase().normalize('NFC'));
+  // sides of the comparison are lowercased and composed. `libraryPaths` arrives that way.
+  const owned = (r: FinderRow) => libraryPaths.has(r.fileName.toLowerCase().normalize('NFC'));
 
   useEffect(() => {
     list.current?.querySelector('[data-selected]')?.scrollIntoView({ block: 'nearest' });

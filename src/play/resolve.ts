@@ -2,7 +2,7 @@
 // the built-in default. A piece column of NULL is what "inherit" looks like in the database, so 0
 // and false are values like any other and never fall through.
 
-import { getSettingOr } from '@/db/db';
+import { knobValues, PIECE_DEFAULT_KEYS, readSettings, type Settings } from '@/db/db';
 import type { PieceRow } from '@/library/queries';
 import {
   DEFAULT_PLAY_SETTINGS,
@@ -87,19 +87,14 @@ export function resolvePlaySettings(
   return { settings: settings as PieceSettings, inherited: inherited as Inherited };
 }
 
-/** The Playing defaults group: the middle level of the resolution. */
+/** The Playing defaults group: the middle level of the resolution. Tempo mode is never global. */
+export function pieceDefaultsOf(settings: Settings): Partial<PieceSettings> {
+  return knobValues(settings, PIECE_DEFAULT_KEYS);
+}
+
+/** The same, for a caller that holds no settings of its own yet. */
 export async function readPieceDefaults(): Promise<Partial<PieceSettings>> {
-  const [tempoValue, metronome, countInBars, hands, keyboardPreset, keyboardLo, keyboardHi] =
-    await Promise.all([
-      getSettingOr('default_tempo_value', DEFAULT_PLAY_SETTINGS.tempoValue),
-      getSettingOr('default_metronome', DEFAULT_PLAY_SETTINGS.metronome),
-      getSettingOr('default_count_in_bars', DEFAULT_PLAY_SETTINGS.countInBars),
-      getSettingOr('default_hands', DEFAULT_PLAY_SETTINGS.hands),
-      getSettingOr('default_keyboard_preset', DEFAULT_PLAY_SETTINGS.keyboardPreset),
-      getSettingOr('default_keyboard_lo', DEFAULT_PLAY_SETTINGS.keyboardLo),
-      getSettingOr('default_keyboard_hi', DEFAULT_PLAY_SETTINGS.keyboardHi),
-    ]);
-  return { tempoValue, metronome, countInBars, hands, keyboardPreset, keyboardLo, keyboardHi };
+  return pieceDefaultsOf(await readSettings());
 }
 
 /**

@@ -1,4 +1,4 @@
-import { getSetting, getSettingOr, SETTING_DEFAULTS } from '@/db/db';
+import { getSetting, getSettingOr } from '@/db/db';
 import { setTheme } from '@/look/use-dark';
 import type { PlayKind } from '@/play/engine';
 import { Library } from '@/screens/library';
@@ -19,7 +19,7 @@ export function App() {
 
   // The theme is global, so it is painted before any screen is.
   useEffect(() => {
-    void getSettingOr('theme', SETTING_DEFAULTS.theme).then(setTheme);
+    void getSettingOr('theme').then(setTheme);
   }, []);
 
   // A database that will not open leaves onboarding to report the failure when Continue retries it.

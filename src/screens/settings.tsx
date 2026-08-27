@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { getSettingOr, setSetting, SETTING_DEFAULTS, type Settings } from '@/db/db';
+import { readSettings, setSetting, SETTING_DEFAULTS, type Settings } from '@/db/db';
 import { detectedRange } from '@/lane/keyboard';
 import type { LaneLook } from '@/lane/lane';
 import { noteName } from '@/look/color';
@@ -449,13 +449,6 @@ export function GearPopover({
       </PopoverContent>
     </Popover>
   );
-}
-
-/** Every setting, read once with its default for the one never written. */
-async function readSettings(): Promise<Settings> {
-  const keys = Object.keys(SETTING_DEFAULTS) as (keyof Settings)[];
-  const values = await Promise.all(keys.map((key) => getSettingOr(key, SETTING_DEFAULTS[key])));
-  return Object.fromEntries(keys.map((key, at) => [key, values[at]])) as Settings;
 }
 
 function Group({

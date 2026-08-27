@@ -3,7 +3,14 @@
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { getSettingOr, setSetting, type Settings as GlobalSettings } from '@/db/db';
+import {
+  ENGINE_KNOBS,
+  knobValues,
+  LANE_KNOBS,
+  readSettings,
+  setSetting,
+  type Settings as GlobalSettings,
+} from '@/db/db';
 import {
   DEFAULT_LANE_LOOK,
   DEFAULT_SPLIT,
@@ -34,6 +41,7 @@ import {
 } from '@/play/engine';
 import {
   INHERITS_EVERYTHING,
+  pieceDefaultsOf,
   readPieceDefaults,
   resolvePlaySettings,
   type PieceSettings,
@@ -43,7 +51,6 @@ import {
   type HandsSetting,
   type KeyboardPreset,
   type PlayMode,
-  type PlaySettings,
   type TempoMode,
 } from '@/play/settings';
 import { clampSection, sectionLabel, type Section } from '@/play/section';
@@ -86,32 +93,6 @@ const TEMPO_RANGE: Record<TempoMode, [number, number]> = {
   percent: [25, 200],
   bpm: [40, 240],
 };
-
-/** The global knobs a running play reads, and the field of `PlaySettings` each one lands in. */
-const ENGINE_KNOBS = {
-  grade_timing_flat_ms: 'timingFlatMs',
-  grade_timing_zero_ms: 'timingZeroMs',
-  grade_velocity_flat: 'velocityFlat',
-  grade_velocity_zero: 'velocityZero',
-  grade_release_flat_lo: 'releaseFlatLo',
-  grade_release_flat_hi: 'releaseFlatHi',
-  grade_release_zero_lo: 'releaseZeroLo',
-  grade_release_zero_hi: 'releaseZeroHi',
-  grade_weight_timing: 'weightTiming',
-  grade_weight_velocity: 'weightVelocity',
-  grade_weight_release: 'weightRelease',
-  velocity_offset: 'velocityOffset',
-  matching_window_ms: 'matchingWindowMs',
-  togetherness_ms: 'togethernessMs',
-} as const satisfies Partial<Record<keyof GlobalSettings, keyof PlaySettings>>;
-
-/** The same for the lane's look, which the next frame reads out of the live object. */
-const LANE_KNOBS = {
-  lane_lookahead: 'lookaheadBeats',
-  lane_note_width: 'noteWidthPct',
-  lane_gap: 'gapPx',
-  keyboard_labels: 'keyLabels',
-} as const satisfies Partial<Record<keyof GlobalSettings, keyof LaneLook>>;
 
 export function PlayScreen({
   folder,
@@ -202,20 +183,15 @@ export function PlayScreen({
       try {
         await reindexIfChanged(folder, path);
         const bytes = await readScoreFile(pathOf(folder, path));
-        const [opening, knobs, row, defaults] = await Promise.all([
-          laneLook(),
-          engineKnobs(),
-          getPiece(path).catch(() => null),
-          readPieceDefaults(),
-        ]);
-        const resolved = resolvePlaySettings(row ?? INHERITS_EVERYTHING, defaults);
+        const [globals, row] = await Promise.all([readSettings(), getPiece(path).catch(() => null)]);
+        const resolved = resolvePlaySettings(row ?? INHERITS_EVERYTHING, pieceDefaultsOf(globals));
         const sheet = await Sheet.open(hostRef.current!, bytes, fileName, darkRef.current);
         if (!mounted.current) return sheet.dispose();
         sheetRef.current = sheet;
         // The piece opens as it was left: its own settings over the global defaults over these.
         const engine = new Engine(sheet.score, {
           ...DEFAULT_PLAY_SETTINGS,
-          ...knobs,
+          ...knobValues(globals, ENGINE_KNOBS),
           mode: liveRef.current.mode,
           ...resolved.settings,
         });
@@ -228,12 +204,13 @@ export function PlayScreen({
           setSection(picked && clampSection(sheet.score.measures, picked));
         };
         setMeasures(sheet.score.measures);
-        laneRef.current = new Lane(canvasRef.current!, engine, opening.lane, darkRef.current);
-        setSplit(opening.split);
-        setLook(opening.lane);
+        const lane = knobValues(globals, LANE_KNOBS);
+        laneRef.current = new Lane(canvasRef.current!, engine, lane, darkRef.current);
+        setSplit(Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, globals.sheet_split)));
+        setLook(lane);
         setOneStaff(sheet.score.staffCount < 2);
         show(resolved.settings);
-        setClickVolume(opening.clickVolume);
+        setClickVolume(globals.click_volume);
         setWritten({
           bpm: sheet.score.hasTempo ? Math.round(bpmAt(sheet.score, 0)) : 120,
           constant: sheet.score.constantTempo,
@@ -749,35 +726,6 @@ function Cell({ label, value }: { label: string; value: string | number }) {
 /** A hand the play does not expect is dimmed, and fades as the setting changes. */
 function handGlyph(hands: HandsSetting, hand: 'left' | 'right'): string {
   return `transition-opacity duration-200 ${hands === 'both' || hands === hand ? '' : 'opacity-30'}`;
-}
-
-/** The global settings the lane, the split and the metronome open with. The gear writes them. */
-async function laneLook(): Promise<{ lane: LaneLook; split: number; clickVolume: number }> {
-  const [lookaheadBeats, noteWidthPct, gapPx, keyLabels, split, clickVolume] = await Promise.all([
-    getSettingOr('lane_lookahead', DEFAULT_LANE_LOOK.lookaheadBeats),
-    getSettingOr('lane_note_width', DEFAULT_LANE_LOOK.noteWidthPct),
-    getSettingOr('lane_gap', DEFAULT_LANE_LOOK.gapPx),
-    getSettingOr('keyboard_labels', DEFAULT_LANE_LOOK.keyLabels),
-    getSettingOr('sheet_split', DEFAULT_SPLIT),
-    getSettingOr('click_volume', 70),
-  ]);
-  return {
-    lane: { lookaheadBeats, noteWidthPct, gapPx, keyLabels },
-    split: Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, split)),
-    clickVolume,
-  };
-}
-
-/** Every global knob the engine reads, taken once when the piece opens. */
-async function engineKnobs(): Promise<Partial<PlaySettings>> {
-  const knobs: Record<string, number> = {};
-  await Promise.all(
-    Object.entries(ENGINE_KNOBS).map(async ([key, field]) => {
-      const fallback = DEFAULT_PLAY_SETTINGS[field] as number;
-      knobs[field] = (await getSettingOr(key as keyof GlobalSettings, fallback)) as number;
-    }),
-  );
-  return knobs as Partial<PlaySettings>;
 }
 
 /**

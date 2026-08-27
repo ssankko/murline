@@ -1,16 +1,17 @@
-import { DEFAULT_LANE_LOOK, DEFAULT_SPLIT } from '@/lane/lane';
+import { DEFAULT_LANE_LOOK, DEFAULT_SPLIT, type LaneLook } from '@/lane/lane';
 import type { Theme } from '@/look/use-dark';
 import {
   DEFAULT_PLAY_SETTINGS,
   type HandsSetting,
   type KeyboardPreset,
+  type PlaySettings,
 } from '@/play/settings';
 import Database from '@tauri-apps/plugin-sql';
 
 /** Global settings, one row each in `setting`, stored as JSON. NULL means never written. */
 export type Settings = {
   library_folder: string;
-  /** The folder holding `mxl/` from the unpacked PDMX tarball; NULL until the user picks one. */
+  /** The folder holding `mxl/` from the unpacked PDMX tarball; empty until the user picks one. */
   pdmx_folder: string;
   onboarding_done: boolean;
   /** Id of the one MIDI input port to listen on; NULL listens on every port. */
@@ -61,6 +62,63 @@ export type Settings = {
   togetherness_ms: number;
 };
 
+/** The global knobs a running play reads, and the field of `PlaySettings` each one lands in. */
+export const ENGINE_KNOBS = {
+  grade_timing_flat_ms: 'timingFlatMs',
+  grade_timing_zero_ms: 'timingZeroMs',
+  grade_velocity_flat: 'velocityFlat',
+  grade_velocity_zero: 'velocityZero',
+  grade_release_flat_lo: 'releaseFlatLo',
+  grade_release_flat_hi: 'releaseFlatHi',
+  grade_release_zero_lo: 'releaseZeroLo',
+  grade_release_zero_hi: 'releaseZeroHi',
+  grade_weight_timing: 'weightTiming',
+  grade_weight_velocity: 'weightVelocity',
+  grade_weight_release: 'weightRelease',
+  velocity_offset: 'velocityOffset',
+  matching_window_ms: 'matchingWindowMs',
+  togetherness_ms: 'togethernessMs',
+} as const satisfies Record<string, keyof PlaySettings>;
+
+/** The same for the lane's look, which the next frame reads out of the live object. */
+export const LANE_KNOBS = {
+  lane_lookahead: 'lookaheadBeats',
+  lane_note_width: 'noteWidthPct',
+  lane_gap: 'gapPx',
+  keyboard_labels: 'keyLabels',
+} as const satisfies Record<string, keyof LaneLook>;
+
+/** The global default of a piece setting, and the field of `PieceSettings` it stands for. */
+export const PIECE_DEFAULT_KEYS = {
+  default_tempo_value: 'tempoValue',
+  default_metronome: 'metronome',
+  default_count_in_bars: 'countInBars',
+  default_hands: 'hands',
+  default_keyboard_preset: 'keyboardPreset',
+  default_keyboard_lo: 'keyboardLo',
+  default_keyboard_hi: 'keyboardHi',
+} as const satisfies Record<string, keyof PlaySettings>;
+
+/** One block of `SETTING_DEFAULTS`: each key takes the built-in default of the field it names. */
+function knobDefaults<S, M extends Record<string, keyof S>>(
+  from: S,
+  knobs: M,
+): { [K in keyof M]: S[M[K]] } {
+  return Object.fromEntries(
+    Object.entries(knobs).map(([key, field]) => [key, from[field]]),
+  ) as { [K in keyof M]: S[M[K]] };
+}
+
+/** The fields a knob map names, read off a settings object: the reverse of `knobDefaults`. */
+export function knobValues<M extends Partial<Record<keyof Settings, string>>>(
+  settings: Settings,
+  knobs: M,
+): { [K in keyof M as M[K] & string]: Settings[K & keyof Settings] } {
+  return Object.fromEntries(
+    Object.entries(knobs).map(([key, field]) => [field, settings[key as keyof Settings]]),
+  ) as { [K in keyof M as M[K] & string]: Settings[K & keyof Settings] };
+}
+
 /** What every setting holds until the user writes it, and what "Reset group" writes back. */
 export const SETTING_DEFAULTS: Settings = {
   library_folder: '',
@@ -69,32 +127,10 @@ export const SETTING_DEFAULTS: Settings = {
   midi_device: null,
   theme: 'system',
   sheet_split: DEFAULT_SPLIT,
-  lane_lookahead: DEFAULT_LANE_LOOK.lookaheadBeats,
-  lane_note_width: DEFAULT_LANE_LOOK.noteWidthPct,
-  lane_gap: DEFAULT_LANE_LOOK.gapPx,
-  keyboard_labels: DEFAULT_LANE_LOOK.keyLabels,
   click_volume: 70,
-  default_tempo_value: DEFAULT_PLAY_SETTINGS.tempoValue,
-  default_metronome: DEFAULT_PLAY_SETTINGS.metronome,
-  default_count_in_bars: DEFAULT_PLAY_SETTINGS.countInBars,
-  default_hands: DEFAULT_PLAY_SETTINGS.hands,
-  default_keyboard_preset: DEFAULT_PLAY_SETTINGS.keyboardPreset,
-  default_keyboard_lo: DEFAULT_PLAY_SETTINGS.keyboardLo,
-  default_keyboard_hi: DEFAULT_PLAY_SETTINGS.keyboardHi,
-  grade_timing_flat_ms: DEFAULT_PLAY_SETTINGS.timingFlatMs,
-  grade_timing_zero_ms: DEFAULT_PLAY_SETTINGS.timingZeroMs,
-  grade_velocity_flat: DEFAULT_PLAY_SETTINGS.velocityFlat,
-  grade_velocity_zero: DEFAULT_PLAY_SETTINGS.velocityZero,
-  grade_release_flat_lo: DEFAULT_PLAY_SETTINGS.releaseFlatLo,
-  grade_release_flat_hi: DEFAULT_PLAY_SETTINGS.releaseFlatHi,
-  grade_release_zero_lo: DEFAULT_PLAY_SETTINGS.releaseZeroLo,
-  grade_release_zero_hi: DEFAULT_PLAY_SETTINGS.releaseZeroHi,
-  grade_weight_timing: DEFAULT_PLAY_SETTINGS.weightTiming,
-  grade_weight_velocity: DEFAULT_PLAY_SETTINGS.weightVelocity,
-  grade_weight_release: DEFAULT_PLAY_SETTINGS.weightRelease,
-  velocity_offset: DEFAULT_PLAY_SETTINGS.velocityOffset,
-  matching_window_ms: DEFAULT_PLAY_SETTINGS.matchingWindowMs,
-  togetherness_ms: DEFAULT_PLAY_SETTINGS.togethernessMs,
+  ...knobDefaults(DEFAULT_LANE_LOOK, LANE_KNOBS),
+  ...knobDefaults(DEFAULT_PLAY_SETTINGS, PIECE_DEFAULT_KEYS),
+  ...knobDefaults(DEFAULT_PLAY_SETTINGS, ENGINE_KNOBS),
 };
 
 let opening: Promise<Database> | undefined;
@@ -133,11 +169,23 @@ export async function setSetting<K extends keyof Settings>(
 /** A global setting, with the default for one never written or a database that will not open. */
 export async function getSettingOr<K extends keyof Settings>(
   key: K,
-  fallback: Settings[K],
+  fallback: Settings[K] = SETTING_DEFAULTS[key],
 ): Promise<Settings[K]> {
   try {
     return (await getSetting(key)) ?? fallback;
   } catch {
     return fallback;
+  }
+}
+
+/** Every global setting in one read, each one never written held at its default. */
+export async function readSettings(): Promise<Settings> {
+  try {
+    const db = await getDb();
+    const rows = await db.select<{ key: string; value: string }[]>('SELECT key, value FROM setting');
+    const written = rows.map((row) => [row.key, JSON.parse(row.value) as unknown]);
+    return { ...SETTING_DEFAULTS, ...Object.fromEntries(written) } as Settings;
+  } catch {
+    return { ...SETTING_DEFAULTS };
   }
 }

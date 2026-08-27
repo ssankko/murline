@@ -3,6 +3,19 @@
 import { OpenSheetMusicDisplay } from 'opensheetmusicdisplay';
 import { ScoreError } from './types';
 
+// The letters MuseScore hides behind a SMuFL glyph name when it writes a dynamic as text.
+const DYNAMIC_LETTERS: Record<string, string> = {
+  dynamicPiano: 'p',
+  dynamicMezzo: 'm',
+  dynamicForte: 'f',
+  dynamicSforzando: 'sf',
+  dynamicRinforzando: 'rf',
+  dynamicNiente: 'n',
+  dynamicZ: 'z',
+  dynamicS: 's',
+  dynamicR: 'r',
+};
+
 /**
  * The one gate every score file passes: bytes in, or a `ScoreError` naming why not. The bytes go in
  * as a Blob whatever the extension, because OSMD fetches a plain string that does not open with
@@ -21,6 +34,7 @@ export async function loadInto(
     throw new ScoreError('Not a MusicXML file', String(error));
   }
   if (!osmd.Sheet) throw new ScoreError('Not a MusicXML file', 'the file holds no score');
+  spellSymbols(osmd);
 }
 
 /** Loads the bytes of a score file into an OSMD instance that is never rendered. */
@@ -36,4 +50,25 @@ export async function loadSheet(
   });
   await loadInto(osmd, bytes, fileName);
   return osmd;
+}
+
+/**
+ * Rewrites the `<sym>dynamicMezzo</sym>` markup MuseScore puts in a `<words>` direction, which OSMD
+ * prints as it stands. Each glyph name becomes the letter it stands for, a name with no letter
+ * loses only its tags.
+ */
+function spellSymbols(osmd: OpenSheetMusicDisplay): void {
+  for (const measure of osmd.Sheet.SourceMeasures) {
+    for (const staff of measure.StaffLinkedExpressions) {
+      for (const expression of staff ?? []) {
+        for (const entry of expression.EntriesList) {
+          if (entry.label.includes('<sym>')) entry.label = spell(entry.label);
+        }
+      }
+    }
+  }
+}
+
+function spell(text: string): string {
+  return text.replace(/<sym>(\w+)<\/sym>/g, (_, name: string) => DYNAMIC_LETTERS[name] ?? name);
 }

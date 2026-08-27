@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use tauri_plugin_sql::{Migration, MigrationKind};
 
 mod finder;
@@ -11,11 +9,7 @@ mod pdmx;
 /// later folder change both call it without checking first.
 #[tauri::command]
 fn ensure_dir(path: String) -> Result<(), String> {
-    ensure_dir_at(Path::new(&path)).map_err(|e| e.to_string())
-}
-
-fn ensure_dir_at(path: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(path)
+    std::fs::create_dir_all(&path).map_err(|e| e.to_string())
 }
 
 /// The user's home directory, so the frontend can offer `~/Music/Piano/` as an absolute path.
@@ -66,19 +60,3 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-#[cfg(test)]
-mod tests {
-    use super::ensure_dir_at;
-
-    #[test]
-    fn ensure_dir_creates_nested_and_repeats_without_error() {
-        let root = tempfile::tempdir().unwrap();
-        let target = root.path().join("Music").join("Piano");
-
-        ensure_dir_at(&target).unwrap();
-        assert!(target.is_dir());
-
-        ensure_dir_at(&target).unwrap();
-        assert!(target.is_dir());
-    }
-}

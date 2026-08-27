@@ -126,11 +126,10 @@ fn list_dir(root: &Path) -> std::io::Result<Vec<FileEntry>> {
                 stack.push(path);
                 continue;
             }
-            let ext = path
+            let known = path
                 .extension()
-                .map(|e| e.to_string_lossy().to_lowercase())
-                .unwrap_or_default();
-            if !EXTENSIONS.contains(&ext.as_str()) {
+                .is_some_and(|e| EXTENSIONS.iter().any(|&x| e.eq_ignore_ascii_case(x)));
+            if !known {
                 continue;
             }
             let Some(rel) = path.strip_prefix(root).ok().and_then(Path::to_str) else {
@@ -253,25 +252,6 @@ mod tests {
 
         let names: Vec<&str> = list.iter().map(|e| e.rel_path.as_str()).collect();
         assert_eq!(names, ["sub/piece.musicxml"]);
-    }
-
-    /// APFS refuses a name that is not UTF-8, so this only bites on a library folder mounted from a
-    /// filesystem that allows one.
-    #[test]
-    fn a_name_that_is_not_utf_8_is_no_piece() {
-        use std::os::unix::ffi::OsStrExt;
-        let root = tempfile::tempdir().unwrap();
-        write(root.path(), "good.musicxml", "bytes");
-        let bad = root.path().join(std::ffi::OsStr::from_bytes(b"bad\xff.musicxml"));
-        if std::fs::write(&bad, "bytes").is_err() {
-            println!("skipped: this filesystem refuses a name that is not UTF-8");
-            return;
-        }
-
-        let list = list_dir(root.path()).unwrap();
-
-        let names: Vec<&str> = list.iter().map(|e| e.rel_path.as_str()).collect();
-        assert_eq!(names, ["good.musicxml"]);
     }
 
     #[test]

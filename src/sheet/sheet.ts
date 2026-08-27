@@ -202,7 +202,8 @@ export class Sheet {
     for (const el of this.band) el.className = 'sheet-section';
     this.clear = child(
       this.handles[1],
-      `position:absolute;top:0;width:${CLEAR_SIZE}px;height:${CLEAR_SIZE}px;cursor:pointer`,
+      `position:absolute;top:0;left:0;width:${CLEAR_SIZE}px;height:${CLEAR_SIZE}px;` +
+        'border-radius:0 4px 4px 0;cursor:pointer',
     );
     // The cross itself is drawn by the class: two bars centred by CSS, not a glyph on a baseline.
     this.clear.className = 'sheet-section-clear';
@@ -498,10 +499,8 @@ export class Sheet {
       handle.style.height = `${height}px`;
       handle.style.background = ink;
     }
-    // The × is a square tab in the Section's top-right corner, joined to the end handle in the same
-    // ink. A bar too narrow to hold it pulls it back only as far as the Section's start.
-    const room = to.right - from.left - CLEAR_SIZE + HANDLE_PAST;
-    this.clear.style.right = `${Math.min(HANDLE_PAST, room)}px`;
+    // The × is a tab on the outside of the end handle, at its top, in the same ink: one border
+    // with a rounded knob to its right.
     this.clear.style.background = ink;
     this.clear.style.color = tone(PAPER, this.dark);
   }

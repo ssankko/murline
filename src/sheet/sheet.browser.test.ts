@@ -267,10 +267,10 @@ test('the Section fades in and hangs its clear button inside the tint', async ()
 
   const band = tint.getBoundingClientRect();
   const button = clear.getBoundingClientRect();
-  expect(button.left).toBeGreaterThanOrEqual(band.left);
-  expect(button.right).toBeLessThanOrEqual(band.right);
-  expect(button.top).toBeGreaterThanOrEqual(band.top);
-  expect(button.bottom).toBeLessThanOrEqual(band.bottom);
+  // Outside the Section, starting on the end handle, level with the top of the band.
+  expect(button.left).toBeGreaterThanOrEqual(band.right - 5);
+  expect(button.left).toBeLessThanOrEqual(band.right);
+  expect(button.top).toBeCloseTo(band.top, 0);
   expect(clear.getAttribute('aria-label')).toBe('Clear section');
 
   sheet.setSection(null);

@@ -56,6 +56,12 @@ export interface KnownFile {
   present: number;
 }
 
+/** Every column of `piece` the page reads, in the order `PieceRow` names them. */
+const COLUMNS = `path, title, composer, measure_count, duration_s, midi_lo, midi_hi, has_tempo,
+       constant_tempo, key_sharps, key_mode, part_count, part_name, favorite, error,
+       tempo_mode, tempo_value, metronome, count_in_bars, hands, keyboard_preset,
+       keyboard_lo, keyboard_hi`;
+
 const HISTORY = `
   (SELECT MAX(grade) FROM play WHERE piece_path = piece.path AND kind = 'performance') AS best_grade,
   (SELECT MAX(started_at) FROM play WHERE piece_path = piece.path) AS last_played,
@@ -81,11 +87,7 @@ export async function listPieces(sort: SortOrder = 'title'): Promise<PieceRow[]>
   const db = await getDb();
   const { where, order } = SORTS[sort];
   return db.select<PieceRow[]>(
-    `SELECT path, title, composer, measure_count, duration_s, midi_lo, midi_hi, has_tempo,
-            constant_tempo, key_sharps, key_mode, part_count, part_name, favorite, error,
-            tempo_mode, tempo_value, metronome, count_in_bars, hands, keyboard_preset,
-            keyboard_lo, keyboard_hi,
-            ${HISTORY}
+    `SELECT ${COLUMNS},${HISTORY}
      FROM piece WHERE present = 1 ${where} ORDER BY ${order}`,
   );
 }
@@ -136,11 +138,7 @@ export async function setFavorite(path: string, favorite: boolean): Promise<void
 export async function getPiece(path: string): Promise<PieceRow | null> {
   const db = await getDb();
   const rows = await db.select<PieceRow[]>(
-    `SELECT path, title, composer, measure_count, duration_s, midi_lo, midi_hi, has_tempo,
-            constant_tempo, key_sharps, key_mode, part_count, part_name, favorite, error,
-            tempo_mode, tempo_value, metronome, count_in_bars, hands, keyboard_preset,
-            keyboard_lo, keyboard_hi,
-            ${HISTORY}
+    `SELECT ${COLUMNS},${HISTORY}
      FROM piece WHERE path = $1`,
     [path],
   );
@@ -243,7 +241,7 @@ export async function upsertIndex(
   );
 }
 
-/** A file the app cannot read stays a piece, with the reason in place of its facts. */
+/** A file the app cannot read stays a piece: it gains the reason and keeps its old index columns. */
 export async function markError(
   path: string,
   error: string,
@@ -271,9 +269,8 @@ export async function markPresent(path: string): Promise<void> {
   await db.execute('UPDATE piece SET present = 1 WHERE path = $1', [path]);
 }
 
-/** Drops the piece and its plays. The file itself goes to the Trash first, through `trash_file`. */
+/** Drops the piece, and its plays with it through the foreign key that cascades. */
 export async function deletePiece(path: string): Promise<void> {
   const db = await getDb();
-  await db.execute('DELETE FROM play WHERE piece_path = $1', [path]);
   await db.execute('DELETE FROM piece WHERE path = $1', [path]);
 }

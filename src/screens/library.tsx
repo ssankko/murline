@@ -14,7 +14,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { baseNameOf } from '@/library/index-file';
+import { baseNameOf, pathOf } from '@/library/index-file';
 import {
   importFiles,
   SCORE_EXTENSIONS,
@@ -32,7 +32,7 @@ import {
   type PlayRow,
   type SortOrder,
 } from '@/library/queries';
-import { scanLibrary } from '@/library/scan';
+import { scanLibrary, splitError } from '@/library/scan';
 import { colorOf, noteName } from '@/look/color';
 import { useDark } from '@/look/use-dark';
 import { setSetting } from '@/db/db';
@@ -186,7 +186,7 @@ export function Library({
   /** Trash, row, plays, then the row that took its place in the list. */
   async function remove(target: PieceRow): Promise<void> {
     try {
-      await invoke('trash_file', { path: `${folder}/${target.path}` });
+      await invoke('trash_file', { path: pathOf(folder!, target.path) });
     } catch (error) {
       // A file already gone from disk still drops its piece; any other refusal keeps the row.
       if (!/no such file|not found/i.test(String(error))) {
@@ -413,7 +413,7 @@ function Row({
           {row.title ?? row.path}
         </b>
         <span className="text-muted-ink truncate text-[13px]">
-          {row.error ? reasonOf(row.error) : (row.composer ?? ' ')}
+          {row.error ? splitError(row.error).reason : (row.composer ?? ' ')}
         </span>
       </span>
       <span className="ml-auto text-[13px] font-medium tabular-nums">
@@ -442,7 +442,7 @@ function Detail({
   onPreview: (path: string) => void;
 }) {
   const broken = !!piece.error;
-  const fullPath = folder ? `${folder}/${piece.path}` : piece.path;
+  const fullPath = folder ? pathOf(folder, piece.path) : piece.path;
   return (
     <div className="flex-1 overflow-y-auto px-12 py-10">
       <div className="flex max-w-[640px] flex-col">
@@ -489,11 +489,11 @@ function Detail({
 
         {broken ? (
           <div className="mt-7 flex flex-col gap-1.5 text-[13px]">
-            <b className="font-semibold">{reasonOf(piece.error!)}</b>
+            <b className="font-semibold">{splitError(piece.error!).reason}</b>
             <details className="text-muted-ink text-[12px]">
               <summary className="cursor-pointer select-none">Details</summary>
               <code className="mt-1 block text-[11.5px] whitespace-pre-wrap">
-                {detailOf(piece.error!)}
+                {splitError(piece.error!).detail}
               </code>
             </details>
           </div>
@@ -754,10 +754,3 @@ function duration(seconds: number): string {
   return minutes < 60 ? rest : `${Math.floor(minutes / 60)}:${rest.padStart(5, '0')}`;
 }
 
-function reasonOf(error: string): string {
-  return error.split(': ')[0] ?? error;
-}
-
-function detailOf(error: string): string {
-  return error.split(': ').slice(1).join(': ');
-}

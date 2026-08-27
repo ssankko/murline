@@ -3,7 +3,7 @@
 
 import { ScoreError } from '@/score/types';
 import { invoke } from '@tauri-apps/api/core';
-import { baseNameOf, indexBytes, readScoreFile } from './index-file';
+import { baseNameOf, indexBytes, pathOf, readScoreFile } from './index-file';
 import { upsertIndex } from './queries';
 import type { FileEntry } from './scan';
 
@@ -83,7 +83,7 @@ async function importOne(
 
   const stamp = await invoke<{ mtime: number; size: number }>('copy_file', {
     src: path,
-    dst: `${folder}/${relPath}`,
+    dst: pathOf(folder, relPath),
   });
   await upsertIndex(relPath, index, stamp.mtime, stamp.size);
   return relPath;

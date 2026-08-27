@@ -24,7 +24,7 @@ export interface FinderRow {
   time: string | null;
   bars: number | null;
   ratings: number;
-  /** The uploader's own title when it differs from the site's song name. */
+  /** The uploader's own title when it differs from the site's title field. */
   alt: string | null;
   file: string;
   fileName: string;
@@ -69,7 +69,7 @@ export function metaLine(r: FinderRow): string {
     .join(' · ');
 }
 
-type Download =
+type DownloadState =
   | { state: 'idle' }
   | { state: 'downloading' }
   | { state: 'failed'; provider: string; reason: string };
@@ -98,12 +98,14 @@ export function Finder({
   const [query, setQuery] = useState('');
   const [result, setResult] = useState<SearchResult>({ rows: [], more: 0 });
   const [sel, setSel] = useState(0);
-  const [dl, setDl] = useState<Download>({ state: 'idle' });
+  const [dl, setDl] = useState<DownloadState>({ state: 'idle' });
   const [pdmxFolder, setPdmxFolder] = useState<string | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const list = useRef<HTMLDivElement>(null);
 
+  // A setting the database will not give up leaves the folder empty, which a PDMX download reports.
   useEffect(() => {
-    void getSetting('pdmx_folder').then(setPdmxFolder);
+    void getSetting('pdmx_folder').then(setPdmxFolder, () => {});
   }, []);
 
   // Every keystroke searches; Rust answers in under 20 ms. A late answer to an older query is dropped.
@@ -113,9 +115,18 @@ export function Finder({
       return;
     }
     let live = true;
-    void invoke<SearchResult>('finder_search', { query }).then((r) => {
-      if (live) setResult(r);
-    });
+    void invoke<SearchResult>('finder_search', { query }).then(
+      (r) => {
+        if (!live) return;
+        setResult(r);
+        setSearchError(null);
+      },
+      (error: unknown) => {
+        if (!live) return;
+        setResult({ rows: [], more: 0 });
+        setSearchError(`Could not search: ${reasonOf(error)}`);
+      },
+    );
     return () => {
       live = false;
     };
@@ -191,7 +202,9 @@ export function Finder({
 
         <div ref={list} className="min-h-0 flex-1 overflow-y-auto py-1">
           {query.trim() === '' && <Hint>Type a composer or a title.</Hint>}
-          {query.trim() !== '' && rows.length === 0 && <Hint>Nothing matches “{query}”.</Hint>}
+          {query.trim() !== '' && rows.length === 0 && (
+            <Hint>{searchError ?? `Nothing matches “${query}”.`}</Hint>
+          )}
           {rows.map((row, i) => (
             <div key={`${row.provider}${row.file}`}>
               {row.heading !== rows[i - 1]?.heading && (

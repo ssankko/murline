@@ -28,6 +28,16 @@ const BUBBLE_ROW = 13;
 /** Clear paper kept between two bubbles of one row. */
 const BUBBLE_GAP = 6;
 
+/** Width of a Section handle, and how much of it stands past the bar edge it marks. */
+const HANDLE_W = 5;
+const HANDLE_PAST = 3;
+
+/** Diameter of the × that clears the Section, and its whole hit area. */
+const CLEAR_SIZE = 24;
+
+/** Paper between the top of the Section and the × hanging inside it. */
+const CLEAR_INSET = 4;
+
 /** Clear paper kept above the highest ink of the sheet. */
 const TOP_AIR = 4;
 
@@ -127,6 +137,8 @@ export class Sheet {
   private readonly tint: HTMLElement;
   private readonly handles: [HTMLElement, HTMLElement];
   private readonly clear: HTMLElement;
+  /** Tint and handles together: they show, hide and move as one. */
+  private readonly band: HTMLElement[];
   /** Takes every listener this sheet put on the host off again. */
   private readonly listeners = new AbortController();
 
@@ -179,18 +191,26 @@ export class Sheet {
     this.paper.className = 'sheet-paper';
     const overlay = child(this.content, 'position:absolute;inset:0;pointer-events:none');
     this.bubbles = child(overlay, 'position:absolute;inset:0');
-    this.tint = child(overlay, 'position:absolute;display:none');
+    // The paper under the tint stays reachable, so a fresh drag can start inside a Section.
+    this.tint = child(overlay, 'position:absolute;pointer-events:none');
     this.handles = [
-      child(overlay, 'position:absolute;display:none;width:5px;cursor:ew-resize;pointer-events:auto'),
-      child(overlay, 'position:absolute;display:none;width:5px;cursor:ew-resize;pointer-events:auto'),
+      child(overlay, `position:absolute;width:${HANDLE_W}px;cursor:ew-resize`),
+      child(overlay, `position:absolute;width:${HANDLE_W}px;cursor:ew-resize`),
     ];
+    this.band = [this.tint, ...this.handles];
+    // The class carries the fade and the glide of the Section; src/index.css holds them.
+    for (const el of this.band) el.className = 'sheet-section';
     this.clear = child(
       this.handles[1],
-      'position:absolute;top:-9px;left:-6px;width:16px;height:16px;border-radius:999px;' +
-        'display:flex;align-items:center;justify-content:center;cursor:pointer;' +
-        'font-size:11px;line-height:1;font-weight:700',
+      `position:absolute;top:${CLEAR_INSET}px;width:${CLEAR_SIZE}px;height:${CLEAR_SIZE}px;` +
+        'border-radius:999px;display:flex;align-items:center;justify-content:center;' +
+        'cursor:pointer;font-size:15px;line-height:1;font-weight:600',
     );
+    this.clear.className = 'sheet-section-clear';
     this.clear.textContent = '×';
+    this.clear.setAttribute('role', 'button');
+    this.clear.setAttribute('aria-label', 'Clear section');
+    this.clear.title = 'Clear section';
     this.cursor = child(overlay, 'position:absolute;border-radius:12px');
     this.cursor.className = 'sheet-cursor';
     this.marker = child(
@@ -445,23 +465,32 @@ export class Sheet {
     const section = this.section;
     const from = this.boxes[section?.from ?? -1];
     const to = this.boxes[section?.to ?? -1];
-    const show = section && from && to;
-    this.tint.style.display = show ? 'block' : 'none';
-    for (const handle of this.handles) handle.style.display = show ? 'block' : 'none';
+    const show = !!(section && from && to);
+    for (const el of this.band) {
+      el.classList.toggle('on', show);
+      // A drag rewrites the geometry every pointermove, so the glide waits for the pointer to lift.
+      el.classList.toggle('dragging', this.drag !== null);
+    }
+    // A hidden band keeps its last geometry, which is what it fades out from.
     if (!show) return;
     const top = this.system.top;
     const height = this.system.bottom - top;
     const ink = tone(INK.duration, this.dark);
-    this.tint.style.cssText =
-      `position:absolute;display:block;left:${from.left}px;top:${top}px;` +
-      `width:${to.right - from.left}px;` +
-      `height:${height}px;background:color-mix(in srgb, ${ink} 9%, transparent)`;
+    this.tint.style.left = `${from.left}px`;
+    this.tint.style.top = `${top}px`;
+    this.tint.style.width = `${to.right - from.left}px`;
+    this.tint.style.height = `${height}px`;
+    this.tint.style.background = `color-mix(in srgb, ${ink} 9%, transparent)`;
     for (const [i, handle] of this.handles.entries()) {
-      handle.style.left = `${(i === 0 ? from.left : to.right) - 2}px`;
+      handle.style.left = `${(i === 0 ? from.left : to.right) - (HANDLE_W - HANDLE_PAST)}px`;
       handle.style.top = `${top}px`;
       handle.style.height = `${height}px`;
       handle.style.background = ink;
     }
+    // The × hangs from the end handle, its right edge on the Section's own end. A bar too narrow
+    // to hold the button pulls it back only as far as the Section's start.
+    const room = to.right - from.left - CLEAR_SIZE + HANDLE_PAST;
+    this.clear.style.right = `${Math.min(HANDLE_PAST, room)}px`;
     this.clear.style.background = ink;
     this.clear.style.color = tone(PAPER, this.dark);
   }

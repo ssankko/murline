@@ -126,3 +126,46 @@
     transition: none;
   }
 }
+
+/* The Section of the sheet: the tint, its two handles and the × that clears it. Their colours and
+   geometry come from src/sheet/sheet.ts; the fade and the glide of a resize live here, where the
+   motion setting can switch them off. `allow-discrete` holds `display` at `block` for the whole
+   fade out; `pointer-events` drops away at once, so the fading ink takes no click. */
+.sheet-section {
+  display: none;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 200ms ease,
+    display 200ms allow-discrete,
+    left 200ms ease,
+    width 200ms ease;
+}
+.sheet-section.on {
+  display: block;
+  opacity: 1;
+  pointer-events: auto;
+}
+@starting-style {
+  .sheet-section.on {
+    opacity: 0;
+  }
+}
+/* Every pointermove of a drag rewrites the geometry, so a glide would trail behind the pointer. */
+.sheet-section.dragging {
+  transition:
+    opacity 200ms ease,
+    display 200ms allow-discrete;
+}
+.sheet-section-clear {
+  transition: transform 150ms ease;
+}
+.sheet-section-clear:hover {
+  transform: scale(1.15);
+}
+@media (prefers-reduced-motion: reduce) {
+  .sheet-section,
+  .sheet-section-clear {
+    transition: none;
+  }
+}

@@ -1,3 +1,5 @@
+// The sheet's overlays take their fade from the app stylesheet, so the styles it asserts need it.
+import '@/index.css';
 import { INK, PAPER, colorOf, tone } from '@/look/color';
 import type { Snapshot } from '@/play/engine';
 import { expect, test } from 'vitest';
@@ -244,6 +246,34 @@ test('the cursor band stands over the first Onset', async () => {
   expect(cursor.offsetWidth).toBeGreaterThan(0);
   expect(cursor.offsetHeight).toBeGreaterThan(0);
   expect(cursor.offsetLeft + cursor.offsetWidth / 2).toBeCloseTo(sheet.xOfOnset(0), 0);
+
+  sheet.dispose();
+}, 60_000);
+
+test('the Section fades in and hangs its clear button inside the tint', async () => {
+  const host = hostEl();
+  const sheet = await open(BACH, host);
+  const tint = host.querySelector<HTMLElement>('.sheet-section')!;
+  const clear = host.querySelector<HTMLElement>('.sheet-section-clear')!;
+
+  expect(getComputedStyle(tint).transitionProperty).toContain('opacity');
+  expect(getComputedStyle(tint).display).toBe('none');
+
+  sheet.setSection({ from: 0, to: 2 });
+  expect(getComputedStyle(tint).display).toBe('block');
+  // Layout pixels, so the sheet's fit-to-height scale cannot read the button smaller than it is.
+  expect(Math.min(clear.offsetWidth, clear.offsetHeight)).toBeGreaterThanOrEqual(22);
+
+  const band = tint.getBoundingClientRect();
+  const button = clear.getBoundingClientRect();
+  expect(button.left).toBeGreaterThanOrEqual(band.left);
+  expect(button.right).toBeLessThanOrEqual(band.right);
+  expect(button.top).toBeGreaterThanOrEqual(band.top);
+  expect(button.bottom).toBeLessThanOrEqual(band.bottom);
+  expect(clear.getAttribute('aria-label')).toBe('Clear section');
+
+  sheet.setSection(null);
+  expect(tint.classList.contains('on')).toBe(false);
 
   sheet.dispose();
 }, 60_000);

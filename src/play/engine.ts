@@ -115,8 +115,6 @@ export interface Snapshot {
   playedTick: number;
   /** Index into `walk`, which names both the Onset and the pass it belongs to. */
   stepIndex: number;
-  onsetIndex: number;
-  measureIndex: number;
   /** Wait mode: the clock stands still at `stepIndex` until the player satisfies its Onset. */
   stopped: boolean;
 }
@@ -278,16 +276,11 @@ export class Engine {
   }
 
   snapshot(): Snapshot {
-    const stepIndex = this.stepAt(this.tick);
-    const step = this.walk[stepIndex];
-    const onset = step ? this.score.onsets[step.onsetIndex] : undefined;
     return {
       state: this.state,
       kind: this.kind,
       playedTick: this.tick,
-      stepIndex,
-      onsetIndex: step?.onsetIndex ?? 0,
-      measureIndex: onset?.measureIndex ?? 0,
+      stepIndex: this.stepAt(this.tick),
       stopped: this.stopStep !== null,
     };
   }

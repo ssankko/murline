@@ -5,6 +5,12 @@ import { Engine } from './engine';
 
 const BAR = 4 * TICKS_PER_QUARTER;
 
+/** Where the cursor stands in the Score, read off the walk as a screen that draws it does. */
+function where(play: Engine): { onsetIndex: number; measureIndex: number } {
+  const onsetIndex = play.walk[play.snapshot().stepIndex]!.onsetIndex;
+  return { onsetIndex, measureIndex: play.score.onsets[onsetIndex]!.measureIndex };
+}
+
 /** A Score with `bars` bars of 4/4 and a quarter-note Onset on every beat. */
 function scoreOf(bars: number, tempoMap = [{ tick: 0, bpm: 60 }], hasTempo = true): Score {
   const measures: Measure[] = [];
@@ -163,11 +169,8 @@ describe('the played tick against the score', () => {
     // Inside the third beat of the repeated first bar.
     play.advance(10_500);
 
-    expect(play.snapshot()).toMatchObject({
-      stepIndex: 10,
-      onsetIndex: 2,
-      measureIndex: 0,
-    });
+    expect(play.snapshot().stepIndex).toBe(10);
+    expect(where(play)).toEqual({ onsetIndex: 2, measureIndex: 0 });
   });
 
   test('before the jump the same played tick names the first pass', () => {
@@ -175,7 +178,8 @@ describe('the played tick against the score', () => {
     play.start();
     play.advance(2500);
 
-    expect(play.snapshot()).toMatchObject({ stepIndex: 2, onsetIndex: 2, measureIndex: 0 });
+    expect(play.snapshot().stepIndex).toBe(2);
+    expect(where(play)).toEqual({ onsetIndex: 2, measureIndex: 0 });
   });
 });
 
@@ -1287,7 +1291,7 @@ describe('Section and Loop', () => {
     play.advance(9000);
 
     expect(play.walk).toBe(score.playOrder);
-    expect(play.snapshot().measureIndex).toBe(0);
+    expect(where(play).measureIndex).toBe(0);
   });
 
   test('creating a Section while Idle parks the cursor at its start', () => {
@@ -1353,7 +1357,7 @@ describe('Section and Loop', () => {
     play.advance(8000);
 
     expect(play.snapshot().playedTick).toBe(0);
-    expect(play.snapshot().measureIndex).toBe(0);
+    expect(where(play).measureIndex).toBe(0);
   });
 
   test('Loop with no Section wraps from the end of the piece to bar one', () => {
@@ -1438,16 +1442,15 @@ describe('Section and Loop', () => {
     play.start();
     // Into the second pass of bar 1, half a beat past its second Onset.
     play.advance(9500);
-    expect(play.snapshot()).toMatchObject({ playedTick: 9120, measureIndex: 0 });
+    expect(play.snapshot().playedTick).toBe(9120);
+    expect(where(play).measureIndex).toBe(0);
 
     // Loop over a Section swaps the play order for the linear walk under a running cursor.
     play.setSection({ from: 0, to: 1 });
     play.setLoop(true);
 
-    expect(play.snapshot()).toMatchObject({
-      playedTick: TICKS_PER_QUARTER + TICKS_PER_QUARTER / 2,
-      measureIndex: 0,
-    });
+    expect(play.snapshot().playedTick).toBe(TICKS_PER_QUARTER + TICKS_PER_QUARTER / 2);
+    expect(where(play).measureIndex).toBe(0);
   });
 
   test('a key held from the last lap blocks nothing on the next one', () => {

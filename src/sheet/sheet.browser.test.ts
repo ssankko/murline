@@ -150,8 +150,6 @@ function snapshot(playedTick: number): Snapshot {
     kind: 'practice',
     playedTick,
     stepIndex: 0,
-    onsetIndex: 0,
-    measureIndex: 0,
     stopped: false,
   };
 }

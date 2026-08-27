@@ -108,7 +108,7 @@ const NOTICE_FADE_MS = 150;
 const GREY = '#8b8b93';
 
 const NOTE_RADIUS = 3;
-/** The name on a block: its font, the pill height a short block grows, and the room it wants each side. */
+/** The name on a block: its font, the tab height a short block grows, and the room it wants each side. */
 const NAME_FONT = '600 11px system-ui, sans-serif';
 const NAME_MIN_H = 16;
 const NAME_PAD = 4;
@@ -1025,7 +1025,7 @@ export class Lane {
         }
 
         // The name rides the landing edge, where the eye already is. A block too thin or too short
-        // to hold it whole grows a pill in its own fill around the name, so the name is never
+        // to hold it whole grows a tab in its own fill around the name, so the name is never
         // shrunk and never left off.
         if (this.look.names) {
           const name = NOTE_NAMES[pitchClass(note.midi)]!;
@@ -1040,7 +1040,7 @@ export class Lane {
               blockY + height - NAME_MIN_H,
               pillW,
               NAME_MIN_H,
-              NAME_MIN_H / 2,
+              NOTE_RADIUS,
             );
             ctx.fill();
           }

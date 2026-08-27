@@ -311,7 +311,8 @@ fn heading(composer: &str) -> String {
     }
 }
 
-/// The name the file lands under in the library folder.
+/// The name the file lands under in the library folder, cut to the 255 bytes a POSIX file name
+/// takes: a long title loses its tail, never the extension.
 fn file_name(f: &Fields) -> String {
     let mut name = format!("{} - {}", f.surname, f.title);
     if let Some(mv) = f.movement {
@@ -321,7 +322,15 @@ fn file_name(f: &Fields) -> String {
         }
     }
     name = name.replace(['/', ':'], "-");
-    name.push_str(".musicxml");
+    const EXT: &str = ".musicxml";
+    let mut fits = 255 - EXT.len();
+    if name.len() > fits {
+        while !name.is_char_boundary(fits) {
+            fits -= 1;
+        }
+        name.truncate(name[..fits].trim_end().len());
+    }
+    name.push_str(EXT);
     name
 }
 
@@ -621,6 +630,28 @@ Morris\tLelia N. Morris\tThe Fight Is On\tThe Fight Is On\t\t24\t0\t1/3/QmC.mxl\
             let name = file_name(&ks_fields(row));
             assert!(!name.contains(".."), "{name}");
             assert!(!name.contains(" .musicxml"), "{name}");
+        }
+    }
+
+    /// A name over the POSIX limit fails the write, and one shipped row's title is long enough.
+    #[test]
+    fn a_long_title_stays_inside_the_file_name_limit() {
+        let long = "Above the hills of time the cross is gleaming ".repeat(8);
+        // Three-byte characters, so the cut lands mid-character unless it walks back.
+        let wide = "\u{65e5}".repeat(300);
+        let pdmx = format!(
+            "c\tAnon Composer\t{long}\t{long}\t\t10\t0\t1/1/QmA.mxl\n\
+             c\tAnon Composer\t{wide}\t{wide}\t\t10\t0\t1/2/QmB.mxl\n"
+        );
+        let ix = Index::build("[]", Box::leak(pdmx.into_boxed_str()));
+        for name in search(&ix, "anon").rows.iter().map(|r| &r.file_name) {
+            assert!(name.len() <= 255, "{} bytes", name.len());
+            assert!(name.ends_with(".musicxml") && !name.contains(" .musicxml"), "{name}");
+        }
+
+        for entry in &INDEX.entries {
+            let name = file_name(&fields(&INDEX.ks, entry));
+            assert!(name.len() <= 255, "{} bytes: {name}", name.len());
         }
     }
 

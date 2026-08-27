@@ -50,27 +50,31 @@ test('a missed key blinks in a grey, never in a pitch colour', () => {
 test('a pressed key sinks under a strip of its own face, shaded deeper', () => {
   const ctx = draw((_midi, base) => base, only(60));
   // C4 sinks four pixels under its strip; the key beside it keeps the flat face.
-  expect(pixel(ctx, 50, 1)).toBe('#ababab');
-  expect(pixel(ctx, 50, 5)).toBe('#d1d1d1');
+  expect(pixel(ctx, 50, 1)).toBe('#cdcdcd');
+  expect(pixel(ctx, 50, 5)).toBe('#dadada');
   expect(pixel(ctx, 150, 1)).toBe('#dedede');
 });
 
 test('the press shades toward the paper: black on light, white on dark', () => {
   const ctx = draw((_midi, base) => base, only(60), true);
   // On dark paper a sunk face lightens instead, so the press reads the same way round.
-  expect(pixel(ctx, 50, 1)).toBe('#626262');
-  expect(pixel(ctx, 50, 5)).toBe('#404040');
+  expect(pixel(ctx, 50, 1)).toBe('#444444');
+  expect(pixel(ctx, 50, 5)).toBe('#383838');
   expect(pixel(ctx, 150, 1)).toBe('#343434');
 });
 
-test('a pressed black key sinks whole, keeping its length', () => {
-  const ctx = draw((_midi, base) => base, only(61));
-  // C#4 wears its strip at the top, its face under it, and reaches four pixels past the 51 it
-  // stops at unpressed.
-  expect(pixel(ctx, 110, 1)).toBe('#969696');
-  expect(pixel(ctx, 110, 10)).toBe('#b7b7b7');
-  expect(pixel(ctx, 110, 53)).toBe('#b7b7b7');
-  expect(pixel(draw((_midi, base) => base), 110, 53)).toBe('#dedede');
+test('a pressed black key sinks a short way and never past it', () => {
+  // Depth 1.5 is what the ease reaches on the way down: a white key follows it, a black one stops.
+  const ctx = draw(
+    (_midi, base) => base,
+    (midi) => (midi === 61 ? 1.5 : 0),
+  );
+  const flat = draw((_midi, base) => base);
+  // C#4 wears its face shaded, reaches past the y 51 it stops at unpressed, and no further.
+  expect(pixel(ctx, 110, 45)).toBe('#bfbfbf');
+  expect(pixel(ctx, 110, 51)).toBe('#bfbfbf');
+  expect(pixel(ctx, 110, 53)).toBe('#dedede');
+  expect(pixel(flat, 110, 51)).not.toBe('#bfbfbf');
 });
 
 test('a key half way down sinks half as far', () => {
@@ -79,6 +83,6 @@ test('a key half way down sinks half as far', () => {
     (midi) => (midi === 60 ? 0.5 : 0),
   );
   // Two pixels of strip over a face shaded half as much as a key all the way down.
-  expect(pixel(ctx, 50, 1)).toBe('#b0b0b0');
-  expect(pixel(ctx, 50, 3)).toBe('#d7d7d7');
+  expect(pixel(ctx, 50, 1)).toBe('#cfcfcf');
+  expect(pixel(ctx, 50, 3)).toBe('#dcdcdc');
 });

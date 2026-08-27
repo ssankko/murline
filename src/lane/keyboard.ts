@@ -15,12 +15,14 @@ const KEY_BLACK = ['#c3c3c3', '#4c4c4c'] as const;
 const LABEL_MIN_W = 11;
 
 /**
- * How far a pressed key sinks, how far its whole face shades, and how much deeper the strip it
- * sinks under is shaded. The face shades as well as sinking, so a press reads on a coloured key.
+ * How far a pressed white key sinks, how far its whole face shades, and how much deeper the strip
+ * it sinks under is shaded. The face shades as well as sinking, so a press reads on a coloured key.
+ * A black key stands proud of the white ones, so it sinks a share of that and never overshoots it.
  */
 const PRESS_DROP = 4;
-const PRESS_FACE = 0.06;
-const PRESS_STRIP = 0.18;
+const BLACK_DROP = PRESS_DROP / 3;
+const PRESS_FACE = 0.02;
+const PRESS_STRIP = 0.06;
 
 export interface Key {
   midi: number;
@@ -102,8 +104,9 @@ export function drawKeyboard(
 
   for (const key of layout.keys) {
     if (key.black) continue;
-    const drop = PRESS_DROP * depth(key.midi);
-    const face = shade(fill(key.midi, white), PRESS_FACE * span(drop), dark);
+    const sunk = depth(key.midi);
+    const drop = PRESS_DROP * sunk;
+    const face = shade(fill(key.midi, white), PRESS_FACE * Math.min(sunk, 1), dark);
     if (drop > 0) {
       // The strip takes whole pixels, so its edge stays crisp while the face slides over it.
       ctx.fillStyle = shade(face, PRESS_STRIP, dark);
@@ -115,9 +118,11 @@ export function drawKeyboard(
   }
   for (const key of layout.keys) {
     if (!key.black) continue;
-    // A black key sinks the way a white one does, whole, not by giving up its length.
-    const drop = PRESS_DROP * depth(key.midi);
-    const face = shade(fill(key.midi, black), PRESS_FACE * span(drop), dark);
+    // A black key sinks whole as a white one does, but a shorter way and without the bounce past
+    // its stop: it has less of itself to give.
+    const sunk = Math.min(depth(key.midi), 1);
+    const drop = BLACK_DROP * sunk;
+    const face = shade(fill(key.midi, black), PRESS_FACE * sunk, dark);
     if (drop > 0) {
       ctx.fillStyle = shade(face, PRESS_STRIP, dark);
       ctx.fillRect(key.x, top - 1, key.w, Math.ceil(drop));
@@ -129,9 +134,6 @@ export function drawKeyboard(
   }
   if (labels) drawLabels(ctx, layout, top, blackH, dark);
 }
-
-/** How much of the full shade a key this far down takes; past its stop it takes no more. */
-const span = (drop: number) => Math.min(drop / PRESS_DROP, 1);
 
 /** A pressed face is its own colour a little way toward the paper's far end, black or white. */
 const shade = (face: string, amount: number, dark: boolean) =>

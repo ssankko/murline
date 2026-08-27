@@ -111,7 +111,8 @@ describe('the pulse at the now-line', () => {
 describe('the swing of a struck block', () => {
   test('is out and back inside its time, and its own size outside it', () => {
     expect(bounceAt(0)).toBe(1);
-    expect(bounceAt(0.25)).toBeGreaterThan(1.2);
+    expect(bounceAt(0.25)).toBeGreaterThan(1.1);
+    expect(bounceAt(0.25)).toBeLessThan(1.2);
     expect(bounceAt(0.75)).toBeLessThan(1);
     // A clock that hands over a wild number must never scale a block by one.
     expect(bounceAt(-5)).toBe(1);

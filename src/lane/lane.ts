@@ -73,8 +73,8 @@ const SPLASH_RADIUS = [16, 40] as const;
 const SPLASH_ALPHA = [0.35, 0.8] as const;
 
 /** How far a struck block swells at the peak of its pulse, and how long the whole pulse runs. */
-const POP = 0.33;
-const POP_MS = 280;
+const POP = 0.16;
+const POP_MS = 140;
 
 /**
  * A missed block: how long it takes to go grey, how far it sinks and how much of its alpha it
@@ -95,8 +95,12 @@ const PULSE_SHARE = 0.12;
 const PULSE_WIDTH = 0.75;
 const PULSE_BAND = 0.06;
 
-/** How far a sounding key's face drains toward its base, and how long its release blink lasts. */
+/**
+ * How far a sounding key's face drains toward its base, over what share of the note's written
+ * duration it gets there, and how long its release blink lasts.
+ */
 const DRAIN_FLOOR = 0.4;
+const DRAIN_RUSH = 3;
 const BLINK_MS = 120;
 
 /** How long a key takes to sink under a finger and to come back up, both through the overshoot. */
@@ -109,8 +113,11 @@ const RELEASE_MS = 160;
  */
 const BURST = [6, 14] as const;
 const BURST_SPREAD = Math.PI / 6;
-const TRICKLE_SPREAD = Math.PI / 18;
+const TRICKLE_SPREAD = (Math.PI * 5) / 12;
 const TRICKLE_PER_S = 12;
+/** How far a trickle speck wanders sideways and how fast it turns, in px/s and rad/s. */
+const TRICKLE_DRIFT = 25;
+const TRICKLE_TURN = 12;
 const SPECK_CAP = 400;
 const SPECK_GRAVITY = 200;
 /** The longest step the specks take, so a frame the app slept through does not fling them away. */
@@ -153,8 +160,10 @@ interface Speck {
   y: number;
   vx: number;
   vy: number;
-  /** Downward pull in px/s²: a burst arcs back, a trickle drifts straight up. */
+  /** Downward pull in px/s²: a burst arcs back, a trickle rises against none. */
   gravity: number;
+  /** Sideways wander in px/s, which only a trickle takes; its own birth is its phase. */
+  wobble: number;
   radius: number;
   born: number;
   life: number;
@@ -770,6 +779,7 @@ export class Lane {
       this.particles.push(
         speck(key.x + key.w / 2, laneH, BURST_SPREAD, between(60, 140), color, {
           gravity: SPECK_GRAVITY,
+          wobble: 0,
           radius: between(1.5, 2.5),
           born: this.now,
           life: between(350, 500),
@@ -786,6 +796,7 @@ export class Lane {
       this.particles.push(
         speck(x + Math.random() * width, laneH, GRIND_SPREAD, between(40, 120), color, {
           gravity: GRIND_GRAVITY,
+          wobble: 0,
           radius: between(1, 2),
           born: this.now,
           life: between(250, 400),
@@ -795,12 +806,19 @@ export class Lane {
     }
   }
 
-  /** One speck of a sounding key, off a random point of its top edge. */
+  /**
+   * One speck of a sounding key, off a random point of its top edge. It wanders as it goes and
+   * wears a lighter cast of its pitch, or the full tier on dark paper, so it reads over the block
+   * of the same colour it rises from.
+   */
   private trickle(key: Key, laneH: number): void {
-    const color = colorOf(key.midi, 'muted', this.dark);
+    const color = this.dark
+      ? colorOf(key.midi, 'full', true)
+      : mix(colorOf(key.midi, 'muted', false), '#ffffff', 0.5);
     this.particles.push(
-      speck(key.x + Math.random() * key.w, laneH, TRICKLE_SPREAD, between(20, 50), color, {
+      speck(key.x + Math.random() * key.w, laneH, TRICKLE_SPREAD, between(30, 90), color, {
         gravity: 0,
+        wobble: TRICKLE_DRIFT,
         radius: between(1, 1.5),
         born: this.now,
         life: between(300, 450),
@@ -817,6 +835,11 @@ export class Lane {
       if (this.now - spark.born >= spark.life || spark.y > laneH) continue;
       spark.vy += spark.gravity * seconds;
       spark.x += spark.vx * seconds;
+      if (spark.wobble > 0) {
+        // Its own birth stands in for a phase, so no two specks wander together.
+        const swing = Math.sin(((this.now - spark.born) / 1000) * TRICKLE_TURN + spark.born);
+        spark.x += swing * spark.wobble * seconds;
+      }
       spark.y += spark.vy * seconds;
       this.particles[kept++] = spark;
     }
@@ -856,8 +879,8 @@ export class Lane {
     const color = colorOf(midi, 'muted', this.dark);
     const note = this.engine.notes[this.engine.heldNote(midi)];
     if (!note || note.durationTicks <= 0) return color;
-    const gone = clamp((this.playedTick - note.tick) / note.durationTicks, 0, DRAIN_FLOOR);
-    return mix(color, base, gone);
+    const over = (DRAIN_RUSH * (this.playedTick - note.tick)) / note.durationTicks;
+    return mix(color, base, clamp(over, 0, 1) * DRAIN_FLOOR);
   }
 
   /**
@@ -1006,7 +1029,7 @@ function speck(
   spread: number,
   speed: number,
   color: string,
-  rest: Pick<Speck, 'gravity' | 'radius' | 'born' | 'life' | 'alpha'>,
+  rest: Pick<Speck, 'gravity' | 'wobble' | 'radius' | 'born' | 'life' | 'alpha'>,
 ): Speck {
   const angle = -Math.PI / 2 + between(-spread, spread);
   return { x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, color, ...rest };

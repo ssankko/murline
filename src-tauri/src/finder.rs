@@ -199,9 +199,11 @@ pub fn search(ix: &Index, query: &str) -> SearchResult {
                 break 'fill;
             }
             let row = row_of(ix, i);
-            match blocks.iter_mut().find(|(name, _)| *name == norm(&row.heading)) {
+            // Trimmed, because `norm` leaves the trailing space of a name written with a final dot.
+            let key = norm(&row.heading).trim().to_string();
+            match blocks.iter_mut().find(|(name, _)| *name == key) {
                 Some((_, block)) => block.push(row),
-                None => blocks.push((norm(&row.heading), vec![row])),
+                None => blocks.push((key, vec![row])),
             }
             taken += 1;
         }
@@ -551,6 +553,21 @@ Bach\tJohann Sebastian Bach\tMinuet in G\tMinuet in G\t\t32\t7\t1/2/QmB.mxl\n";
         assert_eq!(
             hits.rows.iter().map(|r| r.title.as_str()).collect::<Vec<_>>(),
             ["Prelude in C major", "Minuet in G", "Invention 1"]
+        );
+    }
+
+    /// `norm` turns a trailing dot into a trailing space, so the two spellings of one name only
+    /// meet under a trimmed key; a third spelling between them must not split the block.
+    #[test]
+    fn a_trailing_dot_is_not_a_second_composer() {
+        let pdmx = "Morris\tLelia N. Morris.\tSweeter as the Years Go By\tSweeter as the Years Go By\t\t20\t2\t1/1/QmA.mxl\n\
+Morris\tLelia Morris\tNearer Still Nearer\tNearer Still Nearer\t\t18\t1\t1/2/QmB.mxl\n\
+Morris\tLelia N. Morris\tThe Fight Is On\tThe Fight Is On\t\t24\t0\t1/3/QmC.mxl\n";
+        let ix = Index::build("[]", pdmx);
+        let hits = search(&ix, "lelia morris");
+        assert_eq!(
+            hits.rows.iter().map(|r| r.heading.as_str()).collect::<Vec<_>>(),
+            ["Lelia N. Morris.", "Lelia N. Morris.", "Lelia Morris"]
         );
     }
 

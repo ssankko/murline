@@ -345,9 +345,11 @@ export class Engine {
       return;
     }
     // A count-in is not motion to pause: the play drops back to Idle where the count-in led, which
-    // is a stop, so what it had already played is stored.
+    // is a stop, so what it had already played is stored. Idle parks at the start point, so the
+    // start point comes to the tick the count-in led to as well.
     if (this.state === 'counting-in') {
       this.stopRecord();
+      this.startTick = this.countInTo;
       this.tick = this.countInTo;
       this.countInBeats = [];
       this.state = 'idle';

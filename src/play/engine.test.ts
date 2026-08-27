@@ -77,6 +77,19 @@ function withRepeat(): Score {
   return score;
 }
 
+/** Four bars whose play order plays bar 1 again before it goes on: bars 1, 2, 1, 3, 4. */
+function repeatOfBarOne(): Score {
+  const score = scoreOf(4);
+  const step = (onsetIndex: number, tick: number) => ({ onsetIndex, tick });
+  score.playOrder = [
+    ...score.onsets.slice(0, 8).map((onset, i) => step(i, onset.tick)),
+    ...score.onsets.slice(0, 4).map((onset, i) => step(i, 2 * BAR + onset.tick)),
+    ...score.onsets.slice(8).map((onset, i) => step(i + 8, BAR + onset.tick)),
+  ];
+  score.totalTicks = 5 * BAR;
+  return score;
+}
+
 /** The count-in is off unless a test asks for it, so a play starts on the first beat. */
 function engine(score: Score, settings: Partial<PlaySettings> = {}) {
   return new Engine(score, { ...DEFAULT_PLAY_SETTINGS, countInBars: 0, ...settings });
@@ -487,6 +500,23 @@ function waiting(
 const CHORD = [{ tick: TICKS_PER_QUARTER, notes: [{ midi: 60 }, { midi: 64 }] }];
 
 describe('Wait mode', () => {
+  test('a tie continuation is neither required nor blocking', () => {
+    const play = waiting([
+      {
+        tick: TICKS_PER_QUARTER,
+        notes: [{ midi: 60, tiedFrom: true, strikeable: false }, { midi: 62 }],
+      },
+    ]);
+    play.advance(2 * BEAT_MS);
+    expect(play.snapshot().stopped).toBe(true);
+
+    // The player re-articulates the note tied into this Onset while playing the chord.
+    down(play, 60, 2 * BEAT_MS);
+    down(play, 62, 2 * BEAT_MS);
+
+    expect(play.snapshot().stopped).toBe(false);
+  });
+
   test('the cursor stops at an Onset the player has not satisfied', () => {
     const play = waiting(CHORD);
     play.advance(2 * BEAT_MS);
@@ -816,6 +846,29 @@ describe('the metronome', () => {
   });
 });
 
+/**
+ * One 4/4 bar, then a 3/4 bar that opens with a quarter rest, so the second bar's first Onset
+ * stands a beat after its bar line.
+ */
+function restThenThreeFour(): Score {
+  const score = scoreOf(1);
+  score.measures.push({
+    index: 1,
+    number: 2,
+    startTick: BAR,
+    durationTicks: 3 * TICKS_PER_QUARTER,
+    beatsPerBar: 3,
+    beatUnit: 4,
+  });
+  for (const beat of [1, 2]) {
+    const tick = BAR + beat * TICKS_PER_QUARTER;
+    score.onsets.push({ tick, measureIndex: 1, notes: [note(tick, 1)], timestamp: undefined as never });
+  }
+  score.playOrder = score.onsets.map((onset, i) => ({ onsetIndex: i, tick: onset.tick }));
+  score.totalTicks = BAR + 3 * TICKS_PER_QUARTER;
+  return score;
+}
+
 describe('the count-in', () => {
   test('runs its bar of beats before the play moves, and clicks them with the metronome off', () => {
     const play = engine(scoreOf(2), { countInBars: 1, metronome: false });
@@ -866,6 +919,31 @@ describe('the count-in', () => {
     play.resume();
 
     expect(play.snapshot().state).toBe('counting-in');
+  });
+
+  test('a pause during it leaves the start point where it was counting to', () => {
+    const play = engine(scoreOf(4), { countInBars: 1 });
+    play.start();
+    play.advance(4000 + 8500);
+    play.pause();
+    play.resume();
+    play.pause();
+
+    expect(play.snapshot().playedTick).toBe(2 * BAR);
+
+    // The next start counts in to bar 3, where the cursor is parked.
+    play.start();
+    expect(play.snapshot().playedTick).toBe(2 * BAR - 4 * TICKS_PER_QUARTER);
+  });
+
+  test('counts the meter of a bar that opens with a rest', () => {
+    const play = engine(restThenThreeFour(), { countInBars: 1 });
+    play.seek({ measure: 1 });
+    play.start();
+
+    // Three beats of the 3/4 bar the count-in leads into, not four of the 4/4 bar before it.
+    expect(play.countInBeats).toHaveLength(3);
+    expect(play.snapshot().playedTick).toBe(BAR - 3 * TICKS_PER_QUARTER);
   });
 });
 
@@ -1358,6 +1436,23 @@ describe('Section and Loop', () => {
     expect(play.snapshot().stopped).toBe(true);
     play.strike({ midi: 60, velocity: 80, time: 0, on: true });
     expect(play.snapshot().stopped).toBe(false);
+  });
+
+  test('a walk swap keeps the cursor at the written moment it stands on', () => {
+    const play = engine(repeatOfBarOne());
+    play.start();
+    // Into the second pass of bar 1, half a beat past its second Onset.
+    play.advance(9500);
+    expect(play.snapshot()).toMatchObject({ playedTick: 9120, measureIndex: 0 });
+
+    // Loop over a Section swaps the play order for the linear walk under a running cursor.
+    play.setSection({ from: 0, to: 1 });
+    play.setLoop(true);
+
+    expect(play.snapshot()).toMatchObject({
+      playedTick: TICKS_PER_QUARTER + TICKS_PER_QUARTER / 2,
+      measureIndex: 0,
+    });
   });
 
   test('a key held from the last lap blocks nothing on the next one', () => {

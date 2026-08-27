@@ -11,11 +11,10 @@ import { buildScore } from '@/score/build';
 import { ScoreError, type Note, type PlayStep, type Score } from '@/score/types';
 import {
   OpenSheetMusicDisplay,
-  type GraphicalNote,
   type MusicSystem,
   type Note as OsmdNote,
 } from 'opensheetmusicdisplay';
-import { applyTheme, applyTiers, noteheadEl, paintHead } from './paint';
+import { applyTheme, applyTiers, noteheadEl, paintHead, type VFNote } from './paint';
 
 /** Paper kept above the top staff line, the strip the chord bubbles sit in. */
 const BUBBLE_STRIP = 28;
@@ -76,11 +75,6 @@ interface Drag {
   x: number;
   moved: boolean;
 }
-
-type VFNote = GraphicalNote & {
-  vfnoteIndex: number;
-  getNoteheadSVGs(): HTMLElement[];
-};
 
 interface Box {
   top: number;
@@ -357,7 +351,7 @@ export class Sheet {
     const perTick = span > 0 ? Math.abs(toX - here.x) / span : 0;
     return {
       x: here.x + (toX - here.x) * done,
-      width: Math.min(48, Math.max(12, windowTicks * 2 * perTick)),
+      width: Math.max(2, windowTicks * 2 * perTick),
       onsetIndex: step?.onsetIndex ?? 0,
       stepIndex: i,
     };

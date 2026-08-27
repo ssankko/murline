@@ -9,7 +9,8 @@ import { OpenSheetMusicDisplay, type GraphicalNote, type Note as OsmdNote } from
 const DURATION_GROUPS =
   '.vf-stem, .vf-beam, .vf-flag, .vf-stavetie, .vf-slur, .vf-tuplet, .vf-modifiers';
 
-type VFNote = GraphicalNote & {
+/** A graphical note as VexFlow leaves it: the noteheads it drew, and where they sit in the array. */
+export type VFNote = GraphicalNote & {
   vfnoteIndex: number;
   getNoteheadSVGs(): HTMLElement[];
 };

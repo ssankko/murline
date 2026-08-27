@@ -8,8 +8,8 @@ and `song_name` are the site's clean fields, `composer_name` and `title` the upl
 so the finder groups by the artist, shows the song name first and the title in grey, and searches
 all four.
 
-The source is `PDMX.csv` (Zenodo record 15571083, 225 MB, not committed) or a JSON array of the
-same eight fields per row, which is what the score finder prototype left behind.
+The argument is `PDMX.csv` (Zenodo record 15571083, 225 MB, not committed), which the script
+filters, or a `.json` array holding the eight fields of each kept row, which it only writes out.
 
 Usage: python3 scripts/pdmx-index.py /path/to/PDMX.csv
        python3 scripts/pdmx-index.py /path/to/pdmx.json

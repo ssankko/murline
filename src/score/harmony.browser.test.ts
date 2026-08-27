@@ -27,22 +27,30 @@ const DEPARTURES = new Map([
   [34, 'Dm7/C'],
 ]);
 
+/** The name in force in a bar: the last change at or before its bar line. */
+function nameInBar(built: Score, bar: number): string | undefined {
+  const start = built.measures.find((m) => m.number === bar)!.startTick;
+  return built.harmony.findLast((e) => e.tick <= start)?.absolute;
+}
+
 describe('Bach BWV 846', () => {
   test('names one chord per bar as the textbook does', async () => {
     const built = await score('JohannSebastianBach_PraeludiumInCDur_BWV846_1.xml');
     expect(built.harmony.map((e) => e.absolute)).toEqual(BACH);
-    // 35 bars for 33 names: two bars under the dominant pedal carry the name before them.
-    const byBar = new Map(built.harmony.map((e) => [built.measures[e.measureIndex]!.number, e.absolute]));
-    for (const [bar, name] of DEPARTURES) expect(byBar.get(bar)).toBe(name);
+    // 35 bars for 33 names: three bars carry the name of the change before them.
+    for (const [bar, name] of DEPARTURES) expect(nameInBar(built, bar)).toBe(name);
   });
 
   test('every event sits on the Onset that opens its bar, and reads in degrees', async () => {
     const built = await score('JohannSebastianBach_PraeludiumInCDur_BWV846_1.xml');
-    for (const event of built.harmony) {
-      const onset = built.onsets[event.onsetIndex]!;
-      expect(onset.tick).toBe(event.tick);
-      expect(event.tick).toBe(built.measures[event.measureIndex]!.startTick);
-    }
+    for (const event of built.harmony) expect(built.onsets[event.onsetIndex]!.tick).toBe(event.tick);
+    // One change alone starts inside a bar: the D of the closing chord enters on bar 33's last beat.
+    const offBar = built.harmony.filter(
+      (e) => e.tick !== built.measures[e.measureIndex]!.startTick,
+    );
+    expect(offBar.map((e) => `${built.measures[e.measureIndex]!.number} ${e.absolute}`)).toEqual([
+      '33 Dm7/C',
+    ]);
     expect(built.harmony.slice(0, 4).map((e) => e.degree)).toEqual(['1', '2m⁷/1', '5⁷/7', '1']);
   });
 });

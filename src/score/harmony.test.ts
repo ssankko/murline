@@ -135,6 +135,18 @@ describe('the naming rules', () => {
     expect(events.map((e) => e.measureIndex)).toEqual([0, 3]);
   });
 
+  test('a tie chain counts once, so the bar it runs under keeps its own name', () => {
+    // C3 is tied across both bars. Counted twice it drags the second bar into a C chord.
+    const score = scoreOf([[48, 60, 64, 67], [48, 67, 70, 74]]);
+    const start = score.onsets[0]!.notes[0]!;
+    start.durationTicks = 2 * BAR;
+    start.tieStart = true;
+    const continuation = score.onsets[1]!.notes[0]!;
+    continuation.tiedFrom = true;
+    continuation.strikeable = false;
+    expect(names(analyzeHarmony(score))).toEqual(['C 1', 'Gm 5m']);
+  });
+
   test('an event points at the Onset where the harmony changes', () => {
     expect(analyzeHarmony(scoreOf([[60, 64, 67], [62, 65, 69]]))).toEqual([
       { onsetIndex: 0, tick: 0, measureIndex: 0, absolute: 'C', degree: '1' },

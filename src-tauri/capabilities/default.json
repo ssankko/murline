@@ -7,8 +7,6 @@
     "core:default",
     "core:window:allow-destroy",
     "dialog:allow-open",
-    "midi:allow-open-input",
-    "midi:allow-close-input",
     "sql:allow-load",
     "sql:allow-select",
     "sql:allow-execute"

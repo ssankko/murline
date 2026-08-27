@@ -40,7 +40,7 @@ import { SettingsDialog } from '@/screens/settings';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open } from '@tauri-apps/plugin-dialog';
-import { Settings } from 'lucide-react';
+import { ArrowUpDown, Settings } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 const SORTS: [SortOrder, string][] = [
@@ -215,6 +215,7 @@ export function Library({
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" className="text-muted-ink text-[12px]">
+                <ArrowUpDown className="size-3.5" />
                 {SORTS.find(([key]) => key === sort)![1]}
               </Button>
             </DropdownMenuTrigger>

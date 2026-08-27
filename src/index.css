@@ -34,6 +34,9 @@
   /* The fills a list row takes: ink 9 % under the selected row, ink 4 % under the pointer. */
   --fill-selected: color-mix(in srgb, var(--ink) 9%, transparent);
   --fill-hover: color-mix(in srgb, var(--ink) 4%, transparent);
+  /* The fill a menu item takes under the pointer or the keyboard: one step of ink over the
+     surface it sits on, so it reads on both papers. */
+  --accent: color-mix(in srgb, var(--ink) 8%, var(--surface));
 }
 
 /* The system chooses the paper until the `d` key pins one, which puts a class on the root. */
@@ -62,7 +65,7 @@
   --color-primary-foreground: var(--paper);
   --color-muted: var(--surface);
   --color-muted-foreground: var(--muted);
-  --color-accent: var(--surface);
+  --color-accent: var(--accent);
   --color-accent-foreground: var(--ink);
   --color-secondary: var(--surface);
   --color-secondary-foreground: var(--ink);

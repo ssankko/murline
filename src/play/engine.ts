@@ -385,12 +385,6 @@ export class Engine {
     this.applyLoop();
   }
 
-  /** Wait mode asks for every Onset from a walk step again, and waits at it if it must. */
-  private forgetSatisfied(fromStep = 0): void {
-    this.wait.forgetFrom(fromStep);
-    this.stopStep = null;
-  }
-
   restart(): void {
     // A restart lands on the Section only while Loop gives it force; a Section alone is inert, and
     // Loop over the whole piece leaves the start bar where the player put it.
@@ -472,8 +466,8 @@ export class Engine {
     this.beatGrid = beatGridOf(this.score, walk);
     this.lastSoundingTick = lastSoundingTickOf(this.score, walk);
     // The new walk renumbers both notes and steps, so a held key names nothing and the Wait state
-    // names Onsets that are gone. A key held across the swap blocks nothing on the new walk.
-    for (const midi of this.held.keys()) this.held.set(midi, ABSORBED);
+    // names Onsets that are gone.
+    this.absorbHeld();
     this.wait.reset();
     this.startTick = this.replay(startAt, this.startTick);
     this.moveTo(this.replay(at, this.tick));
@@ -504,19 +498,28 @@ export class Engine {
       this.states[i] = 'pending';
       this.resolved[i] = 0;
     }
-    this.forgetSatisfied(this.stepAt(to));
+    // Wait mode asks for every Onset from here again.
+    this.wait.forgetFrom(this.stepAt(to));
+    this.stopStep = null;
     // Wait mode stands at the Onset it lands on when that Onset asks for anything.
     const stop = this.nextStop();
     if (stop >= 0 && this.walk[stop]!.tick <= to) this.stopStep = stop;
     this.syncBeats();
   }
 
+  /**
+   * Every key held now stops naming a note: it blocks nothing and colours nothing until it comes
+   * up again. A wrap and a walk swap both want the next lap struck afresh.
+   */
+  private absorbHeld(): void {
+    for (const midi of this.held.keys()) this.held.set(midi, ABSORBED);
+  }
+
   /** A new lap: back to the Section start, or to bar one when Loop runs with no Section. */
   private wrap(): void {
     const span = this.loopSpan();
     this.moveTo(span ? span.from : 0);
-    // A key held across the wrap blocks nothing and colours nothing; the new lap wants a fresh strike.
-    for (const midi of this.held.keys()) this.held.set(midi, ABSORBED);
+    this.absorbHeld();
     this.beginMotion(this.tick);
   }
 

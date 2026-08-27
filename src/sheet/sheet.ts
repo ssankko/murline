@@ -67,7 +67,7 @@ interface Placed {
 }
 
 /** Where a click on the paper landed: what to seek to, and the bar it fell in. */
-export interface SheetHit {
+interface SheetHit {
   seek: SeekTarget;
   measure: number;
 }
@@ -252,7 +252,7 @@ export class Sheet {
    * What a click at a screen x means: the Onset within reach of it, else the bar it fell in. The
    * bar is the one the Onset before the click belongs to, or the next one past that bar's edge.
    */
-  hitAt(clientX: number): SheetHit | null {
+  private hitAt(clientX: number): SheetHit | null {
     const x = this.contentX(clientX);
     const onsets = this.score.onsets;
     if (onsets.length === 0) return null;

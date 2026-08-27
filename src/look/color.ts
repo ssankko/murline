@@ -54,8 +54,8 @@ export function isBlackKey(midi: number): boolean {
   return IS_SHARP[pitchClass(midi)]!;
 }
 
-// Three ink tiers for the sheet, plus the paper and chrome greys every screen sits on. Light value
-// first, dark second; the CSS variables in src/index.css carry the same greys for the DOM.
+// Three ink tiers for the sheet, plus the paper grey every screen sits on. Light value first, dark
+// second; the CSS variables in src/index.css carry the same greys for the DOM.
 export const INK = {
   scaffolding: ['#9a9a9a', '#6a6a6a'],
   duration: ['#5a5a5a', '#d0d0d0'],
@@ -63,7 +63,6 @@ export const INK = {
 } as const;
 
 export const PAPER = ['#f4f4f4', '#202020'] as const;
-export const CHROME = ['#e9e9e9', '#161616'] as const;
 export const CURSOR = ['#c9922e', '#d9a83c'] as const;
 
 /** Picks the light or dark member of one of the constants above. */

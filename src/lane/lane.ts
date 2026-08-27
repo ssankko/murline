@@ -82,6 +82,7 @@ export class Lane {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private readonly engine: Engine;
+  private readonly resize: ResizeObserver;
   private bars: LaneBar[];
   private jumps: LaneJump[];
   /** The walk the bars and the dividers were read from; Loop swaps it for the linear one. */
@@ -117,7 +118,13 @@ export class Lane {
     this.range = keyRange(engine.notes, engine.settings);
     this.measure();
     this.layout = keyLayout(this.range[0], this.range[1], this.size.width || 1);
-    new ResizeObserver(() => this.measure()).observe(canvas);
+    this.resize = new ResizeObserver(() => this.measure());
+    this.resize.observe(canvas);
+  }
+
+  /** Lets the canvas go: nothing watches it and no frame draws after this. */
+  dispose(): void {
+    this.resize.disconnect();
   }
 
   private measure(): void {

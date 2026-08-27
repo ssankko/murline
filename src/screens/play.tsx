@@ -255,6 +255,7 @@ export function PlayScreen({
       engineRef.current?.abort();
       savePractice();
       sheetRef.current?.dispose();
+      laneRef.current?.dispose();
       sheetRef.current = null;
       engineRef.current = null;
       laneRef.current = null;

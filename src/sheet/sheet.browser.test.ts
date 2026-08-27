@@ -23,6 +23,8 @@ const BACH = 'JohannSebastianBach_PraeludiumInCDur_BWV846_1.xml';
 const VOLTA = 'test_repeat_volta_simple.musicxml';
 /** Slurs arc high over its top staff, well above every label of the first bars. */
 const MAZURKA = 'kernscores-mazurka-50.musicxml';
+/** Short enough to stay one system at every spacing, and long enough that the view scrolls. */
+const HORSEMAN = 'Schumann_The_Wild_Horseman_Op._68_No._8.mxl';
 
 async function bytesOf(file: string): Promise<Uint8Array> {
   const url = FIXTURES[`../score/fixtures/${file}`] as string;
@@ -907,6 +909,90 @@ test('a bar of long notes is spaced as wide as a bar of short ones', async () =>
   expect(spreadOf()).toBeGreaterThan(0.2);
   sheet.setProportional(true);
   expect(spreadOf()).toBeLessThan(0.08);
+
+  sheet.dispose();
+}, 60_000);
+
+/** A pinch on the trackpad, which reaches the page as a wheel with ctrl held. */
+function pinch(host: HTMLElement, deltaY: number): WheelEvent {
+  const event = new WheelEvent('wheel', { deltaY, ctrlKey: true, bubbles: true, cancelable: true });
+  host.dispatchEvent(event);
+  return event;
+}
+
+/** Real time, which the throttle behind a pinch runs on. */
+function wait(ms: number): Promise<void> {
+  return new Promise((done) => setTimeout(done, ms));
+}
+
+test('a pinch spaces the sheet by time around the cursor and stops at the clamps', async () => {
+  const host = hostEl();
+  const sheet = await open(HORSEMAN, host);
+  const scroll = host.firstElementChild as HTMLElement;
+  const stored: { spacing: number }[] = [];
+  sheet.onLook = (look) => void stored.push(look);
+  sheet.setProportional(true);
+
+  const step = 60;
+  const tick = sheet.score.playOrder[step]!.tick;
+  const frame = (now: number) =>
+    sheet.frame(snapshot(tick, { state: 'idle', stepIndex: step }), 100, now);
+  /** Where the cursor stands in the block the reader sees. */
+  const standing = () => sheet.cursorAt(tick, step, 100).x * scaleOf(host) - scroll.scrollLeft;
+  const width = () => sheet.xOfOnset(sheet.score.onsets.length - 1);
+
+  // A bar mid-piece, the view glided onto it: paper stands on both sides of the cursor.
+  frame(0);
+  frame(400);
+  expect(scroll.scrollLeft).toBeGreaterThan(0);
+
+  const tight = width();
+  const stood = standing();
+  pinch(host, -20);
+  pinch(host, -20);
+  pinch(host, -20);
+  // The throttle lets the first step through and holds the rest; the newest target lands after it.
+  const first = width();
+  expect(first).toBeGreaterThan(tight);
+  await wait(200);
+  expect(width()).toBeGreaterThan(first);
+  // The paper opened up around the cursor, which never moved in the block the reader sees.
+  expect(Math.abs(standing() - stood)).toBeLessThanOrEqual(1);
+
+  // The spacing the pinch settled on is handed over once, and it stands inside the 100 to 300 range.
+  await wait(300);
+  expect(stored.length).toBe(1);
+  expect(stored[0]!.spacing).toBeGreaterThan(250);
+  expect(stored[0]!.spacing).toBeLessThanOrEqual(300);
+
+  // However far the fingers spread or pinch, the sheet stops at the ends of that range.
+  for (let i = 0; i < 4; i++) pinch(host, -100);
+  await wait(200);
+  const widest = width();
+  sheet.setSpacing(300);
+  expect(width()).toBe(widest);
+  for (let i = 0; i < 4; i++) pinch(host, 100);
+  await wait(200);
+  const tightest = width();
+  sheet.setSpacing(100);
+  expect(width()).toBe(tightest);
+  expect(tightest).toBeLessThan(widest);
+
+  sheet.dispose();
+}, 60_000);
+
+test('a pinch leaves a sheet spaced by its engraving alone', async () => {
+  const host = hostEl();
+  const sheet = await open(BACH, host);
+  const stored: { spacing: number }[] = [];
+  sheet.onLook = (look) => void stored.push(look);
+  const engraved = sheet.xOfOnset(sheet.score.onsets.length - 1);
+
+  // The page must never zoom under the fingers, whatever the sheet does with them.
+  expect(pinch(host, -60).defaultPrevented).toBe(true);
+  await wait(400);
+  expect(sheet.xOfOnset(sheet.score.onsets.length - 1)).toBe(engraved);
+  expect(stored).toEqual([]);
 
   sheet.dispose();
 }, 60_000);

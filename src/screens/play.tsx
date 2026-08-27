@@ -196,6 +196,11 @@ export function PlayScreen({
         engineRef.current = engine;
         // The sheet knows where a click landed; the screen decides what it means.
         sheet.onSeek = (target) => engine.seek(target);
+        // A pinch has already spaced the sheet; this only stores what it settled on. A View
+        // popover standing open keeps its own slider until it is reopened and rereads the setting.
+        sheet.onLook = ({ spacing }) => {
+          setSetting('sheet_spacing', spacing).catch(console.error);
+        };
         sheet.onSection = (picked) => {
           if (engine.kind !== 'practice') return;
           setSection(picked && clampSection(sheet.score.measures, picked));

@@ -51,10 +51,17 @@ const LANE_BAR = ['#c8c8c8', '#464646'] as const;
 const LANE_LABEL = ['#6e6e6e', '#8f8f8f'] as const;
 const NOW_LINE = ['#141414', '#ffffff'] as const;
 
-/** How long the view takes to roll back onto the clock after a seek or a scroll. */
-const GLIDE_MS = 300;
+/**
+ * How long the view takes to roll back onto the clock after a seek or a scroll, and the now-line
+ * to cross to a tick that was clicked.
+ */
+export const GLIDE_MS = 300;
 /** While the play runs the wheel detaches the view, and it rolls back this long after the last one. */
 const DETACH_MS = 2000;
+/** How long a count-in line takes to fade out once its beat is spent. */
+const COUNT_FADE_MS = 120;
+/** How long the notice over the keys takes to come up or go. */
+const NOTICE_FADE_MS = 150;
 
 /** A key held on nothing, and the ring an extra leaves. Neither is a pitch, so neither is coloured. */
 const GREY = '#8b8b93';
@@ -266,6 +273,15 @@ export class Lane {
   private laneH = 0;
   /** Set by a click that seeks: its jump goes into the offset and no glide takes the view back. */
   private holdView = false;
+  /**
+   * How far the now-line stands behind the clock in ticks, which a click seek opens and a glide of
+   * its own closes, with the lag that glide runs from and the wall it began at.
+   */
+  private lineLag = 0;
+  private lineFrom = 0;
+  private lineAt = -Infinity;
+  /** Count-in lines as last drawn, keyed by their beat, kept past the beat while they fade out. */
+  private readonly countLines = new Map<number, { y: number; label: string; spentAt: number }>();
   /** What the engine's counters and its motion read last frame, which is how a seek is spotted. */
   private lastResets: number;
   private lastWraps: number;
@@ -288,6 +304,10 @@ export class Lane {
   private shownSection: Section | null = null;
   private sectionOn = false;
   private sectionAt = -Infinity;
+  /** The notice the panel is drawn for, which outlives `notice` by its fade, and when it changed. */
+  private shownNotice: string | null = null;
+  private noticeOn = false;
+  private noticeAt = -Infinity;
   /**
    * What the harmony panel drew last frame: the chord in the top slot, the chord under it, when the
    * panels last moved up a slot, and the chord leaving the top slot while it fades out.
@@ -418,6 +438,11 @@ export class Lane {
       this.sectionOn = section !== null;
       this.sectionAt = this.reduced ? -Infinity : now;
     }
+    if (this.notice) this.shownNotice = this.notice;
+    if (this.noticeOn !== (this.notice !== null)) {
+      this.noticeOn = this.notice !== null;
+      this.noticeAt = this.reduced ? -Infinity : now;
+    }
     const ctx = this.ctx;
     const { width, height } = this.size;
     if (width === 0 || height === 0) return;
@@ -499,7 +524,7 @@ export class Lane {
       this.keyDepth,
     );
     this.drawParticles();
-    if (this.notice) this.drawNotice(width, laneH);
+    if (this.shownNotice) this.drawNotice(width, laneH);
   }
 
   /**
@@ -518,7 +543,8 @@ export class Lane {
     const wrapped = engine.wraps !== this.lastWraps;
     this.lastResets = engine.resets;
     this.lastWraps = engine.wraps;
-    this.offset += jumpOf(sinceTick, snap.playedTick, reach, reset, wrapped);
+    const jump = jumpOf(sinceTick, snap.playedTick, reach, reset, wrapped);
+    this.offset += jump;
 
     const running = snap.state === 'running' || snap.state === 'counting-in';
     const began = running && !this.lastRunning;
@@ -527,10 +553,13 @@ export class Lane {
     const detached = settled && running && this.now - this.scrolledAt >= DETACH_MS;
     if (reset && this.holdView) {
       // A click seek wants the notes left where they are, so the view detaches as a wheel
-      // leaves it and rides the clock again only after the detach window.
+      // leaves it and rides the clock again only after the detach window. The now-line marks the
+      // clock, so it holds where it stood and travels to the tick that was clicked instead.
       this.holdView = false;
       this.glideAt = -Infinity;
       this.scrolledAt = this.now;
+      this.lineFrom = this.lineLag + jump;
+      this.lineAt = this.now;
     } else if (this.offset !== 0 && ((reset && !wrapped) || began || detached)) {
       this.glideFrom = this.offset;
       this.glideAt = this.now;
@@ -539,6 +568,11 @@ export class Lane {
       const left = glideLeft((this.now - this.glideAt) / GLIDE_MS);
       this.offset = this.reduced ? 0 : this.glideFrom * left;
       if (this.offset === 0) this.glideAt = -Infinity;
+    }
+    if (this.lineAt > -Infinity) {
+      const left = glideLeft((this.now - this.lineAt) / GLIDE_MS);
+      this.lineLag = this.reduced ? 0 : this.lineFrom * left;
+      if (this.lineLag === 0) this.lineAt = -Infinity;
     }
     this.view = snap.playedTick + this.offset;
   }
@@ -592,23 +626,40 @@ export class Lane {
     }
   }
 
-  /** The count-in: one line per beat left, falling to the now-line where the music starts. */
+  /**
+   * The count-in: one line per beat left, falling to the now-line where the music starts. A line
+   * whose beat is spent holds the place it stood at and fades out from there.
+   */
   private drawCountIn(width: number, laneH: number, pxPerTick: number, beats: number[]): void {
-    if (beats.length === 0) return;
+    const live = new Set<number>();
+    for (let i = 0; i < beats.length; i++) {
+      const y = Math.round(this.y(beats[i]!, laneH, pxPerTick)) + 0.5;
+      if (y < -20 || y > laneH) continue;
+      live.add(beats[i]!);
+      this.countLines.set(beats[i]!, { y, label: String(beats.length - i), spentAt: Infinity });
+    }
     const ctx = this.ctx;
     ctx.font = '600 15px system-ui, sans-serif';
     ctx.strokeStyle = tone(NOW_LINE, this.dark);
     ctx.fillStyle = ctx.strokeStyle;
     ctx.lineWidth = 1;
-    for (let i = 0; i < beats.length; i++) {
-      const y = Math.round(this.y(beats[i]!, laneH, pxPerTick)) + 0.5;
-      if (y < -20 || y > laneH) continue;
+    for (const [tick, line] of this.countLines) {
+      if (!live.has(tick)) {
+        line.spentAt = Math.min(line.spentAt, this.reduced ? -Infinity : this.now);
+      }
+      const gone = (this.now - line.spentAt) / COUNT_FADE_MS;
+      if (gone >= 1) {
+        this.countLines.delete(tick);
+        continue;
+      }
+      ctx.globalAlpha = gone > 0 ? 1 - easeInOut(gone) : 1;
       ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
+      ctx.moveTo(0, line.y);
+      ctx.lineTo(width, line.y);
       ctx.stroke();
-      ctx.fillText(String(beats.length - i), 10, y - 6);
+      ctx.fillText(line.label, 10, line.y - 6);
     }
+    ctx.globalAlpha = 1;
   }
 
   /**
@@ -805,10 +856,11 @@ export class Lane {
    * The now-line, inside a band as tall in time as the matching window: early on one side of the
    * line, late on the other. It marks the clock, so it stands at the foot of the lane while the
    * view rides it and travels with the notes while the view is off it; the keyboard is drawn over
-   * the late half. A clock scrolled out of the lane leaves no line at all.
+   * the late half. Its lag carries it over to a tick that was clicked. A clock scrolled out of the
+   * lane leaves no line at all.
    */
   private drawNowLine(width: number, laneH: number, pxPerTick: number, bandH: number): void {
-    const at = this.y(this.playedTick, laneH, pxPerTick);
+    const at = this.y(this.playedTick + this.lineLag, laneH, pxPerTick);
     if (at < 0 || at > laneH) return;
     const ctx = this.ctx;
     const pulse = this.reduced ? { level: 0, strong: false } : pulseAt(this.bars, this.playedTick);
@@ -1122,15 +1174,24 @@ export class Lane {
     ctx.globalAlpha = 1;
   }
 
+  /** The panel over the keys, which fades in on a notice and out again once it goes. */
   private drawNotice(width: number, laneH: number): void {
+    const eased = easeInOut(Math.min(1, (this.now - this.noticeAt) / NOTICE_FADE_MS));
+    const alpha = this.noticeOn ? eased : 1 - eased;
+    if (alpha <= 0) {
+      this.shownNotice = null;
+      return;
+    }
     const ctx = this.ctx;
+    ctx.globalAlpha = alpha;
     ctx.fillStyle = tone(PANEL_FILL, this.dark);
     ctx.fillRect(0, laneH, width, KEYBOARD_H);
     ctx.fillStyle = tone(LANE_LABEL, this.dark);
     ctx.font = '600 13px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(this.notice!, width / 2, laneH + KEYBOARD_H / 2 + 4);
+    ctx.fillText(this.shownNotice!, width / 2, laneH + KEYBOARD_H / 2 + 4);
     ctx.textAlign = 'left';
+    ctx.globalAlpha = 1;
   }
 }
 

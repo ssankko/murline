@@ -1,4 +1,4 @@
-import { DEFAULT_LANE_LOOK, Lane } from '@/lane/lane';
+import { DEFAULT_LANE_LOOK, GLIDE_MS, Lane } from '@/lane/lane';
 import { KEYBOARD_H } from '@/lane/keyboard';
 import { PAPER, colorOf, tone } from '@/look/color';
 import { Engine } from '@/play/engine';
@@ -141,8 +141,7 @@ function clickAt(canvas: HTMLCanvasElement, y: number): void {
 
 test('a click up the lane seeks to the step it points at and the view stands still', () => {
   const laneH = HEIGHT - KEYBOARD_H;
-  const { engine, lane, canvas, ctx } = mount();
-  const bare = WIDTH / 2;
+  const { engine, lane, canvas } = mount();
   const wall = performance.timeOrigin + performance.now();
   const frame = (at: number) => lane.frame(engine.snapshot(), engine.windowTicks, wall + at);
   const asked: number[] = [];
@@ -161,15 +160,121 @@ test('a click up the lane seeks to the step it points at and the view stands sti
   expect(asked[0]).toBeCloseTo(TICKS_PER_QUARTER, -2);
   expect(engine.snapshot().playedTick).toBe(TICKS_PER_QUARTER);
 
-  // The clock moved a beat on; the view holds, so the now-line has left the keyboard line for the
-  // place that was clicked and the notes have not rolled anywhere. Half a glide later it is still
-  // there: the seek starts none.
+  // The clock moved a beat on and the notes have not rolled anywhere: the view holds through the
+  // whole of a glide, because the seek starts none for it.
   frame(10);
   expect(viewOf(lane)).toBe(view);
   frame(160);
   expect(viewOf(lane)).toBe(view);
-  expect(hex(ctx, bare, laneH - 1)).toBe(tone(PAPER, false));
-  expect(hex(ctx, bare, Math.round(beatTwo))).not.toBe(tone(PAPER, false));
+  lane.dispose();
+});
+
+/**
+ * Where the now-line's ink centres in a column with no key and no block under it, as a lane row.
+ * Only the line is near black there, so weighting the rows by darkness finds it whatever the beat
+ * pulse does to its width.
+ */
+function nowRow(ctx: CanvasRenderingContext2D, x: number, laneH: number): number {
+  let sum = 0;
+  let ink = 0;
+  for (let y = 0; y < laneH; y++) {
+    const dark = Math.max(0, 0x80 - parseInt(hex(ctx, x, y).slice(1, 3), 16));
+    sum += dark * y;
+    ink += dark;
+  }
+  return sum / ink;
+}
+
+test('a click up the lane glides the now-line to the tick it named', () => {
+  const laneH = HEIGHT - KEYBOARD_H;
+  const { engine, lane, canvas, ctx } = mount();
+  const bare = WIDTH / 2;
+  const wall = performance.timeOrigin + performance.now();
+  const frame = (at: number) => lane.frame(engine.snapshot(), engine.windowTicks, wall + at);
+  lane.onSeek = (target) => engine.seek(target);
+  frame(0);
+  const foot = nowRow(ctx, bare, laneH);
+  expect(foot).toBeGreaterThan(0);
+  const beatTwo = Math.round(laneH - TICKS_PER_QUARTER * scaleOf(lane));
+
+  // The clock is a beat further on from the frame after the click, but the line is still at the
+  // foot: it has the whole glide to travel to the beat that was clicked.
+  clickAt(canvas, beatTwo);
+  frame(10);
+  expect(Math.abs(nowRow(ctx, bare, laneH) - foot)).toBeLessThan(1);
+
+  // Half a glide on it stands between the two, and at the end of one it stands on the beat. The
+  // ink is two pixels thick over its tick, so its centre lands within a pixel of the beat's row.
+  frame(GLIDE_MS / 2);
+  const midway = nowRow(ctx, bare, laneH);
+  expect(midway).toBeLessThan(foot);
+  expect(midway).toBeGreaterThan(beatTwo);
+  frame(GLIDE_MS);
+  expect(Math.abs(nowRow(ctx, bare, laneH) - beatTwo)).toBeLessThan(2);
+  lane.dispose();
+});
+
+/** How dark a point of the canvas is, 0 for black and 255 for white. */
+function level(ctx: CanvasRenderingContext2D, x: number, y: number): number {
+  return parseInt(hex(ctx, x, y).slice(1, 3), 16);
+}
+
+test('a spent count-in line fades out where it stood', () => {
+  const laneH = HEIGHT - KEYBOARD_H;
+  const { engine, lane, ctx } = mount();
+  const wall = performance.timeOrigin + performance.now();
+  const frame = (at: number) => lane.frame(engine.snapshot(), engine.windowTicks, wall + at);
+  frame(0);
+  // One beat to count in, half a beat above the keyboard line, where no beat line of the grid is.
+  const row = Math.round(laneH - (TICKS_PER_QUARTER / 2) * scaleOf(lane));
+  const paper = level(ctx, WIDTH / 2, row);
+  engine.countInBeats = [TICKS_PER_QUARTER / 2];
+  frame(1);
+  const drawn = level(ctx, WIDTH / 2, row);
+  expect(drawn).toBeLessThan(paper);
+
+  // The beat is spent: the line holds its place and gives its ink up over the fade, and the frame
+  // past the end of it draws nothing at all.
+  engine.countInBeats = [];
+  frame(2);
+  expect(level(ctx, WIDTH / 2, row)).toBe(drawn);
+  frame(62);
+  const going = level(ctx, WIDTH / 2, row);
+  expect(going).toBeGreaterThan(drawn);
+  expect(going).toBeLessThan(paper);
+  frame(122);
+  expect(level(ctx, WIDTH / 2, row)).toBe(paper);
+  lane.dispose();
+});
+
+test('the notice over the keys fades in and out', () => {
+  const laneH = HEIGHT - KEYBOARD_H;
+  const { engine, lane, ctx } = mount();
+  const wall = performance.timeOrigin + performance.now();
+  const frame = (at: number) => lane.frame(engine.snapshot(), engine.windowTicks, wall + at);
+  const key = () => level(ctx, 20, laneH + 20);
+  frame(0);
+  const bare = key();
+
+  // The panel comes up from nothing over the frames after the notice arrives.
+  lane.notice = 'no MIDI device';
+  frame(1);
+  expect(key()).toBe(bare);
+  frame(76);
+  const coming = key();
+  expect(coming).not.toBe(bare);
+  frame(151);
+  const shown = key();
+  expect(shown).not.toBe(coming);
+
+  // Taking the notice away runs the same fade the other way, and the keys come back.
+  lane.notice = null;
+  frame(152);
+  expect(key()).toBe(shown);
+  frame(227);
+  expect(key()).not.toBe(shown);
+  frame(302);
+  expect(key()).toBe(bare);
   lane.dispose();
 });
 

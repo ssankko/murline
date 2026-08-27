@@ -297,9 +297,9 @@ fn heading(composer: &str) -> String {
 fn file_name(f: &Fields) -> String {
     let mut name = format!("{} - {}", f.surname, f.title);
     if let Some(mv) = f.movement {
-        name.push_str(&format!(" - {mv}."));
+        name.push_str(&format!(" - {mv}"));
         if let Some(m) = f.movement_name {
-            name.push_str(&format!(" {m}"));
+            name.push_str(&format!(". {m}"));
         }
     }
     name = name.replace(['/', ':'], "-");
@@ -418,7 +418,8 @@ mod tests {
     const KS: &str = r#"[
       {"dir":"users/craig/classical/chopin/mazurka","file":"mazurka50-1.krn","composer":"Chopin, Frédéric","surname":"Chopin","title":"Mazurka in G Major, Op. 50, No. 1","opus":"50","number":"1","movement":null,"movementName":"Vivace","key":"G major","time":"3/4","bars":103},
       {"dir":"users/craig/classical/chopin/nocturne","file":"nocturne09-1.krn","composer":"Chopin, Frédéric","surname":"Chopin","title":"Nocturne in B-flat minor, Op. 9, No. 1","opus":"9","number":"1","movement":null,"movementName":"Larghetto","key":"Bb minor","time":"6/4","bars":85},
-      {"dir":"users/craig/classical/beethoven/piano/sonata","file":"sonata01-1.krn","composer":"Beethoven, Ludwig van","surname":"Beethoven","title":"Piano Sonata no. 1 in F minor","opus":"2","number":"1","movement":1,"movementName":"Allegro","key":"F minor","time":"2/2","bars":152}
+      {"dir":"users/craig/classical/beethoven/piano/sonata","file":"sonata01-1.krn","composer":"Beethoven, Ludwig van","surname":"Beethoven","title":"Piano Sonata no. 1 in F minor","opus":"2","number":"1","movement":1,"movementName":"Allegro","key":"F minor","time":"2/2","bars":152},
+      {"dir":"users/craig/classical/beethoven/piano/sonata","file":"sonata21-4.krn","composer":"Beethoven, Ludwig van","surname":"Beethoven","title":"Sonata no. 21 for Piano (Waldstein)","opus":"53","number":null,"movement":4,"movementName":null,"key":"C major","time":"2/4","bars":543}
     ]"#;
 
     /// composer_name, artist_name, song_name, title, subtitle, bars, ratings, path.
@@ -505,7 +506,14 @@ Chopin\tFrederic Chopin\tMazurka Op. 50 No. 1\tChopin Mazurka 50/1\t\t103\t9\t3/
         let ix = index();
         let hits = search(&ix, "beethoven");
         let names: Vec<&str> = hits.rows.iter().map(|r| r.file_name.as_str()).collect();
-        assert_eq!(names, ["Beethoven - Piano Sonata no. 1 in F minor - 1. Allegro.musicxml"]);
+        assert_eq!(
+            names,
+            [
+                "Beethoven - Piano Sonata no. 1 in F minor - 1. Allegro.musicxml",
+                // A numbered movement with no name ends at the number.
+                "Beethoven - Sonata no. 21 for Piano (Waldstein) - 4.musicxml",
+            ]
+        );
         assert_eq!(
             search(&ix, "gymnopedie").rows[0].file_name,
             "Satie - Gymnopédie No. 1.musicxml"
@@ -514,6 +522,13 @@ Chopin\tFrederic Chopin\tMazurka Op. 50 No. 1\tChopin Mazurka 50/1\t\t103\t9\t3/
             search(&ix, "chopin 50").rows[0].file_name,
             "Chopin - Mazurka in G Major, Op. 50, No. 1.musicxml"
         );
+
+        // No shipped row names a file with a doubled dot or a space before the extension.
+        for row in &INDEX.ks {
+            let name = file_name(&ks_fields(row));
+            assert!(!name.contains(".."), "{name}");
+            assert!(!name.contains(" .musicxml"), "{name}");
+        }
     }
 
     #[test]

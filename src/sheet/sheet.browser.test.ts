@@ -388,3 +388,27 @@ function snapshot(playedTick: number): Snapshot {
     stopped: false,
   };
 }
+
+test('a missed tie greys its whole chain, and the colour comes back to all of it', async () => {
+  const sheet = await open();
+  const notes = sheet.score.onsets.flatMap((onset) => onset.notes);
+  const start = notes.find((note) => {
+    const tie = note.source.NoteTie;
+    return tie && tie.StartNote === note.source && tie.Notes.length > 1;
+  })!;
+  const held = start.source.NoteTie!.Notes[1]!;
+  const fill = (source: typeof held) =>
+    noteheadEl(sheet.osmd, source)?.firstElementChild?.getAttribute('fill');
+
+  // Only the note that starts the tie is ever struck, so only it is missed; the head it sounds on
+  // must go grey with it.
+  sheet.markNote(start, 'miss');
+  expect(fill(start.source)).toBe(tone(INK.miss, false));
+  expect(fill(held)).toBe(tone(INK.miss, false));
+
+  sheet.markNote(start, 'none');
+  expect(fill(start.source)).toBe(colorOf(start.midi, 'muted', false));
+  expect(fill(held)).toBe(colorOf(start.midi, 'muted', false));
+
+  sheet.dispose();
+}, 60_000);

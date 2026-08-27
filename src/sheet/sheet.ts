@@ -317,9 +317,15 @@ export class Sheet {
       paintHead(head, { stroke: OUTLINE, 'stroke-width': '1.2', 'paint-order': 'stroke' });
       return;
     }
-    if (kind === 'miss') this.misses.add(note.source);
-    else this.misses.delete(note.source);
-    this.paintNote(note, head);
+    // A tie sounds as one note and only the note that starts it is ever struck, so its whole chain
+    // takes the mark. Every member is the same pitch on the same staff, so one colour serves them.
+    const tie = note.source.NoteTie;
+    const chain = tie?.StartNote === note.source ? tie.Notes : [note.source];
+    for (const member of chain) {
+      if (kind === 'miss') this.misses.add(member);
+      else this.misses.delete(member);
+      this.paintNote(note, member === note.source ? head : noteheadEl(this.osmd, member));
+    }
   }
 
   /**

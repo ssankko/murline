@@ -43,14 +43,24 @@ test('a missed key blinks in a grey, never in a pitch colour', () => {
   expect([g, b]).toEqual([r, r]);
 });
 
-test('a pressed key sinks under a darker strip of its own face', () => {
+test('a pressed key sinks under a shadow strip, its whole face darker', () => {
   const ctx = draw(
     (_midi, base) => base,
     (midi) => midi === 60,
   );
-  // The top two pixels of C4 are its face mixed a quarter of the way to black; C4 itself and the
-  // key beside it keep the flat face below.
-  expect(pixel(ctx, 50, 1)).toBe('#a7a7a7');
-  expect(pixel(ctx, 50, 3)).toBe('#dedede');
+  // C4 sinks four pixels under a strip a third of the way to black, and the face it sank to is its
+  // own a little darker. The key beside it keeps the flat face.
+  expect(pixel(ctx, 50, 1)).toBe('#7f7f7f');
+  expect(pixel(ctx, 50, 5)).toBe('#c3c3c3');
   expect(pixel(ctx, 150, 1)).toBe('#dedede');
+});
+
+test('a pressed black key shortens and darkens', () => {
+  const ctx = draw(
+    (_midi, base) => base,
+    (midi) => midi === 61,
+  );
+  // C#4 wears its face darker down to y 47, four pixels short of the 51 it reaches unpressed.
+  expect(pixel(ctx, 110, 40)).toBe('#acacac');
+  expect(pixel(ctx, 110, 50)).toBe('#dedede');
 });

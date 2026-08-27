@@ -105,12 +105,9 @@ struct Fields<'a> {
 pub struct Index {
     ks: Vec<KsRow>,
     entries: Vec<Entry>,
-    /// Every row's normalised haystack, in list order, joined by newlines.
-    blob: String,
-    /// Byte offset of each row's haystack in `blob`, plus one past the last.
-    starts: Vec<u32>,
-    /// Length of the composer part at the head of each haystack.
-    who: Vec<u32>,
+    /// Every row's normalised haystack, in list order, each behind the byte length of the composer
+    /// part at its head.
+    hays: Vec<(usize, String)>,
 }
 
 impl Index {
@@ -125,18 +122,14 @@ impl Index {
         }
         keyed.sort_unstable_by(|a, b| a.0.cmp(&b.0));
 
-        let mut blob = String::with_capacity(keyed.len() * 130);
-        let mut starts = Vec::with_capacity(keyed.len() + 1);
-        let mut who = Vec::with_capacity(keyed.len());
         let entries: Vec<Entry> = keyed.into_iter().map(|(_, e)| e).collect();
+        let mut hays = Vec::with_capacity(entries.len());
         for e in &entries {
             let f = fields(&ks, e);
-            starts.push(blob.len() as u32);
-            let composer = norm(&format!("{} {}", f.composer, heading(f.composer)));
-            who.push(composer.len() as u32);
-            blob.push_str(&composer);
-            blob.push(' ');
-            blob.push_str(&norm(&format!(
+            let mut hay = norm(&format!("{} {}", f.composer, heading(f.composer)));
+            let who = hay.len();
+            hay.push(' ');
+            hay.push_str(&norm(&format!(
                 "{} {} {} {} {} {} {} {}",
                 f.title,
                 f.alt.unwrap_or(""),
@@ -147,22 +140,16 @@ impl Index {
                 f.credit.unwrap_or(""),
                 f.file,
             )));
-            blob.push('\n');
+            hays.push((who, hay));
         }
-        starts.push(blob.len() as u32);
-        Index { ks, entries, blob, starts, who }
-    }
-
-    /// One row's haystack, without the newline that closes it in the blob.
-    fn hay(&self, i: usize) -> &str {
-        &self.blob[self.starts[i] as usize..self.starts[i + 1] as usize - 1]
+        Index { ks, entries, hays }
     }
 }
 
 /// Every token must start a word of the row's haystack and an all-digit token must match a whole
 /// number, so "op 9" skips Op. 59; rows whose composer matches more tokens come first.
-// ponytail: one scan of the whole blob per keystroke, 12 to 30 ms over the 200k shipped rows in a
-// debug build; index the tokens if a query stops keeping up with typing.
+// ponytail: one scan of every row's haystack per keystroke, 12 to 30 ms over the 200k shipped rows
+// in a debug build; index the tokens if a query stops keeping up with typing.
 pub fn search(ix: &Index, query: &str) -> SearchResult {
     let query = norm(query);
     let tokens: Vec<&str> = query.split_whitespace().collect();
@@ -172,16 +159,12 @@ pub fn search(ix: &Index, query: &str) -> SearchResult {
     let whole: Vec<bool> = tokens.iter().map(|t| t.bytes().all(|b| b.is_ascii_digit())).collect();
     let mut buckets: Vec<Vec<usize>> = vec![Vec::new(); tokens.len() + 1];
 
-    let mut pos = 0usize;
-    while let Some(off) = ix.blob[pos..].find(tokens[0]) {
-        let i = row_at(&ix.starts, (pos + off) as u32);
-        let hay = ix.hay(i);
-        if tokens.iter().zip(&whole).all(|(t, &w)| has_word(hay, t, w)) {
-            let who = &hay[..ix.who[i] as usize];
-            let rank = tokens.iter().zip(&whole).filter(|&(t, &w)| has_word(who, t, w)).count();
-            buckets[rank].push(i);
+    for (i, (who, hay)) in ix.hays.iter().enumerate() {
+        if !tokens.iter().zip(&whole).all(|(t, &w)| has_word(hay, t, w)) {
+            continue;
         }
-        pos = ix.starts[i + 1] as usize;
+        let rank = tokens.iter().zip(&whole).filter(|&(t, &w)| has_word(&hay[..*who], t, w)).count();
+        buckets[rank].push(i);
     }
 
     let more = buckets.iter().map(Vec::len).sum::<usize>().saturating_sub(MAX_ROWS);
@@ -390,11 +373,6 @@ fn has_word(s: &str, t: &str, whole: bool) -> bool {
         (i == 0 || !word_byte(bytes[i - 1]))
             && (!whole || bytes.get(i + t.len()).is_none_or(|&b| !word_byte(b)))
     })
-}
-
-/// The row whose haystack holds blob position `p`.
-fn row_at(starts: &[u32], p: u32) -> usize {
-    starts.partition_point(|&s| s <= p) - 1
 }
 
 /// The scan is one blocking pass over the whole index, and the first call waits for `warm()` to
@@ -751,4 +729,3 @@ Morris\tLelia N. Morris\tThe Fight Is On\tThe Fight Is On\t\t24\t0\t1/3/QmC.mxl\
         assert!(hits.more > 0, "one letter left nothing over");
     }
 }
-

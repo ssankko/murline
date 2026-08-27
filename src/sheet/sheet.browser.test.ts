@@ -66,6 +66,21 @@ test('every notehead carries the pitch colour of its note', async () => {
   sheet.dispose();
 }, 60_000);
 
+test('the colour switch drops every notehead to the plain ink and puts the pitch colours back', async () => {
+  const sheet = await open();
+  const heads = sheet.score.onsets.slice(0, 8).flatMap((onset) => onset.notes);
+  const fill = (note: Note) =>
+    noteheadEl(sheet.osmd, note.source)?.firstElementChild?.getAttribute('fill');
+
+  sheet.setLook({ colour: false });
+  for (const note of heads) expect(fill(note)).toBe(tone(INK.duration, false));
+
+  sheet.setLook({ colour: true });
+  for (const note of heads) expect(fill(note)).toBe(colorOf(note.midi, 'muted', false));
+
+  sheet.dispose();
+}, 60_000);
+
 test('the current mark rings the notehead outside its fill and comes off again', async () => {
   const sheet = await open();
   const note = sheet.score.onsets[0]!.notes[0]!;
@@ -173,6 +188,20 @@ test('a chord bubble stands over every chord event and dims once the cursor is p
 
   expect(bubbles.filter((el) => el.classList.contains('past')).length).toBe(3);
   for (const el of bubbles.slice(0, 3)) expect(el.classList.contains('past')).toBe(true);
+
+  sheet.dispose();
+}, 60_000);
+
+test('the harmony switch takes the chord bubbles off the paper and prints them again', async () => {
+  const host = hostEl();
+  const sheet = await open(BACH, host);
+  const count = () => host.querySelectorAll('.chord-bubble').length;
+
+  expect(count()).toBe(sheet.score.harmony.length);
+  sheet.setLook({ harmony: false });
+  expect(count()).toBe(0);
+  sheet.setLook({ harmony: true });
+  expect(count()).toBe(sheet.score.harmony.length);
 
   sheet.dispose();
 }, 60_000);

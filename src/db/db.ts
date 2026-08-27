@@ -29,6 +29,15 @@ export type Settings = {
   /** Gap between two blocks of the same key, in pixels. */
   lane_gap: number;
   keyboard_labels: boolean;
+
+  // What the two views show of a note beyond its place in time: the harmony display and the pitch
+  // colouring, each switchable on the sheet and in the falling notes on its own.
+
+  sheet_harmony: boolean;
+  sheet_colour: boolean;
+  lane_harmony: boolean;
+  lane_colour: boolean;
+
   /** Loudness of the metronome click, 0 to 100. */
   click_volume: number;
 
@@ -88,6 +97,8 @@ export const LANE_KNOBS = {
   lane_note_width: 'noteWidthPct',
   lane_gap: 'gapPx',
   keyboard_labels: 'keyLabels',
+  lane_harmony: 'harmony',
+  lane_colour: 'colour',
 } as const satisfies Record<string, keyof LaneLook>;
 
 /** The global default of a piece setting, and the field of `PieceSettings` it stands for. */
@@ -130,6 +141,8 @@ export const SETTING_DEFAULTS: Settings = {
   theme: 'system',
   sheet_split: DEFAULT_SPLIT,
   sheet_proportional: false,
+  sheet_harmony: true,
+  sheet_colour: true,
   click_volume: 70,
   ...knobDefaults(DEFAULT_LANE_LOOK, LANE_KNOBS),
   ...knobDefaults(DEFAULT_PLAY_SETTINGS, PIECE_DEFAULT_KEYS),

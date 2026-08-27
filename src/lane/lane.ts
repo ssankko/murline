@@ -14,7 +14,7 @@ import {
   type KeyLayout,
 } from '@/lane/keyboard';
 import { clamp } from '@/lib/utils';
-import { INK, PAPER, colorOf, mix, tone } from '@/look/color';
+import { INK, PAPER, colorOf, mix, tone, type Palette } from '@/look/color';
 import { easeInOut, reducedMotion } from '@/look/motion';
 import type { Engine, LoopSpan, PlayEvent, SeekTarget, Snapshot } from '@/play/engine';
 import type { Section } from '@/play/section';
@@ -29,6 +29,10 @@ export interface LaneLook {
   noteWidthPct: number;
   gapPx: number;
   keyLabels: boolean;
+  /** Whether the harmony panels are drawn. */
+  harmony: boolean;
+  /** Whether a block wears the pitch colour of its note, against one neutral ink for every note. */
+  colour: boolean;
 }
 
 export const DEFAULT_LANE_LOOK: LaneLook = {
@@ -36,6 +40,8 @@ export const DEFAULT_LANE_LOOK: LaneLook = {
   noteWidthPct: 80,
   gapPx: 2,
   keyLabels: true,
+  harmony: true,
+  colour: true,
 };
 
 /** Share of the window height the sheet takes by default; the beat scale is fixed against it. */
@@ -823,6 +829,15 @@ export class Lane {
     }
   }
 
+  /**
+   * The ink a block starts from, before its state works on it: the pitch colour of its note, or,
+   * while the colouring is off, a neutral grey, with a stronger one standing in for the full tier.
+   */
+  private blockInk(midi: number, palette: Palette): string {
+    if (this.look.colour) return colorOf(midi, palette, this.dark);
+    return tone(palette === 'full' ? INK.duration : INK.miss, this.dark);
+  }
+
   private drawNotes(
     laneH: number,
     pxPerTick: number,
@@ -881,7 +896,7 @@ export class Lane {
 
       ctx.save();
       if (ghost < 1) {
-        let fill = colorOf(note.midi, 'muted', this.dark);
+        let fill = this.blockInk(note.midi, 'muted');
         let glow = 0;
         if (state === 'miss') fill = mix(fill, tone(INK.miss, this.dark), gone);
         else if (state === 'hit' && age < HIT_FLASH_MS && !this.reduced) {
@@ -892,12 +907,12 @@ export class Lane {
         } else if (state === 'pending') {
           // The last beat of the fall brightens the block from muted to its full pitch colour.
           const near = clamp(1 - (note.tick - this.playedTick) / beatTicks, 0, 1);
-          if (near > 0) fill = mix(fill, colorOf(note.midi, 'full', this.dark), near);
+          if (near > 0) fill = mix(fill, this.blockInk(note.midi, 'full'), near);
         }
 
         ctx.globalAlpha = (1 - ghost) * (1 - MISS_DIM * gone);
         if (glow > 0) {
-          ctx.shadowColor = colorOf(note.midi, 'muted', this.dark);
+          ctx.shadowColor = this.blockInk(note.midi, 'muted');
           ctx.shadowBlur = glow;
         }
         ctx.fillStyle = fill;
@@ -1171,7 +1186,7 @@ export class Lane {
    * to the chord that stood next, every panel slides up one slot and the one on top leaves.
    */
   private drawHarmony(width: number, loop: LoopSpan | null): void {
-    if (this.chords.length === 0) return;
+    if (this.chords.length === 0 || !this.look.harmony) return;
     // Past the wrap the panel reads the lap again, as the lane draws it again.
     const chords = loop
       ? throughWrap(this.chords, loop, (chord, by) => ({ ...chord, tick: chord.tick + by }))

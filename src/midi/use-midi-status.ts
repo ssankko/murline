@@ -15,14 +15,10 @@ export type MidiStatus = {
 };
 
 /**
- * Connected MIDI inputs, kept current from the plugin's `statechange` event, and every key they
- * send. The plugin injects a Web MIDI polyfill into the webview, so this is the standard API and
- * nothing imports the plugin. Its timestamps are Unix milliseconds stamped in Rust, the timeline
- * `performance.timeOrigin + performance.now()` also runs on.
- *
- * The ports are opened once for the whole app, so a screen and a dialog can both read the strikes:
- * setting `onmidimessage` is what opens a port, and a second listener would take it off the first.
- * The `midi_device` setting pins one port by id; unset, every input port is listened to.
+ * Connected MIDI inputs and every key they send, over the Web MIDI polyfill the plugin injects,
+ * whose timestamps are Unix milliseconds on the `performance.timeOrigin + performance.now()`
+ * timeline. The ports are opened once for the whole app, because setting `onmidimessage` is what
+ * opens one and a second listener would take it off the first.
  */
 export function useMidiStatus(onStrike?: (event: StrikeEvent) => void): MidiStatus {
   const handler = useRef(onStrike);

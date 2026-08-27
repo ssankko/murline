@@ -207,7 +207,7 @@ export class Engine {
   }
 
   /** What the clock and the matching run on: a performance keeps the settings it started at. */
-  private get live(): Pick<PlaySettings, 'tempoMode' | 'tempoValue' | 'hands' | 'mode'> {
+  private get inForce(): Pick<PlaySettings, 'tempoMode' | 'tempoValue' | 'hands' | 'mode'> {
     return this.frozen ?? this.settings;
   }
 
@@ -231,7 +231,7 @@ export class Engine {
 
   /** Takes everything that happened since the last call. Nothing is kept for a second reader. */
   events(): PlayEvent[] {
-    if (this.pending.length === 0) return EMPTY_EVENTS;
+    if (this.pending.length === 0) return [];
     const events = this.pending;
     this.pending = [];
     return events;
@@ -245,11 +245,6 @@ export class Engine {
     const clicks = this.clicks;
     this.clicks = 0;
     return clicks;
-  }
-
-  /** Seconds the clock has moved in this play, count-in and pauses left out. */
-  get motionSeconds(): number {
-    return this.motionMs / 1000;
   }
 
   /**
@@ -382,7 +377,7 @@ export class Engine {
   }
 
   /** Wait mode asks for every Onset from a walk step again, and waits at it if it must. */
-  forgetSatisfied(fromStep = 0): void {
+  private forgetSatisfied(fromStep = 0): void {
     this.wait.forgetFrom(fromStep);
     this.stopStep = null;
   }
@@ -396,9 +391,8 @@ export class Engine {
   }
 
   /**
-   * Moves the play to a bar's opening line or to an Onset. While Running the clock carries straight
-   * on from there; while Idle or Paused the start point moves with it. Nothing behind the target is
-   * closed on the way: the notes passed over are neither missed nor expected.
+   * Moves the play to a bar's opening line or to an Onset, the start point with it while the clock
+   * is still. Nothing behind the target closes, so the notes passed over never become misses.
    */
   seek(target: SeekTarget): void {
     // A performance is one clean run: it takes no seek, and no Section has force during it.
@@ -418,10 +412,6 @@ export class Engine {
   setSection(section: Section | null): void {
     this.sectionRange = section ? clampSection(this.score.measures, section) : null;
     this.applyLoop();
-  }
-
-  get looping(): boolean {
-    return this.loop;
   }
 
   setLoop(on: boolean): void {
@@ -562,7 +552,7 @@ export class Engine {
     if (this.startedAt === 0) this.startedAt = this.wall;
     this.motionMs += ms;
     // A play switched to Flow glides on from wherever Wait mode was holding it.
-    if (this.live.mode !== 'wait') this.stopStep = null;
+    if (this.inForce.mode !== 'wait') this.stopStep = null;
     if (this.stopStep !== null) {
       // A live hands change can leave the Onset the cursor waits at asking for less, or nothing.
       if (this.requiredOf(this.stopStep).length === 0) this.stopStep = null;
@@ -574,6 +564,8 @@ export class Engine {
     const span = this.loopSpan();
     const end = span && this.tick < span.to ? span.to : this.endTick;
     let left = ms;
+    // ponytail: 10_000 segments cap one frame, enough for any tempo map; raise it if a piece with
+    // marks thicker than that ever stalls here.
     for (let guard = 0; left > 1e-9 && guard < 10_000; guard++) {
       const rate = this.ticksPerMs(this.tick);
       const stop = this.nextStop();
@@ -716,9 +708,9 @@ export class Engine {
     this.performance = {
       startedAt: this.startedAt,
       seconds: this.motionMs / 1000,
-      tempoMode: this.live.tempoMode,
-      tempoValue: this.live.tempoValue,
-      hands: this.live.hands,
+      tempoMode: this.inForce.tempoMode,
+      tempoValue: this.inForce.tempoValue,
+      hands: this.inForce.hands,
       grade: playGrade(notes, this.extras, this.settings, this.score.hasDynamics),
     };
   }
@@ -788,9 +780,9 @@ export class Engine {
     return this.tick - (this.wall - wallMs) * this.ticksPerMs(this.tick);
   }
 
-  /** In Flow mode the player is asked for the strikeable notes of the active hand, graces aside. */
+  /** What the play asks the player for: the strikeable notes of the active hand, graces aside. */
   private isExpected(note: PlayNote): boolean {
-    const { hands } = this.live;
+    const { hands } = this.inForce;
     return !note.grace && (hands === 'both' || hands === note.hand);
   }
 
@@ -849,7 +841,7 @@ export class Engine {
   }
 
   private ticksPerMs(playedTick: number): number {
-    const { tempoMode, tempoValue } = this.live;
+    const { tempoMode, tempoValue } = this.inForce;
     const written = writtenBpm(this.score, this.sheetTickOf(playedTick));
     const bpm = tempoMode === 'bpm' ? tempoValue : (written * tempoValue) / 100;
     return (bpm * TICKS_PER_QUARTER) / 60_000;
@@ -906,7 +898,7 @@ export class Engine {
 
   /** Wait mode only bites while the play is moving through the Score. */
   private get waiting(): boolean {
-    return this.live.mode === 'wait' && this.state === 'running';
+    return this.inForce.mode === 'wait' && this.state === 'running';
   }
 
   /** A held key whose strike matched nothing blocks every Onset until it comes up. */
@@ -1025,9 +1017,6 @@ export class Engine {
     return [from, to];
   }
 }
-
-/** Shared empty result of `events()`, so a quiet frame allocates nothing. */
-const EMPTY_EVENTS: PlayEvent[] = [];
 
 /**
  * Every note of the piece in played order. A repeated bar appears once per pass; a tie

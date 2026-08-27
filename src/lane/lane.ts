@@ -182,7 +182,7 @@ export class Lane {
     this.drawJumps(width, laneH, pxPerTick, loop);
     ctx.restore();
 
-    this.drawNowLine(width, laneH, windowTicks * pxPerTick);
+    this.drawNowLine(width, laneH, windowTicks * 2 * pxPerTick);
     this.drawRings(laneH);
     drawKeyboard(ctx, this.layout, laneH, this.dark, this.look.keyLabels, this.keyFill);
     if (this.notice) this.drawNotice(width, laneH);
@@ -288,7 +288,14 @@ export class Lane {
     const ctx = this.ctx;
     const top = this.playedTick + laneH / pxPerTick;
     ctx.font = '13px system-ui, sans-serif';
-    for (const jump of loop ? [this.wrapDivider(loop)] : this.jumps) {
+    // A looping Section walks its bars linearly, so the wrap is the only divider. Loop over the
+    // whole piece keeps the written repeats, so their dividers fall as well as the wrap.
+    const jumps = loop
+      ? this.engine.section
+        ? [this.wrapDivider(loop)]
+        : [...this.jumps, this.wrapDivider(loop)]
+      : this.jumps;
+    for (const jump of jumps) {
       if (jump.tick > top) break;
       const y = this.y(jump.tick, laneH, pxPerTick);
       if (y > laneH + 40) continue;
@@ -397,11 +404,14 @@ export class Lane {
     }
   }
 
-  /** The now-line, with a band over it as tall in time as the matching window at play tempo. */
+  /**
+   * The now-line, inside a band as tall in time as the matching window: early on one side of the
+   * line, late on the other. The keyboard is drawn over the late half.
+   */
   private drawNowLine(width: number, laneH: number, bandH: number): void {
     const ctx = this.ctx;
     ctx.fillStyle = this.dark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)';
-    ctx.fillRect(0, laneH - bandH, width, bandH);
+    ctx.fillRect(0, laneH - bandH / 2, width, bandH);
     ctx.strokeStyle = tone(NOW_LINE, this.dark);
     ctx.lineWidth = 1.5;
     ctx.beginPath();

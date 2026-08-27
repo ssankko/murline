@@ -117,8 +117,8 @@ impl Index {
     pub fn build(ks_json: &str, pdmx_tsv: &'static str) -> Index {
         let ks: Vec<KsRow> = serde_json::from_str(ks_json).expect("kernscores index");
         let mut keyed: Vec<(String, Entry)> = Vec::with_capacity(ks.len() + pdmx_tsv.len() / 130);
-        for i in 0..ks.len() {
-            keyed.push((sort_key(&ks_fields(&ks[i])), Entry::Ks(i as u32)));
+        for (i, row) in ks.iter().enumerate() {
+            keyed.push((sort_key(&ks_fields(row)), Entry::Ks(i as u32)));
         }
         for line in pdmx_tsv.lines() {
             keyed.push((sort_key(&pdmx_fields(line)), Entry::Pdmx(line)));
@@ -380,7 +380,7 @@ fn has_word(s: &str, t: &str, whole: bool) -> bool {
     let bytes = s.as_bytes();
     s.match_indices(t).any(|(i, _)| {
         (i == 0 || !word_byte(bytes[i - 1]))
-            && (!whole || bytes.get(i + t.len()).map_or(true, |&b| !word_byte(b)))
+            && (!whole || bytes.get(i + t.len()).is_none_or(|&b| !word_byte(b)))
     })
 }
 

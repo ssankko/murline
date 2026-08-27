@@ -136,7 +136,7 @@ fn merge_parts(root: &mut Elem) -> Result<(), String> {
     if let Some(list) = child_mut(root, "part-list") {
         let mut seen = false;
         list.children.retain(|n| match n {
-            Node::Elem(e) if e.name == "score-part" => std::mem::replace(&mut seen, true) == false,
+            Node::Elem(e) if e.name == "score-part" => !std::mem::replace(&mut seen, true),
             _ => true,
         });
         if let Some(name) = child_mut(list, "score-part").and_then(|p| child_mut(p, "part-name")) {
@@ -450,11 +450,11 @@ fn parse(xml: &[u8]) -> Result<(Vec<u8>, Elem), String> {
                 }
             }
             Event::Text(e) => {
-                let text = e.as_ref().to_string();
-                if let Some(parent) = stack.last_mut() {
-                    if !text.trim().is_empty() {
-                        parent.children.push(Node::Text(text));
-                    }
+                let text = e.as_ref();
+                if !text.trim().is_empty()
+                    && let Some(parent) = stack.last_mut()
+                {
+                    parent.children.push(Node::Text(text.to_string()));
                 }
             }
             Event::Decl(e) => {
@@ -509,7 +509,7 @@ fn write(el: &Elem, depth: usize, out: &mut Vec<u8>) {
             Node::Elem(child) => {
                 if block {
                     out.push(b'\n');
-                    out.extend(std::iter::repeat(b'\t').take(depth + 1));
+                    out.extend(std::iter::repeat_n(b'\t', depth + 1));
                 }
                 write(child, depth + 1, out);
             }
@@ -518,7 +518,7 @@ fn write(el: &Elem, depth: usize, out: &mut Vec<u8>) {
     }
     if block {
         out.push(b'\n');
-        out.extend(std::iter::repeat(b'\t').take(depth));
+        out.extend(std::iter::repeat_n(b'\t', depth));
     }
     out.extend_from_slice(b"</");
     out.extend_from_slice(el.name.as_bytes());
@@ -529,8 +529,11 @@ fn write(el: &Elem, depth: usize, out: &mut Vec<u8>) {
 mod tests {
     use super::*;
 
-    /// Note counts, staff split and dynamics of the seven downloads the file rule was settled on.
-    const FIXTURES: [(&str, &[u8], usize, usize, usize, usize); 7] = [
+    /// Name, MusicXML, then the note counts: all notes, right staff, left staff, dynamic marks.
+    type Fixture = (&'static str, &'static [u8], usize, usize, usize, usize);
+
+    /// The seven downloads the file rule was settled on.
+    const FIXTURES: [Fixture; 7] = [
         ("mazurka-50", include_bytes!("../fixtures/mazurka-50.musicxml"), 1486, 1014, 472, 8),
         ("sonata01-1", include_bytes!("../fixtures/sonata01-1.musicxml"), 1901, 939, 962, 34),
         ("wtc1p01", include_bytes!("../fixtures/wtc1p01.musicxml"), 747, 535, 212, 0),
@@ -619,10 +622,10 @@ mod tests {
         let out = merge(include_bytes!("../fixtures/sonata01-1.musicxml")).unwrap();
         let (_, root) = parse(&out).unwrap();
         for direction in find(&root, "direction") {
-            if let Some(kind) = child(direction, "direction-type") {
-                if child(kind, "dynamics").is_some() {
-                    assert_eq!(text_of(child(direction, "staff").unwrap()), "1");
-                }
+            if let Some(kind) = child(direction, "direction-type")
+                && child(kind, "dynamics").is_some()
+            {
+                assert_eq!(text_of(child(direction, "staff").unwrap()), "1");
             }
         }
         let marks: Vec<String> = find(&root, "dynamics")

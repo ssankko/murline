@@ -4,9 +4,39 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Piano</title>
+    <style>
+      /* The paper of the app, before its stylesheet loads: the window opens on grey, not on white.
+         `color-scheme` picks the same grey src/index.css names, until the theme setting pins one. */
+      html {
+        color-scheme: light dark;
+        background: light-dark(#f4f4f4, #202020);
+      }
+      /* The boot screen paints before the stylesheet loads, so its whole look lives here. The
+         greys are the muted ink of src/index.css. */
+      .boot {
+        margin: 0;
+        padding: 24px;
+        font: 12px/20px ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: light-dark(#6e6e6e, #8f8f8f);
+      }
+      @keyframes boot-blink {
+        50% {
+          opacity: 0;
+        }
+      }
+      .boot-cursor {
+        animation: boot-blink 1s step-end infinite;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-cursor {
+          animation: none;
+        }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"><pre class="boot">&gt; starting …
+<span class="boot-cursor">█</span></pre></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

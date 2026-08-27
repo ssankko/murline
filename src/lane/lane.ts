@@ -100,7 +100,7 @@ const PULSE_BAND = 0.06;
  * duration it gets there, and how long its release blink lasts.
  */
 const DRAIN_FLOOR = 0.4;
-const DRAIN_RUSH = 3;
+const DRAIN_RUSH = 7.5;
 const BLINK_MS = 120;
 
 /** How long a key takes to sink under a finger and to come back up, both through the overshoot. */

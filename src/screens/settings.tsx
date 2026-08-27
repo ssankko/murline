@@ -465,19 +465,27 @@ function Group({
   onReset: () => void;
   children: React.ReactNode;
 }) {
+  // A reset to a default equal to the value in force changes no prop, so the fields are rebuilt
+  // by their key: text a field refused, and the message under it, start over from the setting.
+  const [round, setRound] = useState(0);
   return (
     <section className="flex flex-col gap-2">
       <div className="flex items-baseline gap-3">
         {title && <h3 className="text-[13px] font-semibold">{title}</h3>}
         {note && <p className="text-muted-ink text-[11.5px]">{note}</p>}
         <button
-          onClick={onReset}
+          onClick={() => {
+            onReset();
+            setRound((n) => n + 1);
+          }}
           className="text-muted-ink hover:text-ink ml-auto text-[11.5px] underline underline-offset-2"
         >
           Reset group
         </button>
       </div>
-      <div className="divide-edge-soft border-edge-soft divide-y border-y">{children}</div>
+      <div key={round} className="divide-edge-soft border-edge-soft divide-y border-y">
+        {children}
+      </div>
     </section>
   );
 }

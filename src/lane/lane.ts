@@ -57,18 +57,19 @@ const HANDS_FADE_MS = 200;
 const SECTION_ALPHA = 0.09;
 const SECTION_FADE_MS = 200;
 
-/** The harmony panel at the lane's top right: its inset from the corner and a row's padding. */
+/** The harmony panel at the lane's top right: its inset from the corner, the gap between rows. */
 const PANEL_INSET = 8;
-const PANEL_PAD = 6;
 const PANEL_GAP = 4;
+/** Side padding a name keeps inside its panel; a name that needs more is set smaller. */
+const PANEL_PAD = 6;
 /** The chrome tone a panel over the lane wears: paper enough to read on, sheer enough to see past. */
 const PANEL_FILL = ['rgba(233,233,233,0.82)', 'rgba(22,22,22,0.82)'] as const;
-/** Type size of the chord sounding now and of the two after it; the degree follows at 0.75 of it. */
-const CHORD_SIZE = 20;
-const NEXT_SIZE = 13;
-const DEGREE_GAP = 4;
-/** A beat glyph: its width, the step to the next one, and the gap it leaves the chord name. */
+/** The panel of the chord sounding now, and of each of the two after it: its size and its type. */
+const CHORD_PANEL = { w: 128, h: 64, weight: 700, size: 26 };
+const NEXT_PANEL = { w: 72, h: 36, weight: 600, size: 15 };
+/** A beat glyph: its width, a capsule's height, the step to the next one, the gap to the panel. */
 const GLYPH_W = 4;
+const GLYPH_TALL = 8;
 const GLYPH_STEP = 6;
 const GLYPH_GAP = 8;
 /** How far the countdown counts; a chord further off than this holds a full row until it nears. */
@@ -534,8 +535,8 @@ export class Lane {
 
   /**
    * The chord sounding now and the two after it, each on its own panel at the top right. A next
-   * chord carries one glyph per beat left before it, a stick where a bar opens, and the leftmost
-   * glyph is the beat that ends first.
+   * chord counts the beats left before it left of its panel: one glyph per beat, a capsule where a
+   * bar opens and a dot inside it, the leftmost the beat that ends first.
    */
   private drawHarmony(width: number, loop: LoopSpan | null): void {
     if (this.chords.length === 0) return;
@@ -552,63 +553,56 @@ export class Lane {
       : this.bars;
 
     const [current, ...next] = chordsAt(chords, this.playedTick);
-    const rows: { chord: LaneChord; size: number; glyphs: BeatGlyph[] }[] = [];
-    if (current) rows.push({ chord: current, size: CHORD_SIZE, glyphs: [] });
+    const rows: { chord: LaneChord; panel: typeof CHORD_PANEL; glyphs: BeatGlyph[] }[] = [];
+    if (current) rows.push({ chord: current, panel: CHORD_PANEL, glyphs: [] });
     for (const chord of next) {
       if (!chord) continue;
       const glyphs = beatsBefore(bars, this.playedTick, chord.tick);
-      rows.push({ chord, size: NEXT_SIZE, glyphs });
+      rows.push({ chord, panel: NEXT_PANEL, glyphs });
     }
 
     const ctx = this.ctx;
     const fading = !reducedMotion();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
     let y = PANEL_INSET;
-    for (const { chord, size, glyphs } of rows) {
-      const degreeSize = size * 0.75;
-      ctx.font = `600 ${size}px system-ui, sans-serif`;
-      const nameW = ctx.measureText(chord.event.absolute).width;
-      ctx.font = `${degreeSize}px system-ui, sans-serif`;
-      const degreeW = ctx.measureText(chord.event.degree).width;
-      const countW =
-        glyphs.length === 0 ? 0 : (glyphs.length - 1) * GLYPH_STEP + GLYPH_W + GLYPH_GAP;
-      const h = size + PANEL_PAD * 2;
-      const w = PANEL_PAD * 2 + countW + nameW + DEGREE_GAP + degreeW;
-      const left = width - PANEL_INSET - w;
-
+    for (const { chord, panel, glyphs } of rows) {
+      const left = width - PANEL_INSET - panel.w;
       ctx.fillStyle = tone(PANEL_FILL, this.dark);
       ctx.beginPath();
-      ctx.roundRect(left, y, w, h, 4);
+      ctx.roundRect(left, y, panel.w, panel.h, 4);
       ctx.fill();
 
-      // The countdown, the name and the degree read left to right, the two texts on one baseline.
-      const nameX = left + PANEL_PAD + countW;
-      const baseline = y + PANEL_PAD + size * 0.8;
-      ctx.font = `600 ${size}px system-ui, sans-serif`;
+      // A name too long for its panel steps down through smaller type until it fits.
+      let size = panel.size;
+      ctx.font = `${panel.weight} ${size}px system-ui, sans-serif`;
+      while (size > 10 && ctx.measureText(chord.event.absolute).width > panel.w - PANEL_PAD * 2) {
+        size -= 2;
+        ctx.font = `${panel.weight} ${size}px system-ui, sans-serif`;
+      }
       ctx.fillStyle = tone(INK.duration, this.dark);
-      ctx.fillText(chord.event.absolute, nameX, baseline);
-      ctx.font = `${degreeSize}px system-ui, sans-serif`;
-      ctx.fillStyle = tone(INK.scaffolding, this.dark);
-      ctx.fillText(chord.event.degree, nameX + nameW + DEGREE_GAP, baseline);
+      ctx.fillText(chord.event.absolute, left + panel.w / 2, y + panel.h / 2);
 
+      // The countdown stands outside the panel, its last glyph against the panel's left edge, so
+      // the beats still to come hold their place as the row shrinks toward the panel.
+      const bottom = y + panel.h / 2 + 2;
+      ctx.fillStyle = tone(INK.scaffolding, this.dark);
       glyphs.forEach((glyph, i) => {
         // A glyph fades over the last quarter of its beat, off the clock alone.
         const remains = (glyph.end - this.playedTick) / (glyph.span / 4);
         ctx.globalAlpha = fading ? clamp(remains, 0, 1) : 1;
+        const x = left - GLYPH_GAP - GLYPH_W - (glyphs.length - 1 - i) * GLYPH_STEP;
         ctx.beginPath();
-        ctx.ellipse(
-          left + PANEL_PAD + GLYPH_W / 2 + i * GLYPH_STEP,
-          y + h / 2,
-          GLYPH_W / 2,
-          glyph.strong ? GLYPH_W * 1.25 : GLYPH_W / 2,
-          0,
-          0,
-          Math.PI * 2,
-        );
+        if (glyph.strong) ctx.roundRect(x, bottom - GLYPH_TALL, GLYPH_W, GLYPH_TALL, GLYPH_W / 2);
+        else ctx.arc(x + GLYPH_W / 2, bottom - GLYPH_W / 2, GLYPH_W / 2, 0, Math.PI * 2);
         ctx.fill();
       });
       ctx.globalAlpha = 1;
-      y += h + PANEL_GAP;
+      y += panel.h + PANEL_GAP;
     }
+    // The rest of the lane draws on the defaults.
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
   }
 
   private drawNotice(width: number, laneH: number): void {

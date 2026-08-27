@@ -253,6 +253,28 @@ mod tests {
         assert!(response.status().is_success(), "{}", response.status());
     }
 
+    /// The archive holds the `mxl/` tree the unpack keeps. Only the first entry is read, so the
+    /// check costs a couple of megabytes of the 1.89 GB.
+    #[test]
+    #[ignore = "reaches zenodo.org"]
+    fn the_archive_starts_with_the_mxl_tree() {
+        let response = client().unwrap().get(ARCHIVE).send().unwrap();
+        let total = response.content_length();
+        let counting = Counting {
+            inner: response,
+            done: 0,
+            sent: 0,
+            total,
+            progress: Channel::new(|_| Ok(())),
+        };
+        let mut archive =
+            tar::Archive::new(flate2::read::GzDecoder::new(counting.take(2 * 1024 * 1024)));
+        let first = archive.entries().unwrap().next().unwrap().unwrap();
+        let path = first.path().unwrap().to_string_lossy().into_owned();
+        println!("first entry: {path}");
+        assert!(path.starts_with("mxl/") || path.starts_with("./mxl/"), "{path}");
+    }
+
     #[test]
     fn extract_takes_the_musicxml_out_of_the_mxl() {
         let bytes = extract(Path::new(FOLDER), ROW).unwrap();

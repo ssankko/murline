@@ -16,8 +16,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 vi.mock('./queries', () => ({
   knownFiles: async () => [],
   markError: async () => {},
-  markMissing: async () => {},
-  markPresent: async () => {},
+  setPresent: async () => {},
   upsertIndex: async () => {},
 }));
 

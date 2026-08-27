@@ -127,7 +127,10 @@ export interface Score {
   measures: Measure[];
   keys: KeyChange[];
   chords: ChordSymbol[];
-  /** The chord names along the sheet, one per Onset where the harmony changes. */
+  /**
+   * The chord names along the sheet, one per Onset where the harmony changes. Empty until the
+   * sheet analyses it.
+   */
   harmony: ChordEvent[];
 }
 

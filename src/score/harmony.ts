@@ -49,16 +49,15 @@ const DIMINISHED_7: Shape = { abs: '°7', rel: '°⁷', steps: [0, 3, 6, 9] };
 // triad's. The diminished triad stands in for a rootless dominant seventh, so it costs about what
 // that chord does; the minor seventh, under 2% of his corpus, costs as a share of 2% would. The
 // major seventh is left out: it names every passing leading tone over a tonic.
-const TEMPLATES = [
-  MAJOR_TRIAD,
-  DOMINANT_7,
-  MINOR_TRIAD,
-  DIMINISHED_7,
-  HALF_DIMINISHED_7,
-  DIMINISHED,
-  MINOR_7,
+const TEMPLATES: [Shape, number][] = [
+  [MAJOR_TRIAD, 0],
+  [DOMINANT_7, 0.2],
+  [MINOR_TRIAD, 0.23],
+  [DIMINISHED_7, 0.66],
+  [HALF_DIMINISHED_7, 0.71],
+  [DIMINISHED, 0.3],
+  [MINOR_7, 0.9],
 ];
-const PRIOR = [0, 0.2, 0.23, 0.66, 0.71, 0.3, 0.9];
 
 // Cost of a note off the template, per unit it sounds in: cheap when it steps to the next note of
 // its staff, dear otherwise.
@@ -163,7 +162,7 @@ interface Candidate {
  */
 function scoreSegment(weight: number[], off: number[], total: number): Candidate {
   let best: (Candidate & { rank: number[] }) | undefined;
-  TEMPLATES.forEach((shape, order) => {
+  TEMPLATES.forEach(([shape, prior], order) => {
     for (let root = 0; root < 12; root++) {
       let present = 0;
       let missing = 0;
@@ -175,7 +174,7 @@ function scoreSegment(weight: number[], off: number[], total: number): Candidate
           onTemplate += off[tone]!;
         } else missing += MISSING[step]!;
       }
-      const score = present - missing - (total - onTemplate) - PRIOR[order]!;
+      const score = present - missing - (total - onTemplate) - prior;
       const rank = [score, missing === 0 ? 1 : 0, weight[root]!, -order];
       if (!best || beats(rank, best.rank)) best = { root, shape, score, rank };
     }

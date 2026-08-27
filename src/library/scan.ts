@@ -7,8 +7,7 @@ import { baseNameOf, indexBytes, pathOf, readScoreFile } from './index-file';
 import {
   knownFiles,
   markError,
-  markMissing,
-  markPresent,
+  setPresent,
   upsertIndex,
   type KnownFile,
 } from './queries';
@@ -77,9 +76,9 @@ export async function reindexIfChanged(folder: string, relPath: string): Promise
 
 async function apply(folder: string, actions: ScanAction[]): Promise<void> {
   for (const action of actions) {
-    if (action.kind === 'restore') await markPresent(action.path);
-    else if (action.kind === 'hide') await markMissing(action.path);
-    else await index(folder, action.file);
+    if (action.kind === 'restore' || action.kind === 'hide') {
+      await setPresent(action.path, action.kind === 'restore');
+    } else await index(folder, action.file);
   }
 }
 

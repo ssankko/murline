@@ -1,4 +1,4 @@
-import { getSetting, getSettingOr } from '@/db/db';
+import { getSettingOr, readSettings } from '@/db/db';
 import { setTheme } from '@/look/use-dark';
 import type { PlayKind } from '@/play/engine';
 import { Library } from '@/screens/library';
@@ -17,17 +17,17 @@ type Route =
 export function App() {
   const [route, setRoute] = useState<Route>({ at: 'loading' });
 
-  // The theme is global, so it is painted before any screen is.
+  // The theme is global, so it is painted before any screen is. A database that will not open
+  // reads as unfinished onboarding, which reports the failure when Continue retries it.
   useEffect(() => {
-    void getSettingOr('theme').then(setTheme);
-  }, []);
-
-  // A database that will not open leaves onboarding to report the failure when Continue retries it.
-  useEffect(() => {
-    Promise.all([getSetting('onboarding_done'), getSetting('library_folder')]).then(
-      ([done, folder]) => setRoute(done ? { at: 'library', folder } : { at: 'onboarding' }),
-      () => setRoute({ at: 'onboarding' }),
-    );
+    void readSettings().then((s) => {
+      setTheme(s.theme);
+      setRoute(
+        s.onboarding_done
+          ? { at: 'library', folder: s.library_folder || null }
+          : { at: 'onboarding' },
+      );
+    });
   }, []);
 
   switch (route.at) {

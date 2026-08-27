@@ -104,7 +104,7 @@ export function buildScore(sheet: MusicSheet): Score {
   }));
 
   const tempoMap = tempoMapOf(sheet);
-  const score: Score = {
+  return {
     title: sheet.TitleString ?? '',
     composer: sheet.ComposerString ?? '',
     partName: instrument.Name ?? '',
@@ -123,7 +123,6 @@ export function buildScore(sheet: MusicSheet): Score {
     // The analysis is run by the play screen, the one place that draws it.
     harmony: [],
   };
-  return score;
 }
 
 /** Cue notes and notes the file hides are printed nowhere and played by nobody. */

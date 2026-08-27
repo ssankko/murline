@@ -263,16 +263,10 @@ export async function markError(
   );
 }
 
-/** The file is gone: keep the row and its history, drop it from the list. */
-export async function markMissing(path: string): Promise<void> {
+/** Whether the file is in the folder. A row absent from it keeps its history and leaves the list. */
+export async function setPresent(path: string, present: boolean): Promise<void> {
   const db = await getDb();
-  await db.execute('UPDATE piece SET present = 0 WHERE path = $1', [path]);
-}
-
-/** The same file is back, unchanged since it was indexed. */
-export async function markPresent(path: string): Promise<void> {
-  const db = await getDb();
-  await db.execute('UPDATE piece SET present = 1 WHERE path = $1', [path]);
+  await db.execute('UPDATE piece SET present = $2 WHERE path = $1', [path, present ? 1 : 0]);
 }
 
 /** Drops the piece, and its plays with it through the foreign key that cascades. */

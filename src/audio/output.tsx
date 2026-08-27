@@ -88,10 +88,10 @@ export function OutputSection() {
       () => invoke('audio_set_buffer_frames', { frames: choice }),
     );
 
-  // The picker shows the choice, even while the device it names is unplugged; the dialog's own
-  // line is what says the engine had to play somewhere else.
-  const chosenName =
-    chosen === null ? 'System default' : (devices.find((d) => d.id === chosen)?.name ?? chosen);
+  // A device that is not connected is not in the list, and the picker names it nowhere. It reads as
+  // the system default, where the sound is really going. The setting keeps the choice, so the name
+  // comes back with the device, and the dialog's own line is what says the engine had to move.
+  const shown = devices.find((d) => d.id === chosen);
 
   return (
     <section className="flex flex-col gap-2">
@@ -106,13 +106,13 @@ export function OutputSection() {
               aria-label="Output device"
               className="h-7 max-w-[220px] justify-between px-2 text-[12px] font-normal"
             >
-              <span className="truncate">{chosenName}</span>
+              <span className="truncate">{shown?.name ?? 'System default'}</span>
               <ChevronDown className="size-3.5 opacity-60" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="max-w-[280px]">
             <DropdownMenuRadioGroup
-              value={chosen ?? ''}
+              value={shown?.id ?? ''}
               onValueChange={(id) => void chooseDevice(id || null)}
             >
               <DropdownMenuRadioItem value="" className="text-[13px]">

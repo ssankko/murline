@@ -85,6 +85,12 @@ function openPicker(): void {
   trigger?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }));
 }
 
+/** The picker row the radio dot is on, once the picker is open. */
+function checkedRow(): string {
+  const found = document.querySelector('[role="menuitemradio"][aria-checked="true"]');
+  return found?.textContent?.trim() ?? '';
+}
+
 function clickText(label: string): void {
   const found = [...document.querySelectorAll('button, [role="menuitemradio"]')].find(
     (element) => element.textContent?.trim() === label,
@@ -144,7 +150,7 @@ test('choosing a buffer size writes the setting and applies it', async () => {
   );
 });
 
-test('a chosen device that is not connected keeps its place in the picker', async () => {
+test('a chosen device that is not connected reads as the system default until it is back', async () => {
   settings = { audio_output_device: 'Scarlett', audio_buffer_frames: 64 };
   devices = [{ id: 'BuiltInSpeakerDevice', name: 'MacBook Pro Speakers' }];
   status = {
@@ -156,8 +162,20 @@ test('a chosen device that is not connected keeps its place in the picker', asyn
   };
 
   const text = await open();
-  // The picker keeps the user's choice, which is what makes the device come back when it does.
-  await vi.waitFor(() => expect(text()).toContain('Scarlett'));
+  // The latency figure is the engine answering, by which point the setting has been read too.
+  await vi.waitFor(() => expect(text()).toContain('17.9 ms'));
+  // Neither the device's name nor the id it was stored under is anywhere on the page.
+  expect(text()).not.toContain('Scarlett');
+
+  openPicker();
+  await vi.waitFor(() => expect(text()).toContain('MacBook Pro Speakers'));
+  expect(checkedRow()).toBe('System default');
   // Saying where the sound went is the dialog's one line, not a second one in this section.
   expect(text()).not.toContain('not connected');
+
+  // The setting kept the choice, so plugging the device back in shows its name again.
+  devices = [...devices, { id: 'Scarlett', name: 'Scarlett 2i2' }];
+  announce?.();
+
+  await vi.waitFor(() => expect(checkedRow()).toBe('Scarlett 2i2'));
 });

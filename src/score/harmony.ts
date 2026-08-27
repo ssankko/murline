@@ -4,6 +4,7 @@
 // at all; the symbols are the harmony.
 
 import { AccidentalEnum, ChordSymbolEnum } from 'opensheetmusicdisplay';
+import { beatOf } from './beat';
 import {
   TICKS_PER_QUARTER,
   type ChordEvent,
@@ -200,9 +201,7 @@ function gridOf(measures: Measure[]): { bars: number[]; beats: number[] } {
   const beats: number[] = [];
   for (const measure of measures) {
     bars.push(measure.startTick);
-    const compound =
-      measure.beatUnit === 8 && measure.beatsPerBar > 3 && measure.beatsPerBar % 3 === 0;
-    const length = compound ? 3 * (TICKS_PER_QUARTER / 2) : WHOLE_NOTE / measure.beatUnit;
+    const length = beatOf(measure).ticks;
     for (let t = measure.startTick; t < measure.startTick + measure.durationTicks; t += length) {
       beats.push(t);
     }

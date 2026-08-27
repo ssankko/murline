@@ -7,7 +7,8 @@ import { INK, PAPER, colorOf, tone } from '@/look/color';
 import { reducedMotion } from '@/look/motion';
 import type { Engine, LoopSpan, PlayEvent, Snapshot } from '@/play/engine';
 import type { HandsSetting } from '@/play/settings';
-import { TICKS_PER_QUARTER, type Hand, type PlayStep } from '@/score/types';
+import { barTickOf, beatOf } from '@/score/beat';
+import { TICKS_PER_QUARTER, type Hand, type PlayStep, type Score } from '@/score/types';
 
 /** Look knobs, all global settings the gear writes to. */
 export interface LaneLook {
@@ -103,8 +104,8 @@ export class Lane {
     this.look = look;
     this.dark = dark;
     this.walk = engine.walk;
-    this.bars = barsOf(engine, this.walk);
-    this.jumps = jumpsOf(engine, this.walk);
+    this.bars = barsOf(engine.score, this.walk);
+    this.jumps = jumpsOf(engine.score, this.walk);
     this.hands = engine.settings.hands;
     this.handsBefore = this.hands;
     // The range spans both hands, so a change of hands never re-lays the keyboard out.
@@ -164,8 +165,8 @@ export class Lane {
 
     if (this.engine.walk !== this.walk) {
       this.walk = this.engine.walk;
-      this.bars = barsOf(this.engine, this.walk);
-      this.jumps = jumpsOf(this.engine, this.walk);
+      this.bars = barsOf(this.engine.score, this.walk);
+      this.jumps = jumpsOf(this.engine.score, this.walk);
     }
 
     const loop = this.engine.loopSpan();
@@ -467,20 +468,19 @@ const DASH = [7, 5];
 const SOLID: number[] = [];
 
 /** Every bar of the play in played time, one entry per pass of a repeated bar. */
-function barsOf(engine: Engine, walk: PlayStep[]): LaneBar[] {
-  const { score } = engine;
+function barsOf(score: Score, walk: PlayStep[]): LaneBar[] {
   const bars: LaneBar[] = [];
   for (const step of walk) {
     const onset = score.onsets[step.onsetIndex];
     const measure = onset ? score.measures[onset.measureIndex] : undefined;
     if (!onset || !measure) continue;
-    const tick = step.tick - (onset.tick - measure.startTick);
+    const tick = barTickOf(step, onset, measure);
     if (bars.length > 0 && bars[bars.length - 1]!.tick === tick) continue;
     bars.push({
       tick,
       number: measure.number,
       measure: measure.index,
-      beatTicks: (TICKS_PER_QUARTER * 4) / measure.beatUnit,
+      beatTicks: beatOf(measure).ticks,
       endTick: tick + measure.durationTicks,
     });
   }
@@ -488,8 +488,7 @@ function barsOf(engine: Engine, walk: PlayStep[]): LaneBar[] {
 }
 
 /** Where the walk goes back in the sheet, which is where a divider falls. */
-function jumpsOf(engine: Engine, walk: PlayStep[]): LaneJump[] {
-  const { score } = engine;
+function jumpsOf(score: Score, walk: PlayStep[]): LaneJump[] {
   const jumps: LaneJump[] = [];
   for (let i = 1; i < walk.length; i++) {
     const from = score.onsets[walk[i - 1]!.onsetIndex];

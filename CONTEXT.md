@@ -114,3 +114,21 @@ _Avoid_: Wrong note, false note
 **Miss**:
 An expected note the user did not strike within its window. Grades as zero and marks grey on the sheet.
 _Avoid_: Skipped note, error
+
+### Sound
+
+**Sound engine**:
+The audio graph in the Rust side that turns keyboard and Preview notes into sound, through the instrument, the effect chain and the chosen output device. macOS only; everywhere else it reports itself unavailable and the app runs silently.
+_Avoid_: Synth, audio engine, playback engine
+
+**Instrument**:
+The one Audio Unit instrument, or file loaded into Apple's sampler, that the sound engine plays. One at a time, global, remembered across launches.
+_Avoid_: Patch, preset, voice, sound font (a SoundFont is one kind of file an instrument is loaded from)
+
+**Effect chain**:
+The ordered list of Audio Unit effects between the instrument and the output. Each slot has a bypass toggle and keeps its plugin's own settings; a slot whose plugin is not installed keeps its place and is skipped.
+_Avoid_: FX chain, rack, inserts, effects bus
+
+**Audio dialog**:
+The one global dialog for the output device, the instrument and the effect chain, opened from the Audio button on the play screen and the library screen. Every control writes on change, and one line says what is wrong with the sound engine.
+_Avoid_: Audio settings, sound preferences (see Global settings)

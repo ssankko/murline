@@ -10,6 +10,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
@@ -29,6 +36,7 @@ import { validNumber, type PieceSettings } from '@/play/resolve';
 import { TEMPO_RANGE, type HandsSetting, type KeyboardPreset } from '@/play/settings';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
+import { ChevronDown } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 /** The whole keyboard, the span both note dropdowns offer. */
@@ -317,19 +325,41 @@ export function SettingsDialog({
 
           <Group title="MIDI" onReset={() => reset(['midi_device', 'velocity_offset'])}>
             <Row label="Input device">
-              <select
-                aria-label="MIDI input device"
-                value={values.midi_device ?? ''}
-                onChange={(event) => write('midi_device', event.target.value || null)}
-                className="border-edge h-7 border bg-transparent px-2 text-[12px]"
-              >
-                <option value="">Any device</option>
-                {midi.ports.map((port) => (
-                  <option key={port.id} value={port.id}>
-                    {port.name}
-                  </option>
-                ))}
-              </select>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    aria-label="MIDI input device"
+                    className="h-7 max-w-[190px] justify-between px-2 text-[12px] font-normal"
+                  >
+                    <span className="truncate">
+                      {midi.ports.find((port) => port.id === values.midi_device)?.name ??
+                        'Any device'}
+                    </span>
+                    <ChevronDown className="size-3.5 opacity-60" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="max-w-[260px]">
+                  <DropdownMenuRadioGroup
+                    value={values.midi_device ?? ''}
+                    onValueChange={(id) => write('midi_device', id || null)}
+                  >
+                    <DropdownMenuRadioItem value="" className="text-[13px]">
+                      Any device
+                    </DropdownMenuRadioItem>
+                    {midi.ports.map((port) => (
+                      <DropdownMenuRadioItem
+                        key={port.id}
+                        value={port.id}
+                        className="text-[13px]"
+                      >
+                        <span className="truncate">{port.name}</span>
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </Row>
             <Row label="Velocity offset">
               <div className="flex items-center gap-3">

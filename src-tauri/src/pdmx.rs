@@ -49,6 +49,10 @@ pub struct Progress {
 
 /// Downloads the tarball into `<app data>/pdmx` and answers with that folder. The archive never
 /// reaches the disk: it is unpacked as it arrives.
+///
+/// The error is one short line for the settings dialog to show: `already downloading`,
+/// `no data folder`, `no connection`, `Zenodo answered <status>`, `not enough disk space`,
+/// `download stopped`, or `cancelled` when the user stopped it.
 #[tauri::command]
 pub async fn pdmx_fetch(
     app: tauri::AppHandle,
@@ -60,13 +64,13 @@ pub async fn pdmx_fetch(
     CANCEL.store(false, Ordering::SeqCst);
     let home = app.path().app_data_dir();
     let done = tauri::async_runtime::spawn_blocking(move || {
-        let folder = home.map_err(|_| "download failed".to_string())?.join("pdmx");
+        let folder = home.map_err(|_| "no data folder".to_string())?.join("pdmx");
         fetch_into(&folder, progress)?;
         Ok(folder.to_string_lossy().into_owned())
     })
     .await;
     RUNNING.store(false, Ordering::SeqCst);
-    done.unwrap_or_else(|_| Err("download failed".to_string()))
+    done.unwrap_or_else(|_| Err("download stopped".to_string()))
 }
 
 /// Stops the running fetch, which then removes what it had unpacked.
@@ -82,13 +86,13 @@ fn client() -> Result<reqwest::blocking::Client, String> {
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(READ_TIMEOUT)
         .build()
-        .map_err(|_| "download failed".to_string())
+        .map_err(|_| "no connection".to_string())
 }
 
 fn fetch_into(folder: &Path, progress: Channel<Progress>) -> Result<(), String> {
-    let response = client()?.get(ARCHIVE).send().map_err(|_| "download failed".to_string())?;
+    let response = client()?.get(ARCHIVE).send().map_err(|_| "no connection".to_string())?;
     if !response.status().is_success() {
-        return Err("download failed".to_string());
+        return Err(format!("Zenodo answered {}", response.status().as_u16()));
     }
     let total = response.content_length();
     let mut body = Counting { inner: response, done: 0, sent: 0, total, progress };
@@ -155,11 +159,12 @@ fn unpack_entries(reader: impl Read, folder: &Path, cancel: &AtomicBool) -> Resu
     Ok(())
 }
 
-/// The finder shows the reason on one line, so it names no URL and no path.
+/// The settings dialog shows the reason on one line, so it names no URL and no path. Everything
+/// short of a full disk is a body that stopped arriving or a file that would not be written.
 fn io_reason(e: std::io::Error) -> String {
     match e.kind() {
         std::io::ErrorKind::StorageFull => "not enough disk space",
-        _ => "download failed",
+        _ => "download stopped",
     }
     .to_string()
 }
@@ -244,8 +249,7 @@ mod tests {
     #[test]
     #[ignore = "reaches zenodo.org"]
     fn zenodo_serves_the_archive_to_this_client() {
-        let response =
-            client().unwrap().get(ARCHIVE).header("Range", "bytes=0-0").send().unwrap();
+        let response = client().unwrap().get(ARCHIVE).header("Range", "bytes=0-0").send().unwrap();
         assert!(response.status().is_success(), "{}", response.status());
     }
 
@@ -393,7 +397,7 @@ mod tests {
 
         let half = &whole[..whole.len() / 2];
         let torn = unpack(half, &folder, &AtomicBool::new(false));
-        assert_eq!(torn, Err("download failed".to_string()));
+        assert_eq!(torn, Err("download stopped".to_string()));
         assert!(!folder.exists() && !temp.path().join("pdmx.part").exists());
     }
 }

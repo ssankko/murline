@@ -104,8 +104,14 @@ const COUNT_POP_RISE = 0.3;
 /** How long the notice over the keys takes to come up or go. */
 const NOTICE_FADE_MS = 150;
 
-/** A key held on nothing, and the ring an extra leaves. Neither is a pitch, so neither is coloured. */
+/** The ring an extra leaves, and the cast a wrong key's face takes. */
 const GREY = '#8b8b93';
+/**
+ * A wrong key stays close to its own face: this far toward the grey, then this far toward its
+ * pitch, so it reads as pressed and as that key without the shout of a right one.
+ */
+const WRONG_GREY = 0.35;
+const WRONG_TINT = 0.2;
 
 const NOTE_RADIUS = 3;
 /** The name on a block: its font, the tab height a short block grows, and the room it wants each side. */
@@ -1250,13 +1256,16 @@ export class Lane {
   /**
    * The key colour rule: a held key wears its pitch colour only while its strike matched a note
    * that is still sounding, and drains toward its base face as that note runs out. Every other
-   * held key is grey. Over either lies the release blink.
+   * held key is a grey cast of its face with a little of its pitch in it. Over either lies the
+   * release blink.
    */
   private readonly keyFill = (midi: number, base: string): string => {
     const state = this.engine.keyState(midi);
     let face = base;
     if (state === 'color') face = this.sounding(midi, base);
-    else if (state === 'grey') face = GREY;
+    else if (state === 'grey') {
+      face = mix(mix(base, GREY, WRONG_GREY), colorOf(midi, 'muted', this.dark), WRONG_TINT);
+    }
     const blink = this.blinks.get(midi);
     if (blink === undefined || this.reduced) return face;
     const gone = (this.now - blink) / BLINK_MS;

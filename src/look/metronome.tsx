@@ -6,7 +6,7 @@ import { EASE, reducedMotion } from '@/look/motion';
 import { useEffect, useImperativeHandle, useRef, type Ref } from 'react';
 
 /** How far the arm leans to either side of upright on a beat, in degrees. */
-const SWING = 22;
+const SWING = 35;
 /** Where the arm stands while the beats run, measured from the lean the icon is drawn with. */
 const UPRIGHT = -45;
 /** How long the arm takes to reach its resting angle once the beats stop. */
@@ -18,6 +18,9 @@ const PULSE_MS = 200;
 const PEAK = { strong: 1.56, weak: 1.24 };
 /** The value of `--ease`, written out because an animation cannot read a variable. */
 const CURVE = 'cubic-bezier(0.65, 0, 0.35, 1)';
+/** A pendulum's two halves: it slows into the end of its swing and gathers speed back to centre. */
+const OUT = 'cubic-bezier(0.33, 1, 0.68, 1)';
+const BACK = 'cubic-bezier(0.32, 0, 0.67, 0)';
 /** The rise of a pulse: away fast, then all the way out. */
 const SWELL = 'cubic-bezier(0.22, 1, 0.36, 1)';
 
@@ -73,8 +76,8 @@ export function Metronome({
       arm.style.transform = `rotate(${UPRIGHT}deg)`;
       arm.animate(
         [
-          { transform: `rotate(${UPRIGHT}deg)`, easing: CURVE },
-          { transform: `rotate(${UPRIGHT + lean.current * SWING}deg)`, offset: 0.5, easing: CURVE },
+          { transform: `rotate(${UPRIGHT}deg)`, easing: OUT },
+          { transform: `rotate(${UPRIGHT + lean.current * SWING}deg)`, offset: 0.5, easing: BACK },
           { transform: `rotate(${UPRIGHT}deg)` },
         ],
         { duration: Math.round(periodMs) },
@@ -111,8 +114,8 @@ export function Metronome({
       // The pulse and the upright arm both reach past the 24-unit box and past the bar button.
       className="overflow-visible"
     >
-      {/* The case, open on the right where the arm leaves it, and the mark of the arm's slot. */}
-      <path d="m15.05 5.7-.218-.691a3 3 0 0 0-5.663 0L4.418 19.695A1 1 0 0 0 5.37 21h13.253a1 1 0 0 0 .951-1.31L18.45 16.2" />
+      {/* The closed case and the mark of the arm's slot; the arm's own outline cuts the case. */}
+      <path d="m15.05 5.7-.218-.691a3 3 0 0 0-5.663 0L4.418 19.695A1 1 0 0 0 5.37 21h13.253a1 1 0 0 0 .951-1.31L18.45 16.2Z" />
       <path d="M12 11.4V9.1" />
       {/* The arm and its weight, turning about the pivot at the foot of the case. The pair is drawn
           twice, the first in the colour of the bar behind it, so it cuts the case where it crosses. */}

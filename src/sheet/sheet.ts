@@ -281,7 +281,7 @@ export class Sheet {
     for (const note of this.outlined) this.markNote(note, 'current');
   }
 
-  /** Miss red or the current Onset's outline; `none` puts the pitch colour back. */
+  /** The miss grey or the current Onset's outline; `none` puts the pitch colour back. */
   markNote(note: Note, kind: MarkKind): void {
     const head = noteheadEl(this.osmd, note.source);
     if (!head) return;
@@ -613,7 +613,7 @@ export class Sheet {
   }
 
   /**
-   * The pitch colour of a note, or the miss red once it has been marked. A note of the inactive
+   * The pitch colour of a note, or the miss grey once it has been marked. A note of the inactive
    * hand is context only: it drops to the scaffolding tier and takes no mark.
    */
   private paintNote(note: Note, head = noteheadEl(this.osmd, note.source)): void {

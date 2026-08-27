@@ -145,7 +145,7 @@ export class Lane {
     this.layout = keyLayout(this.range[0], this.range[1], this.size.width || 1);
   }
 
-  /** Feedback at the key: a ring for a hit or an extra, a red blink for a miss. */
+  /** Feedback at the key: a ring for a hit or an extra, a grey blink for a miss. */
   effect(event: PlayEvent, now: number): void {
     if (event.verdict === 'absorbed') return;
     this.effects.push({ kind: event.verdict, midi: event.midi, start: now });
@@ -467,7 +467,7 @@ export class Lane {
 
   /**
    * The key colour rule: a held key wears its pitch colour only while its strike matched a note
-   * that is still sounding. A miss blinks red; every other held key is grey.
+   * that is still sounding. A miss blinks the miss grey; every other held key is grey.
    */
   private readonly keyFill = (midi: number, base: string): string => {
     const state = this.engine.keyState(midi);

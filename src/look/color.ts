@@ -55,11 +55,12 @@ export function isBlackKey(midi: number): boolean {
 }
 
 // Three ink tiers for the sheet, plus the paper grey every screen sits on. Light value first, dark
-// second; the CSS variables in src/index.css carry the same greys for the DOM.
+// second; the CSS variables in src/index.css carry the same greys for the DOM. `miss` holds no
+// saturation, so a dead note never reads as one of the twelve pitch colours.
 export const INK = {
   scaffolding: ['#9a9a9a', '#6a6a6a'],
   duration: ['#5a5a5a', '#d0d0d0'],
-  miss: ['#b3392f', '#e06a5f'],
+  miss: ['#6b6b6b', '#b4b4b4'],
 } as const;
 
 export const PAPER = ['#f4f4f4', '#202020'] as const;

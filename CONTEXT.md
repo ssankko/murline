@@ -112,5 +112,5 @@ A struck key that matches no expected note of the play. Lowers the grade.
 _Avoid_: Wrong note, false note
 
 **Miss**:
-An expected note the user did not strike within its window. Grades as zero and marks red on the sheet.
+An expected note the user did not strike within its window. Grades as zero and marks grey on the sheet.
 _Avoid_: Skipped note, error

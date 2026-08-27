@@ -111,7 +111,7 @@ export function PlayScreen({
   const sheetRef = useRef<Sheet | null>(null);
   const engineRef = useRef<Engine | null>(null);
   const laneRef = useRef<Lane | null>(null);
-  /** Notes wearing a red miss mark, so the next start of motion can take them all off. */
+  /** Notes wearing a miss mark, so the next start of motion can take them all off. */
   const missedRef = useRef<Note[]>([]);
   /** The engine's counters as the last frame read them: a change is what the screen answers. */
   const resetsRef = useRef(0);
@@ -395,7 +395,7 @@ export function PlayScreen({
     void savePractice();
     savePerformance();
     const snapshot = engine.snapshot();
-    // The engine opened the notes again, so the red the sheet still wears belongs to nothing.
+    // The engine opened the notes again, so the miss marks the sheet still wears belong to nothing.
     if (engine.resets !== resetsRef.current) {
       resetsRef.current = engine.resets;
       for (const note of missedRef.current) sheet.markNote(note, 'none');

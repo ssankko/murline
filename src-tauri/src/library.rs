@@ -101,14 +101,22 @@ fn stamp(meta: &std::fs::Metadata) -> Stamp {
     }
 }
 
+/// A symlink is never followed, so a link pointing back up the tree cannot loop, and a name that is
+/// not UTF-8 is skipped, because a `rel_path` that does not round-trip names no file to reopen.
+// ponytail: walks the whole tree on every launch scan; take a depth cap or an incremental walk when
+// a library folder gets deep enough for the scan to be felt.
 fn list_dir(root: &Path) -> std::io::Result<Vec<FileEntry>> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         for entry in std::fs::read_dir(&dir)? {
             let entry = entry?;
+            let kind = entry.file_type()?;
+            if kind.is_symlink() {
+                continue;
+            }
             let path = entry.path();
-            if path.is_dir() {
+            if kind.is_dir() {
                 stack.push(path);
                 continue;
             }
@@ -119,15 +127,11 @@ fn list_dir(root: &Path) -> std::io::Result<Vec<FileEntry>> {
             if !EXTENSIONS.contains(&ext.as_str()) {
                 continue;
             }
-            let Ok(rel) = path.strip_prefix(root) else {
+            let Some(rel) = path.strip_prefix(root).ok().and_then(Path::to_str) else {
                 continue;
             };
             let Stamp { mtime, size } = stamp(&entry.metadata()?);
-            out.push(FileEntry {
-                rel_path: rel.to_string_lossy().into_owned(),
-                mtime,
-                size,
-            });
+            out.push(FileEntry { rel_path: rel.to_string(), mtime, size });
         }
     }
     Ok(out)
@@ -222,6 +226,41 @@ mod tests {
         assert!(remove_temp_file("/Users/somebody/Music/Piano/piece.musicxml".to_string()).is_err());
         assert!(remove_temp_file(outside.to_string_lossy().into_owned()).is_err());
         assert!(library.path().join("piece.musicxml").exists());
+    }
+
+    #[test]
+    fn a_symlink_that_points_back_up_the_tree_does_not_loop() {
+        let root = tempfile::tempdir().unwrap();
+        write(root.path(), "sub/piece.musicxml", "bytes");
+        std::os::unix::fs::symlink(root.path(), root.path().join("sub").join("up")).unwrap();
+        std::os::unix::fs::symlink(
+            root.path().join("sub/piece.musicxml"),
+            root.path().join("link.musicxml"),
+        )
+        .unwrap();
+
+        let list = list_dir(root.path()).unwrap();
+
+        let names: Vec<&str> = list.iter().map(|e| e.rel_path.as_str()).collect();
+        assert_eq!(names, ["sub/piece.musicxml"]);
+    }
+
+    /// APFS refuses a name that is not UTF-8, so this only bites on a library folder mounted from a
+    /// filesystem that allows one.
+    #[test]
+    fn a_name_that_is_not_utf_8_is_no_piece() {
+        use std::os::unix::ffi::OsStrExt;
+        let root = tempfile::tempdir().unwrap();
+        write(root.path(), "good.musicxml", "bytes");
+        let bad = root.path().join(std::ffi::OsStr::from_bytes(b"bad\xff.musicxml"));
+        if std::fs::write(&bad, "bytes").is_err() {
+            return;
+        }
+
+        let list = list_dir(root.path()).unwrap();
+
+        let names: Vec<&str> = list.iter().map(|e| e.rel_path.as_str()).collect();
+        assert_eq!(names, ["good.musicxml"]);
     }
 
     #[test]

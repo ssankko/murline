@@ -524,7 +524,7 @@ mod tests {
 
     fn offline() -> Graph {
         let mut graph = Graph::build().unwrap();
-        graph.load_sound_bank(Path::new(FIXTURE), "Sine".into()).unwrap();
+        graph.load_file(Path::new(FIXTURE)).unwrap();
         graph.start_offline(PASS).unwrap();
         graph
     }

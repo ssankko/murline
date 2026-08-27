@@ -10,6 +10,7 @@ vi.mock('@tauri-apps/api/core', () => ({
     if (command === 'audio_status') return answer;
     if (command === 'audio_output_devices') return [];
     if (command === 'audio_set_output_device' || command === 'audio_set_buffer_frames') return;
+    if (command === 'audio_instruments') return [];
     throw new Error(`unexpected command ${command}`);
   },
 }));

@@ -33,8 +33,9 @@ tempfile = "3"
 block2 = "0.6"
 coremidi = "0.9"
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSGraphics", "NSResponder", "NSView", "NSViewController", "NSWindow"] }
+objc2-app-kit = "0.3"
 objc2-audio-toolbox = "0.3"
 objc2-avf-audio = { version = "0.3", features = ["objc2-audio-toolbox"] }
 objc2-core-audio = { version = "0.3", features = ["AudioHardware"] }
+objc2-core-foundation = "0.3"
 objc2-foundation = "0.3"

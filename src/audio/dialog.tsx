@@ -44,6 +44,8 @@ export const NO_STATUS: AudioStatus = {
 
 export function AudioDialog({ onClose }: { onClose: () => void }) {
   const [status, setStatus] = useState<AudioStatus | null>(null);
+  // A section that changed something the status line reads asks for this to go round again.
+  const [round, setRound] = useState(0);
 
   useEffect(() => {
     let live = true;
@@ -54,7 +56,7 @@ export function AudioDialog({ onClose }: { onClose: () => void }) {
     return () => {
       live = false;
     };
-  }, []);
+  }, [round]);
 
   return (
     <Dialog open onOpenChange={onClose}>
@@ -68,7 +70,7 @@ export function AudioDialog({ onClose }: { onClose: () => void }) {
 
         <div className="flex min-w-0 flex-col gap-7">
           <OutputSection />
-          <InstrumentSection />
+          <InstrumentSection onChanged={() => setRound((round) => round + 1)} />
           <EffectsSection />
           {status && !status.available && (
             <p className="text-muted-ink text-[12px]">{status.reason}</p>

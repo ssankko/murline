@@ -1,6 +1,7 @@
 // The start-up sequence: the work the app does before its first screen, and the line each step
 // prints when it lands. The boot screen in src/App.tsx shows the lines as they arrive.
 
+import { restoreInstrument } from '@/audio/instrument';
 import { getDb, readSettings, type Settings } from '@/db/db';
 import { reasonOf } from '@/library/notice';
 import { scanLibrary } from '@/library/scan';
@@ -42,6 +43,7 @@ export async function boot(print: (lines: string[]) => void): Promise<Settings> 
     await invoke('audio_start');
     await invoke('audio_set_output_device', { id: settings.audio_output_device });
     await invoke('audio_set_buffer_frames', { frames: settings.audio_buffer_frames });
+    await restoreInstrument(settings);
     await invoke('audio_set_chain', { chain: settings.effect_chain });
   });
 

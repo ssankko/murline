@@ -9,7 +9,11 @@ use tauri::{AppHandle, Emitter};
 #[cfg(target_os = "macos")]
 pub mod device;
 #[cfg(target_os = "macos")]
+mod instruments;
+#[cfg(target_os = "macos")]
 pub mod mac;
+#[cfg(target_os = "macos")]
+mod window;
 // On macOS the stub is only there for the tests that check what a platform without an engine
 // answers; off macOS it is the engine.
 #[cfg(any(not(target_os = "macos"), test))]
@@ -97,6 +101,20 @@ pub struct OutputDevice {
     pub name: String,
 }
 
+/// One line of the instrument picker. The id is opaque: a file and an Audio Unit look the same
+/// from the webview, which only ever hands one back.
+#[derive(Debug, Serialize)]
+pub struct Instrument {
+    pub id: String,
+    pub name: String,
+    /// `file` for one the sampler loads, `plugin` for a hosted Audio Unit, which is the one that
+    /// has a window of its own.
+    pub kind: String,
+    pub loaded: bool,
+    /// Why this instrument is not sounding, when it is the chosen one and its load failed.
+    pub reason: String,
+}
+
 /// Builds the graph and starts it on the output device. The boot screen prints ok or the reason,
 /// and a failure leaves every later step running.
 #[tauri::command]
@@ -161,6 +179,26 @@ pub fn audio_set_buffer_frames(frames: u32) -> Result<(), String> {
     engine::set_buffer_frames(frames)
 }
 
+/// Every instrument the engine can play: Logic's pianos, the files in the folder the webview
+/// names, and the installed Audio Unit instruments.
+#[tauri::command]
+pub fn audio_instruments(folder: String) -> Vec<Instrument> {
+    engine::instruments(&folder)
+}
+
+/// Loads one of them, with the state a plugin was last left in. Off the main thread: a big sampler
+/// instrument takes a moment to read, and the app stays answering while it does.
+#[tauri::command(async)]
+pub fn audio_load_instrument(id: String, state: Option<String>) -> Result<(), String> {
+    engine::load_instrument(&id, state.as_deref())
+}
+
+/// Opens the instrument's own window, and answers with its state when the user closes it again.
+#[tauri::command]
+pub async fn audio_show_instrument(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    engine::show_instrument(app).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,6 +225,12 @@ mod tests {
         assert!(stub::output_devices().is_empty());
         assert!(stub::set_output_device(Some("anything".into())).is_err());
         assert!(stub::set_buffer_frames(64).is_err());
+
+        assert!(stub::instruments("/instruments").is_empty());
+        assert_eq!(
+            stub::load_instrument("file:/instruments/piano.sf2", None),
+            Err("No sound engine on this platform".into())
+        );
     }
 
     #[test]

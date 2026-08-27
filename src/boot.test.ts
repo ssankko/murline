@@ -24,6 +24,7 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: async (command: string, args: unknown) => {
     sent.push([command, args]);
     if (command === 'audio_start' && engineReason) throw engineReason;
+    if (command === 'audio_instruments') return [];
   },
 }));
 

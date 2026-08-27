@@ -223,7 +223,7 @@ mod tests {
     #[test]
     fn a_key_on_the_pinned_port_sounds_and_the_port_going_away_ends_it() {
         let mut graph = audio::mac::Graph::build().unwrap();
-        graph.load_sound_bank(std::path::Path::new(FIXTURE), "Sine".into()).unwrap();
+        graph.load_file(std::path::Path::new(FIXTURE)).unwrap();
         graph.start_offline(PASS).unwrap();
         audio::mac::install(graph);
 

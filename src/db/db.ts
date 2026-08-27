@@ -57,6 +57,16 @@ export type Settings = {
   /** Frames the output device runs per buffer: 32, 64, 128 or 256. Smaller is lower latency. */
   audio_buffer_frames: number;
 
+  // The sound engine's instrument. The id is opaque: only the engine knows whether it names a
+  // file or an Audio Unit.
+
+  /** The instrument the engine plays; NULL means none is chosen and the app is silent. */
+  instrument_id: string | null;
+  /** What a plugin instrument's own window was last left set to. */
+  instrument_state: string | null;
+  /** Folder of `.sf2` and `.exs` files the picker lists; empty lists none of its own. */
+  instruments_folder: string;
+
   // Defaults of the piece settings: what a piece plays at while it holds none of its own. Tempo
   // has no mode here, because BPM belongs to a piece written at one tempo.
 
@@ -165,6 +175,9 @@ export const SETTING_DEFAULTS: Settings = {
   effect_chain: [],
   audio_output_device: null,
   audio_buffer_frames: 64,
+  instrument_id: null,
+  instrument_state: null,
+  instruments_folder: '',
   ...knobDefaults(DEFAULT_LANE_LOOK, LANE_KNOBS),
   ...knobDefaults(DEFAULT_PLAY_SETTINGS, PIECE_DEFAULT_KEYS),
   ...knobDefaults(DEFAULT_PLAY_SETTINGS, ENGINE_KNOBS),

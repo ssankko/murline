@@ -65,6 +65,9 @@ const GRADE_KNOBS: [keyof Settings, string, number, number][] = [
   ['togetherness_ms', 'Togetherness window (ms)', 1, 1000],
 ];
 
+/** One global setting as it was just written: a key, with a value of that key's own type. */
+export type SettingChange = { [K in keyof Settings]: [key: K, value: Settings[K]] }[keyof Settings];
+
 /**
  * Every global setting, in the five groups. A knob the running play reads is handed to
  * `onGlobalChange` as it is written, so a change mid-practice applies at once.
@@ -74,7 +77,7 @@ export function SettingsDialog({
   onGlobalChange,
 }: {
   onClose: () => void;
-  onGlobalChange?: (key: keyof Settings, value: unknown) => void;
+  onGlobalChange?: (...change: SettingChange) => void;
 }) {
   const [values, setValues] = useState<Settings | null>(null);
   const [velocity, setVelocity] = useState<number | null>(null);
@@ -92,7 +95,8 @@ export function SettingsDialog({
     setSetting(key, value).catch(console.error);
     if (key === 'theme') setTheme(value as Theme);
     if (key === 'midi_device') pinMidiDevice(value as string | null);
-    onGlobalChange?.(key, value);
+    // The pair comes straight out of this function's own key type, so it is one of the union.
+    onGlobalChange?.(...([key, value] as SettingChange));
   }
 
   function reset(keys: (keyof Settings)[]): void {

@@ -13,6 +13,7 @@ import {
   TOP_BAR,
   type LaneLook,
 } from '@/lane/lane';
+import { pathOf, readScoreFile } from '@/library/index-file';
 import { setNotice } from '@/library/notice';
 import {
   getPiece,
@@ -49,9 +50,9 @@ import { clampSection, sectionLabel, type Section } from '@/play/section';
 import { useFrameLoop } from '@/play/use-frame-loop';
 import { bpmAt, ScoreError, type Measure, type Note } from '@/score/types';
 import { Button } from '@/components/ui/button';
-import { GearPopover, SettingsDialog } from '@/screens/settings';
+import { GearPopover, SettingsDialog, type SettingChange } from '@/screens/settings';
 import { Sheet } from '@/sheet/sheet';
-import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
   ArrowLeft,
   FastForward,
@@ -112,9 +113,6 @@ const LANE_KNOBS = {
   keyboard_labels: 'keyLabels',
 } as const satisfies Partial<Record<keyof GlobalSettings, keyof LaneLook>>;
 
-/** What the screen was opened for: a practice Idle, or a performance armed at bar one. */
-export type PlayIntent = PlayKind;
-
 export function PlayScreen({
   folder,
   path,
@@ -123,7 +121,8 @@ export function PlayScreen({
 }: {
   folder: string;
   path: string;
-  intent?: PlayIntent;
+  /** What the screen was opened for: a practice Idle, or a performance armed at bar one. */
+  intent?: PlayKind;
   onBack: () => void;
 }) {
   /** False once the screen is gone or the piece changed, so a late write touches no state. */
@@ -202,9 +201,7 @@ export function PlayScreen({
     void (async () => {
       try {
         await reindexIfChanged(folder, path);
-        const bytes = new Uint8Array(
-          await invoke<ArrayBuffer>('read_file', { path: `${folder}/${path}` }),
-        );
+        const bytes = await readScoreFile(pathOf(folder, path));
         const [opening, knobs, row, defaults] = await Promise.all([
           laneLook(),
           engineKnobs(),
@@ -253,7 +250,7 @@ export function PlayScreen({
       mounted.current = false;
       // Leaving the screen is a stop, so the practice it ends is stored on the way out.
       engineRef.current?.abort();
-      savePractice();
+      void savePractice();
       sheetRef.current?.dispose();
       laneRef.current?.dispose();
       sheetRef.current = null;
@@ -261,6 +258,16 @@ export function PlayScreen({
       laneRef.current = null;
     };
   }, [folder, path, intent]);
+
+  // Quitting is an abort like Back is, and the window waits for this handler, so the practice
+  // under way reaches the database before it goes.
+  useEffect(() => {
+    const listening = getCurrentWindow().onCloseRequested(async () => {
+      engineRef.current?.abort();
+      await savePractice();
+    });
+    return () => void listening.then((stop) => stop(), console.error);
+  }, [path]);
 
   useEffect(() => {
     sheetRef.current?.setDark(dark);
@@ -293,9 +300,10 @@ export function PlayScreen({
   }, [tempoMode, tempo, metronome, countInBars, mode]);
 
   /** Nothing on screen announces the save; the library's History is where it shows. */
-  function savePractice(): void {
+  async function savePractice(): Promise<void> {
     const done = engineRef.current?.takePractice();
-    if (done) insertPlay(path, 'practice', done.startedAt, done.seconds).catch(console.error);
+    if (!done) return;
+    await insertPlay(path, 'practice', done.startedAt, done.seconds).catch(console.error);
   }
 
   /** A complete performance leaves a row, and the card that says what it earned. */
@@ -330,7 +338,11 @@ export function PlayScreen({
     setCountInBars(settings.countInBars);
     if (settings.countInBars > 0) countInLast.current = settings.countInBars;
     setHands(settings.hands);
-    setKeyboard(settings);
+    setKeyboard({
+      keyboardPreset: settings.keyboardPreset,
+      keyboardLo: settings.keyboardLo,
+      keyboardHi: settings.keyboardHi,
+    });
     const engine = engineRef.current;
     if (!engine) return;
     Object.assign(engine.settings, settings);
@@ -386,7 +398,7 @@ export function PlayScreen({
   }
 
   /** A global knob the dialog writes reaches the running play through the same live objects. */
-  function applyGlobal(key: keyof GlobalSettings, value: unknown): void {
+  function applyGlobal(...[key, value]: SettingChange): void {
     const engineField = ENGINE_KNOBS[key as keyof typeof ENGINE_KNOBS];
     if (engineField && engineRef.current) {
       Object.assign(engineRef.current.settings, { [engineField]: value });
@@ -394,8 +406,8 @@ export function PlayScreen({
     const laneField = LANE_KNOBS[key as keyof typeof LANE_KNOBS];
     if (laneField) setLook((held) => ({ ...held, [laneField]: value }));
     if (laneField && laneRef.current) Object.assign(laneRef.current.look, { [laneField]: value });
-    if (key === 'click_volume') setClickVolume(value as number);
-    if (key === 'sheet_split') setSplit(value as number);
+    if (key === 'click_volume') setClickVolume(value);
+    if (key === 'sheet_split') setSplit(value);
   }
 
   useFrameLoop((delta, now) => {
@@ -406,7 +418,7 @@ export function PlayScreen({
     // Strikes carry the plugin's Unix timestamp, so the clock takes wall time on the same timeline.
     engine.advance(delta, performance.timeOrigin + now);
     if (engine.beats() > 0) click();
-    savePractice();
+    void savePractice();
     savePerformance();
     const snapshot = engine.snapshot();
     // The engine opened the notes again, so the red the sheet still wears belongs to nothing.

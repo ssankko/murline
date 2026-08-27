@@ -1,8 +1,9 @@
 import { getSetting, getSettingOr, SETTING_DEFAULTS } from '@/db/db';
 import { setTheme } from '@/look/use-dark';
+import type { PlayKind } from '@/play/engine';
 import { Library } from '@/screens/library';
 import { Onboarding } from '@/screens/onboarding';
-import { PlayScreen, type PlayIntent } from '@/screens/play';
+import { PlayScreen } from '@/screens/play';
 import { PreviewScreen } from '@/screens/preview';
 import { useEffect, useState } from 'react';
 
@@ -11,7 +12,7 @@ type Route =
   | { at: 'onboarding' }
   | { at: 'library'; folder: string | null; selected?: string }
   | { at: 'preview'; folder: string; path: string }
-  | { at: 'play'; folder: string; path: string; intent: PlayIntent };
+  | { at: 'play'; folder: string; path: string; intent: PlayKind };
 
 export function App() {
   const [route, setRoute] = useState<Route>({ at: 'loading' });

@@ -30,8 +30,11 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use tauri::{AppHandle, Emitter};
 
-/// Audio Unit effects, the one component type this chain hosts.
+/// Audio Unit effects, the two component types this chain hosts: the plain effect, and the music
+/// effect, which is an effect that also takes MIDI. Both are hosted the same way, and a plugin's
+/// maker chooses between them: FabFilter registers its reverbs and EQs as music effects.
 const EFFECT: u32 = u32::from_be_bytes(*b"aufx");
+const MIDI_EFFECT: u32 = u32::from_be_bytes(*b"aumf");
 /// The event the webview listens on to write the chain back to its setting, carrying the whole
 /// chain as `audio_chain` would answer it.
 const CHANGED: &str = "audio-chain-changed";
@@ -61,14 +64,19 @@ type Open = (Retained<NSWindow>, Retained<AVAudioUnitEffect>);
 
 /// Every installed Audio Unit effect, Apple's own included, by manufacturer and name.
 pub fn effects() -> Vec<Effect> {
-    let mut list: Vec<Effect> = components(description(EFFECT, 0, 0))
-        .iter()
-        .map(|component| unsafe {
-            Effect {
-                id: id_of(component.audioComponentDescription()),
-                name: component.name().to_string(),
-                manufacturer: component.manufacturerName().to_string(),
-            }
+    let mut list: Vec<Effect> = [EFFECT, MIDI_EFFECT]
+        .into_iter()
+        .flat_map(|kind| {
+            components(description(kind, 0, 0))
+                .iter()
+                .map(|component| unsafe {
+                    Effect {
+                        id: id_of(component.audioComponentDescription()),
+                        name: component.name().to_string(),
+                        manufacturer: component.manufacturerName().to_string(),
+                    }
+                })
+                .collect::<Vec<_>>()
         })
         .collect();
     list.sort_by(|one, two| {
@@ -585,6 +593,23 @@ mod tests {
         assert!(list.iter().all(|effect| description_of(&effect.id).is_some()));
     }
 
+    /// The list is the two effect types and nothing else: no instrument, generator or mixer creeps
+    /// in through a wildcard. And no id repeats, which is what keeps the two halves of a plugin
+    /// published under both types apart, as Guitar Rig's FX and MFX are.
+    #[test]
+    fn the_list_is_effects_of_both_kinds_and_each_one_once() {
+        let list = effects();
+        for effect in &list {
+            let kind = description_of(&effect.id).unwrap().componentType;
+            assert!(kind == EFFECT || kind == MIDI_EFFECT, "{} is no effect", effect.id);
+        }
+        let mut ids: Vec<&str> = list.iter().map(|effect| effect.id.as_str()).collect();
+        ids.sort_unstable();
+        let count = ids.len();
+        ids.dedup();
+        assert_eq!(ids.len(), count, "every effect is listed once");
+    }
+
     #[test]
     fn an_effect_changes_the_sound_and_bypass_gives_the_dry_one_back() {
         let mut graph = offline();
@@ -627,7 +652,7 @@ mod tests {
     #[test]
     fn a_plugin_that_is_not_installed_keeps_its_slot_and_the_rest_plays() {
         let mut graph = offline();
-        let ghost = Slot { name: "Pro-R 2".into(), ..slot("aufx:zzzz:zzzz") };
+        let ghost = Slot { name: "Pro-R 2".into(), ..slot("aumf:zzzz:zzzz") };
         let chain = apply(&mut graph, vec![ghost, slot(REVERB)]);
 
         assert!(chain[0].missing, "the plugin is gone");
@@ -705,6 +730,11 @@ mod tests {
         let desc = description_of(REVERB).unwrap();
         assert_eq!(desc.componentType, EFFECT);
         assert_eq!(id_of(desc), REVERB);
+        // FabFilter's Pro-R 2, whether this Mac has it or not: a music effect id is read back the
+        // same way, so a chain saved on a Mac with the plugin loads it on the next one.
+        let music = description_of("aumf:FR2p:FabF").unwrap();
+        assert_eq!(music.componentType, MIDI_EFFECT);
+        assert_eq!(id_of(music), "aumf:FR2p:FabF");
         assert_eq!(description_of("aufx:rvb2"), None);
         assert_eq!(id_of(description(EFFECT, 0, 0)), "aufx:00000000:00000000");
         assert_eq!(description_of("aufx:00000000:00000000").unwrap().componentSubType, 0);

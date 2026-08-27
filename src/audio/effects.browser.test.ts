@@ -5,7 +5,7 @@ import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 const REVERB = 'aufx:rvb2:appl';
-const GONE = 'aufx:prr2:fabf';
+const GONE = 'aumf:FR2p:FabF';
 
 let held: EffectSlot[] = [];
 let written: EffectSlot[][] = [];

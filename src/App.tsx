@@ -1,5 +1,5 @@
-import { getSettingOr, readSettings } from '@/db/db';
-import { setTheme } from '@/look/use-dark';
+import { boot } from '@/boot';
+import { getSettingOr } from '@/db/db';
 import type { PlayKind } from '@/play/engine';
 import { Library } from '@/screens/library';
 import { Onboarding } from '@/screens/onboarding';
@@ -16,23 +16,23 @@ type Route =
 
 export function App() {
   const [route, setRoute] = useState<Route>({ at: 'loading' });
+  const [lines, setLines] = useState<string[]>([]);
 
-  // The theme is global, so it is painted before any screen is. A database that will not open
-  // reads as unfinished onboarding, which reports the failure when Continue retries it.
+  // A database that will not open reads as unfinished onboarding, which reports the failure when
+  // Continue retries it. Two boot runs print the same lines, so the last array to land is right.
   useEffect(() => {
-    void readSettings().then((s) => {
-      setTheme(s.theme);
+    void boot(setLines).then((s) =>
       setRoute(
         s.onboarding_done
           ? { at: 'library', folder: s.library_folder || null }
           : { at: 'onboarding' },
-      );
-    });
+      ),
+    );
   }, []);
 
   switch (route.at) {
     case 'loading':
-      return null;
+      return <BootScreen lines={lines} />;
     case 'onboarding':
       return <Onboarding onDone={(folder) => setRoute({ at: 'library', folder })} />;
     case 'library':
@@ -75,4 +75,14 @@ export function App() {
         />
       );
   }
+}
+
+/** The start-up log, one line per step done. Its look and its first line live in index.html. */
+function BootScreen({ lines }: { lines: string[] }) {
+  return (
+    <pre className="boot">
+      {lines.map((line) => `${line}\n`).join('')}
+      <span className="boot-cursor">█</span>
+    </pre>
+  );
 }

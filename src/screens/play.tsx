@@ -205,6 +205,11 @@ export function PlayScreen({
         const lane = knobValues(globals, LANE_KNOBS);
         laneRef.current = new Lane(canvasRef.current!, engine, lane, darkRef.current);
         laneRef.current.onSeek = (target) => engine.seek(target);
+        // A pinch has already scaled the lane; this only shows the beats it settled on in the gear
+        // and writes them down.
+        laneRef.current.onLook = ({ lookaheadBeats }) => {
+          if (lookaheadBeats !== undefined) changeLook('lane_lookahead', lookaheadBeats);
+        };
         setSplit(clamp(globals.sheet_split, SPLIT_MIN, SPLIT_MAX));
         setLook(lane);
         setOneStaff(sheet.score.staffCount < 2);

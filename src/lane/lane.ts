@@ -44,6 +44,21 @@ export const DEFAULT_LANE_LOOK: LaneLook = {
   colour: true,
 };
 
+/** The span the gear offers for the lookahead, which a pinch zoom stays inside. */
+const LOOK_MIN = 1;
+const LOOK_MAX = 32;
+/** Beats per unit of pinch delta: a full spread, about 140 of delta, halves the beats in view. */
+const ZOOM_RATE = 0.005;
+/** How long after a WebKit gesture event a ctrl-wheel is that same pinch, reported twice. */
+const GESTURE_MS = 100;
+/** How long a zoom stands still before the lane reports its lookahead to be written down. */
+const LOOK_SETTLE_MS = 300;
+
+/** WebKit's pinch, which the DOM types do not carry. */
+interface GestureEvent extends UIEvent {
+  readonly scale: number;
+}
+
 /** Share of the window height the sheet takes by default; the beat scale is fixed against it. */
 export const DEFAULT_SPLIT = 0.35;
 export const SPLIT_MIN = 0.2;
@@ -254,6 +269,8 @@ export class Lane {
   notice: string | null = null;
   /** Where a click in the lane asks the play to go; the screen decides what a seek means. */
   onSeek: ((target: SeekTarget) => void) | null = null;
+  /** Where the lane says a pinch has changed its look, once the pinch has stood still. */
+  onLook: ((look: Partial<LaneLook>) => void) | null = null;
 
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
@@ -296,6 +313,11 @@ export class Lane {
   private glideAt = -Infinity;
   /** Wall time of the last wheel or click, which the detach window is measured from. */
   private scrolledAt = -Infinity;
+  /** Wall time of the last WebKit gesture event, and the scale it carried; 0 between pinches. */
+  private gestureAt = -Infinity;
+  private pinchScale = 0;
+  /** The timer that reports a zoom that has stood still. */
+  private lookTimer = 0;
   /** The scale and the lane height of the last frame, which turn a wheel or a click into ticks. */
   private pxPerTick = 0;
   private laneH = 0;
@@ -384,11 +406,36 @@ export class Lane {
       'wheel',
       (event) => {
         event.preventDefault();
+        // A trackpad pinch reaches the page as a ctrl-wheel, and WebKit sends gesture events for
+        // the same pinch: the gesture leads, so a ctrl-wheel close behind one is the pinch again.
+        if (event.ctrlKey) {
+          const since = performance.timeOrigin + performance.now() - this.gestureAt;
+          if (since >= GESTURE_MS) this.zoom(event.deltaY);
+          return;
+        }
         // Wheel up looks ahead: the view goes later in the play, so the blocks travel down the lane.
         if (this.pxPerTick > 0) this.moveView(-event.deltaY / this.pxPerTick);
       },
       { passive: false, signal: this.listeners.signal },
     );
+    // WebKit's own pinch, which zooms the page unless it is turned down; its scale drives the same
+    // zoom, for a web view that sends these and no ctrl-wheel.
+    for (const name of ['gesturestart', 'gesturechange', 'gestureend']) {
+      canvas.addEventListener(
+        name,
+        (event) => {
+          event.preventDefault();
+          const scale = (event as GestureEvent).scale;
+          this.gestureAt = performance.timeOrigin + performance.now();
+          // Spreading the fingers grows the scale, and the beats in view shrink by that ratio.
+          if (event.type === 'gesturechange' && this.pinchScale > 0 && scale > 0) {
+            this.zoom(Math.log(this.pinchScale / scale) / ZOOM_RATE);
+          }
+          this.pinchScale = event.type === 'gestureend' ? 0 : scale;
+        },
+        { passive: false, signal: this.listeners.signal },
+      );
+    }
     // A click seeks to the step nearest where it landed and leaves the view standing, as a wheel
     // does. The keyboard under the lane is not time, so a click on it asks for nothing.
     canvas.addEventListener(
@@ -410,6 +457,7 @@ export class Lane {
   dispose(): void {
     this.resize.disconnect();
     this.listeners.abort();
+    clearTimeout(this.lookTimer);
   }
 
   private measure(): void {
@@ -647,6 +695,18 @@ export class Lane {
     this.offset = clamp(this.view + by, floor, ceiling) - this.playedTick;
     this.glideAt = -Infinity;
     this.scrolledAt = performance.timeOrigin + performance.now();
+  }
+
+  /**
+   * Takes the lookahead through one step of a pinch and reports it once the pinch stands still. The
+   * view is the tick at the foot of the lane, so the new scale spreads the lane about the now-line.
+   */
+  private zoom(deltaY: number): void {
+    this.look.lookaheadBeats = zoomLookahead(this.look.lookaheadBeats, deltaY);
+    clearTimeout(this.lookTimer);
+    this.lookTimer = window.setTimeout(() => {
+      this.onLook?.({ lookaheadBeats: this.look.lookaheadBeats });
+    }, LOOK_SETTLE_MS);
   }
 
   /** Lane y of a played tick: the view stands at the foot of the lane and time falls towards it. */
@@ -1460,6 +1520,16 @@ export function beatsBefore(bars: LaneBar[], playedTick: number, chordTick: numb
     }
   }
   return glyphs;
+}
+
+/**
+ * The beats in view after one step of a pinch, where `deltaY` is the wheel's: negative as the
+ * fingers spread, which leaves fewer beats in view and draws them bigger. Tenths of a beat, because
+ * the gear shows this number and takes it back.
+ */
+export function zoomLookahead(beats: number, deltaY: number): number {
+  const zoomed = clamp(beats * Math.exp(deltaY * ZOOM_RATE), LOOK_MIN, LOOK_MAX);
+  return Math.round(zoomed * 10) / 10;
 }
 
 /** A list in played time cut at the wrap, with the lap's own entries again one lap later. */

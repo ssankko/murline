@@ -13,6 +13,7 @@ import {
   pulseAt,
   slotRect,
   throughWrap,
+  zoomLookahead,
 } from './lane';
 
 const Q = TICKS_PER_QUARTER;
@@ -88,6 +89,21 @@ describe('the countdown', () => {
     expect(glyphs(next!.tick, after!.tick)).toBe('|..');
     // Counted from the clock it would carry the beats before the next chord as well.
     expect(glyphs(0, after!.tick)).toBe('|..|..');
+  });
+});
+
+describe('the lookahead under a pinch', () => {
+  /** The pinch delta that halves the beats in view, from the rate the lane zooms at. */
+  const HALF = Math.LN2 / 0.005;
+
+  test('halves as the fingers spread and doubles as they close', () => {
+    expect(zoomLookahead(8, -HALF)).toBeCloseTo(4);
+    expect(zoomLookahead(8, HALF)).toBeCloseTo(16);
+  });
+
+  test('stops at the ends of the span the gear offers', () => {
+    expect(zoomLookahead(2, -10 * HALF)).toBe(1);
+    expect(zoomLookahead(30, 10 * HALF)).toBe(32);
   });
 });
 

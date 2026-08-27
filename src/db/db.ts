@@ -23,7 +23,10 @@ export type Settings = {
   sheet_split: number;
   /** Measures and notes take their width from their duration, so the cursor runs at one speed. */
   sheet_proportional: boolean;
-  /** Paper a bar spaced by time takes over the tightest bar's pixels per tick, 100 to 300 percent. */
+  /**
+   * Paper a bar spaced by time takes over the tightest bar's pixels per tick, a percent inside
+   * `SPACING_MIN` to `SPACING_MAX`.
+   */
   sheet_spacing: number;
   /** Beats of lane visible above the now-line. */
   lane_lookahead: number;

@@ -61,8 +61,14 @@ import { clampSection, sectionLabel, type Section } from '@/play/section';
 import { useFrameLoop } from '@/play/use-frame-loop';
 import { bpmAt, ScoreError, type Measure } from '@/score/types';
 import { Button } from '@/components/ui/button';
-import { GearPopover, SettingsDialog, ViewPopover, type SettingChange } from '@/screens/settings';
-import { Sheet } from '@/sheet/sheet';
+import {
+  GearPopover,
+  SettingsDialog,
+  SpacingPopup,
+  ViewPopover,
+  type SettingChange,
+} from '@/screens/settings';
+import { Sheet, type Pinch } from '@/sheet/sheet';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
   ArrowLeft,
@@ -134,6 +140,8 @@ export function PlayScreen({
   const [loop, setLoop] = useState(false);
   const [measures, setMeasures] = useState<Measure[]>([]);
 
+  /** What a pinch on the sheet is choosing while it lasts, which the panel over the paper shows. */
+  const [pinch, setPinch] = useState<Pinch | null>(null);
   const [split, setSplit] = useState(DEFAULT_SPLIT);
   const [look, setLook] = useState<LaneLook>(DEFAULT_LANE_LOOK);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -201,6 +209,7 @@ export function PlayScreen({
         sheet.onLook = ({ spacing }) => {
           setSetting('sheet_spacing', spacing).catch(console.error);
         };
+        sheet.onPinch = setPinch;
         sheet.onSection = (picked) => {
           if (engine.kind !== 'practice') return;
           setSection(picked && clampSection(sheet.score.measures, picked));
@@ -662,6 +671,8 @@ export function PlayScreen({
             />
           )}
         </div>
+
+        <SpacingPopup pinch={pinch} />
 
         {settingsOpen && (
           <SettingsDialog onClose={() => setSettingsOpen(false)} onGlobalChange={applyGlobal} />

@@ -81,9 +81,12 @@ const GLIDE_MS = 220;
  */
 export const DEFAULT_SPACING = 150;
 
-/** Range the time spacing may be pinched to, the same percents the settings slider writes. */
-const SPACING_MIN = 100;
-const SPACING_MAX = 300;
+/**
+ * Range the time spacing may be pinched to, the same percents the settings slider writes. Under
+ * 100 only the bars with slack tighten: the rest stand at their engraved minimum.
+ */
+export const SPACING_MIN = 80;
+export const SPACING_MAX = 300;
 
 /**
  * Per trackpad pixel a pinch reports, how much it scales the spacing: `exp(-deltaY * ZOOM_K)`. A
@@ -91,10 +94,7 @@ const SPACING_MAX = 300;
  */
 const ZOOM_K = 0.01;
 
-/** A re-spacing renders the whole sheet, so a live pinch gets at most one render per this long. */
-const ZOOM_MS = 80;
-
-/** The pinch is over once nothing has come in for this long, and what it settled on is stored. */
+/** The pinch is over once nothing has come in for this long, and what it settled on is drawn. */
 const LOOK_MS = 300;
 
 /** How long the cursor band takes to grow or shrink into a new size, as the Section's tint fades. */
@@ -142,6 +142,13 @@ interface Span {
   right: number;
 }
 
+/** A pinch under way: where the fingers are, and the spacing percent they are heading to. */
+export interface Pinch {
+  x: number;
+  y: number;
+  spacing: number;
+}
+
 /** What the sheet shows of a note beyond its place on the staff, both global settings. */
 export interface SheetLook {
   /** Whether the chord bubbles are printed in the strip above the top staff. */
@@ -164,6 +171,8 @@ export class Sheet {
   onSection: ((section: Section | null) => void) | null = null;
   /** A pinch has settled on a spacing: the screen stores it. */
   onLook: ((look: { spacing: number }) => void) | null = null;
+  /** Every step of a live pinch, and `null` once it is over: the screen shows what it is choosing. */
+  onPinch: ((pinch: Pinch | null) => void) | null = null;
 
   private dark: boolean;
   /** Whether the measures take their width from their duration rather than from their engraving. */
@@ -206,13 +215,14 @@ export class Sheet {
   private drag: Drag | null = null;
   /** Wall-clock time of the last free scroll: the view snaps back two seconds after it. */
   private scrolledAt = -Infinity;
-  /** Spacing percent the newest pinch step asks for, which the throttled render carries. */
+  /** Spacing percent the newest pinch step asks for, which the render at the end of it carries. */
   private zoomTo = 0;
-  /** Timers of a pinch: the throttle holding the next render, and the idle wait before `onLook`. */
-  private zoomTimer = 0;
+  /** The wait for the pinch to stop; a live pinch is one that has this timer standing. */
   private lookTimer = 0;
   /** Spacing the running WebKit gesture started from, zero while no gesture is running. */
   private gesturing = 0;
+  /** Where the pointer last stood, which is where a pinch shows what it is choosing. */
+  private pointer = { x: 0, y: 0 };
   /** The played timeline the cursor reads; the engine swaps it when Loop goes on. */
   private walk: PlayStep[] = [];
   /** Left and right edge of each bar in unscaled pixels, for the Section a drag picks. */
@@ -317,10 +327,8 @@ export class Sheet {
         // A trackpad pinch reaches the page as a wheel with ctrl held, and spaces the sheet
         // instead of scrolling it.
         if (event.ctrlKey) {
-          // Steps compound on the target the throttle still owes a render, not on the spacing
-          // already drawn, so a burst of them inside one throttle window keeps its whole travel.
-          const from = this.zoomTimer ? this.zoomTo : this.spacing;
-          if (!this.gesturing) this.pinch(from * Math.exp(-event.deltaY * ZOOM_K));
+          this.pointAt(event);
+          if (!this.gesturing) this.pinch(this.target * Math.exp(-event.deltaY * ZOOM_K));
           return;
         }
         const by = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
@@ -334,42 +342,65 @@ export class Sheet {
     // fingers reported both ways are only applied once.
     const gesture = (event: Event): void => {
       event.preventDefault();
+      this.pointAt(event);
       const scale = (event as { scale?: number }).scale ?? 1;
-      if (event.type === 'gesturestart') this.gesturing = this.spacing;
-      else if (event.type === 'gestureend') this.gesturing = 0;
-      else if (this.gesturing) this.pinch(this.gesturing * scale);
+      if (event.type === 'gesturestart') this.gesturing = this.target;
+      else if (this.gesturing) {
+        // WebKit drops and coalesces `gesturechange` freely; `gestureend` is the one event that
+        // always arrives, and its scale carries the whole travel of the fingers.
+        this.pinch(this.gesturing * scale);
+        if (event.type === 'gestureend') {
+          this.gesturing = 0;
+          this.settle();
+        }
+      }
     };
     for (const type of ['gesturestart', 'gesturechange', 'gestureend']) {
       host.addEventListener(type, gesture, { passive: false, signal });
     }
   }
 
+  /** What a pinch step compounds on: the target a live pinch is heading to, or the drawn spacing. */
+  private get target(): number {
+    return this.lookTimer ? this.zoomTo : this.spacing;
+  }
+
+  /** Keeps where the pointer stands, from any event that carries a point of its own. */
+  private pointAt(event: Event): void {
+    const at = event as { clientX?: number; clientY?: number };
+    if (at.clientX !== undefined && at.clientY !== undefined) {
+      this.pointer = { x: at.clientX, y: at.clientY };
+    }
+  }
+
   /**
    * One step of a pinch on the paper: the spacing the fingers ask for. A sheet spaced by its
-   * engraving has no spacing to pinch and stands still. The render the change needs is the whole
-   * sheet, so at most one runs per ZOOM_MS and it always carries the newest target.
+   * engraving has no spacing to pinch and stands still. Nothing is drawn while the fingers move,
+   * only the target and what the screen shows of it; `settle` draws the sheet once at the end.
    */
   private pinch(percent: number): void {
     if (!this.proportional) return;
     this.zoomTo = clamp(Math.round(percent), SPACING_MIN, SPACING_MAX);
+    this.onPinch?.({ ...this.pointer, spacing: this.zoomTo });
     clearTimeout(this.lookTimer);
-    this.lookTimer = window.setTimeout(() => {
-      this.lookTimer = 0;
-      this.onLook?.({ spacing: this.spacing });
-    }, LOOK_MS);
-    if (!this.zoomTimer) this.applyZoom();
+    this.lookTimer = window.setTimeout(() => this.settle(), LOOK_MS);
   }
 
-  /** Renders the newest target and holds the next render back; the trailing timer runs that one. */
-  private applyZoom(): void {
+  /**
+   * The end of a pinch: the one render of the whole gesture, at the spacing the fingers settled on,
+   * which is then handed over to be stored. Rendering the sheet takes hundreds of milliseconds and
+   * blocks the main thread, so a render between two steps would eat the events that follow it.
+   */
+  private settle(): void {
+    if (!this.lookTimer) return;
+    clearTimeout(this.lookTimer);
+    this.lookTimer = 0;
     if (this.zoomTo !== this.spacing) {
       this.spacing = this.zoomTo;
       this.reflow();
+      this.onLook?.({ spacing: this.spacing });
     }
-    this.zoomTimer = window.setTimeout(() => {
-      this.zoomTimer = 0;
-      if (this.zoomTo !== this.spacing) this.applyZoom();
-    }, ZOOM_MS);
+    this.onPinch?.(null);
   }
 
   /** Loads the bytes, renders them on one line and builds the Score of what was rendered. */
@@ -455,7 +486,8 @@ export class Sheet {
 
   /**
    * How much paper a measure spaced by time takes over the tightest one, as a percent. 100 packs
-   * the sheet as tight as its notes allow; above it the notes of a crowded bar reach their time.
+   * the sheet as tight as its notes allow; above it the notes of a crowded bar reach their time,
+   * and under it only the bars still wider than their engraved minimum tighten further.
    */
   setSpacing(percent: number): void {
     if (percent === this.spacing) return;
@@ -501,9 +533,11 @@ export class Sheet {
     }
     // An elongated measure would be wider than its duration asks for.
     rules.MaximumLyricsElongationFactor = 1;
-    // Every measure opens up to the tightest one's pixels per tick, so none is asked for less width
-    // than its own notes pack into. Every measure carries a factor of its own: OSMD keeps the last
-    // one it saw for a measure that has none.
+    // Every measure opens up to the tightest one's pixels per tick. OSMD scales a measure's packed
+    // minimum by its factor, so a factor under 1 would print the notes of that bar over each other:
+    // under 100 % the tightest bars stand pinned at their minimum and only the roomier ones tighten.
+    // Every measure carries a factor of its own: OSMD keeps the last one it saw for a measure that
+    // has none.
     const ticksOf = (i: number) => this.score.measures[i]?.durationTicks ?? 0;
     let tightest = 0;
     this.engraved.forEach((width, i) => {
@@ -512,7 +546,8 @@ export class Sheet {
     const want = (tightest * this.spacing) / 100;
     measures.forEach((measure, i) => {
       const width = this.engraved[i] ?? 0;
-      measure.WidthFactor = width > 0 && ticksOf(i) > 0 ? (want * ticksOf(i)) / width : 1;
+      const factor = width > 0 && ticksOf(i) > 0 ? (want * ticksOf(i)) / width : 1;
+      measure.WidthFactor = Math.max(1, factor);
     });
     this.osmd.render();
   }
@@ -739,7 +774,6 @@ export class Sheet {
   /** Takes only this sheet's own DOM out of the host, which may already hold the next one. */
   dispose(): void {
     this.listeners.abort();
-    clearTimeout(this.zoomTimer);
     clearTimeout(this.lookTimer);
     this.osmd.clear();
     this.scroll.remove();
@@ -780,6 +814,7 @@ export class Sheet {
 
   /** A drag across the paper picks whole bars: one bar while it stays in one, more as it leaves. */
   private move(event: PointerEvent): void {
+    this.pointAt(event);
     const drag = this.drag;
     if (!drag || event.buttons === 0) return;
     if (!drag.moved && Math.abs(event.clientX - drag.x) < DRAG_SLOP) return;
@@ -1093,7 +1128,9 @@ function headX(note: VFNote): number | undefined {
 /**
  * The one speed a sheet spaced by time runs at: every gap that stays inside a measure over the
  * ticks it covers. Gaps across a bar line are left out, the bar line and its instructions being
- * paper no duration asks for.
+ * paper no duration asks for. A bar too crowded for the width it got keeps VexFlow's packing and
+ * runs at a speed of its own, so this is a mean; only the band's width reads it, the cursor itself
+ * standing between the Onsets as they were drawn.
  */
 function perTickOf(
   onsets: readonly { tick: number; measureIndex: number }[],

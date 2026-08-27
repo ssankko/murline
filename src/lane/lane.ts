@@ -58,9 +58,9 @@ export const DEFAULT_LANE_LOOK: LaneLook = {
   names: false,
 };
 
-/** The span the gear offers for the lookahead, which a pinch zoom stays inside. */
-const LOOK_MIN = 1;
-const LOOK_MAX = 32;
+/** The span the Look tab offers for the lookahead, which a pinch zoom stays inside. */
+export const LOOKAHEAD_MIN = 1;
+export const LOOKAHEAD_MAX = 32;
 /** Beats per unit of pinch delta: a full spread, about 140 of delta, halves the beats in view. */
 const ZOOM_RATE = 0.005;
 /** How long after a WebKit gesture event a ctrl-wheel is that same pinch, reported twice. */
@@ -295,6 +295,8 @@ export class Lane {
   onSeek: ((target: SeekTarget) => void) | null = null;
   /** Where the lane says a pinch has changed its look, once the pinch has stood still. */
   onLook: ((look: Partial<LaneLook>) => void) | null = null;
+  /** Every step of a live pinch: the lookahead the fingers are choosing, before it is written. */
+  onPinch: ((lookaheadBeats: number) => void) | null = null;
 
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
@@ -727,10 +729,12 @@ export class Lane {
    */
   private zoom(deltaY: number): void {
     this.look.lookaheadBeats = zoomLookahead(this.look.lookaheadBeats, deltaY);
+    // Tenths of a beat, because the Look tab shows this number and takes it back.
+    const shown = Math.round(this.look.lookaheadBeats * 10) / 10;
+    this.onPinch?.(shown);
     clearTimeout(this.lookTimer);
     this.lookTimer = window.setTimeout(() => {
-      // Tenths of a beat, because the gear shows this number and takes it back.
-      this.onLook?.({ lookaheadBeats: Math.round(this.look.lookaheadBeats * 10) / 10 });
+      this.onLook?.({ lookaheadBeats: shown });
     }, LOOK_SETTLE_MS);
   }
 
@@ -1582,7 +1586,7 @@ export function beatsBefore(bars: LaneBar[], playedTick: number, chordTick: numb
  * pinch near the ends of the span still moves.
  */
 export function zoomLookahead(beats: number, deltaY: number): number {
-  return clamp(beats * Math.exp(deltaY * ZOOM_RATE), LOOK_MIN, LOOK_MAX);
+  return clamp(beats * Math.exp(deltaY * ZOOM_RATE), LOOKAHEAD_MIN, LOOKAHEAD_MAX);
 }
 
 /** A list in played time cut at the wrap, with the lap's own entries again one lap later. */

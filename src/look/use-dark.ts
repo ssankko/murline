@@ -26,11 +26,6 @@ export function useDark(): boolean {
   return useSyncExternalStore(subscribe, dark);
 }
 
-/** The theme setting as it stands, for the control that shows it. */
-export function useTheme(): Theme {
-  return useSyncExternalStore(subscribe, () => theme);
-}
-
 /** Paints the app in a theme. The class pins the CSS variables; System takes both classes off. */
 export function setTheme(next: Theme): void {
   theme = next;
@@ -38,11 +33,4 @@ export function setTheme(next: Theme): void {
   root.toggle('dark', next === 'dark');
   root.toggle('light', next === 'light');
   for (const notify of listeners) notify();
-}
-
-/** The other paper, as an explicit setting. Returns what to store. */
-export function flipTheme(): Theme {
-  const next = dark() ? 'light' : 'dark';
-  setTheme(next);
-  return next;
 }

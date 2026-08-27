@@ -1,7 +1,7 @@
-// The Section: a range of whole bars picked by dragging on the sheet, and the walk Loop plays it
-// on. A Section on its own is inert; Loop is what gives it force, in src/play/engine.ts.
+// The Section: a range of whole bars picked by dragging on the sheet. A Section on its own is
+// inert; Loop is what gives it force, in src/play/engine.ts.
 
-import type { Measure, PlayStep, Score } from '@/score/types';
+import type { Measure } from '@/score/types';
 
 /** A range of whole bars as measure indices, both ends inside it. */
 export interface Section {
@@ -16,24 +16,6 @@ export function clampSection(measures: Measure[], section: Section): Section {
   return {
     from: inside(Math.min(section.from, section.to)),
     to: inside(Math.max(section.from, section.to)),
-  };
-}
-
-/**
- * Every Onset once, in written order. Loop runs the play on this walk, so bars play linearly with
- * no repeat and no jump, and a played tick is the same number as a sheet tick.
- */
-export function linearWalk(score: Score): PlayStep[] {
-  return score.onsets.map((onset, index) => ({ onsetIndex: index, tick: onset.tick }));
-}
-
-/** The bar lines that open and close a Section, in sheet ticks. */
-export function sectionTicks(measures: Measure[], section: Section): { from: number; to: number } {
-  const first = measures[section.from];
-  const last = measures[section.to];
-  return {
-    from: first?.startTick ?? 0,
-    to: (last?.startTick ?? 0) + (last?.durationTicks ?? 0),
   };
 }
 

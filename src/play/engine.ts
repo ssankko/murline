@@ -2,7 +2,7 @@
 // DOM, no React, no timer of its own. The screen owns the frame loop and feeds it wall time.
 
 import { playGrade, type NoteStrike, type PlayGrade } from '@/play/grade';
-import { clampSection, linearWalk, sectionTicks, type Section } from '@/play/section';
+import { clampSection, type Section } from '@/play/section';
 import { isInactiveHand, type HandsSetting, type PlaySettings, type TempoMode } from '@/play/settings';
 import { WaitState } from '@/play/wait';
 import { barTickOf, beatOf } from '@/score/beat';
@@ -152,7 +152,7 @@ export class Engine {
   private lastSoundingTick: number;
   private sectionRange: Section | null = null;
   private loop = false;
-  /** The linear walk, built once, because Loop swaps to it and back. */
+  /** Every Onset once in written order, built once: Loop over a Section swaps to it and back. */
   private linear: PlayStep[] | null = null;
 
   /** Wall-clock milliseconds of the last `advance`: what a strike's timestamp is measured against. */
@@ -423,8 +423,11 @@ export class Engine {
    */
   loopSpan(): LoopSpan | null {
     if (!this.loop || this.kind !== 'practice') return null;
+    // A Section's lap runs from its opening bar line to the closing line of its last bar.
+    const first = this.sectionRange && this.score.measures[this.sectionRange.from];
+    const last = this.sectionRange && this.score.measures[this.sectionRange.to];
     const range = this.sectionRange
-      ? sectionTicks(this.score.measures, this.sectionRange)
+      ? { from: first?.startTick ?? 0, to: (last?.startTick ?? 0) + (last?.durationTicks ?? 0) }
       : { from: 0, to: this.endTick };
     const bars = Math.floor(this.settings.countInBars);
     const measure = this.barAt(range.from)?.measure;
@@ -440,7 +443,10 @@ export class Engine {
   private applyLoop(): void {
     // Only a looping Section leaves the play order; Loop over the whole piece keeps its repeats.
     const linear = this.loop && this.kind === 'practice' && this.sectionRange !== null;
-    const walk = linear ? (this.linear ??= linearWalk(this.score)) : this.score.playOrder;
+    // On the linear walk a played tick is the same number as a sheet tick.
+    const walk = linear
+      ? (this.linear ??= this.score.onsets.map((onset, index) => ({ onsetIndex: index, tick: onset.tick })))
+      : this.score.playOrder;
     if (walk !== this.walk) this.setWalk(walk);
     const span = this.loopSpan();
     if (!span || (this.state !== 'idle' && this.state !== 'paused')) return;

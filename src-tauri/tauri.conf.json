@@ -14,8 +14,7 @@
       {
         "title": "Piano",
         "width": 1400,
-        "height": 1000,
-        "resizable": true
+        "height": 1000
       }
     ],
     "security": { "csp": null }

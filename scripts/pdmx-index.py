@@ -8,14 +8,11 @@ and `song_name` are the site's clean fields, `composer_name` and `title` the upl
 so the finder groups by the artist, shows the song name first and the title in grey, and searches
 all four.
 
-The argument is `PDMX.csv` (Zenodo record 15571083, 225 MB, not committed), which the script
-filters, or a `.json` array holding the eight fields of each kept row, which it only writes out.
+The argument is `PDMX.csv` (Zenodo record 15571083, 225 MB, not committed).
 
 Usage: python3 scripts/pdmx-index.py /path/to/PDMX.csv
-       python3 scripts/pdmx-index.py /path/to/pdmx.json
 """
 import csv
-import json
 import os
 import sys
 
@@ -44,7 +41,7 @@ def csv_rows(path):
 
 
 clean = lambda v: str(v).replace('\t', ' ').replace('\n', ' ').replace('\r', ' ')
-rows = csv_rows(src) if src.endswith('.csv') else json.load(open(src, encoding='utf-8'))
+rows = csv_rows(src)
 n = 0
 with open(out, 'w', encoding='utf-8', newline='\n') as f:
     for r in rows:

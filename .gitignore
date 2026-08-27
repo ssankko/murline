@@ -1,11 +1,8 @@
 node_modules/
 dist/
-target/
 .DS_Store
 # Throwaway prototypes, 4.7 GB of node_modules, cargo targets and PDMX data
 .scratch/piano-v1-spec/proto/
-src-tauri/gen/
-node_modules/.tmp/
 test-results/
 .vitest-attachments/
 __screenshots__/

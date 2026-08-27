@@ -50,6 +50,9 @@ const OUTLINE = '#ffffff';
 /** A backward jump names its bar over the sheet for this long. */
 const MARKER_MS = 800;
 
+/** How long the jump marker takes to come up, of the time it stands. */
+const MARKER_IN_MS = 120;
+
 /** Pointer travel that turns a click into a Section drag, in screen pixels. */
 const DRAG_SLOP = 4;
 
@@ -58,6 +61,9 @@ const DETACH_MS = 2000;
 
 /** How long the view takes to glide back to the cursor once it attaches to it again. */
 const SCROLL_GLIDE_MS = 300;
+
+/** Part of the view at each edge that counts as off it: a seek landing there still moves the view. */
+const EDGE = 0.1;
 
 /** Width of the count-in runner, the line travelling to the standing cursor. */
 const RUNNER_W = 2;
@@ -175,7 +181,6 @@ export class Sheet {
     scale: 0,
     onset: -1,
     step: -1,
-    tick: 0,
     jumpAt: -Infinity,
     jumpBar: 0,
     running: true,
@@ -183,7 +188,9 @@ export class Sheet {
     glideUntil: -Infinity,
     /** Whether the view is following the cursor, as against the reader holding it. */
     attached: false,
-    /** Pixels the view stood away from the cursor when it attached, and when that was. */
+    /** Whether a glide is still carrying the view to the cursor while the reader holds it. */
+    chasing: false,
+    /** Pixels the view stood away from the cursor when the glide began, and when that was. */
     scrollFrom: 0,
     scrollAt: -Infinity,
   };
@@ -369,15 +376,15 @@ export class Sheet {
       // Play snaps the view to the cursor, whatever the reader scrolled to while it was still.
       this.scrolledAt = -Infinity;
     }
-    // A loop wrap runs the cursor back over the sheet, so the frames after it glide. A written
-    // repeat snaps instead: `cursorAt` has already run the cursor to the measure's right edge.
-    if (running && snap.playedTick < this.drawn.tick && !this.jumpAfter[this.drawn.step]) {
-      this.drawn.glideUntil = now + GLIDE_MS;
-    }
-    this.drawn.tick = snap.playedTick;
+    // A step further off than the clock could walk to in one frame: a seek either way, or the loop
+    // wrap that runs the cursor back over the sheet. A written repeat steps by one and snaps
+    // instead, `cursorAt` having already run the cursor to the measure's right edge. However far
+    // the jump, the CSS transition below carries it in the same GLIDE_MS.
+    const jumped = Math.abs(at.stepIndex - this.drawn.step) > 1;
+    if (running && jumped) this.drawn.glideUntil = now + GLIDE_MS;
     // The inline transition wins over any class, so it names every property the band eases. Its
     // size follows the matching window, the zoom and the system, all of which step now and then;
-    // its x is written every frame while the clock runs forward, and only a jump back glides it.
+    // its x is written every frame while the clock walks the sheet, and only a jump glides it.
     // A band with no size yet would grow out of nothing, so it takes its first one flat.
     const motion = !reducedMotion() && this.cursor.style.width !== '';
     const glide = motion && (!running || now < this.drawn.glideUntil);
@@ -416,15 +423,28 @@ export class Sheet {
     // takes that hold back by gliding in from wherever the reader left it.
     const follow = at.x * this.drawn.scale - this.scroll.clientWidth * 0.3;
     const attached = running && now - this.scrolledAt >= DETACH_MS;
-    if (attached !== this.drawn.attached) {
-      this.drawn.attached = attached;
+    const took = attached && !this.drawn.attached;
+    this.drawn.attached = attached;
+    // A jump carries the view with the band: always while the view follows the cursor, and while
+    // the reader holds it only when the cursor would otherwise land off the paper he is reading.
+    if (took || (jumped && (attached || this.offView(at)))) {
       this.drawn.scrollFrom = reducedMotion() ? 0 : this.scroll.scrollLeft - follow;
       this.drawn.scrollAt = now;
+      this.drawn.chasing = true;
     }
-    if (attached) {
+    if (attached || this.drawn.chasing) {
       const done = easeInOut(clamp((now - this.drawn.scrollAt) / SCROLL_GLIDE_MS, 0, 1));
       this.scroll.scrollLeft = follow + this.drawn.scrollFrom * (1 - done);
+      // A view that follows the cursor never stops; one the reader holds is his again at the end.
+      this.drawn.chasing = !attached && done < 1;
     }
+  }
+
+  /** Whether the cursor stands off the view, counting a strip at each edge as off it. */
+  private offView(at: CursorAt): boolean {
+    const x = at.x * this.drawn.scale - this.scroll.scrollLeft;
+    const width = this.scroll.clientWidth;
+    return x < width * EDGE || x > width * (1 - EDGE);
   }
 
   /**
@@ -555,9 +575,12 @@ export class Sheet {
     const from = this.boxes[section?.from ?? -1];
     const to = this.boxes[section?.to ?? -1];
     const show = !!(section && from && to);
-    for (const el of this.band) el.classList.toggle('on', show);
     // A hidden band keeps its last geometry, which is what it fades out from.
-    if (!show) return;
+    if (!show) {
+      for (const el of this.band) el.classList.remove('on');
+      return;
+    }
+    const unplaced = this.tint.style.left === '';
     const top = this.system.top;
     const height = this.system.bottom - top;
     const ink = tone(INK.duration, this.dark);
@@ -576,6 +599,16 @@ export class Sheet {
     // with a rounded knob to its right.
     this.clear.style.background = ink;
     this.clear.style.color = tone(PAPER, this.dark);
+    // A band that has never stood anywhere takes its first place flat, before `.on` puts it on the
+    // paper: with the transition live it would glide in from the edge it hangs at unplaced.
+    if (unplaced) {
+      for (const el of this.band) {
+        el.style.transition = 'none';
+        void el.offsetWidth;
+        el.style.transition = '';
+      }
+    }
+    for (const el of this.band) el.classList.add('on');
   }
 
   /** Steps the cursor snaps after: the step it leads to stands earlier in the written sheet. */
@@ -738,7 +771,13 @@ export class Sheet {
       return;
     }
     this.marker.style.display = 'block';
-    this.marker.style.opacity = String(1 - age / MARKER_MS);
+    // Up over MARKER_IN_MS and down over the whole stand, both on the shared curve; the lower of
+    // the two ramps holds at every moment, so the label neither snaps on nor lingers.
+    const fade = Math.min(
+      easeInOut(clamp(age / MARKER_IN_MS, 0, 1)),
+      1 - easeInOut(clamp(age / MARKER_MS, 0, 1)),
+    );
+    this.marker.style.opacity = String(fade);
     this.marker.style.transform = `translateX(${at.x - 20}px)`;
     this.marker.style.top = `${Math.max(this.system.top - 18, 0)}px`;
     this.marker.textContent = `↺ bar ${this.drawn.jumpBar}`;

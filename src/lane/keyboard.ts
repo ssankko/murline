@@ -1,18 +1,15 @@
 // The on-screen keyboard at the foot of the lane canvas: where the falling notes land, and the
 // app's only colour legend. Its x axis is the lane's x axis, so a block always falls on its key.
 
-import { NOTE_NAMES, colorOf, isBlackKey, pitchClass, tone } from '@/look/color';
+import { INK, NOTE_NAMES, colorOf, isBlackKey, pitchClass, tone } from '@/look/color';
 import type { PlayNote } from '@/play/engine';
 import type { KeyboardPreset, PlaySettings } from '@/play/settings';
 
 export const KEYBOARD_H = 84;
 
-/** Soft greys: a key is a surface, never ink. */
-const KEY_WHITE = ['#f2f2f2', '#7a7a7a'] as const;
-const KEY_BLACK = ['#2a2a2a', '#111111'] as const;
-const KEY_EDGE = ['#cfcfcf', '#3a3a3a'] as const;
-const KEY_WHITE_INK = ['#5a5a5a', '#eaeaea'] as const;
-const KEY_BLACK_INK = ['#d6d6d6', '#d6d6d6'] as const;
+/** Key faces: ink over paper, 10 % for a white key and 22 % for a black one, as the range strip. */
+const KEY_WHITE = ['#dedede', '#343434'] as const;
+const KEY_BLACK = ['#c3c3c3', '#4c4c4c'] as const;
 
 /** The narrowest key that still has room for a swatch and a name. */
 const LABEL_MIN_W = 11;
@@ -76,8 +73,8 @@ export function keyRange(notes: readonly PlayNote[], settings: PlaySettings): [n
 }
 
 /**
- * Draws the keys, blacks over whites. `fill` gives each key its face: the base grey, or whatever
- * the play says it is right now.
+ * Draws the keys as flat rects, blacks over whites. `fill` gives each key its face: the base grey,
+ * or whatever the play says it is right now.
  */
 export function drawKeyboard(
   ctx: CanvasRenderingContext2D,
@@ -89,15 +86,13 @@ export function drawKeyboard(
 ): void {
   const white = tone(KEY_WHITE, dark);
   const black = tone(KEY_BLACK, dark);
-  const blackH = KEYBOARD_H * 0.6;
+  const blackH = KEYBOARD_H * 0.62;
 
-  ctx.lineWidth = 1;
-  ctx.strokeStyle = tone(KEY_EDGE, dark);
   for (const key of layout.keys) {
     if (key.black) continue;
     ctx.fillStyle = fill(key.midi, white);
-    ctx.fillRect(key.x, top, key.w, KEYBOARD_H);
-    ctx.strokeRect(key.x + 0.5, top + 0.5, key.w - 1, KEYBOARD_H - 1);
+    // The face stops one pixel short: that hairline of paper is what tells two white keys apart.
+    ctx.fillRect(key.x, top, key.w - 1, KEYBOARD_H);
   }
   for (const key of layout.keys) {
     if (!key.black) continue;
@@ -118,7 +113,6 @@ function drawLabels(
   dark: boolean,
 ): void {
   ctx.textAlign = 'center';
-  ctx.lineWidth = 1;
   for (const key of layout.keys) {
     if (key.w < LABEL_MIN_W) continue;
     const cx = key.x + key.w / 2;
@@ -131,12 +125,9 @@ function drawLabels(
     ctx.beginPath();
     ctx.roundRect(cx - swatch / 2, y, swatch, swatch, 3);
     ctx.fill();
-    ctx.strokeStyle = key.black ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.4)';
-    ctx.beginPath();
-    ctx.roundRect(cx - swatch / 2 + 0.5, y + 0.5, swatch - 1, swatch - 1, 2.5);
-    ctx.stroke();
 
-    ctx.fillStyle = tone(key.black ? KEY_BLACK_INK : KEY_WHITE_INK, dark);
+    // Both faces sit near the paper, so both carry the same ink.
+    ctx.fillStyle = tone(INK.duration, dark);
     ctx.font = `${key.black ? 8 : 9}px system-ui, sans-serif`;
     // Only a C carries its octave, which is enough to find your place on the keys.
     ctx.fillText(pc === 0 ? `C${Math.floor(key.midi / 12) - 1}` : NOTE_NAMES[pc]!, cx, bottom - 6);

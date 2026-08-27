@@ -450,7 +450,7 @@ fn parse(xml: &[u8]) -> Result<(Vec<u8>, Elem), String> {
                 }
             }
             Event::Text(e) => {
-                let text = String::from_utf8_lossy(e.as_ref()).into_owned();
+                let text = e.as_ref().to_string();
                 if let Some(parent) = stack.last_mut() {
                     if !text.trim().is_empty() {
                         parent.children.push(Node::Text(text));
@@ -459,17 +459,17 @@ fn parse(xml: &[u8]) -> Result<(Vec<u8>, Elem), String> {
             }
             Event::Decl(e) => {
                 prologue.extend_from_slice(b"<?");
-                prologue.extend_from_slice(e.as_ref());
+                prologue.extend_from_slice(e.as_ref().as_bytes());
                 prologue.extend_from_slice(b"?>\n");
             }
             Event::DocType(e) => {
                 prologue.extend_from_slice(b"<!DOCTYPE ");
-                prologue.extend_from_slice(e.as_ref());
+                prologue.extend_from_slice(e.as_ref().as_bytes());
                 prologue.extend_from_slice(b">\n");
             }
             Event::Comment(e) if stack.is_empty() => {
                 prologue.extend_from_slice(b"<!--");
-                prologue.extend_from_slice(e.as_ref());
+                prologue.extend_from_slice(e.as_ref().as_bytes());
                 prologue.extend_from_slice(b"-->\n");
             }
             Event::Eof => break,
@@ -482,17 +482,8 @@ fn parse(xml: &[u8]) -> Result<(Vec<u8>, Elem), String> {
 
 fn open(e: &quick_xml::events::BytesStart) -> Elem {
     Elem {
-        name: String::from_utf8_lossy(e.name().as_ref()).into_owned(),
-        attrs: e
-            .attributes()
-            .flatten()
-            .map(|a| {
-                (
-                    String::from_utf8_lossy(a.key.as_ref()).into_owned(),
-                    String::from_utf8_lossy(a.value.as_ref()).into_owned(),
-                )
-            })
-            .collect(),
+        name: e.name().as_ref().to_string(),
+        attrs: e.attributes().flatten().map(|a| (a.key.as_ref().to_string(), a.value.into_owned())).collect(),
         children: Vec::new(),
     }
 }

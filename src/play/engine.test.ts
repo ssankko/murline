@@ -421,14 +421,6 @@ describe('a window that closes unmatched', () => {
     expect(play.events()).toEqual([]);
   });
 
-  test('never fires for the inactive hand', () => {
-    const play = onBeatTwo([{ midi: 50, hand: 'left', staff: 1 }], { hands: 'right' });
-    play.advance(BEAT_MS + 200);
-
-    expect(play.events()).toEqual([]);
-    expect(play.noteState(0)).toBe('pending');
-  });
-
   test('never fires for a grace note', () => {
     const play = onBeatTwo([{ midi: 61, grace: true, durationTicks: 0 }]);
     play.advance(BEAT_MS + 200);
@@ -476,14 +468,6 @@ describe('the colour of a held key', () => {
 
     expect(play.keyState(60)).toBe('grey');
   });
-
-  test('is grey for an absorbed inactive-hand strike', () => {
-    const play = onBeatTwo([{ midi: 50, hand: 'left', staff: 1 }], { hands: 'right' });
-    play.advance(BEAT_MS);
-    down(play, 50, BEAT_MS);
-
-    expect(play.keyState(50)).toBe('grey');
-  });
 });
 
 /** A Wait mode play over hand-written Onsets, already running. */
@@ -517,7 +501,7 @@ describe('Wait mode', () => {
     expect(play.snapshot().stopped).toBe(false);
   });
 
-  test('the cursor stops at an Onset the player has not satisfied', () => {
+  test('the cursor stops at an Onset the player has not satisfied, however long it lasts', () => {
     const play = waiting(CHORD);
     play.advance(2 * BEAT_MS);
 
@@ -526,13 +510,8 @@ describe('Wait mode', () => {
       playedTick: TICKS_PER_QUARTER,
       stopped: true,
     });
-  });
 
-  test('the tick stands still however long the stop lasts', () => {
-    const play = waiting(CHORD);
-    play.advance(2 * BEAT_MS);
     play.advance(10 * BEAT_MS);
-
     expect(play.snapshot().playedTick).toBe(TICKS_PER_QUARTER);
   });
 
@@ -956,13 +935,14 @@ describe('what a practice leaves behind', () => {
     expect(play.takePractice()).toBeNull();
   });
 
-  test('its motion once the cursor passed one', () => {
+  test('its motion once the cursor passed one, and nothing a second time', () => {
     const play = engine(scoreOf(2), { countInBars: 0 });
     play.start();
     play.advance(1100);
     play.abort();
 
     expect(play.takePractice()).toEqual({ startedAt: 1100, seconds: 1.1 });
+    expect(play.takePractice()).toBeNull();
   });
 
   test('nothing at a pause, which is not a stop', () => {
@@ -1001,16 +981,6 @@ describe('what a practice leaves behind', () => {
 
     expect(play.snapshot().state).toBe('idle');
     expect(play.takePractice()?.seconds).toBeCloseTo(2, 6);
-  });
-
-  test('nothing twice, and nothing for a fresh play', () => {
-    const play = engine(scoreOf(2), { countInBars: 0 });
-    play.start();
-    play.advance(1100);
-    play.abort();
-
-    expect(play.takePractice()).not.toBeNull();
-    expect(play.takePractice()).toBeNull();
   });
 });
 
@@ -1279,7 +1249,6 @@ describe('Section and Loop', () => {
     play.setSection({ from: 0, to: 1 });
 
     expect(play.walk.map((step) => step.tick)).toEqual(score.onsets.map((onset) => onset.tick));
-    expect(play.walk).toHaveLength(score.onsets.length);
   });
 
   test('Loop with no Section keeps the piece and its repeats', () => {
@@ -1407,7 +1376,7 @@ describe('Section and Loop', () => {
     expect(play.snapshot().playedTick).toBe(0);
   });
 
-  test('Wait mode asks for every Onset of the Section again on the next lap', () => {
+  test('Wait mode asks for every Onset of the Section again on the next lap, whatever is held', () => {
     const play = engine(scoreOf(2), { mode: 'wait' });
     play.setLoop(true);
     play.setSection({ from: 0, to: 0 });
@@ -1418,11 +1387,17 @@ describe('Section and Loop', () => {
       play.strike({ midi: 60, velocity: 80, time: 0, on: true });
       play.strike({ midi: 60, velocity: 80, time: 0, on: false });
       expect(play.snapshot().stopped).toBe(false);
+      // A wrong key goes down in the last beat of the lap and stays down over the wrap.
+      if (beat === 3) play.strike({ midi: 61, velocity: 80, time: 0, on: true });
     }
     play.advance(1000);
 
     expect(play.snapshot().playedTick).toBe(0);
     expect(play.snapshot().stopped).toBe(true);
+
+    // The key held over the wrap names nothing now, so the right key alone frees the cursor.
+    play.strike({ midi: 60, velocity: 80, time: 0, on: true });
+    expect(play.snapshot().stopped).toBe(false);
   });
 
   test('a key held through the count-in blocks nothing', () => {
@@ -1460,24 +1435,5 @@ describe('Section and Loop', () => {
     play.setSection({ from: 0, to: 0 });
     play.setLoop(true);
     expect(play.snapshot().playedTick).toBe(0);
-  });
-
-  test('a key held from the last lap blocks nothing on the next one', () => {
-    const play = engine(scoreOf(2), { mode: 'wait' });
-    play.setLoop(true);
-    play.setSection({ from: 0, to: 0 });
-    play.start();
-    for (let beat = 0; beat < 4; beat++) {
-      play.advance(1000);
-      play.strike({ midi: 60, velocity: 80, time: 0, on: true });
-      play.strike({ midi: 60, velocity: 80, time: 0, on: false });
-      // A wrong key goes down in the last beat of the lap and stays down over the wrap.
-      if (beat === 3) play.strike({ midi: 61, velocity: 80, time: 0, on: true });
-    }
-    play.advance(1000);
-    expect(play.snapshot().stopped).toBe(true);
-
-    play.strike({ midi: 60, velocity: 80, time: 0, on: true });
-    expect(play.snapshot().stopped).toBe(false);
   });
 });

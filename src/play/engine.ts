@@ -742,9 +742,27 @@ export class Engine {
   }
 
   private measureAt(playedTick: number): Measure | undefined {
-    const step = this.walk[this.stepAt(playedTick)];
+    return this.barAt(playedTick)?.measure;
+  }
+
+  /**
+   * The bar a played tick stands in, with the played tick of its opening line. A bar that opens
+   * with a rest has its first Onset after its line, so the step before the tick may still belong
+   * to the bar before it.
+   */
+  private barAt(playedTick: number): { measure: Measure; tick: number } | undefined {
+    const index = this.stepAt(playedTick);
+    const next = this.barOfStep(index + 1);
+    return next && next.tick <= playedTick ? next : this.barOfStep(index);
+  }
+
+  /** The bar a walk step stands in, with the played tick of its opening line. */
+  private barOfStep(index: number): { measure: Measure; tick: number } | undefined {
+    const step = this.walk[index];
     const onset = step ? this.score.onsets[step.onsetIndex] : undefined;
-    return onset ? this.score.measures[onset.measureIndex] : undefined;
+    const measure = onset ? this.score.measures[onset.measureIndex] : undefined;
+    if (!step || !onset || !measure) return undefined;
+    return { measure, tick: barTickOf(step, onset, measure) };
   }
 
   /**
@@ -899,12 +917,7 @@ export class Engine {
 
   /** Played tick of the bar line that opens the bar the played tick stands in. */
   private barStartOf(playedTick: number): number {
-    const step = this.walk[this.stepAt(playedTick)];
-    if (!step) return playedTick;
-    const onset = this.score.onsets[step.onsetIndex];
-    const measure = onset ? this.score.measures[onset.measureIndex] : undefined;
-    if (!onset || !measure) return playedTick;
-    return barTickOf(step, onset, measure);
+    return this.barAt(playedTick)?.tick ?? playedTick;
   }
 
   /** The last step at or before a played tick. A walk's ticks never go back. */

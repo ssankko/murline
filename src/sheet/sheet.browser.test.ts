@@ -1,7 +1,7 @@
 // The sheet's overlays take their fade from the app stylesheet, so the styles it asserts need it.
 import '@/index.css';
 import { INK, PAPER, colorOf, tone } from '@/look/color';
-import type { Snapshot } from '@/play/engine';
+import type { SeekTarget, Snapshot } from '@/play/engine';
 import type { Section } from '@/play/section';
 import { expect, test } from 'vitest';
 import { noteheadEl } from './paint';
@@ -295,6 +295,77 @@ test('the cursor band eases into a new size and takes its first one flat', async
   sheet.dispose();
 }, 60_000);
 
+test('a click seeks to the nearest Onset, over a bar line and far from any notehead', async () => {
+  const host = hostEl();
+  const sheet = await open(BACH, host);
+  let sought: SeekTarget | null = null;
+  sheet.onSeek = (target) => {
+    sought = target;
+  };
+
+  // No frame has run, so the content is unscaled and unscrolled: a content x is a client x.
+  const left = host.getBoundingClientRect().left;
+  const click = (x: number) => {
+    sought = null;
+    const at = { clientX: left + x, bubbles: true };
+    host.dispatchEvent(new PointerEvent('pointerdown', { ...at, button: 0 }));
+    host.dispatchEvent(new PointerEvent('pointerup', at));
+    return sought;
+  };
+  const between = (a: number, b: number, part: number) =>
+    sheet.xOfOnset(a) + (sheet.xOfOnset(b) - sheet.xOfOnset(a)) * part;
+
+  // Between two Onsets of one bar the click goes to whichever is the closer.
+  expect(click(between(2, 3, 0.4))).toEqual({ onset: 2 });
+  expect(click(between(2, 3, 0.6))).toEqual({ onset: 3 });
+
+  // Past the last notehead of a bar, well beyond any notehead, the click still means that note.
+  const last = sheet.score.onsets.findLastIndex((onset) => onset.measureIndex === 0);
+  expect(sheet.score.onsets[last + 1]!.measureIndex).toBe(1);
+  expect(between(last, last + 1, 0.4) - sheet.xOfOnset(last)).toBeGreaterThan(11);
+  expect(click(between(last, last + 1, 0.4))).toEqual({ onset: last });
+
+  sheet.dispose();
+}, 60_000);
+
+test('the count-in runs a line towards the cursor, which stands where the count-in leads', async () => {
+  const host = hostEl();
+  const sheet = await open(BACH, host);
+  const cursor = host.querySelector<HTMLElement>('.sheet-cursor')!;
+  const runner = host.querySelector<HTMLElement>('.sheet-runner')!;
+  const countIn = (playedTick: number) =>
+    snapshot(playedTick, { state: 'counting-in', countInTo: 0 });
+  // Both lines hang by their left edge, so their place is read back from their middle.
+  const middleOf = (el: HTMLElement) => parseFloat(el.style.left) + el.offsetWidth / 2;
+
+  // A count-in into the first Onset counts at ticks before the walk, so the runner comes in from
+  // the left of it rather than parking on it.
+  sheet.frame(countIn(-480), 100, 0);
+  const far = middleOf(runner);
+  const stood = cursor.style.left;
+  expect(runner.style.display).toBe('block');
+  expect(far).toBeGreaterThan(0);
+  expect(far).toBeLessThan(sheet.xOfOnset(0) - 1);
+
+  sheet.frame(countIn(-120), 100, 16);
+  const near = middleOf(runner);
+  expect(near).toBeGreaterThan(far);
+  expect(near).toBeLessThan(sheet.xOfOnset(0));
+  // The real cursor never moves through a count-in: it waits at the tick the count-in leads to.
+  expect(cursor.style.left).toBe(stood);
+  expect(middleOf(cursor)).toBeCloseTo(sheet.xOfOnset(0), 0);
+
+  // A count-in longer than the paper left of the first Onset holds the runner at the edge.
+  sheet.frame(countIn(-19200), 100, 32);
+  expect(middleOf(runner)).toBe(0);
+
+  // Motion takes the runner off the paper.
+  sheet.frame(snapshot(0), 100, 48);
+  expect(runner.style.display).toBe('none');
+
+  sheet.dispose();
+}, 60_000);
+
 test('a drag that starts outside the Section picks a fresh one there', async () => {
   const host = hostEl();
   const sheet = await open(BACH, host);
@@ -379,13 +450,15 @@ function hexToRgb(hex: string): string {
   return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
 }
 
-function snapshot(playedTick: number): Snapshot {
+function snapshot(playedTick: number, over: Partial<Snapshot> = {}): Snapshot {
   return {
     state: 'running',
     kind: 'practice',
     playedTick,
     stepIndex: 0,
+    countInTo: 0,
     stopped: false,
+    ...over,
   };
 }
 

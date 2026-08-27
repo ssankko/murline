@@ -50,14 +50,17 @@ const OUTLINE = '#ffffff';
 /** A backward jump names its bar over the sheet for this long. */
 const MARKER_MS = 800;
 
-/** How far from an Onset a click still means that Onset and not its bar, in unscaled pixels. */
-const NOTE_REACH = 11;
-
 /** Pointer travel that turns a click into a Section drag, in screen pixels. */
 const DRAG_SLOP = 4;
 
 /** While Running a scroll detaches the view, and it snaps back this long after the last input. */
 const DETACH_MS = 2000;
+
+/** How long the view takes to glide back to the cursor once it attaches to it again. */
+const SCROLL_GLIDE_MS = 300;
+
+/** Width of the count-in runner, the line travelling to the standing cursor. */
+const RUNNER_W = 2;
 
 /** How long the cursor takes to slide when it is not being moved by the clock. */
 const GLIDE_MS = 220;
@@ -130,6 +133,8 @@ export class Sheet {
   private readonly content: HTMLElement;
   private readonly paper: HTMLElement;
   private readonly cursor: HTMLElement;
+  /** The count-in line, which runs to the standing cursor while the count-in lasts. */
+  private readonly runner: HTMLElement;
   private readonly marker: HTMLElement;
   private readonly bubbles: HTMLElement;
   private bubbleEls: HTMLElement[] = [];
@@ -176,6 +181,11 @@ export class Sheet {
     running: true,
     transition: '',
     glideUntil: -Infinity,
+    /** Whether the view is following the cursor, as against the reader holding it. */
+    attached: false,
+    /** Pixels the view stood away from the cursor when it attached, and when that was. */
+    scrollFrom: 0,
+    scrollAt: -Infinity,
   };
 
   private constructor(host: HTMLElement, dark: boolean) {
@@ -210,6 +220,9 @@ export class Sheet {
     this.clear.setAttribute('role', 'button');
     this.clear.setAttribute('aria-label', 'Clear section');
     this.clear.title = 'Clear section';
+    // No transition: the runner is written every frame, and a glide would lag the beat it marks.
+    this.runner = child(overlay, `position:absolute;display:none;width:${RUNNER_W}px`);
+    this.runner.className = 'sheet-runner';
     this.cursor = child(overlay, 'position:absolute;border-radius:12px');
     this.cursor.className = 'sheet-cursor';
     this.marker = child(
@@ -272,8 +285,8 @@ export class Sheet {
   }
 
   /**
-   * What a click at a screen x means: the Onset within reach of it, else the bar it fell in. The
-   * bar is the one the Onset before the click belongs to, or the next one past that bar's edge.
+   * What a click at a screen x means: the Onset nearest it, however far away, and the bar the
+   * click fell in, which is the Onset before it or the next one past that bar's edge.
    */
   private hitAt(clientX: number): SheetHit | null {
     const x = this.contentX(clientX);
@@ -283,12 +296,8 @@ export class Sheet {
     while (i + 1 < onsets.length && this.placed[i + 1]!.x <= x) i++;
     const next = i + 1 < onsets.length ? i + 1 : i;
     const near = Math.abs(this.placed[next]!.x - x) < Math.abs(this.placed[i]!.x - x) ? next : i;
-    if (Math.abs(this.placed[near]!.x - x) <= NOTE_REACH) {
-      return { seek: { onset: near }, measure: onsets[near]!.measureIndex };
-    }
     const bar = x > this.placed[i]!.measureRight ? next : i;
-    const measure = onsets[bar]!.measureIndex;
-    return { seek: { measure }, measure };
+    return { seek: { onset: near }, measure: onsets[bar]!.measureIndex };
   }
 
   /** Repaints the whole sheet for the other theme. The clock never hears about it. */
@@ -334,7 +343,14 @@ export class Sheet {
    */
   frame(snap: Snapshot, windowTicks: number, now: number): void {
     this.fit();
-    const at = this.cursorAt(snap.playedTick, snap.stepIndex, windowTicks);
+    // A count-in stands the cursor where it leads, and sends the runner over the bars it counts.
+    const counting = snap.state === 'counting-in';
+    const at = this.cursorAt(
+      counting ? snap.countInTo : snap.playedTick,
+      snap.stepIndex,
+      windowTicks,
+    );
+    this.drawRunner(counting ? snap : null, windowTicks);
 
     const running = snap.state === 'running' || snap.state === 'counting-in';
     if (running !== this.drawn.running) {
@@ -385,10 +401,50 @@ export class Sheet {
     this.drawMarker(at, now);
 
     // The view is the reader's while the play stands still, and again for two seconds after a
-    // scroll during one; the rest of the time it holds the cursor 30 % from the left edge.
-    if (running && now - this.scrolledAt >= DETACH_MS) {
-      this.scroll.scrollLeft = at.x * this.drawn.scale - this.scroll.clientWidth * 0.3;
+    // scroll during one; the rest of the time it holds the cursor 30 % from the left edge. It
+    // takes that hold back by gliding from wherever the reader left it, cubed so it eases out.
+    const follow = at.x * this.drawn.scale - this.scroll.clientWidth * 0.3;
+    const attached = running && now - this.scrolledAt >= DETACH_MS;
+    if (attached !== this.drawn.attached) {
+      this.drawn.attached = attached;
+      this.drawn.scrollFrom = reducedMotion() ? 0 : this.scroll.scrollLeft - follow;
+      this.drawn.scrollAt = now;
     }
+    if (attached) {
+      const left = clamp(1 - (now - this.drawn.scrollAt) / SCROLL_GLIDE_MS, 0, 1);
+      this.scroll.scrollLeft = follow + this.drawn.scrollFrom * left ** 3;
+    }
+  }
+
+  /**
+   * The count-in runner: a thin line travelling from where the count-in started to the cursor,
+   * which stands still at the tick the count-in leads to. Off in every other state.
+   */
+  private drawRunner(snap: Snapshot | null, windowTicks: number): void {
+    if (!snap) {
+      if (this.runner.style.display !== 'none') this.runner.style.display = 'none';
+      return;
+    }
+    this.runner.style.display = 'block';
+    const x = this.runnerX(snap.playedTick, snap.stepIndex, windowTicks);
+    this.runner.style.left = `${x - RUNNER_W / 2}px`;
+    this.runner.style.top = `${this.system.top}px`;
+    this.runner.style.height = `${this.system.bottom - this.system.top}px`;
+  }
+
+  /**
+   * Where the runner stands for a played tick. A count-in into the first Onset runs at ticks the
+   * walk has no place for, so it comes in from the left at the first step's own spacing.
+   */
+  private runnerX(playedTick: number, hint: number, windowTicks: number): number {
+    const first = this.walk[0];
+    if (!first || playedTick >= first.tick) return this.cursorAt(playedTick, hint, windowTicks).x;
+    const from = this.placed[first.onsetIndex]?.x ?? 0;
+    const next = this.walk[1];
+    const to = next ? (this.placed[next.onsetIndex]?.x ?? from) : from;
+    const span = next ? next.tick - first.tick : 0;
+    const perTick = span > 0 ? Math.max(0, to - from) / span : 0;
+    return Math.max(0, from - (first.tick - playedTick) * perTick);
   }
 
   /**
@@ -586,6 +642,7 @@ export class Sheet {
 
     this.cursor.style.background = `color-mix(in srgb, ${tone(CURSOR, this.dark)} 26%, transparent)`;
     this.cursor.style.boxShadow = `inset 0 0 0 1px color-mix(in srgb, ${tone(CURSOR, this.dark)} 55%, transparent)`;
+    this.runner.style.background = `color-mix(in srgb, ${tone(CURSOR, this.dark)} 55%, transparent)`;
     this.marker.style.background = tone(INK.duration, this.dark);
     this.marker.style.color = tone(PAPER, this.dark);
   }

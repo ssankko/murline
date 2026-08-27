@@ -113,6 +113,8 @@ export interface Snapshot {
   playedTick: number;
   /** Index into `walk`, which names both the Onset and the pass it belongs to. */
   stepIndex: number;
+  /** Played tick the count-in leads to; only `counting-in` gives it meaning. */
+  countInTo: number;
   /** Wait mode: the clock stands still at `stepIndex` until the player satisfies its Onset. */
   stopped: boolean;
 }
@@ -285,6 +287,7 @@ export class Engine {
       kind: this.kind,
       playedTick: this.tick,
       stepIndex: this.stepAt(this.tick),
+      countInTo: this.countInTo,
       stopped: this.stopStep !== null,
     };
   }

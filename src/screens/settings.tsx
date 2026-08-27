@@ -21,11 +21,13 @@ import {
   type Settings,
 } from '@/db/db';
 import type { LaneLook } from '@/lane/lane';
+import { cancelPdmx, downloadPdmx, progressLabel, usePdmxDownload } from '@/library/pdmx';
 import { noteName } from '@/look/color';
 import { setTheme, useTheme, type Theme } from '@/look/use-dark';
 import { pinMidiDevice, useMidiStatus } from '@/midi/use-midi-status';
 import { validNumber, type PieceSettings } from '@/play/resolve';
 import { TEMPO_RANGE, type HandsSetting, type KeyboardPreset } from '@/play/settings';
+import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useEffect, useRef, useState } from 'react';
 
@@ -94,14 +96,33 @@ export function SettingsDialog({
 }) {
   const [values, setValues] = useState<Settings | null>(null);
   const [velocity, setVelocity] = useState<number | null>(null);
+  const [pdmxReady, setPdmxReady] = useState<boolean | null>(null);
   const midi = useMidiStatus((event) => {
     if (event.on) setVelocity(event.velocity);
   });
   const theme = useTheme();
+  const pdmx = usePdmxDownload();
+  const downloading = pdmx.progress !== null;
 
+  // A finished PDMX download writes the folder itself, so the settings are read again when one
+  // stops: the dialog is not always open to hear about it.
   useEffect(() => {
     readSettings().then(setValues, console.error);
-  }, []);
+  }, [downloading]);
+
+  // Whether the folder in force holds unpacked scores. Rust answers off the disk, not the setting.
+  useEffect(() => {
+    const folder = values?.pdmx_folder;
+    if (folder === undefined) return;
+    let live = true;
+    const hold = (ready: boolean) => {
+      if (live) setPdmxReady(ready);
+    };
+    invoke<boolean>('pdmx_status', { folder }).then(hold, () => hold(false));
+    return () => {
+      live = false;
+    };
+  }, [values?.pdmx_folder]);
 
   function write<K extends keyof Settings>(key: K, value: Settings[K]): void {
     setValues((held) => held && { ...held, [key]: value });
@@ -115,6 +136,15 @@ export function SettingsDialog({
   function reset(keys: (keyof Settings)[]): void {
     for (const key of keys) write(key, SETTING_DEFAULTS[key] as never);
   }
+
+  /** One line for the PDMX row: how far the download has got, or what is on disk. */
+  const pdmxStatus = pdmx.progress
+    ? progressLabel(pdmx.progress)
+    : pdmxReady === null
+      ? ''
+      : pdmxReady
+        ? 'Ready'
+        : 'Not downloaded';
 
   async function chooseFolder(key: 'library_folder' | 'pdmx_folder'): Promise<void> {
     const picked = await open({ directory: true, defaultPath: values?.[key] || undefined });
@@ -148,6 +178,27 @@ export function SettingsDialog({
                   value={values.pdmx_folder}
                   onChoose={() => chooseFolder('pdmx_folder').catch(console.error)}
                 />
+              </Row>
+              <Row label="PDMX scores">
+                <span className="flex flex-none flex-col items-end gap-0.5">
+                  <span className="flex items-center gap-3">
+                    <span className="text-muted-ink text-[12px] tabular-nums">{pdmxStatus}</span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 flex-none"
+                      onClick={() => {
+                        if (downloading) cancelPdmx();
+                        else void downloadPdmx();
+                      }}
+                    >
+                      {downloading ? 'Cancel' : 'Download PDMX (1.9 GB)'}
+                    </Button>
+                  </span>
+                  {pdmx.error && (
+                    <span className="text-[11px] text-red-600 dark:text-red-400">{pdmx.error}</span>
+                  )}
+                </span>
               </Row>
             </Group>
 

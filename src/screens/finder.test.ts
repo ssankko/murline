@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest';
 import { reasonOf } from '@/library/notice';
+import { progressLabel } from '@/library/pdmx';
 import { metaLine, titleLine, type FinderRow } from './finder';
 
 function row(fields: Partial<FinderRow>): FinderRow {
@@ -54,4 +55,9 @@ test('a PDMX row shows the uploader title, and only when it differs from the son
 
 test('the failure reason drops the prefix a thrown Error carries', () => {
   expect(reasonOf(new Error('HTTP 404 from KernScores'))).toBe('HTTP 404 from KernScores');
+});
+
+test('the PDMX download reads its progress in the unit of the whole archive', () => {
+  expect(progressLabel({ done: 812_000_000, total: 1_890_000_000 })).toBe('0.8 of 1.9 GB');
+  expect(progressLabel({ done: 812_000_000, total: null })).toBe('812 MB');
 });

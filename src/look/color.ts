@@ -12,10 +12,10 @@ const SHARP_S = -24;
 const SHARP_L = -16;
 
 // The muted tier every block and swatch wears, and the full tier a note reaching the now-line
-// takes: the same hue at nearly all its saturation, so it reads as the pitch turned up.
+// takes: the same hue a step up in saturation, enough to read as the pitch turned up and no more.
 const TONE: Record<Palette, { s: number; l: number }> = {
   muted: { s: 60, l: 50 },
-  full: { s: 95, l: 46 },
+  full: { s: 72, l: 48 },
 };
 
 // Dark paper swallows a mid-lightness colour, so every hue rises by this much on it.

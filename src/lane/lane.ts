@@ -57,11 +57,12 @@ const HANDS_FADE_MS = 200;
 const SECTION_ALPHA = 0.09;
 const SECTION_FADE_MS = 200;
 
-/** The harmony panel at the lane's top right: its inset from the corner, a row's padding and fill. */
+/** The harmony panel at the lane's top right: its inset from the corner and a row's padding. */
 const PANEL_INSET = 8;
 const PANEL_PAD = 6;
-const PANEL_ALPHA = 0.8;
 const PANEL_GAP = 4;
+/** The chrome tone a panel over the lane wears: paper enough to read on, sheer enough to see past. */
+const PANEL_FILL = ['rgba(233,233,233,0.82)', 'rgba(22,22,22,0.82)'] as const;
 /** Type size of the chord sounding now and of the two after it; the degree follows at 0.75 of it. */
 const CHORD_SIZE = 20;
 const NEXT_SIZE = 13;
@@ -574,12 +575,10 @@ export class Lane {
       const w = PANEL_PAD * 2 + countW + nameW + DEGREE_GAP + degreeW;
       const left = width - PANEL_INSET - w;
 
-      ctx.globalAlpha = PANEL_ALPHA;
-      ctx.fillStyle = tone(PAPER, this.dark);
+      ctx.fillStyle = tone(PANEL_FILL, this.dark);
       ctx.beginPath();
       ctx.roundRect(left, y, w, h, 4);
       ctx.fill();
-      ctx.globalAlpha = 1;
 
       // The countdown, the name and the degree read left to right, the two texts on one baseline.
       const nameX = left + PANEL_PAD + countW;
@@ -614,7 +613,7 @@ export class Lane {
 
   private drawNotice(width: number, laneH: number): void {
     const ctx = this.ctx;
-    ctx.fillStyle = this.dark ? 'rgba(22,22,22,0.82)' : 'rgba(233,233,233,0.82)';
+    ctx.fillStyle = tone(PANEL_FILL, this.dark);
     ctx.fillRect(0, laneH, width, KEYBOARD_H);
     ctx.fillStyle = tone(LANE_LABEL, this.dark);
     ctx.font = '600 13px system-ui, sans-serif';

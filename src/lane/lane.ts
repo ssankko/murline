@@ -52,8 +52,8 @@ const NOW_LINE = ['#141414', '#ffffff'] as const;
 const GREY = '#8b8b93';
 
 const NOTE_RADIUS = 3;
-const HIT_FLASH_MS = 200;
-const MISS_FLASH_MS = 300;
+/** How long a struck block takes to fade from white back to its pitch colour. */
+const HIT_FLASH_MS = 350;
 const RING_MS = 300;
 /** The inactive hand is context: its notes fall as ghosts and never take feedback. */
 const GHOST_ALPHA = 0.25;
@@ -72,9 +72,19 @@ const SPLASH_MS = 250;
 const SPLASH_RADIUS = [16, 40] as const;
 const SPLASH_ALPHA = [0.35, 0.8] as const;
 
-/** How much wider a struck block draws, and how long it takes to settle back. */
-const SQUASH = 0.12;
-const SQUASH_MS = 150;
+/** How much wider a struck block pops, and how long it takes to settle back. */
+const POP = 0.3;
+const POP_MS = 300;
+
+/**
+ * A missed block: how long it takes to go grey, how far it sinks and how much of its alpha it
+ * gives up on the way, and the specks it spills as it goes.
+ */
+const MISS_MS = 300;
+const MISS_SINK = 4;
+const MISS_DIM = 0.3;
+const SPILL = [3, 5] as const;
+const SPILL_GRAVITY = 300;
 
 /**
  * The beat pulse at the now-line: the share of a beat it decays over, and what a full pulse adds to
@@ -121,9 +131,9 @@ const GLYPH_GAP = 8;
 /** How far the countdown counts; a chord further off than this holds a full row until it nears. */
 const LOOKAHEAD = 16;
 
-/** One ring, splash or blink playing out at a key. */
+/** One ring or splash playing out at a key. A miss leaves no mark on the keys. */
 interface Effect {
-  kind: 'hit' | 'extra' | 'miss';
+  kind: 'hit' | 'extra';
   midi: number;
   start: number;
   /** How hard the key was struck, 1 to 127; 0 when no strike stands behind it. */
@@ -214,6 +224,8 @@ export class Lane {
   /** The clock and the wall of the frame before this one, which is what a step is measured over. */
   private before = 0;
   private beforeTick = 0;
+  /** The wall of the frame before this one, which is what "settled since the last frame" reads. */
+  private sinceWall = 0;
   /** `reducedMotion()`, read once a frame: it asks the system, so no draw has to ask again. */
   private reduced = false;
   /** The hands setting the blocks are drawn for, the one before it, and when it changed. */
@@ -284,9 +296,9 @@ export class Lane {
     this.layout = keyLayout(this.range[0], this.range[1], this.size.width || 1);
   }
 
-  /** Feedback at the key: a ring for a hit or an extra, a grey blink for a miss. */
+  /** Feedback at the key: a ring for a hit or an extra. A miss shows on the block and the sheet. */
   effect(event: PlayEvent, now: number): void {
-    if (event.verdict === 'absorbed') return;
+    if (event.verdict !== 'hit' && event.verdict !== 'extra') return;
     // The hit's ring is anchored where its block stood, so it must be measured as the key goes
     // down; the clock of the last frame is near enough over one frame.
     const note = event.verdict === 'hit' ? this.engine.notes[event.noteIndex] : undefined;
@@ -305,7 +317,7 @@ export class Lane {
     this.playedTick = snap.playedTick;
     this.reduced = reducedMotion();
     const step = Math.min(now - this.before, MAX_STEP_MS);
-    const sinceWall = this.before;
+    this.sinceWall = this.before;
     const sinceTick = this.beforeTick;
     this.before = now;
     this.beforeTick = snap.playedTick;
@@ -348,7 +360,7 @@ export class Lane {
     this.heldKeys(laneH, sinceTick, step);
     if (!this.reduced) {
       for (const effect of this.effects) {
-        if (effect.kind === 'hit' && effect.start > sinceWall) this.burst(effect, laneH);
+        if (effect.kind === 'hit' && effect.start > this.sinceWall) this.burst(effect, laneH);
       }
     }
     if (this.particles.length > SPECK_CAP) {
@@ -546,13 +558,21 @@ export class Lane {
       if (y > laneH) continue;
       const state = live ? engine.noteState(i) : 'pending';
       const age = live ? this.now - engine.resolvedAt(i) : Infinity;
-      // A struck block swells for a moment, centred on its key.
-      const swell =
-        state === 'hit' && !this.reduced ? SQUASH * clamp(1 - age / SQUASH_MS, 0, 1) : 0;
-      const width = key.w * (this.look.noteWidthPct / 100) * (1 + swell);
+      // A struck block pops out and settles back through the overshoot, centred on its key.
+      const pop =
+        state === 'hit' && !this.reduced ? POP * (1 - easeOutBack(clamp(age / POP_MS, 0, 1))) : 0;
+      const width = key.w * (this.look.noteWidthPct / 100) * (1 + pop);
       const x = key.x + (key.w - width) / 2;
       const height = Math.max(bottom - y - this.look.gapPx, 3);
       const radius = Math.min(NOTE_RADIUS, width / 3, height / 3);
+      // How far a miss has gone grey. It sinks and dims as it goes and stays that way in view.
+      const missed = state === 'miss';
+      const gone = missed ? (this.reduced ? 1 : clamp(age / MISS_MS, 0, 1)) : 0;
+      const blockY = y + MISS_SINK * gone;
+      // The specks a miss spills are thrown once, on the frame the window closed over it.
+      if (missed && !this.reduced && engine.resolvedAt(i) > this.sinceWall) {
+        this.spill(x, width, bottom);
+      }
       // How much of a ghost the note is now: a change of hands cross-fades it over the two looks.
       const ghost = isInactiveHand(this.hands, note.hand)
         ? fade
@@ -564,24 +584,26 @@ export class Lane {
       if (ghost < 1) {
         let fill = colorOf(note.midi, 'muted', this.dark);
         let glow = 0;
-        if (state === 'miss') fill = tone(INK.miss, this.dark);
-        else if (state === 'hit' && age < HIT_FLASH_MS) {
-          fill = '#ffffff';
-          glow = 14 * (1 - age / HIT_FLASH_MS);
+        if (state === 'miss') fill = mix(fill, tone(INK.miss, this.dark), gone);
+        else if (state === 'hit' && age < HIT_FLASH_MS && !this.reduced) {
+          // The white of the strike bleeds back into the pitch colour, its glow with it.
+          const flash = clamp(age / HIT_FLASH_MS, 0, 1);
+          fill = mix('#ffffff', fill, flash);
+          glow = 14 * (1 - flash);
         } else if (state === 'pending') {
           // The last beat of the fall brightens the block from muted to its full pitch colour.
           const near = clamp(1 - (note.tick - this.playedTick) / beatTicks, 0, 1);
           if (near > 0) fill = mix(fill, colorOf(note.midi, 'full', this.dark), near);
         }
 
-        ctx.globalAlpha = 1 - ghost;
+        ctx.globalAlpha = (1 - ghost) * (1 - MISS_DIM * gone);
         if (glow > 0) {
           ctx.shadowColor = colorOf(note.midi, 'muted', this.dark);
           ctx.shadowBlur = glow;
         }
         ctx.fillStyle = fill;
         ctx.beginPath();
-        ctx.roundRect(x, y, width, height, radius);
+        ctx.roundRect(x, blockY, width, height, radius);
         ctx.fill();
         ctx.shadowBlur = 0;
 
@@ -591,19 +613,19 @@ export class Lane {
           ctx.strokeStyle = 'rgba(0,0,0,0.65)';
           ctx.lineWidth = 2;
           ctx.beginPath();
-          ctx.roundRect(x + 1, y + 1, width - 2, height - 2, Math.max(radius - 1, 1));
+          ctx.roundRect(x + 1, blockY + 1, width - 2, height - 2, Math.max(radius - 1, 1));
           ctx.stroke();
           if (height > 10 && width > 8) {
             ctx.fillStyle = 'rgba(0,0,0,0.65)';
             ctx.beginPath();
-            ctx.arc(x + width / 2, y + 5, 2, 0, Math.PI * 2);
+            ctx.arc(x + width / 2, blockY + 5, 2, 0, Math.PI * 2);
             ctx.fill();
           }
         } else {
           ctx.strokeStyle = 'rgba(255,255,255,0.35)';
           ctx.lineWidth = 1;
           ctx.beginPath();
-          ctx.roundRect(x + 0.5, y + 0.5, width - 1, height - 1, radius);
+          ctx.roundRect(x + 0.5, blockY + 0.5, width - 1, height - 1, radius);
           ctx.stroke();
         }
       }
@@ -668,7 +690,6 @@ export class Lane {
   private drawRings(laneH: number, pxPerTick: number): void {
     const ctx = this.ctx;
     for (const effect of this.effects) {
-      if (effect.kind === 'miss') continue;
       const key = this.layout.byMidi.get(effect.midi);
       if (!key) continue;
       const age = (this.now - effect.start) / RING_MS;
@@ -725,6 +746,23 @@ export class Lane {
     }
   }
 
+  /** The grey specks a missed block spills off its bottom edge as it dies. */
+  private spill(x: number, width: number, bottom: number): void {
+    const color = tone(INK.miss, this.dark);
+    const count = Math.round(ramp(SPILL, Math.random()));
+    for (let i = 0; i < count; i++) {
+      this.particles.push(
+        speck(x + Math.random() * width, bottom, Math.PI / 2, between(10, 30), color, {
+          gravity: SPILL_GRAVITY,
+          radius: between(1, 2),
+          born: this.now,
+          life: between(350, 450),
+          alpha: 1,
+        }),
+      );
+    }
+  }
+
   /** One speck of a sounding key, off a random point of its top edge. */
   private trickle(key: Key, laneH: number): void {
     const color = colorOf(key.midi, 'muted', this.dark);
@@ -767,20 +805,14 @@ export class Lane {
 
   /**
    * The key colour rule: a held key wears its pitch colour only while its strike matched a note
-   * that is still sounding, and drains toward its base face as that note runs out. A miss blinks
-   * the miss grey; every other held key is grey. Over any of them lies the release blink.
+   * that is still sounding, and drains toward its base face as that note runs out. Every other
+   * held key is grey. Over either lies the release blink.
    */
   private readonly keyFill = (midi: number, base: string): string => {
     const state = this.engine.keyState(midi);
     let face = base;
     if (state === 'color') face = this.sounding(midi, base);
     else if (state === 'grey') face = GREY;
-    else {
-      for (const effect of this.effects) {
-        if (effect.kind !== 'miss' || effect.midi !== midi) continue;
-        if (this.now - effect.start < MISS_FLASH_MS) face = tone(INK.miss, this.dark);
-      }
-    }
     const blink = this.blinks.get(midi);
     if (blink === undefined || this.reduced) return face;
     const gone = (this.now - blink) / BLINK_MS;

@@ -114,9 +114,9 @@ export function SettingsDialog({
 
         {values && (
           <div className="flex flex-col gap-7">
+            {/* The library folder is the library, and an empty one has no undo, so Reset leaves it. */}
             <Group
               title="Library"
-              // The library folder is the library, and an empty one has no undo, so Reset leaves it.
               onReset={() => reset(['pdmx_folder'])}
               note="A new library folder re-points the app. No file is moved."
             >

@@ -564,7 +564,7 @@ export function PlayScreen({
               pressed={metronome}
               onClick={() => changeMetronome(!metronome)}
             >
-              <Metronome {...ICON} ref={metronomeRef} />
+              <Metronome {...ICON} ref={metronomeRef} on={metronome} />
             </BarButton>
           </div>
 

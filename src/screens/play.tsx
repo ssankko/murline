@@ -123,9 +123,7 @@ export function PlayScreen({
 
   const [title, setTitle] = useState(baseNameOf(path));
   const [state, setState] = useState<PlayState>('idle');
-  const stateRef = useRef<PlayState>('idle');
   const [kind, setKind] = useState<PlayKind>('practice');
-  const kindRef = useRef<PlayKind>('practice');
   /** The card of the performance that just ended, with the piece's best before this run. */
   const [summary, setSummary] = useState<{ record: PerformanceRecord; best: number | null } | null>(
     null,
@@ -285,7 +283,7 @@ export function PlayScreen({
    * reopens as it was left. A performance hides those controls, so nothing is written during one.
    */
   function persist(values: PieceSettingValues): void {
-    if (kindRef.current === 'performance') return;
+    if (engineRef.current?.kind === 'performance') return;
     updatePieceSettings(path, values).catch(console.error);
   }
 
@@ -412,16 +410,12 @@ export function PlayScreen({
     sheet.frame(snapshot, engine.windowTicks, now);
     lane.notice = midi.devices.length === 0 ? 'no MIDI device' : null;
     lane.frame(snapshot, engine.windowTicks, now);
-    if (snapshot.state !== stateRef.current) {
-      stateRef.current = snapshot.state;
+    if (snapshot.state !== state) {
       setState(snapshot.state);
       // The card belongs to the run that ended; anything that moves the play again takes it away.
       if (snapshot.state !== 'ended') setSummary(null);
     }
-    if (snapshot.kind !== kindRef.current) {
-      kindRef.current = snapshot.kind;
-      setKind(snapshot.kind);
-    }
+    if (snapshot.kind !== kind) setKind(snapshot.kind);
   });
 
   useEffect(() => {

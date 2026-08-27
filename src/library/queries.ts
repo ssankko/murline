@@ -96,29 +96,29 @@ export async function allPiecePaths(): Promise<string[]> {
   return rows.map((row) => row.path);
 }
 
+/** Every piece setting: the field of a play it sets, and the `piece` column it lives in. */
+export const PIECE_SETTING_COLUMNS = {
+  tempoMode: 'tempo_mode',
+  tempoValue: 'tempo_value',
+  metronome: 'metronome',
+  countInBars: 'count_in_bars',
+  hands: 'hands',
+  keyboardPreset: 'keyboard_preset',
+  keyboardLo: 'keyboard_lo',
+  keyboardHi: 'keyboard_hi',
+} as const satisfies Record<string, keyof PieceRow>;
+
+/** The piece-setting columns of a `piece` row, the only part of it resolution reads. */
+export type PieceSettingRow = Pick<
+  PieceRow,
+  (typeof PIECE_SETTING_COLUMNS)[keyof typeof PIECE_SETTING_COLUMNS]
+>;
+
 /** The piece settings as their columns; a column set to null makes the piece inherit again. */
-export type PieceSettingValues = Partial<{
-  tempo_mode: string | null;
-  tempo_value: number | null;
-  metronome: number | null;
-  count_in_bars: number | null;
-  hands: string | null;
-  keyboard_preset: string | null;
-  keyboard_lo: number | null;
-  keyboard_hi: number | null;
-}>;
+export type PieceSettingValues = Partial<PieceSettingRow>;
 
 /** The only columns the SET clause below may name. */
-const SETTING_COLUMNS: readonly (keyof PieceSettingValues)[] = [
-  'tempo_mode',
-  'tempo_value',
-  'metronome',
-  'count_in_bars',
-  'hands',
-  'keyboard_preset',
-  'keyboard_lo',
-  'keyboard_hi',
-];
+const SETTING_COLUMNS = Object.values(PIECE_SETTING_COLUMNS);
 
 /** Stores what the play screen just changed. */
 export async function updatePieceSettings(

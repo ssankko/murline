@@ -3,7 +3,7 @@
 // and false are values like any other and never fall through.
 
 import { knobValues, PIECE_DEFAULT_KEYS, readSettings, type Settings } from '@/db/db';
-import type { PieceRow } from '@/library/queries';
+import { PIECE_SETTING_COLUMNS, type PieceSettingRow } from '@/library/queries';
 import {
   DEFAULT_PLAY_SETTINGS,
   type HandsSetting,
@@ -11,57 +11,20 @@ import {
   type PlaySettings,
 } from '@/play/settings';
 
-/** The settings a piece may hold of its own. Everything else about a play is global. */
-export type PieceSettings = Pick<
-  PlaySettings,
-  | 'tempoMode'
-  | 'tempoValue'
-  | 'metronome'
-  | 'countInBars'
-  | 'hands'
-  | 'keyboardPreset'
-  | 'keyboardLo'
-  | 'keyboardHi'
->;
+export type { PieceSettingRow };
 
-export const PIECE_SETTING_KEYS = [
-  'tempoMode',
-  'tempoValue',
-  'metronome',
-  'countInBars',
-  'hands',
-  'keyboardPreset',
-  'keyboardLo',
-  'keyboardHi',
-] as const satisfies readonly (keyof PieceSettings)[];
+/** The settings a piece may hold of its own. Everything else about a play is global. */
+export type PieceSettings = Pick<PlaySettings, keyof typeof PIECE_SETTING_COLUMNS>;
+
+const PIECE_SETTING_KEYS = Object.keys(PIECE_SETTING_COLUMNS) as (keyof PieceSettings)[];
 
 /** True for every field the piece left NULL, which is what the library shows muted. */
 export type Inherited = Record<keyof PieceSettings, boolean>;
 
-/** The piece-setting columns of a `piece` row, the only part of it resolution reads. */
-export type PieceSettingRow = Pick<
-  PieceRow,
-  | 'tempo_mode'
-  | 'tempo_value'
-  | 'metronome'
-  | 'count_in_bars'
-  | 'hands'
-  | 'keyboard_preset'
-  | 'keyboard_lo'
-  | 'keyboard_hi'
->;
-
 /** A row that holds no setting of its own, which is what "Use global defaults" leaves behind. */
-export const INHERITS_EVERYTHING: PieceSettingRow = {
-  tempo_mode: null,
-  tempo_value: null,
-  metronome: null,
-  count_in_bars: null,
-  hands: null,
-  keyboard_preset: null,
-  keyboard_lo: null,
-  keyboard_hi: null,
-};
+export const INHERITS_EVERYTHING = Object.fromEntries(
+  Object.values(PIECE_SETTING_COLUMNS).map((column) => [column, null]),
+) as PieceSettingRow;
 
 /** The three levels, field by field, with the ones the piece did not answer for. */
 export function resolvePlaySettings(

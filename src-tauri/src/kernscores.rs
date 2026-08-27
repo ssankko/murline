@@ -4,7 +4,7 @@
 //! `merge` folds every part into one piano part with two staves: two parts are two hands (the
 //! F-clef part is staff 2, each keeps its clef changes), three or more are voices that move
 //! between fixed staves, so there the clef of the moment decides the staff of every note. A lyric
-//! that spells a dynamic becomes a `<dynamics>` direction; every other lyric is dropped.
+//! that spells a dynamic becomes a `<dynamics>` direction on staff 1; every other lyric is dropped.
 
 use std::time::Duration;
 
@@ -105,7 +105,9 @@ fn merge_parts(root: &mut Elem) -> Result<(), String> {
             by_clef,
         })
         .collect();
+    // Two parts that open on the same clef carry no hint, so their order decides.
     if parts.len() == 2 && states[0].staff == states[1].staff {
+        states[0].staff = 1;
         states[1].staff = 2;
     }
     // The clef each staff opens with, taken from the first part that lands on it.
@@ -209,7 +211,8 @@ fn convert(measure: Elem, st: &mut State, first_measure: bool) -> Vec<Elem> {
                 for lyric in take_all(&mut el, "lyric") {
                     let text = child(&lyric, "text").map(text_of).unwrap_or_default();
                     if is_dynamic(text.trim()) {
-                        // The direction goes before the note, or before the first note of its chord.
+                        // The mark goes on staff 1 like a MuseScore piano export's, whichever part
+                        // the lyric was in, before the note or before the first note of its chord.
                         let mut pos = out.len();
                         if chord {
                             while pos > 0 && out[pos - 1].name == "note" {
@@ -219,7 +222,7 @@ fn convert(measure: Elem, st: &mut State, first_measure: bool) -> Vec<Elem> {
                                 }
                             }
                         }
-                        out.insert(pos, dynamics(text.trim(), &staff));
+                        out.insert(pos, dynamics(text.trim(), "1"));
                     }
                 }
                 if let Some(voice) = child_mut(&mut el, "voice") {
@@ -636,6 +639,58 @@ mod tests {
         let voices: std::collections::BTreeSet<String> =
             find(&root, "voice").iter().map(|v| text_of(v)).collect();
         assert_eq!(voices, ["1", "13", "17", "5", "9"].map(String::from).into_iter().collect());
+    }
+
+    /// Two parts, the dynamic lyric in the F-clef one.
+    const TWO_HANDS: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="3.1">
+ <part-list>
+  <score-part id="P1"><part-name>right</part-name></score-part>
+  <score-part id="P2"><part-name>left</part-name></score-part>
+ </part-list>
+ <part id="P1">
+  <measure number="1">
+   <attributes><divisions>1</divisions><clef><sign>@1</sign><line>2</line></clef></attributes>
+   <note><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice></note>
+  </measure>
+ </part>
+ <part id="P2">
+  <measure number="1">
+   <attributes><divisions>1</divisions><clef><sign>@2</sign><line>4</line></clef></attributes>
+   <note><pitch><step>C</step><octave>3</octave></pitch><duration>4</duration><voice>1</voice>
+    <lyric><text>p</text></lyric></note>
+  </measure>
+ </part>
+</score-partwise>"#;
+
+    fn two_hands(first: &str, second: &str) -> Vec<u8> {
+        TWO_HANDS.replace("@1", first).replace("@2", second).into_bytes()
+    }
+
+    #[test]
+    fn a_recovered_dynamic_sits_on_staff_1_whatever_part_its_lyric_was_in() {
+        let out = merge(&two_hands("G", "F")).unwrap();
+        let (_, root) = parse(&out).unwrap();
+        let directions = find(&root, "direction");
+        assert_eq!(directions.len(), 1);
+        assert_eq!(text_of(child(directions[0], "staff").unwrap()), "1");
+        // The note that carried the lyric stays on its own staff.
+        let notes = find(&root, "note");
+        assert_eq!(notes.iter().map(|n| staff_of(n)).collect::<Vec<_>>(), ["1", "2"]);
+    }
+
+    #[test]
+    fn two_parts_of_one_clef_still_split_over_the_two_staves() {
+        for (first, second) in [("G", "G"), ("F", "F")] {
+            let out = merge(&two_hands(first, second)).unwrap();
+            let (_, root) = parse(&out).unwrap();
+            let notes = find(&root, "note");
+            assert_eq!(
+                notes.iter().map(|n| staff_of(n)).collect::<Vec<_>>(),
+                ["1", "2"],
+                "{first} over {second}"
+            );
+        }
     }
 
     #[test]

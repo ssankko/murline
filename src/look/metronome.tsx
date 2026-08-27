@@ -121,11 +121,11 @@ export function Metronome({
           twice, the first in the colour of the bar behind it, so it cuts the case where it crosses. */}
       <g ref={armRef} style={{ transformBox: 'view-box', transformOrigin: '12px 17px' }}>
         <g stroke="var(--chrome)" strokeWidth={strokeWidth * 2.5}>
-          <path d="m12 17 6.59-6.59" />
-          <circle cx="20" cy="9" r="2" />
+          <path d="m12 17 7.78-7.78" />
+          <circle cx="21.19" cy="7.81" r="2" />
         </g>
-        <path d="m12 17 6.59-6.59" />
-        <circle cx="20" cy="9" r="2" />
+        <path d="m12 17 7.78-7.78" />
+        <circle cx="21.19" cy="7.81" r="2" />
       </g>
     </svg>
   );

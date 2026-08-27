@@ -68,6 +68,9 @@ pub struct Status {
     /// Opaque id of the device the engine plays through now; null while it plays through none.
     pub device: Option<String>,
     pub device_name: String,
+    /// What the engine is playing through now; empty when nothing is loaded, which is one of the
+    /// reasons above. The mixer names it beside the device.
+    pub instrument: String,
     /// Why the device playing is not the one chosen; empty while the choice is honoured.
     pub fallback: String,
     pub buffer_frames: u32,
@@ -150,6 +153,14 @@ pub fn audio_status() -> Status {
 #[tauri::command]
 pub fn audio_click(strength: String, volume: u32) {
     engine::click(strength == "strong", volume);
+}
+
+/// The keyboard volume, 0 to 100: a gain after the effect chain, so it trims what the instrument
+/// path has finished making without changing what the instrument or the effects were given. A
+/// no-op where there is no engine, which is silent anyway.
+#[tauri::command]
+pub fn audio_set_keyboard_volume(percent: u32) {
+    engine::set_keyboard_volume(percent);
 }
 
 /// Every Audio Unit effect installed on the machine, Apple's own included.
@@ -263,9 +274,11 @@ mod tests {
         assert!(!status.available);
         assert_eq!(status.reason, "No sound engine on this platform");
 
-        // The click is the one command that returns nothing: silence is the whole of its answer.
+        // The click and the keyboard volume return nothing: silence is the whole of their answer.
         stub::click(true, 70);
         stub::click(false, 0);
+        stub::set_keyboard_volume(100);
+        stub::set_keyboard_volume(0);
 
         assert!(stub::effects().is_empty());
         assert!(stub::chain().is_empty());

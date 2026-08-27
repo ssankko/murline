@@ -36,7 +36,7 @@ async function open(): Promise<void> {
   document.body.append(host);
   root = createRoot(host);
   root.render(createElement(SettingsPanel, { open: true, onClose: () => {} }));
-  await vi.waitFor(() => expect(host!.querySelector('#setting-row-click_volume')).toBeTruthy());
+  await vi.waitFor(() => expect(host!.querySelector('#setting-row-instrument_id')).toBeTruthy());
 }
 
 /** Types into the search box and returns the results, each a button naming one row. */
@@ -68,17 +68,38 @@ function marked(id: string): boolean {
 
 test('a word from a row label finds it and jumps to its tab', async () => {
   await open();
-  expect(labels(await search('volume'))).toContain('Click volume');
+  expect(labels(await search('buffer'))).toContain('Buffer (frames)');
 
   // The panel opens on Sound, so the jump has to be seen coming back from another tab.
   await openTab('Library');
   expect(activeTab()).toBe('Library');
 
-  const results = await search('volume');
-  await userEvent.click(results.find((each) => each.textContent!.startsWith('Click volume'))!);
+  const results = await search('buffer');
+  await userEvent.click(results.find((each) => each.textContent!.startsWith('Buffer'))!);
 
   expect(activeTab()).toBe('Sound');
-  expect(marked('click_volume')).toBe(true);
+  expect(marked('audio_buffer_frames')).toBe(true);
+});
+
+// The mixer's two faders are the only volumes left, and neither is a row here, so the index says
+// nothing about them: a result for a row the panel does not render is the search box lying.
+test('the two volumes left the panel with the mixer', async () => {
+  await open();
+  expect(labels(await search('volume'))).toEqual([]);
+  expect(labels(await search('metronome'))).toEqual([]);
+});
+
+test('a panel opened at a row lands on that row s tab with it marked', async () => {
+  host = document.createElement('div');
+  document.body.append(host);
+  root = createRoot(host);
+  // What the mixer's way into the Sound tab does, from a panel that would otherwise open on Sound
+  // with nothing marked.
+  root.render(
+    createElement(SettingsPanel, { open: true, onClose: () => {}, jumpTo: 'library_folder' }),
+  );
+  await vi.waitFor(() => expect(activeTab()).toBe('Library'));
+  expect(marked('library_folder')).toBe(true);
 });
 
 test('a word no label holds still finds the rows it names', async () => {
@@ -138,7 +159,7 @@ test('a pinch behind the panel moves the row it belongs to', async () => {
   const show = (live?: SettingChange) =>
     root!.render(createElement(SettingsPanel, { open: true, onClose: () => {}, live }));
   show();
-  await vi.waitFor(() => expect(host!.querySelector('#setting-row-click_volume')).toBeTruthy());
+  await vi.waitFor(() => expect(host!.querySelector('#setting-row-instrument_id')).toBeTruthy());
   await openTab('Look');
 
   const slider = (label: string) =>
@@ -162,7 +183,6 @@ test('a pinch behind the panel moves the row it belongs to', async () => {
 test('the search names no row the panel does not render', async () => {
   await open();
   for (const query of [
-    'volume',
     'storage',
     'playing',
     'window',

@@ -24,8 +24,8 @@ use objc2_audio_toolbox::{
 };
 use objc2_avf_audio::{
     AVAudioEngine, AVAudioEngineConfigurationChangeNotification, AVAudioEngineManualRenderingMode,
-    AVAudioFormat, AVAudioMixing, AVAudioPCMBuffer, AVAudioPlayerNode, AVAudioUnitMIDIInstrument,
-    AVAudioUnitSampler,
+    AVAudioFormat, AVAudioMixerNode, AVAudioMixing, AVAudioPCMBuffer, AVAudioPlayerNode,
+    AVAudioUnitMIDIInstrument, AVAudioUnitSampler,
 };
 #[cfg(test)]
 use objc2_avf_audio::AVAudioEngineManualRenderingStatus;
@@ -99,6 +99,11 @@ pub struct Graph {
     /// in the sampler's place; the sampler stays in the graph, silent.
     plugin: Option<Retained<AVAudioUnitMIDIInstrument>>,
     clicker: Retained<AVAudioPlayerNode>,
+    /// The keyboard volume, a gain the whole instrument path runs through on its way to the mixer.
+    /// It sits after the effects on purpose: a trim before them would change what a compressor or
+    /// a reverb is given and so change how the instrument answers the hands, which is the one
+    /// thing turning the volume down must not do. The click does not pass through it.
+    fader: Retained<AVAudioMixerNode>,
     format: Retained<AVAudioFormat>,
     strong: Retained<AVAudioPCMBuffer>,
     weak: Retained<AVAudioPCMBuffer>,
@@ -139,10 +144,15 @@ impl Graph {
             let engine = AVAudioEngine::new();
             let sampler = AVAudioUnitSampler::new();
             let clicker = AVAudioPlayerNode::new();
+            let fader = AVAudioMixerNode::new();
             engine.attachNode(&sampler);
             engine.attachNode(&clicker);
+            engine.attachNode(&fader);
             let mixer = engine.mainMixerNode();
-            engine.connect_to_format(&sampler, &mixer, Some(&format));
+            // The instrument end of this is rewired whenever the chain changes; the fader's own
+            // connection to the mixer never is, so setting the volume touches no connection.
+            engine.connect_to_format(&sampler, &fader, Some(&format));
+            engine.connect_to_format(&fader, &mixer, Some(&format));
             engine.connect_to_format(&clicker, &mixer, Some(&format));
             Ok(Graph {
                 strong: blip(&format, STRONG_HZ, STRONG_PEAK)?,
@@ -152,6 +162,7 @@ impl Graph {
                 sampler,
                 plugin: None,
                 clicker,
+                fader,
                 chain: Vec::new(),
                 file: None,
                 offline_frames: 0,
@@ -480,6 +491,13 @@ impl Graph {
         }
     }
 
+    /// The keyboard volume, 0 to 100: a gain on the finished sound, set in place. Nothing is
+    /// reconnected, because any connection change flushes every voice the graph has sounding and
+    /// would cut a ringing note off at the moment the fader moved.
+    pub fn set_keyboard_volume(&self, percent: u32) {
+        unsafe { self.fader.setOutputVolume(percent.min(100) as f32 / 100.0) };
+    }
+
     /// One metronome click, at a volume of 0 to 100.
     pub fn click(&self, strong: bool, volume: u32) {
         let buffer = if strong { &self.strong } else { &self.weak };
@@ -746,12 +764,17 @@ pub fn status() -> Status {
         }
         Some(_) => Status { available: true, ..Status::default() },
     };
+    status.instrument = graph.instrument().unwrap_or_default().into();
     graph.describe_output(&mut status);
     status
 }
 
 pub fn click(strong: bool, volume: u32) {
     with(|graph| graph.click(strong, volume));
+}
+
+pub fn set_keyboard_volume(percent: u32) {
+    with(|graph| graph.set_keyboard_volume(percent));
 }
 
 /// One key of the MIDI keyboard, down or up.
@@ -844,6 +867,18 @@ mod tests {
         peak
     }
 
+    /// The note as it comes out at one fader position. A mixer ramps a volume change over the
+    /// render call that follows it, so the window read is the second one.
+    fn at_volume(graph: &mut Graph, percent: u32) -> f32 {
+        graph.set_keyboard_volume(percent);
+        graph.note_on(60, 100);
+        graph.render_peak(LOOK).unwrap();
+        let peak = graph.render_peak(LOOK).unwrap();
+        graph.release_all();
+        graph.render_peak(LOOK).unwrap();
+        peak
+    }
+
     use crate::audio::instruments::hosted_instrument;
 
     /// True while something other than the test's own reference holds the plugin, which is how a
@@ -861,6 +896,24 @@ mod tests {
     /// Renders one pass at a time and hands back the first one that made a sound.
     fn first_sounding_pass(graph: &mut Graph, passes: u32) -> Option<u32> {
         (0..passes).find(|_| graph.render_peak(PASS).unwrap() > 0.01)
+    }
+
+    /// The keyboard fader trims the finished sound: the same note played twice differs by exactly
+    /// what the fader was moved by, and a fader at zero makes no sound at all.
+    #[test]
+    fn the_fader_trims_the_note_and_zero_is_silence() {
+        let mut graph = offline();
+        let full = at_volume(&mut graph, 100);
+        assert!(full > 0.01, "the fixture sounds at all: {full}");
+
+        let quarter = at_volume(&mut graph, 25);
+        assert!(quarter < full / 2.0, "a fader pulled down is quieter: {quarter} against {full}");
+        assert!(
+            (quarter - full / 4.0).abs() < full / 50.0,
+            "and quieter by what the fader says: {quarter} against a quarter of {full}"
+        );
+
+        assert_eq!(at_volume(&mut graph, 0), 0.0, "a fader at zero is silence");
     }
 
     /// The one test that plays out of the real output device, in the order the app boots, so that

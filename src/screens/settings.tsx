@@ -96,12 +96,6 @@ const SEARCH_ROWS: {
   words: string[];
 }[] = [
   {
-    id: 'click_volume',
-    tab: 'sound',
-    label: 'Click volume',
-    words: ['metronome', 'loudness', 'beat', 'tick'],
-  },
-  {
     id: 'audio_output_device',
     tab: 'sound',
     label: 'Output device',
@@ -293,11 +287,15 @@ export function SettingsPanel({
   onClose,
   onGlobalChange,
   live,
+  jumpTo,
 }: {
   open: boolean;
   onClose: () => void;
   onGlobalChange?: (...change: SettingChange) => void;
   live?: SettingChange | null;
+  /** A row to open on, named by its id: the same jump a search result makes, for the callers that
+   * open the panel at one row rather than at the top. */
+  jumpTo?: string | null;
 }) {
   const [values, setValues] = useState<Settings | null>(null);
   const [tab, setTab] = useState<SettingsTab>('sound');
@@ -319,6 +317,15 @@ export function SettingsPanel({
     if (open) readSettings().then(setValues, console.error);
     else setMarked(null);
   }, [open, downloading]);
+
+  // The tab and the mark land in one render, as they do for a search result, so the scroll effect
+  // below finds the row on the page.
+  useEffect(() => {
+    const row = jumpTo && SEARCH_ROWS.find((each) => each.id === jumpTo);
+    if (!open || !row) return;
+    setTab(row.tab);
+    setMarked(row.id);
+  }, [open, jumpTo]);
 
   // Whether the folder in force holds unpacked scores. Rust answers off the disk, not the setting.
   useEffect(() => {
@@ -457,21 +464,9 @@ export function SettingsPanel({
           {values && (
             <>
               <Tabs.Content value="sound" className="flex flex-col gap-7">
-                <Rows>
-                  {/* ponytail: click volume lives here until ticket 06 moves it to the mixer's
-                      metronome fader, which is the only place the spec gives it. */}
-                  <Row id="click_volume" marked={marked === 'click_volume'} label="Click volume">
-                    <NumberField
-                      value={values.click_volume}
-                      min={0}
-                      max={100}
-                      onChange={(value) => write('click_volume', value)}
-                    />
-                  </Row>
-                </Rows>
-
                 {/* The sound engine's own settings write straight to it, not through `write`:
-                    each one has to reach the running engine as well as the database. */}
+                    each one has to reach the running engine as well as the database. The two
+                    volumes are not here at all; they are the mixer's two faders. */}
                 <SoundTab marked={marked} />
               </Tabs.Content>
 

@@ -13,6 +13,7 @@ import { reindexIfChanged } from '@/library/scan';
 import { useDark } from '@/look/use-dark';
 import { TEMPO_RANGE } from '@/play/settings';
 import { ScoreError } from '@/score/types';
+import { Mixer } from '@/audio/mixer';
 import { SettingsPanel } from '@/screens/settings';
 import { PreviewSheet } from '@/sheet/preview-sheet';
 import { invoke } from '@tauri-apps/api/core';
@@ -57,6 +58,7 @@ export function PreviewScreen({
   /** Why there is no sound, empty when there is; null until the engine has answered. */
   const [reason, setReason] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsJump, setSettingsJump] = useState<string | null>(null);
 
   // The note list is the engine's business and never redraws anything, so it stays out of state.
   const notesRef = useRef<ReturnType<typeof previewNotes>>([]);
@@ -237,6 +239,12 @@ export function PreviewScreen({
           <Button size="sm" onClick={() => onPlay('performance')}>
             Perform
           </Button>
+          <Mixer
+            onSoundSettings={() => {
+              setSettingsJump('instrument_id');
+              setSettingsOpen(true);
+            }}
+          />
           <button
             aria-label="Settings"
             onClick={() => setSettingsOpen(true)}
@@ -247,7 +255,14 @@ export function PreviewScreen({
         </div>
       </div>
 
-      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsPanel
+        open={settingsOpen}
+        jumpTo={settingsJump}
+        onClose={() => {
+          setSettingsOpen(false);
+          setSettingsJump(null);
+        }}
+      />
 
       {/* The systems flow down and the paper never scrolls sideways: it is fitted to the width. */}
       <div className="bg-paper flex-1 overflow-x-hidden overflow-y-auto">

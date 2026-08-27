@@ -67,6 +67,7 @@ pub fn run() {
             audio::audio_start,
             audio::audio_status,
             audio::audio_click,
+            audio::audio_set_keyboard_volume,
             audio::audio_effects,
             audio::audio_chain,
             audio::audio_set_chain,

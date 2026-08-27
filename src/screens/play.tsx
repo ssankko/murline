@@ -53,6 +53,7 @@ import { clampSection, sectionLabel, type Section } from '@/play/section';
 import { useFrameLoop } from '@/play/use-frame-loop';
 import { bpmAt, ScoreError, type Measure } from '@/score/types';
 import { Button } from '@/components/ui/button';
+import { Mixer } from '@/audio/mixer';
 import { GearPopover, SettingsPanel, SpacingPopup, type SettingChange } from '@/screens/settings';
 import { Sheet, type Pinch } from '@/sheet/sheet';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -133,6 +134,7 @@ export function PlayScreen({
   const [live, setLive] = useState<SettingChange | null>(null);
   const [split, setSplit] = useState(DEFAULT_SPLIT);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsJump, setSettingsJump] = useState<string | null>(null);
   const [hands, setHands] = useState(DEFAULT_PLAY_SETTINGS.hands);
   /** A one-staff piece is all right hand, so it has no choice of hands to offer. */
   const [oneStaff, setOneStaff] = useState(false);
@@ -537,6 +539,13 @@ export function PlayScreen({
             onUseGlobalDefaults={() => useGlobalDefaults().catch(console.error)}
             onAllSettings={() => setSettingsOpen(true)}
           />
+          <Mixer
+            onSoundSettings={() => {
+              setSettingsJump('instrument_id');
+              setSettingsOpen(true);
+            }}
+            onGlobalChange={applyGlobal}
+          />
           <BarButton label="Settings" onClick={() => setSettingsOpen(true)}>
             <SlidersHorizontal {...ICON} />
           </BarButton>
@@ -662,7 +671,11 @@ export function PlayScreen({
 
         <SettingsPanel
           open={settingsOpen}
-          onClose={() => setSettingsOpen(false)}
+          jumpTo={settingsJump}
+          onClose={() => {
+            setSettingsOpen(false);
+            setSettingsJump(null);
+          }}
           onGlobalChange={applyGlobal}
           live={live}
         />

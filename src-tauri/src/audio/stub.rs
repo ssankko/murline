@@ -16,6 +16,8 @@ pub fn status() -> Status {
 
 pub fn click(_strong: bool, _volume: u32) {}
 
+pub fn set_keyboard_volume(_percent: u32) {}
+
 pub fn effects() -> Vec<Effect> {
     Vec::new()
 }

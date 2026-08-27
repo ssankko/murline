@@ -216,7 +216,7 @@ fn slots(graph: &Graph) -> Vec<Slot> {
         .collect()
 }
 
-/// Connects the instrument through every installed plugin to the mixer. A slot whose plugin is
+/// Connects the instrument through every installed plugin to the keyboard fader. A slot whose plugin is
 /// missing is left out; a bypassed one stays in the path and passes its sound through untouched.
 /// The head is whichever node the notes go to, so a hosted plugin instrument plays through the
 /// chain exactly as the sampler does and the one it replaces is left connected to nothing.
@@ -237,14 +237,15 @@ pub(super) fn rewire(graph: &Graph) -> Result<(), String> {
             }
         }
         let loaded = graph.reload();
-        let mixer = engine.mainMixerNode();
         let mut path: Vec<&AVAudioNode> = vec![graph.target()];
         for held in &graph.chain {
             if let Some(unit) = &held.unit {
                 path.push(unit);
             }
         }
-        path.push(&mixer);
+        // The keyboard volume, and the end of what this function rewires: the fader's own
+        // connection to the mixer is made once when the graph is built and never touched again.
+        path.push(&graph.fader);
         for pair in path.windows(2) {
             engine.connect_to_format(pair[0], pair[1], Some(&graph.format));
         }
@@ -577,6 +578,33 @@ mod tests {
         graph.note_off(60);
         graph.render_peak(LOOK).unwrap();
         graph.render_peak(LOOK).unwrap()
+    }
+
+    /// The keyboard fader sits after the chain, so the effects are handed the same note whatever
+    /// the fader says. A full-wet reverb makes that visible: play a note with the fader down, and
+    /// the reverb is still being fed, so raising the fader while the tail runs brings the tail
+    /// back. A trim before the chain would have fed the reverb silence and left nothing to raise.
+    #[test]
+    fn the_chain_hears_the_same_note_however_far_the_fader_is_down() {
+        let mut graph = offline();
+        apply(&mut graph, vec![slot(REVERB)]);
+        param(&graph, 0, DRY_WET, 100.0);
+
+        graph.set_keyboard_volume(0);
+        graph.note_on(60, 100);
+        // The mixer ramps a volume change over the render call after it, so the first window still
+        // carries the fader's old position and the second is the one that reads it.
+        graph.render_peak(LOOK).unwrap();
+        assert_eq!(graph.render_peak(LOOK).unwrap(), 0.0, "a fader at zero is silence");
+        graph.note_off(60);
+        assert_eq!(graph.render_peak(LOOK).unwrap(), 0.0, "and stays silence while the note rings");
+
+        graph.set_keyboard_volume(100);
+        graph.render_peak(LOOK).unwrap();
+        assert!(
+            graph.render_peak(LOOK).unwrap() > 0.0,
+            "the reverb was fed all along, so the tail is there to be turned up"
+        );
     }
 
     #[test]

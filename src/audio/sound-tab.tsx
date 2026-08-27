@@ -16,6 +16,8 @@ export interface AudioStatus {
   /** Opaque id of the device playing now; null while the engine plays through none. */
   device: string | null;
   device_name: string;
+  /** What is playing now; empty when nothing is loaded, which `reason` then explains. */
+  instrument: string;
   /** Why the device playing is not the one chosen; empty while the choice is honoured. */
   fallback: string;
   buffer_frames: number;
@@ -30,6 +32,7 @@ export const NO_STATUS: AudioStatus = {
   reason: '',
   device: null,
   device_name: '',
+  instrument: '',
   fallback: '',
   buffer_frames: 0,
   sample_rate: 0,
@@ -45,13 +48,12 @@ function trouble(status: AudioStatus | null): string {
 }
 
 /**
- * The sound engine's own settings, under the panel's Sound tab. `marked` is the row a search
- * result jumped to, handed down so each section can mark its own.
+ * What the engine says about itself, re-read whenever the device list changes. `round` is a
+ * counter a caller bumps when it has just changed something the answer depends on, such as the
+ * instrument. Null until the first answer lands.
  */
-export function SoundTab({ marked }: { marked?: string | null }) {
+export function useAudioStatus(round = 0): AudioStatus | null {
   const [status, setStatus] = useState<AudioStatus | null>(null);
-  // A section that changed something the status line reads asks for this to go round again.
-  const [round, setRound] = useState(0);
 
   useEffect(() => {
     let live = true;
@@ -61,13 +63,25 @@ export function SoundTab({ marked }: { marked?: string | null }) {
         (error: unknown) => live && setStatus({ ...NO_STATUS, reason: String(error) }),
       );
     void read();
-    // Unplugging the chosen device is the other way the line below changes while the tab is open.
+    // Unplugging the chosen device is the other way the answer changes while nothing is touched.
     const listening = listen('audio-devices-changed', () => void read());
     return () => {
       live = false;
       void listening.then((stop) => stop());
     };
   }, [round]);
+
+  return status;
+}
+
+/**
+ * The sound engine's own settings, under the panel's Sound tab. `marked` is the row a search
+ * result jumped to, handed down so each section can mark its own.
+ */
+export function SoundTab({ marked }: { marked?: string | null }) {
+  // A section that changed something the status line reads asks for this to go round again.
+  const [round, setRound] = useState(0);
+  const status = useAudioStatus(round);
 
   return (
     <div className="flex min-w-0 flex-col gap-7">

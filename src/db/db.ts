@@ -49,6 +49,9 @@ export type Settings = {
 
   /** Loudness of the metronome click, 0 to 100. */
   click_volume: number;
+  /** The mixer's keyboard fader, 0 to 100: a gain after the effect chain in the sound engine, so
+   * it trims everything the instrument path makes without changing how it makes it. */
+  keyboard_volume: number;
   /** The effects the sound engine plays the instrument through, in the order they play. */
   effect_chain: EffectSlot[];
 
@@ -172,6 +175,7 @@ export const SETTING_DEFAULTS: Settings = {
   sheet_harmony: true,
   sheet_colour: true,
   click_volume: 70,
+  keyboard_volume: 100,
   effect_chain: [],
   audio_output_device: null,
   audio_buffer_frames: 64,

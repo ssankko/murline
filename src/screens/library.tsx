@@ -35,6 +35,7 @@ import { Collapse } from '@/look/collapse';
 import { readPieceDefaults, type PieceSettings } from '@/play/resolve';
 import { Finder } from '@/screens/finder';
 import { Detail } from '@/screens/piece-detail';
+import { Mixer } from '@/audio/mixer';
 import { SettingsPanel } from '@/screens/settings';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
@@ -76,6 +77,8 @@ export function Library({
   /** The lower-cased, NFC folder-relative paths of every present piece, read when the finder opens. */
   const [finding, setFinding] = useState<Set<string> | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** The row the panel opens on, which only the mixer's way into the Sound tab sets. */
+  const [settingsJump, setSettingsJump] = useState<string | null>(null);
   const [defaults, setDefaults] = useState<Partial<PieceSettings>>({});
 
   // The Play settings list holds the resolved values, so it needs the middle level of every field.
@@ -223,6 +226,12 @@ export function Library({
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
+          <Mixer
+            onSoundSettings={() => {
+              setSettingsJump('instrument_id');
+              setSettingsOpen(true);
+            }}
+          />
           <Button
             variant="ghost"
             size="icon"
@@ -342,7 +351,11 @@ export function Library({
       {/* A new library folder re-points the app. The scan runs again and no file is touched. */}
       <SettingsPanel
         open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
+        jumpTo={settingsJump}
+        onClose={() => {
+          setSettingsOpen(false);
+          setSettingsJump(null);
+        }}
         onGlobalChange={(key, value) => {
           if (key === 'library_folder') onFolder(value as string);
         }}

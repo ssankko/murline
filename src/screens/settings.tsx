@@ -163,7 +163,9 @@ export function SettingsDialog({
           <DialogDescription className="sr-only">Every setting of the app.</DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-7">
+        {/* The dialog box is a grid, whose track is as wide as its widest content unless the
+            column is let go under it: without min-w-0 a long path widens the whole box. */}
+        <div className="flex min-w-0 flex-col gap-7">
           {/* The library folder is the library, and an empty one has no undo, so Reset leaves it. */}
           <Group
             title="Library"
@@ -531,7 +533,7 @@ function PopoverGroup({ title, children }: { title: string; children: React.Reac
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex min-h-8 items-center justify-between gap-3 py-1 text-[12px]">
-      <span>{label}</span>
+      <span className="flex-none">{label}</span>
       {children}
     </div>
   );

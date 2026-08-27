@@ -44,7 +44,10 @@ pub fn run() {
             library::reveal_in_finder,
             library::trash_file,
             finder::finder_search,
-            finder::finder_download
+            finder::finder_download,
+            pdmx::pdmx_status,
+            pdmx::pdmx_fetch,
+            pdmx::pdmx_cancel
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

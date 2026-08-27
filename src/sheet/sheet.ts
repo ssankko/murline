@@ -5,7 +5,7 @@
 import { clamp } from '@/lib/utils';
 import { CURSOR, INK, PAPER, colorOf, tone } from '@/look/color';
 import { EASE, easeInOut, reducedMotion } from '@/look/motion';
-import type { SeekTarget, Snapshot } from '@/play/engine';
+import type { NoteState, SeekTarget, Snapshot } from '@/play/engine';
 import type { Section } from '@/play/section';
 import { isInactiveHand, type HandsSetting } from '@/play/settings';
 import { buildScore } from '@/score/build';
@@ -18,6 +18,7 @@ import {
   type Note as OsmdNote,
 } from 'opensheetmusicdisplay';
 import { applyTheme, applyTiers, noteheadEl, paintHead, type VFNote } from './paint';
+import { projectStates, type Play } from './project';
 
 /** Paper kept above the top staff line, the strip the chord bubbles sit in. */
 const BUBBLE_STRIP = 28;
@@ -76,9 +77,6 @@ const EASE_MS = 200;
 
 /** The end of a practice: the cursor band fades away over this long and comes back at the start. */
 const FINISH_MS = 400;
-
-/** What a note carries besides its pitch colour. */
-type MarkKind = 'none' | 'current' | 'miss';
 
 /** Where the cursor stands, in pixels of the unscaled sheet content. */
 interface CursorAt {
@@ -173,10 +171,13 @@ export class Sheet {
   /** Pixels the content is lifted by, which leaves the bubble strip of paper above the staff. */
   private offsetY = 0;
 
-  private misses = new Set<OsmdNote>();
+  /** The state last painted on each notehead, which is what a repaint puts back. */
+  private shown = new Map<OsmdNote, NoteState>();
+  /** The engine version the painted states come from; -1 until the first projection. */
+  private projected = -1;
   /** Which hand the play expects; the other hand's noteheads read as scaffolding. */
   private hands: HandsSetting = 'both';
-  private outlined: Note[] = [];
+  private outlined: readonly Note[] = [];
   private drawn = {
     scale: 0,
     onset: -1,
@@ -322,37 +323,51 @@ export class Sheet {
   setHands(hands: HandsSetting): void {
     if (hands === this.hands) return;
     this.hands = hands;
-    for (const onset of this.score.onsets) for (const note of onset.notes) this.paintNote(note);
-    for (const note of this.outlined) this.markNote(note, 'current');
+    this.repaint();
   }
 
   /**
-   * Puts the note states of a play back on every notehead: a note it names is skipped and reads in
-   * the miss grey, every other note in its pitch colour. One entry per played note, in played
-   * order, so a repeated bar takes the state of its last pass.
+   * Draws the play's note states on the noteheads, once per write the engine made. Only the heads
+   * whose state changed are painted, and the outline of the current Onset goes back over them.
    */
-  setMarks(notes: readonly { note: Note }[], missed: (index: number) => boolean): void {
-    notes.forEach((note, index) => this.markNote(note.note, missed(index) ? 'miss' : 'none'));
-    for (const note of this.outlined) this.markNote(note, 'current');
+  project(play: Play, playedTick: number): void {
+    if (play.version === this.projected) return;
+    this.projected = play.version;
+    const states = projectStates(play.notes, (i) => play.noteState(i), playedTick);
+    for (const onset of this.score.onsets) {
+      for (const note of onset.notes) {
+        const state = states.get(note.source) ?? 'pending';
+        if (this.shown.get(note.source) === state) continue;
+        this.shown.set(note.source, state);
+        this.paintNote(note, state);
+      }
+    }
+    this.outline(this.outlined, true);
   }
 
-  /** The miss grey or the current Onset's outline; `none` puts the pitch colour back. */
-  markNote(note: Note, kind: MarkKind): void {
-    const head = noteheadEl(this.osmd, note.source);
-    if (!head) return;
-    if (kind === 'current') {
-      paintHead(head, { stroke: OUTLINE, 'stroke-width': '1.2', 'paint-order': 'stroke' });
-      return;
+  /**
+   * Rings the noteheads of one Onset, or takes the ring off. The ring is a stroke around the fill,
+   * so it never touches the colour the note carries underneath it.
+   */
+  outline(notes: readonly Note[], on: boolean): void {
+    for (const note of notes) {
+      const head = noteheadEl(this.osmd, note.source);
+      if (!head) continue;
+      paintHead(
+        head,
+        on
+          ? { stroke: OUTLINE, 'stroke-width': '1.2', 'paint-order': 'stroke' }
+          : { stroke: this.colourOf(note), 'stroke-width': null, 'paint-order': null },
+      );
     }
-    // A tie sounds as one note and only the note that starts it is ever struck, so its whole chain
-    // takes the mark. Every member is the same pitch on the same staff, so one colour serves them.
-    const tie = note.source.NoteTie;
-    const chain = tie?.StartNote === note.source ? tie.Notes : [note.source];
-    for (const member of chain) {
-      if (kind === 'miss') this.misses.add(member);
-      else this.misses.delete(member);
-      this.paintNote(note, member === note.source ? head : noteheadEl(this.osmd, member));
+  }
+
+  /** Writes every notehead's colour again, which is what a fresh render and a hands change need. */
+  private repaint(): void {
+    for (const onset of this.score.onsets) {
+      for (const note of onset.notes) this.paintNote(note, this.shown.get(note.source) ?? 'pending');
     }
+    this.outline(this.outlined, true);
   }
 
   /**
@@ -402,9 +417,9 @@ export class Sheet {
     this.cursor.style.height = `${this.system.bottom - this.system.top}px`;
 
     if (at.onsetIndex !== this.drawn.onset) {
-      for (const note of this.outlined) this.paintNote(note);
+      this.outline(this.outlined, false);
       this.outlined = this.score.onsets[at.onsetIndex]?.notes ?? [];
-      for (const note of this.outlined) this.markNote(note, 'current');
+      this.outline(this.outlined, true);
       this.dimBubbles(at.onsetIndex);
       this.drawn.onset = at.onsetIndex;
     }
@@ -669,7 +684,7 @@ export class Sheet {
     if (this.walk.length === 0) this.walk = this.score.playOrder;
     this.markJumps();
 
-    for (const onset of this.score.onsets) for (const note of onset.notes) this.paintNote(note);
+    this.repaint();
     applyTiers(this.paper, this.dark);
 
     // Paper above the top staff line is dead space apart from the strip the bubbles need. The lift
@@ -789,18 +804,11 @@ export class Sheet {
     return onset ? (this.score.measures[onset.measureIndex]?.number ?? 0) : 0;
   }
 
-  /**
-   * The pitch colour of a note, or the miss grey once it has been marked. A note of the inactive
-   * hand is context only: it drops to the scaffolding tier and takes no mark.
-   */
-  private paintNote(note: Note, head = noteheadEl(this.osmd, note.source)): void {
+  /** Writes a note's colour on its head. The write clears any ring, which `outline` puts back. */
+  private paintNote(note: Note, state: NoteState): void {
+    const head = noteheadEl(this.osmd, note.source);
     if (!head) return;
-    const colour =
-      isInactiveHand(this.hands, note.hand)
-        ? tone(INK.scaffolding, this.dark)
-        : this.misses.has(note.source)
-          ? tone(INK.miss, this.dark)
-          : colorOf(note.midi, 'muted', this.dark);
+    const colour = this.colourOf(note, state);
     paintHead(head, {
       fill: colour,
       stroke: colour,
@@ -808,6 +816,16 @@ export class Sheet {
       'paint-order': null,
       opacity: null,
     });
+  }
+
+  /**
+   * What a note reads as: the miss grey once the play skipped it, its pitch colour otherwise. A
+   * note of the inactive hand is context only and drops to the scaffolding tier.
+   */
+  private colourOf(note: Note, state = this.shown.get(note.source) ?? 'pending'): string {
+    if (isInactiveHand(this.hands, note.hand)) return tone(INK.scaffolding, this.dark);
+    if (state === 'miss') return tone(INK.miss, this.dark);
+    return colorOf(note.midi, 'muted', this.dark);
   }
 }
 

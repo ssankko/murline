@@ -99,8 +99,8 @@ interface Struck {
   offMs: number | null;
 }
 
-/** How a note reads in the lane. */
-type NoteState = 'pending' | 'hit' | 'miss';
+/** How a note reads in the lane and on the sheet. */
+export type NoteState = 'pending' | 'hit' | 'miss';
 
 /** How a key reads on the keyboard: its pitch colour, grey while held wrong, or unheld. */
 type KeyState = 'base' | 'grey' | 'color';
@@ -138,8 +138,10 @@ export class Engine {
   /** Played ticks of the beats being counted in, before the tick the count-in leads to. */
   countInBeats: number[] = [];
   kind: PlayKind = 'practice';
-  /** Bumped every time the notes are opened again, which is what takes the sheet's marks off. */
+  /** Bumped every time the notes are opened again, which is what tells the lane the clock jumped. */
   resets = 0;
+  /** Bumped on every write to a note state, so the sheet knows its projection is stale. */
+  version = 0;
   /** Bumped when a loop wrap takes the clock back to the top of the lap, which is motion, not a seek. */
   wraps = 0;
   /** Bumped when a practice runs off the end of the piece, the one ending that is animated. */
@@ -462,6 +464,7 @@ export class Engine {
     this.notes = playNotesOf(this.score, walk);
     this.states = this.notes.map(() => 'pending');
     this.resolved = this.notes.map(() => 0);
+    this.version++;
     this.beatGrid = beatGridOf(this.score, walk);
     this.lastSoundingTick = lastSoundingOf(this.notes);
     // The new walk renumbers both notes and steps, so a held key names nothing and the Wait state
@@ -517,6 +520,7 @@ export class Engine {
     }
     this.states.fill('pending', this.closed);
     this.resolved.fill(0);
+    this.version++;
   }
 
   /**
@@ -797,6 +801,7 @@ export class Engine {
       };
       this.states[hit] = 'hit';
       this.resolved[hit] = event.time;
+      this.version++;
       this.held.set(event.midi, hit);
       this.pending.push({
         verdict: 'hit',
@@ -860,6 +865,7 @@ export class Engine {
       if (this.states[index] !== 'pending' || !this.isExpected(note)) continue;
       this.states[index] = 'miss';
       this.resolved[index] = this.wall;
+      this.version++;
       this.pending.push({
         verdict: 'miss',
         midi: note.midi,
@@ -946,6 +952,7 @@ export class Engine {
       this.wait.count(step, event.midi, event.time);
       this.states[index] = 'hit';
       this.resolved[index] = event.time;
+      this.version++;
       this.held.set(event.midi, index);
       this.pending.push({
         verdict: 'hit',

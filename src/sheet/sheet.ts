@@ -486,11 +486,7 @@ export class Sheet {
     const from = this.boxes[section?.from ?? -1];
     const to = this.boxes[section?.to ?? -1];
     const show = !!(section && from && to);
-    for (const el of this.band) {
-      el.classList.toggle('on', show);
-      // A drag rewrites the geometry every pointermove, so the glide waits for the pointer to lift.
-      el.classList.toggle('dragging', this.drag !== null);
-    }
+    for (const el of this.band) el.classList.toggle('on', show);
     // A hidden band keeps its last geometry, which is what it fades out from.
     if (!show) return;
     const top = this.system.top;

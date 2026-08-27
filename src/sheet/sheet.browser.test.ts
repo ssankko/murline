@@ -318,6 +318,49 @@ test('a drag that starts outside the Section picks a fresh one there', async () 
   sheet.dispose();
 }, 60_000);
 
+test('a fast resize chases the last bar line and never queues the ones before it', async () => {
+  const host = hostEl();
+  const sheet = await open(BACH, host);
+  const tint = host.querySelector<HTMLElement>('.sheet-section')!;
+  const at = () => parseFloat(getComputedStyle(tint).left);
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 320));
+  sheet.onSection = (section) => sheet.setSection(section);
+
+  sheet.setSection({ from: 0, to: 1 });
+  await settle();
+  const start = at();
+
+  // Mid-drag: the band snaps to whole bars, so its edges glide between bar lines under the pointer.
+  const x = host.getBoundingClientRect().left + sheet.xOfOnset(0);
+  host.dispatchEvent(new PointerEvent('pointerdown', { clientX: x, button: 0, bubbles: true }));
+  host.dispatchEvent(new PointerEvent('pointermove', { clientX: x + 60, buttons: 1, bubbles: true }));
+  expect(getComputedStyle(tint).transitionProperty).toBe('opacity, display, left, width');
+  host.dispatchEvent(new PointerEvent('pointerup', { clientX: x + 60, bubbles: true }));
+
+  // Three bar lines in one task, as a drag across three bars hands them over frame by frame.
+  sheet.setSection({ from: 4, to: 5 });
+  sheet.setSection({ from: 8, to: 9 });
+  sheet.setSection({ from: 12, to: 13 });
+  const target = parseFloat(tint.style.left);
+  expect(target).toBeGreaterThan(start);
+
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  const mid = at();
+  expect(mid).toBeGreaterThan(start);
+  expect(mid).toBeLessThan(target);
+
+  // A fourth change in flight picks the band up where it stands instead of dropping it back.
+  sheet.setSection({ from: 20, to: 21 });
+  expect(at()).toBeGreaterThanOrEqual(mid);
+  expect(at()).toBeLessThan(target);
+
+  sheet.setSection({ from: 12, to: 13 });
+  await settle();
+  expect(at()).toBeCloseTo(target, 0);
+
+  sheet.dispose();
+}, 60_000);
+
 /** How far two boxes print over one another: at zero or below they only share an edge. */
 function overlap(a: DOMRect, b: DOMRect): number {
   return Math.min(

@@ -389,6 +389,37 @@ function snapshot(playedTick: number): Snapshot {
   };
 }
 
+test("the play's note states come back over the whole sheet, the outline with them", async () => {
+  const sheet = await open();
+  // The cursor stands at the first Onset, which the frame outlines.
+  sheet.frame(snapshot(0), 0, 0);
+  const notes = sheet.score.onsets.flatMap((onset) => onset.notes);
+  const first = notes[0]!;
+  const last = notes[notes.length - 1]!;
+  const fill = (note: (typeof notes)[number]) =>
+    noteheadEl(sheet.osmd, note.source)?.firstElementChild?.getAttribute('fill');
+
+  // Everything the play skipped greys at once, everything else reads as never played.
+  sheet.setMarks(
+    notes.map((note) => ({ note })),
+    (index) => index < notes.length / 2,
+  );
+  expect(fill(first)).toBe(tone(INK.miss, false));
+  expect(fill(last)).toBe(colorOf(last.midi, 'muted', false));
+  // The repaint went over the Onset the cursor stands at, which keeps its ring.
+  expect(
+    noteheadEl(sheet.osmd, first.source)!.firstElementChild!.getAttribute('paint-order'),
+  ).toBe('stroke');
+
+  sheet.setMarks(
+    notes.map((note) => ({ note })),
+    () => false,
+  );
+  expect(fill(first)).toBe(colorOf(first.midi, 'muted', false));
+
+  sheet.dispose();
+}, 60_000);
+
 test('a missed tie greys its whole chain, and the colour comes back to all of it', async () => {
   const sheet = await open();
   const notes = sheet.score.onsets.flatMap((onset) => onset.notes);

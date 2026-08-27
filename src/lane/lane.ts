@@ -600,13 +600,16 @@ export class Lane {
       const height = full * beat;
       const radius = Math.max(Math.min(NOTE_RADIUS, width / 3, height / 3), 0);
       // How far a miss has gone grey. It sinks and dims as it goes and stays that way in view.
+      // A note the engine skipped past carries no stamp: it is grey from the frame it appears in.
       const missed = state === 'miss';
-      const gone = missed ? (this.reduced ? 1 : clamp(age / MISS_MS, 0, 1)) : 0;
+      const played = engine.resolvedAt(i) > 0;
+      const gone = missed ? (this.reduced || !played ? 1 : clamp(age / MISS_MS, 0, 1)) : 0;
       const blockY = y + full - height + MISS_SINK * gone;
-      // A missed block grinds sparks off the keys for as long as it is crossing them.
+      // A missed block grinds sparks off the keys for as long as it is crossing them; a skipped
+      // one was never played at, so it only lies there.
       const crossing =
         note.tick <= this.playedTick && this.playedTick < note.tick + note.durationTicks;
-      if (missed && !this.reduced && (crossing || engine.resolvedAt(i) > this.sinceWall)) {
+      if (missed && played && !this.reduced && (crossing || engine.resolvedAt(i) > this.sinceWall)) {
         this.grind(x, width, laneH);
       }
       // How much of a ghost the note is now: a change of hands cross-fades it over the two looks.

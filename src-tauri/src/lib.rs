@@ -52,7 +52,9 @@ pub fn run() {
                 .add_migrations("sqlite:piano.db", migrations())
                 .build(),
         )
-        .setup(|_app| {
+        .setup(|app| {
+            // The engine sends its device-list event from a CoreAudio thread, so it needs a handle.
+            audio::remember(app.handle().clone());
             finder::warm();
             Ok(())
         })
@@ -61,6 +63,9 @@ pub fn run() {
             audio::audio_start,
             audio::audio_status,
             audio::audio_click,
+            audio::audio_output_devices,
+            audio::audio_set_output_device,
+            audio::audio_set_buffer_frames,
             library::copy_file,
             library::list_library,
             library::read_file,

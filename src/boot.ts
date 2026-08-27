@@ -38,7 +38,11 @@ export async function boot(print: (lines: string[]) => void): Promise<Settings> 
   setTheme(settings.theme);
   say(`> theme: ${settings.theme}`);
 
-  await step('starting sound engine', () => invoke('audio_start'));
+  await step('starting sound engine', async () => {
+    await invoke('audio_start');
+    await invoke('audio_set_output_device', { id: settings.audio_output_device });
+    await invoke('audio_set_buffer_frames', { frames: settings.audio_buffer_frames });
+  });
 
   // The library screen walks the same folder on mount, and `scanLibrary` walks a folder once, so
   // the wait for it happens here instead of behind an empty list.

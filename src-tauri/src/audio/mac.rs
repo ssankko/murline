@@ -10,15 +10,21 @@
 // then the tests at the bottom of this file are their only caller.
 #![allow(dead_code)]
 
-use crate::audio::Status;
+use crate::audio::device::{self, DeviceId};
+use crate::audio::{OutputDevice, Status};
 use objc2::AllocAnyThread;
 use objc2::rc::Retained;
+use objc2_audio_toolbox::{
+    AudioUnit, AudioUnitGetProperty, AudioUnitSetProperty, kAudioOutputUnitProperty_CurrentDevice,
+    kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global,
+};
 use objc2_avf_audio::{
     AVAudioEngine, AVAudioEngineManualRenderingMode, AVAudioEngineManualRenderingStatus,
     AVAudioFormat, AVAudioMixing, AVAudioPCMBuffer, AVAudioPlayerNode, AVAudioUnitSampler,
 };
 use objc2_foundation::{NSError, NSString, NSURL};
 use std::path::Path;
+use std::ptr::{NonNull, from_ref};
 use std::sync::Mutex;
 
 /// The sample rate the click blips are built at. The device runs at whatever it runs at; the mixer
@@ -42,6 +48,12 @@ const ALL_NOTES_OFF: u8 = 123;
 /// The bank a melodic SoundFont instrument lives in, per Apple's `kAUSampler_DefaultMelodicBankMSB`.
 const MELODIC_BANK_MSB: u8 = 0x79;
 
+/// The buffer sizes the dialog offers, and the one the app starts at.
+pub const FRAME_CHOICES: [u32; 4] = [32, 64, 128, 256];
+pub const DEFAULT_FRAMES: u32 = 64;
+/// The status line when the device the user picked is not plugged in.
+const GONE: &str = "Your chosen output device is not connected; playing through the system default";
+
 /// The one graph the app plays through, empty until `start` builds it.
 static GRAPH: Mutex<Option<Graph>> = Mutex::new(None);
 /// AUSampler keeps its loaded samples in one map per process, and two loads at once abort inside
@@ -59,6 +71,14 @@ pub struct Graph {
     offline_frames: u32,
     /// Name of the instrument loaded into the sampler, which is what makes the engine playable.
     instrument: Option<String>,
+    /// The device the user picked, kept as its UID even while it is unplugged so that plugging it
+    /// back in takes it up again. None is the system default.
+    chosen: Option<String>,
+    /// The device actually playing, and whether the choice above had to be given up to find it.
+    device: DeviceId,
+    fell_back: bool,
+    /// The buffer the user picked. What the device runs may differ, and the status reports that.
+    wanted_frames: u32,
 }
 
 // AVFAudio's classes carry no main-thread requirement, and every call into one goes through the
@@ -90,6 +110,10 @@ impl Graph {
                 clicker,
                 offline_frames: 0,
                 instrument: None,
+                chosen: None,
+                device: 0,
+                fell_back: false,
+                wanted_frames: DEFAULT_FRAMES,
             })
         }
     }
@@ -180,6 +204,82 @@ impl Graph {
         self.instrument.as_deref()
     }
 
+    /// The output unit AVAudioEngine plays through, which is where the device is chosen.
+    fn output_unit(&self) -> AudioUnit {
+        unsafe { self.engine.outputNode().audioUnit() }
+    }
+
+    /// Reads back the device the engine started on, so the status has an answer before the first
+    /// setting is applied.
+    fn adopt(&mut self) {
+        self.device = current_device(self.output_unit()).unwrap_or(0);
+    }
+
+    /// Moves the whole graph to `device`. Nothing is left sounding: the notes go first, and the
+    /// engine has to stop before the output unit will take a different device.
+    fn play_through(&mut self, device: DeviceId, fell_back: bool) -> Result<(), String> {
+        self.release_all();
+        unsafe { self.engine.stop() };
+        set_current_device(self.output_unit(), device)?;
+        self.device = device;
+        self.fell_back = fell_back;
+        // A device that will not take the buffer keeps its own; the move itself still stands, and
+        // the status reports the size actually running.
+        let _ = self.apply_buffer();
+        self.start()
+    }
+
+    /// Takes the device list as it now is: stays put when the choice still resolves to the device
+    /// playing, moves to the system default when the chosen device has gone, and moves back to the
+    /// chosen device when it returns.
+    pub fn follow_devices(&mut self) -> Result<(), String> {
+        let (device, fell_back) = device::resolve(self.chosen.as_deref())?;
+        if device == self.device && fell_back == self.fell_back {
+            return Ok(());
+        }
+        self.play_through(device, fell_back)
+    }
+
+    pub fn set_device(&mut self, chosen: Option<String>) -> Result<(), String> {
+        self.chosen = chosen;
+        let (device, fell_back) = device::resolve(self.chosen.as_deref())?;
+        self.play_through(device, fell_back)
+    }
+
+    pub fn set_buffer(&mut self, frames: u32) -> Result<(), String> {
+        if !FRAME_CHOICES.contains(&frames) {
+            return Err(format!("{frames} frames is not one of 32, 64, 128 and 256"));
+        }
+        self.wanted_frames = frames;
+        self.release_all();
+        // The device restarts its own IO around the change, so the graph stops first and what would
+        // have been a half-rendered buffer is silence instead.
+        unsafe { self.engine.stop() };
+        let applied = self.apply_buffer();
+        self.start()?;
+        applied
+    }
+
+    fn apply_buffer(&self) -> Result<(), String> {
+        let asked = device::set_buffer_frames(self.device, self.wanted_frames);
+        let running = device::buffer_frames(self.device);
+        for unit in [self.output_unit(), unsafe { self.sampler.audioUnit() }] {
+            raise_max_frames(unit, running);
+        }
+        asked
+    }
+
+    /// What the Audio dialog shows about the output, folded into the status the engine answers.
+    fn describe_output(&self, status: &mut Status) {
+        let frames = device::buffer_frames(self.device);
+        status.device = device::uid(self.device);
+        status.device_name = device::name(self.device);
+        status.fallback = if self.fell_back { GONE.into() } else { String::new() };
+        status.buffer_frames = frames;
+        status.sample_rate = device::sample_rate(self.device);
+        status.latency_ms = device::latency_ms(self.device, frames);
+    }
+
     pub fn note_on(&self, note: u8, velocity: u8) {
         unsafe { self.sampler.startNote_withVelocity_onChannel(note, velocity, CHANNEL) };
     }
@@ -240,26 +340,129 @@ fn reason(error: Retained<NSError>) -> String {
     error.localizedDescription().to_string()
 }
 
+fn current_device(unit: AudioUnit) -> Option<DeviceId> {
+    let mut device: DeviceId = 0;
+    let mut size = size_of::<DeviceId>() as u32;
+    let status = unsafe {
+        AudioUnitGetProperty(
+            unit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            NonNull::from(&mut device).cast(),
+            NonNull::from(&mut size),
+        )
+    };
+    (status == 0).then_some(device)
+}
+
+fn set_current_device(unit: AudioUnit, device: DeviceId) -> Result<(), String> {
+    let status = unsafe {
+        AudioUnitSetProperty(
+            unit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            from_ref(&device).cast(),
+            size_of::<DeviceId>() as u32,
+        )
+    };
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(format!("{} could not be played through (status {status})", device::name(device)))
+    }
+}
+
+/// Lets a unit render a whole device buffer in one slice. Units start well above every buffer the
+/// dialog offers, so this fires only for a device running a bigger one than the app asked for.
+/// Lowering the figure to match a small buffer is deliberately not done: it buys nothing, and a
+/// unit that is already initialised refuses it.
+fn raise_max_frames(unit: AudioUnit, frames: u32) {
+    let mut current = 0u32;
+    let mut size = size_of::<u32>() as u32;
+    let read = unsafe {
+        AudioUnitGetProperty(
+            unit,
+            kAudioUnitProperty_MaximumFramesPerSlice,
+            kAudioUnitScope_Global,
+            0,
+            NonNull::from(&mut current).cast(),
+            NonNull::from(&mut size),
+        )
+    };
+    if read != 0 || current >= frames {
+        return;
+    }
+    unsafe {
+        AudioUnitSetProperty(
+            unit,
+            kAudioUnitProperty_MaximumFramesPerSlice,
+            kAudioUnitScope_Global,
+            0,
+            from_ref(&frames).cast(),
+            size_of::<u32>() as u32,
+        )
+    };
+}
+
 pub fn start() -> Result<(), String> {
-    let graph = Graph::build()?;
+    let mut graph = Graph::build()?;
     graph.start()?;
+    graph.adopt();
     *GRAPH.lock().unwrap() = Some(graph);
+    device::watch(devices_changed);
     Ok(())
 }
 
+/// CoreAudio's answer to a plug or an unplug: the engine takes the new list into account, then the
+/// dialog is told to read its picker again. CoreAudio calls this on one of its own threads and
+/// wants it back at once, and stopping the engine there would run inside the HAL's own locks, so
+/// the work moves off it.
+fn devices_changed() {
+    std::thread::spawn(|| {
+        if let Some(graph) = GRAPH.lock().unwrap().as_mut() {
+            let _ = graph.follow_devices();
+        }
+        crate::audio::tell_devices_changed();
+    });
+}
+
 pub fn status() -> Status {
-    match GRAPH.lock().unwrap().as_ref() {
-        None => Status::unavailable("The sound engine did not start"),
-        // Later tickets choose an instrument; until one is loaded the graph is silent by design.
-        Some(graph) if graph.instrument().is_none() => Status::unavailable("No instrument chosen"),
-        Some(_) => Status { available: true, reason: String::new() },
-    }
+    let held = GRAPH.lock().unwrap();
+    let Some(graph) = held.as_ref() else {
+        return Status::unavailable("The sound engine did not start");
+    };
+    // Later tickets choose an instrument; until one is loaded the graph is silent by design.
+    let mut status = match graph.instrument() {
+        None => Status::unavailable("No instrument chosen"),
+        Some(_) => Status { available: true, ..Status::default() },
+    };
+    graph.describe_output(&mut status);
+    status
 }
 
 pub fn click(strong: bool, volume: u32) {
     if let Some(graph) = GRAPH.lock().unwrap().as_ref() {
         graph.click(strong, volume);
     }
+}
+
+pub fn output_devices() -> Vec<OutputDevice> {
+    device::outputs()
+}
+
+pub fn set_output_device(id: Option<String>) -> Result<(), String> {
+    with_graph(|graph| graph.set_device(id))
+}
+
+pub fn set_buffer_frames(frames: u32) -> Result<(), String> {
+    with_graph(|graph| graph.set_buffer(frames))
+}
+
+fn with_graph(run: impl FnOnce(&mut Graph) -> Result<(), String>) -> Result<(), String> {
+    let mut held = GRAPH.lock().unwrap();
+    run(held.as_mut().ok_or("The sound engine did not start")?)
 }
 
 #[cfg(test)]

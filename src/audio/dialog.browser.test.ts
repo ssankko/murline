@@ -8,9 +8,13 @@ let answer: unknown = { available: false, reason: 'No instrument chosen' };
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: async (command: string) => {
     if (command === 'audio_status') return answer;
+    if (command === 'audio_output_devices') return [];
+    if (command === 'audio_set_output_device' || command === 'audio_set_buffer_frames') return;
     throw new Error(`unexpected command ${command}`);
   },
 }));
+// The Output section follows the engine's device-list event; nothing here plugs anything in.
+vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }));
 
 let close: (() => void) | null = null;
 

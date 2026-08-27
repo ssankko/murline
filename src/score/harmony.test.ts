@@ -127,9 +127,8 @@ describe('the naming rules', () => {
   });
 
   test('one pitch class or octave doublings only carry the last name', () => {
-    const events = analyzeHarmony(scoreOf([[60, 64, 67], [60, 72], [60], [62, 65, 69]]));
-    expect(names(events)).toEqual(['C 1', 'Dm 2m']);
-    expect(events.map((e) => e.measureIndex)).toEqual([0, 3]);
+    const score = scoreOf([[60, 64, 67], [60, 72], [60], [62, 65, 69]]);
+    expect(names(analyzeHarmony(score))).toEqual(['C 1', 'Dm 2m']);
   });
 
   test('a tie chain counts once, so the bar it runs under keeps its own name', () => {

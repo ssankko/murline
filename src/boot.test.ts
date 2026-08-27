@@ -1,7 +1,14 @@
 import { expect, test, vi } from 'vitest';
 
-let settings = { theme: 'dark', onboarding_done: true, library_folder: '/scores' };
+let settings = {
+  theme: 'dark',
+  onboarding_done: true,
+  library_folder: '/scores',
+  audio_output_device: 'Scarlett',
+  audio_buffer_frames: 128,
+};
 let engineReason: string | null = null;
+const sent: [string, unknown][] = [];
 
 vi.mock('@/db/db', () => ({
   getDb: async () => ({}),
@@ -14,7 +21,8 @@ vi.mock('@/library/scan', () => ({
   },
 }));
 vi.mock('@tauri-apps/api/core', () => ({
-  invoke: async (command: string) => {
+  invoke: async (command: string, args: unknown) => {
+    sent.push([command, args]);
     if (command === 'audio_start' && engineReason) throw engineReason;
   },
 }));
@@ -34,6 +42,13 @@ test('every step prints its line, in the order the steps run', async () => {
   ]);
   // Each report holds the lines printed so far and no more.
   expect(printed.map((lines) => lines.length)).toEqual([1, 2, 3, 4, 5, 6]);
+});
+
+test('the sound engine starts on the device and buffer the settings hold', async () => {
+  sent.length = 0;
+  await boot(() => {});
+  expect(sent).toContainEqual(['audio_set_output_device', { id: 'Scarlett' }]);
+  expect(sent).toContainEqual(['audio_set_buffer_frames', { frames: 128 }]);
 });
 
 test('a step that fails prints its reason', async () => {

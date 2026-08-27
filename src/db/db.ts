@@ -52,6 +52,11 @@ export type Settings = {
   /** The effects the sound engine plays the instrument through, in the order they play. */
   effect_chain: EffectSlot[];
 
+  /** Opaque id of the device the sound engine plays through; NULL is the system default. */
+  audio_output_device: string | null;
+  /** Frames the output device runs per buffer: 32, 64, 128 or 256. Smaller is lower latency. */
+  audio_buffer_frames: number;
+
   // Defaults of the piece settings: what a piece plays at while it holds none of its own. Tempo
   // has no mode here, because BPM belongs to a piece written at one tempo.
 
@@ -158,6 +163,8 @@ export const SETTING_DEFAULTS: Settings = {
   sheet_colour: true,
   click_volume: 70,
   effect_chain: [],
+  audio_output_device: null,
+  audio_buffer_frames: 64,
   ...knobDefaults(DEFAULT_LANE_LOOK, LANE_KNOBS),
   ...knobDefaults(DEFAULT_PLAY_SETTINGS, PIECE_DEFAULT_KEYS),
   ...knobDefaults(DEFAULT_PLAY_SETTINGS, ENGINE_KNOBS),

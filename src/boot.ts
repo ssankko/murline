@@ -40,6 +40,8 @@ export async function boot(print: (lines: string[]) => void): Promise<Settings> 
 
   await step('starting sound engine', async () => {
     await invoke('audio_start');
+    await invoke('audio_set_output_device', { id: settings.audio_output_device });
+    await invoke('audio_set_buffer_frames', { frames: settings.audio_buffer_frames });
     await invoke('audio_set_chain', { chain: settings.effect_chain });
   });
 

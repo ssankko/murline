@@ -1,7 +1,7 @@
 //! The sound engine everywhere but macOS: there is none. Every command still exists and answers,
 //! so the webview needs no platform branch of its own; the app runs as it always did, silently.
 
-use crate::audio::{Effect, Slot, Status};
+use crate::audio::{Effect, OutputDevice, Slot, Status};
 
 const PLATFORM: &str = "No sound engine on this platform";
 
@@ -33,5 +33,17 @@ pub fn set_chain(_chain: Vec<Slot>) -> Result<Vec<Slot>, String> {
 // an app handle to call it with.
 #[allow(dead_code)]
 pub fn show_effect(_app: tauri::AppHandle, _index: usize) -> Result<(), String> {
+    Err(PLATFORM.into())
+}
+
+pub fn output_devices() -> Vec<OutputDevice> {
+    Vec::new()
+}
+
+pub fn set_output_device(_id: Option<String>) -> Result<(), String> {
+    Err(PLATFORM.into())
+}
+
+pub fn set_buffer_frames(_frames: u32) -> Result<(), String> {
     Err(PLATFORM.into())
 }

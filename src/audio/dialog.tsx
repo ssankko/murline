@@ -19,7 +19,28 @@ import { useEffect, useState } from 'react';
 export interface AudioStatus {
   available: boolean;
   reason: string;
+  /** Opaque id of the device playing now; null while the engine plays through none. */
+  device: string | null;
+  device_name: string;
+  /** Why the device playing is not the one chosen; empty while the choice is honoured. */
+  fallback: string;
+  buffer_frames: number;
+  sample_rate: number;
+  /** What the device reports the buffer costs, in milliseconds. */
+  latency_ms: number;
 }
+
+/** A status with nothing in it, which is what an engine that cannot even be asked answers. */
+export const NO_STATUS: AudioStatus = {
+  available: false,
+  reason: '',
+  device: null,
+  device_name: '',
+  fallback: '',
+  buffer_frames: 0,
+  sample_rate: 0,
+  latency_ms: 0,
+};
 
 export function AudioDialog({ onClose }: { onClose: () => void }) {
   const [status, setStatus] = useState<AudioStatus | null>(null);
@@ -28,7 +49,7 @@ export function AudioDialog({ onClose }: { onClose: () => void }) {
     let live = true;
     invoke<AudioStatus>('audio_status').then(
       (answer) => live && setStatus(answer),
-      (error: unknown) => live && setStatus({ available: false, reason: String(error) }),
+      (error: unknown) => live && setStatus({ ...NO_STATUS, reason: String(error) }),
     );
     return () => {
       live = false;

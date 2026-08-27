@@ -502,7 +502,7 @@ export function PlayScreen({
             trigger={
               <button
                 aria-label="Piece settings"
-                className="hover:bg-ink/8 relative flex h-8 w-8 flex-none items-center justify-center transition-colors duration-150"
+                className="hover:bg-ink/8 relative flex h-8 w-8 flex-none items-center justify-center rounded-md transition-colors duration-150"
               >
                 <Settings {...ICON} />
               </button>
@@ -604,7 +604,7 @@ export function PlayScreen({
                 <button
                   aria-label={performing ? 'Stop' : 'Perform'}
                   onClick={togglePerform}
-                  className={`flex h-[30px] flex-none items-center gap-1.5 border px-3.5 text-[13px] font-medium transition-colors duration-150 ${
+                  className={`flex h-[30px] flex-none items-center gap-1.5 rounded-md border px-3.5 text-[13px] font-medium transition-colors duration-150 ${
                     performing
                       ? 'border-ink bg-ink text-paper hover:bg-ink/85'
                       : 'border-ink/55 hover:bg-ink/8'
@@ -763,7 +763,7 @@ function TempoPopover({
           <PopoverTrigger asChild>
             <button
               aria-label="Tempo"
-              className="hover:bg-ink/8 relative flex h-8 flex-none items-center justify-center px-1.5 transition-colors duration-150"
+              className="hover:bg-ink/8 relative flex h-8 flex-none items-center justify-center rounded-md px-1.5 transition-colors duration-150"
             >
               <span className="text-[13px] font-medium tabular-nums">{label}</span>
             </button>
@@ -840,7 +840,7 @@ function BarButton({
     : `${dim ? 'text-ink/35' : ''} ${off ? '' : 'hover:bg-ink/8'}`;
   const shape = disc
     ? 'size-[34px] rounded-full bg-ink text-paper mx-1 hover:bg-ink/85'
-    : `h-8 ${wide ? 'px-1.5' : 'w-8'} ${paint}`;
+    : `h-8 rounded-md ${wide ? 'px-1.5' : 'w-8'} ${paint}`;
   return (
     <Tooltip>
       <TooltipTrigger asChild>

@@ -152,18 +152,20 @@ impl Index {
 // in a debug build; index the tokens if a query stops keeping up with typing.
 pub fn search(ix: &Index, query: &str) -> SearchResult {
     let query = norm(query);
-    let tokens: Vec<&str> = query.split_whitespace().collect();
+    let tokens: Vec<(&str, bool)> = query
+        .split_whitespace()
+        .map(|t| (t, t.bytes().all(|b| b.is_ascii_digit())))
+        .collect();
     if tokens.is_empty() {
         return SearchResult { rows: Vec::new(), more: 0 };
     }
-    let whole: Vec<bool> = tokens.iter().map(|t| t.bytes().all(|b| b.is_ascii_digit())).collect();
     let mut buckets: Vec<Vec<usize>> = vec![Vec::new(); tokens.len() + 1];
 
     for (i, (who, hay)) in ix.hays.iter().enumerate() {
-        if !tokens.iter().zip(&whole).all(|(t, &w)| has_word(hay, t, w)) {
+        if !tokens.iter().all(|&(t, w)| has_word(hay, t, w)) {
             continue;
         }
-        let rank = tokens.iter().zip(&whole).filter(|&(t, &w)| has_word(&hay[..*who], t, w)).count();
+        let rank = tokens.iter().filter(|&&(t, w)| has_word(&hay[..*who], t, w)).count();
         buckets[rank].push(i);
     }
 
@@ -172,20 +174,13 @@ pub fn search(ix: &Index, query: &str) -> SearchResult {
     // third spelling of the name between them does not open it twice. Rows of one composer always
     // share a rank, so the blocks keep the composer-first order.
     let mut blocks: Vec<(String, Vec<Row>)> = Vec::new();
-    let mut taken = 0;
-    'fill: for bucket in buckets.iter().rev() {
-        for &i in bucket {
-            if taken == MAX_ROWS {
-                break 'fill;
-            }
-            let row = row_of(ix, i);
-            // Trimmed, because `norm` leaves the trailing space of a name written with a final dot.
-            let key = norm(&row.heading).trim().to_string();
-            match blocks.iter_mut().find(|(name, _)| *name == key) {
-                Some((_, block)) => block.push(row),
-                None => blocks.push((key, vec![row])),
-            }
-            taken += 1;
+    for &i in buckets.iter().rev().flatten().take(MAX_ROWS) {
+        let row = row_of(ix, i);
+        // Trimmed, because `norm` leaves the trailing space of a name written with a final dot.
+        let key = norm(&row.heading).trim().to_string();
+        match blocks.iter_mut().find(|(name, _)| *name == key) {
+            Some((_, block)) => block.push(row),
+            None => blocks.push((key, vec![row])),
         }
     }
     let rows: Vec<Row> = blocks
@@ -282,13 +277,7 @@ fn some(s: &str) -> Option<&str> {
 
 /// "Frédéric Chopin" from "Chopin, Frédéric"; the PDMX artist is already in that order.
 fn heading(composer: &str) -> String {
-    if composer.contains(',') {
-        let mut parts: Vec<&str> = composer.split(',').map(str::trim).collect();
-        parts.reverse();
-        parts.join(" ")
-    } else {
-        composer.to_string()
-    }
+    composer.rsplit(',').map(str::trim).collect::<Vec<_>>().join(" ")
 }
 
 /// The name the file lands under in the library folder, cut to the 255 bytes a POSIX file name
@@ -303,12 +292,9 @@ fn file_name(f: &Fields) -> String {
     }
     name = name.replace(['/', ':'], "-");
     const EXT: &str = ".musicxml";
-    let mut fits = 255 - EXT.len();
-    if name.len() > fits {
-        while !name.is_char_boundary(fits) {
-            fits -= 1;
-        }
-        name.truncate(name[..fits].trim_end().len());
+    if name.len() > 255 - EXT.len() {
+        name.truncate(name.floor_char_boundary(255 - EXT.len()));
+        name.truncate(name.trim_end().len());
     }
     name.push_str(EXT);
     name
@@ -701,3 +687,4 @@ Morris\tLelia N. Morris\tThe Fight Is On\tThe Fight Is On\t\t24\t0\t1/3/QmC.mxl\
         }
     }
 }
+

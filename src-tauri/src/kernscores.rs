@@ -8,13 +8,13 @@
 
 use std::time::Duration;
 
-use quick_xml::escape::{escape, partial_escape, resolve_predefined_entity};
-use quick_xml::events::Event;
-use quick_xml::{Reader, XmlVersion};
+use quick_xml::escape::{partial_escape, resolve_predefined_entity};
+use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
+use quick_xml::{Reader, Writer, XmlVersion};
 
 const TIMEOUT: Duration = Duration::from_secs(15);
 /// Children a `<note>` writes after its `<staff>`.
-const AFTER_STAFF: [&str; 4] = ["beam", "notations", "lyric", "play"];
+const AFTER_STAFF: [&str; 3] = ["beam", "notations", "play"];
 /// Element nesting `parse` accepts. MusicXML reaches about ten, and the tree walks that follow
 /// `parse` recurse once per level, so a deeper document is refused instead of overflowing the stack.
 const MAX_DEPTH: usize = 64;
@@ -59,8 +59,9 @@ pub fn merge(xml: &[u8]) -> Result<Vec<u8>, String> {
         return Err("not MusicXML".to_string());
     }
     merge_parts(&mut root)?;
-    let mut out = prologue;
-    write(&root, 0, &mut out);
+    let mut w = Writer::new_with_indent(prologue, b'\t', 1);
+    write(&root, &mut w).map_err(|e| e.to_string())?;
+    let mut out = w.into_inner();
     out.push(b'\n');
     Ok(out)
 }
@@ -150,14 +151,13 @@ fn merge_parts(root: &mut Elem) -> Result<(), String> {
         return Err("parts differ in measure count".to_string());
     }
 
-    let mut merged = Elem { name: "part".to_string(), attrs: parts[0].attrs.clone(), ..Elem::default() };
+    let mut merged = Elem { attrs: parts[0].attrs.clone(), ..elem("part") };
     for i in 0..measures[0].len() {
         let lengths: Vec<i64> = measures.iter().map(|m| length(&m[i])).collect();
-        let mut target =
-            Elem { name: "measure".to_string(), attrs: measures[0][i].attrs.clone(), ..Elem::default() };
+        let mut target = Elem { attrs: measures[0][i].attrs.clone(), ..elem("measure") };
         for k in 0..measures.len() {
             if k > 0 {
-                let mut backup = Elem { name: "backup".to_string(), ..Elem::default() };
+                let mut backup = elem("backup");
                 backup.children.push(Node::Elem(leaf("duration", &lengths[k - 1].to_string())));
                 target.children.push(Node::Elem(backup));
             }
@@ -206,7 +206,7 @@ fn convert(measure: Elem, st: &mut State, first_measure: bool) -> Vec<Elem> {
                 if st.first {
                     out.push(el);
                 } else if !first_measure && !clefs.is_empty() {
-                    let mut attributes = Elem { name: "attributes".to_string(), ..Elem::default() };
+                    let mut attributes = elem("attributes");
                     attributes.children = clefs.into_iter().map(Node::Elem).collect();
                     out.push(attributes);
                 }
@@ -259,7 +259,7 @@ fn convert(measure: Elem, st: &mut State, first_measure: bool) -> Vec<Elem> {
 /// The first measure's one `<attributes>`: what the parts declared, `<staves>`, then each staff's
 /// opening clef, in MusicXML order.
 fn open_staves(target: &mut Elem, opening: &[Option<Elem>; 2], by_clef: bool) {
-    let mut merged = Elem { name: "attributes".to_string(), ..Elem::default() };
+    let mut merged = elem("attributes");
     let mut kept: Vec<Node> = Vec::new();
     for node in std::mem::take(&mut target.children) {
         match node {
@@ -279,7 +279,7 @@ fn open_staves(target: &mut Elem, opening: &[Option<Elem>; 2], by_clef: bool) {
         let mut clef = match &opening[staff as usize - 1] {
             Some(c) if !by_clef => c.clone(),
             _ => {
-                let mut c = Elem { name: "clef".to_string(), ..Elem::default() };
+                let mut c = elem("clef");
                 c.children.push(Node::Elem(leaf("sign", if staff == 1 { "G" } else { "F" })));
                 c.children.push(Node::Elem(leaf("line", if staff == 1 { "2" } else { "4" })));
                 c
@@ -339,26 +339,25 @@ fn is_dynamic(word: &str) -> bool {
 }
 
 fn dynamics(word: &str, staff: &str) -> Elem {
-    let mut mark = Elem { name: "dynamics".to_string(), ..Elem::default() };
-    mark.children.push(Node::Elem(Elem { name: word.to_string(), ..Elem::default() }));
-    let mut kind = Elem { name: "direction-type".to_string(), ..Elem::default() };
-    kind.children.push(Node::Elem(mark));
-    let mut direction = Elem {
-        name: "direction".to_string(),
-        attrs: vec![("placement".to_string(), "below".to_string())],
-        ..Elem::default()
-    };
-    direction.children.push(Node::Elem(kind));
-    direction.children.push(Node::Elem(leaf("staff", staff)));
+    let mut direction =
+        Elem { attrs: vec![("placement".to_string(), "below".to_string())], ..elem("direction") };
+    direction.children = vec![
+        Node::Elem(wrap("direction-type", wrap("dynamics", elem(word)))),
+        Node::Elem(leaf("staff", staff)),
+    ];
     direction
 }
 
+fn elem(name: &str) -> Elem {
+    Elem { name: name.to_string(), ..Elem::default() }
+}
+
+fn wrap(name: &str, child: Elem) -> Elem {
+    Elem { children: vec![Node::Elem(child)], ..elem(name) }
+}
+
 fn leaf(name: &str, text: &str) -> Elem {
-    Elem {
-        name: name.to_string(),
-        attrs: Vec::new(),
-        children: vec![Node::Text(text.to_string())],
-    }
+    Elem { children: vec![Node::Text(text.to_string())], ..elem(name) }
 }
 
 fn child<'a>(el: &'a Elem, name: &str) -> Option<&'a Elem> {
@@ -420,7 +419,7 @@ fn set_attr(el: &mut Elem, name: &str, value: &str) {
     }
 }
 
-/// Everything before the root element, kept as it stands, and the root.
+/// Everything outside the root element, kept as it stands, and the root.
 fn parse(xml: &[u8]) -> Result<(Vec<u8>, Elem), String> {
     let mut reader = Reader::from_reader(xml);
     let mut prologue: Vec<u8> = Vec::new();
@@ -488,6 +487,7 @@ fn parse(xml: &[u8]) -> Result<(Vec<u8>, Elem), String> {
                 prologue.extend_from_slice(e.as_ref().as_bytes());
                 prologue.extend_from_slice(b">\n");
             }
+            // A comment outside the root, wherever the source put it, heads the merged file.
             Event::Comment(e) if stack.is_empty() => {
                 prologue.extend_from_slice(b"<!--");
                 prologue.extend_from_slice(e.as_ref().as_bytes());
@@ -515,41 +515,27 @@ fn open(e: &quick_xml::events::BytesStart) -> Result<Elem, String> {
     Ok(Elem { name: e.name().as_ref().to_string(), attrs, children: Vec::new() })
 }
 
-fn write(el: &Elem, depth: usize, out: &mut Vec<u8>) {
-    out.push(b'<');
-    out.extend_from_slice(el.name.as_bytes());
+/// One tab per level. The writer breaks the line before every event but the one after character
+/// data, which is what an element of pure text needs and what MusicXML's mixed-content-free
+/// documents ask for everywhere else.
+fn write(el: &Elem, w: &mut Writer<Vec<u8>>) -> std::io::Result<()> {
+    let mut start = BytesStart::new(&el.name);
     for (k, v) in &el.attrs {
-        out.push(b' ');
-        out.extend_from_slice(k.as_bytes());
-        out.extend_from_slice(b"=\"");
-        out.extend_from_slice(escape(v.as_str()).as_bytes());
-        out.push(b'"');
+        start.push_attribute((k.as_str(), v.as_str()));
     }
     if el.children.is_empty() {
-        out.extend_from_slice(b"/>");
-        return;
+        return w.write_event(Event::Empty(start));
     }
-    out.push(b'>');
-    let block = el.children.iter().all(|n| matches!(n, Node::Elem(_)));
+    w.write_event(Event::Start(start))?;
     for node in &el.children {
         match node {
-            Node::Elem(child) => {
-                if block {
-                    out.push(b'\n');
-                    out.extend(std::iter::repeat_n(b'\t', depth + 1));
-                }
-                write(child, depth + 1, out);
+            Node::Elem(child) => write(child, w)?,
+            Node::Text(t) => {
+                w.write_event(Event::Text(BytesText::from_escaped(partial_escape(t))))?
             }
-            Node::Text(t) => out.extend_from_slice(partial_escape(t.as_str()).as_bytes()),
         }
     }
-    if block {
-        out.push(b'\n');
-        out.extend(std::iter::repeat_n(b'\t', depth));
-    }
-    out.extend_from_slice(b"</");
-    out.extend_from_slice(el.name.as_bytes());
-    out.push(b'>');
+    w.write_event(Event::End(BytesEnd::new(&el.name)))
 }
 
 #[cfg(test)]
@@ -795,3 +781,4 @@ mod tests {
         assert_eq!(length(&measure), i64::MAX);
     }
 }
+

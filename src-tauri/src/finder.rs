@@ -86,7 +86,7 @@ enum Entry {
 struct Fields<'a> {
     provider: Provider,
     composer: &'a str,
-    surname: Cow<'a, str>,
+    surname: &'a str,
     title: &'a str,
     opus: Option<&'a str>,
     number: Option<&'a str>,
@@ -233,7 +233,7 @@ fn ks_fields(r: &KsRow) -> Fields<'_> {
     Fields {
         provider: Provider::KernScores,
         composer,
-        surname: Cow::Borrowed(r.surname.as_deref().unwrap_or("?")),
+        surname: r.surname.as_deref().unwrap_or("?"),
         title: &r.title,
         opus: r.opus.as_deref(),
         number: r.number.as_deref(),
@@ -260,7 +260,7 @@ fn pdmx_fields(line: &str) -> Fields<'_> {
     Fields {
         provider: Provider::Pdmx,
         composer,
-        surname: Cow::Borrowed(composer.rsplit(' ').next().unwrap_or(composer)),
+        surname: composer.rsplit(' ').next().unwrap_or(composer),
         title: if song.is_empty() { title } else { song },
         opus: None,
         number: None,
@@ -319,7 +319,7 @@ fn file_name(f: &Fields) -> String {
 fn sort_key(f: &Fields) -> String {
     format!(
         "{}|{}|{:09}|{}|{:09}|{:09}|{}|{:09}",
-        norm(&f.surname),
+        norm(f.surname),
         norm(f.composer),
         leading_number(f.opus.unwrap_or("")),
         norm(f.opus.unwrap_or("")),

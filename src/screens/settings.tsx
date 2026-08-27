@@ -2,6 +2,7 @@
 // popover on the play screen that holds what the open piece plays at. Every control writes on
 // change; there is no Save.
 
+import { SoundTab } from '@/audio/sound-tab';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -15,7 +16,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { readSettings, setSetting, type Settings } from '@/db/db';
 import { LOOKAHEAD_MAX, LOOKAHEAD_MIN } from '@/lane/lane';
 import { cancelPdmx, downloadPdmx, progressLabel, usePdmxDownload } from '@/library/pdmx';
-import { clamp } from '@/lib/utils';
+import { clamp, rowId } from '@/lib/utils';
 import { noteName } from '@/look/color';
 import { setTheme, type Theme } from '@/look/use-dark';
 import { pinMidiDevice, useMidiStatus } from '@/midi/use-midi-status';
@@ -99,6 +100,36 @@ const SEARCH_ROWS: {
     tab: 'sound',
     label: 'Click volume',
     words: ['metronome', 'loudness', 'beat', 'tick'],
+  },
+  {
+    id: 'audio_output_device',
+    tab: 'sound',
+    label: 'Output device',
+    words: ['speakers', 'headphones', 'interface', 'sound card', 'playback engine'],
+  },
+  {
+    id: 'audio_buffer_frames',
+    tab: 'sound',
+    label: 'Buffer (frames)',
+    words: ['latency', 'delay', 'lag', 'block size', 'samples'],
+  },
+  {
+    id: 'instrument_id',
+    tab: 'sound',
+    label: 'Instrument',
+    words: ['patch', 'preset', 'voice', 'sound font', 'synth', 'piano sound'],
+  },
+  {
+    id: 'instruments_folder',
+    tab: 'sound',
+    label: 'Instruments folder',
+    words: ['sf2', 'exs', 'sound fonts', 'samples'],
+  },
+  {
+    id: 'effect_chain',
+    tab: 'sound',
+    label: 'Effect chain',
+    words: ['reverb', 'fx chain', 'rack', 'inserts', 'effects bus', 'plugin', 'audio unit'],
   },
   {
     id: 'theme',
@@ -246,11 +277,6 @@ function searchRows(query: string): typeof SEARCH_ROWS {
       word.toLowerCase().includes(needle),
     ),
   );
-}
-
-/** The `id` a search result scrolls to, kept off the setting keys so it collides with nothing. */
-function rowId(id: string): string {
-  return `setting-row-${id}`;
 }
 
 /**
@@ -430,7 +456,7 @@ export function SettingsPanel({
         <div className="flex min-w-0 flex-1 flex-col overflow-y-auto px-3 py-4">
           {values && (
             <>
-              <Tabs.Content value="sound">
+              <Tabs.Content value="sound" className="flex flex-col gap-7">
                 <Rows>
                   {/* ponytail: click volume lives here until ticket 06 moves it to the mixer's
                       metronome fader, which is the only place the spec gives it. */}
@@ -443,6 +469,10 @@ export function SettingsPanel({
                     />
                   </Row>
                 </Rows>
+
+                {/* The sound engine's own settings write straight to it, not through `write`:
+                    each one has to reach the running engine as well as the database. */}
+                <SoundTab marked={marked} />
               </Tabs.Content>
 
               <Tabs.Content value="look" className="flex flex-col gap-6">

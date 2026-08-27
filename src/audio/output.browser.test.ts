@@ -111,7 +111,7 @@ test('the section shows the chosen device and what the engine says it costs', as
   expect(text()).toContain('System default');
 });
 
-test('a device plugged in while the dialog is open appears in the picker', async () => {
+test('a device plugged in while the tab is open appears in the picker', async () => {
   const text = await open();
   await vi.waitFor(() => expect(text()).toContain('Scarlett 2i2'));
 
@@ -170,7 +170,7 @@ test('a chosen device that is not connected reads as the system default until it
   openPicker();
   await vi.waitFor(() => expect(text()).toContain('MacBook Pro Speakers'));
   expect(checkedRow()).toBe('System default');
-  // Saying where the sound went is the dialog's one line, not a second one in this section.
+  // Saying where the sound went is the tab's one line, not a second one in this section.
   expect(text()).not.toContain('not connected');
 
   // The setting kept the choice, so plugging the device back in shows its name again.

@@ -1,7 +1,6 @@
 // The play screen: one 48 px bar of controls over the sheet, with the lane under it. One clock,
 // one frame loop, no state of the play in React beyond what the bar has to draw.
 
-import { AudioDialog } from '@/audio/dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
@@ -59,7 +58,6 @@ import { Sheet, type Pinch } from '@/sheet/sheet';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
   ArrowLeft,
-  AudioLines,
   FastForward,
   Hand,
   Minus,
@@ -135,7 +133,6 @@ export function PlayScreen({
   const [live, setLive] = useState<SettingChange | null>(null);
   const [split, setSplit] = useState(DEFAULT_SPLIT);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [audioOpen, setAudioOpen] = useState(false);
   const [hands, setHands] = useState(DEFAULT_PLAY_SETTINGS.hands);
   /** A one-staff piece is all right hand, so it has no choice of hands to offer. */
   const [oneStaff, setOneStaff] = useState(false);
@@ -540,9 +537,6 @@ export function PlayScreen({
             onUseGlobalDefaults={() => useGlobalDefaults().catch(console.error)}
             onAllSettings={() => setSettingsOpen(true)}
           />
-          <BarButton label="Audio" onClick={() => setAudioOpen(true)}>
-            <AudioLines {...ICON} />
-          </BarButton>
           <BarButton label="Settings" onClick={() => setSettingsOpen(true)}>
             <SlidersHorizontal {...ICON} />
           </BarButton>
@@ -672,9 +666,6 @@ export function PlayScreen({
           onGlobalChange={applyGlobal}
           live={live}
         />
-
-        {/* Both are global, so they change nothing the frame loop reads and the clock runs on. */}
-        {audioOpen && <AudioDialog onClose={() => setAudioOpen(false)} />}
       </div>
     </TooltipProvider>
   );

@@ -8,6 +8,12 @@ vi.mock('@tauri-apps/api/core', () => ({
   Channel: class {},
   invoke: async (command: string) => {
     if (command === 'pdmx_status') return false;
+    // The Sound tab asks the engine about itself the moment it is on the page.
+    if (command === 'audio_status') return { available: true, reason: '', fallback: '' };
+    if (command === 'audio_output_devices') return [];
+    if (command === 'audio_instruments') return [];
+    if (command === 'audio_effects') return [];
+    if (command === 'audio_set_chain') return [];
     throw new Error(`unexpected command ${command}`);
   },
 }));
@@ -88,6 +94,20 @@ test('a word no label holds still finds the rows it names', async () => {
   expect(marked('library_folder')).toBe(true);
 });
 
+test('the sound engine rows are found and jumped to like any other', async () => {
+  await open();
+
+  // "Reverb" is a plugin a player would go looking for, and no row label holds it.
+  const results = await search('reverb');
+  expect(labels(results)).toEqual(['Effect chain']);
+
+  await openTab('Library');
+  const again = await search('reverb');
+  await userEvent.click(again[0]!);
+  expect(activeTab()).toBe('Sound');
+  expect(marked('effect_chain')).toBe(true);
+});
+
 test('a tab name finds every row on that tab', async () => {
   await open();
   expect(labels(await search('playing'))).toContain('Velocity offset');
@@ -141,8 +161,25 @@ test('a pinch behind the panel moves the row it belongs to', async () => {
 
 test('the search names no row the panel does not render', async () => {
   await open();
-  const queries = ['volume', 'storage', 'playing', 'window', 'midi', 'download', 'grade'];
-  for (const query of queries.concat('chords', 'theme', 'pinch', 'labels')) {
+  for (const query of [
+    'volume',
+    'storage',
+    'playing',
+    'window',
+    'midi',
+    'download',
+    'grade',
+    'sound',
+    'reverb',
+    'latency',
+    'preset',
+    'sf2',
+    'headphones',
+    'chords',
+    'theme',
+    'pinch',
+    'labels',
+  ]) {
     const found = labels(await search(query));
     expect(found.length, query).toBeGreaterThan(0);
     for (const label of found) {

@@ -2,7 +2,7 @@
 // that plays it through the sound engine. The notes are scheduled in Rust; this screen only builds
 // the note list, sends the transport commands and moves the bar highlight the engine reports.
 
-import type { AudioStatus } from '@/audio/dialog';
+import type { AudioStatus } from '@/audio/sound-tab';
 import { barAt, barSeconds, previewBars, previewNotes, type PreviewBar } from '@/audio/preview';
 import { Button } from '@/components/ui/button';
 import { clamp } from '@/lib/utils';

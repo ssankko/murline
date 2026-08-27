@@ -9,7 +9,8 @@
     "dialog:allow-open",
     "midi:allow-open-input",
     "midi:allow-close-input",
-    "sql:default",
+    "sql:allow-load",
+    "sql:allow-select",
     "sql:allow-execute"
   ]
 }

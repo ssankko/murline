@@ -57,6 +57,22 @@ test('every notehead carries the pitch colour of its note', async () => {
   sheet.dispose();
 }, 60_000);
 
+test('the current mark rings the notehead outside its fill and comes off again', async () => {
+  const sheet = await open();
+  const note = sheet.score.onsets[0]!.notes[0]!;
+  const path = noteheadEl(sheet.osmd, note.source)!.firstElementChild!;
+
+  // The ring is drawn behind the fill, so the whole pitch colour survives under the cursor band.
+  sheet.markNote(note, 'current');
+  expect(path.getAttribute('paint-order')).toBe('stroke');
+  expect(path.getAttribute('fill')).toBe(colorOf(note.midi, 'muted', false));
+
+  sheet.markNote(note, 'none');
+  expect(path.getAttribute('paint-order')).toBe(null);
+
+  sheet.dispose();
+}, 60_000);
+
 test('the inactive hand drops to the scaffolding tier and the active hand keeps its colour', async () => {
   const sheet = await open();
   const notes = sheet.score.onsets.flatMap((onset) => onset.notes);

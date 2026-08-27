@@ -28,7 +28,10 @@ const BUBBLE_ROW = 13;
 /** Clear paper kept between two bubbles of one row. */
 const BUBBLE_GAP = 6;
 
-/** The ring drawn around the noteheads of the Onset the cursor stands at. */
+/**
+ * The ring drawn around the noteheads of the Onset the cursor stands at. It reads as paper
+ * cleared out of the amber cursor band, so it works on either paper.
+ */
 const OUTLINE = '#ffffff';
 
 /** A backward jump names its bar over the sheet for this long. */
@@ -286,7 +289,7 @@ export class Sheet {
     const head = noteheadEl(this.osmd, note.source);
     if (!head) return;
     if (kind === 'current') {
-      paintHead(head, { stroke: OUTLINE, 'stroke-width': '1.6' });
+      paintHead(head, { stroke: OUTLINE, 'stroke-width': '1.2', 'paint-order': 'stroke' });
       return;
     }
     if (kind === 'miss') this.misses.add(note.source);
@@ -624,7 +627,13 @@ export class Sheet {
         : this.misses.has(note.source)
           ? tone(INK.miss, this.dark)
           : colorOf(note.midi, 'muted', this.dark);
-    paintHead(head, { fill: colour, stroke: colour, 'stroke-width': null, opacity: null });
+    paintHead(head, {
+      fill: colour,
+      stroke: colour,
+      'stroke-width': null,
+      'paint-order': null,
+      opacity: null,
+    });
   }
 }
 

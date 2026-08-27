@@ -14,8 +14,6 @@ import {
 /** The settings a piece may hold of its own. Everything else about a play is global. */
 export type PieceSettings = Pick<PlaySettings, keyof typeof PIECE_SETTING_COLUMNS>;
 
-const PIECE_SETTING_KEYS = Object.keys(PIECE_SETTING_COLUMNS) as (keyof PieceSettings)[];
-
 /** True for every field the piece left NULL, which is what the library shows muted. */
 export type Inherited = Record<keyof PieceSettings, boolean>;
 
@@ -41,9 +39,9 @@ export function resolvePlaySettings(
   };
   const settings: Record<string, unknown> = {};
   const inherited: Record<string, boolean> = {};
-  for (const key of PIECE_SETTING_KEYS) {
-    settings[key] = own[key] ?? globals[key] ?? DEFAULT_PLAY_SETTINGS[key];
-    inherited[key] = own[key] === null;
+  for (const [key, value] of Object.entries(own) as [keyof PieceSettings, unknown][]) {
+    settings[key] = value ?? globals[key] ?? DEFAULT_PLAY_SETTINGS[key];
+    inherited[key] = value === null;
   }
   return { settings: settings as PieceSettings, inherited: inherited as Inherited };
 }

@@ -791,7 +791,6 @@ function TempoPopover({
               key={each}
               aria-label={each === 'bpm' ? 'BPM' : 'Percent'}
               aria-pressed={mode === each}
-              aria-disabled={each === 'bpm' && !constantTempo ? true : undefined}
               disabled={each === 'bpm' && !constantTempo}
               onClick={() => onMode(each)}
               className={`h-6 px-3 text-[12px] font-medium transition-colors duration-150 disabled:text-ink/35 ${

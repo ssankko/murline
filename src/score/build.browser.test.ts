@@ -69,10 +69,11 @@ describe('the Score of a piece', () => {
     expect(notes.every((n) => n.hand === (n.staff === 0 ? 'right' : 'left'))).toBe(true);
     expect(notes.every((n) => n.midi >= 21 && n.midi <= 108)).toBe(true);
     expect(notes.every((n) => n.strikeable === !n.tiedFrom)).toBe(true);
-    // The prelude ties its bass and tenor across each bar line, so a chain sounds a whole bar
-    // while every written note of the piece is a sixteenth or a quarter.
+    // Bar 34 writes its pedal C as two tied halves and nothing longer, so a whole bar of sound
+    // there can only come from the chain landing summed on the note that starts it.
     expect(notes.some((n) => n.tiedFrom)).toBe(true);
-    expect(Math.max(...notes.map((n) => n.durationTicks))).toBe(4 * TICKS_PER_QUARTER);
+    const bar34 = notes.filter((n) => n.measureIndex === 33);
+    expect(Math.max(...bar34.map((n) => n.durationTicks))).toBe(4 * TICKS_PER_QUARTER);
   });
 
   test('a repeat replays the same Onsets at later played ticks', async () => {

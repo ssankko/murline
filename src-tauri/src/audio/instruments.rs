@@ -220,6 +220,22 @@ pub(in crate::audio) fn instantiate(
     }
 }
 
+/// Apple's DLSMusicDevice: the one Audio Unit instrument on every Mac that sounds with nothing
+/// loaded into it, so a test that needs a real plugin can take it. The picker leaves it out.
+#[cfg(test)]
+pub(in crate::audio) const APPLE_INSTRUMENT: AudioComponentDescription = AudioComponentDescription {
+    componentType: MUSIC_DEVICE,
+    componentSubType: u32::from_be_bytes(*b"dls "),
+    componentManufacturer: u32::from_be_bytes(*b"appl"),
+    componentFlags: 0,
+    componentFlagsMask: 0,
+};
+
+#[cfg(test)]
+pub(in crate::audio) fn hosted_instrument() -> Retained<AVAudioUnitMIDIInstrument> {
+    instantiate(APPLE_INSTRUMENT).unwrap()
+}
+
 fn wildcard() -> AudioComponentDescription {
     AudioComponentDescription {
         componentType: MUSIC_DEVICE,
@@ -388,21 +404,9 @@ mod tests {
         assert!(status().available);
     }
 
-    /// Apple's DLSMusicDevice is the one Audio Unit instrument on every Mac that sounds with
-    /// nothing loaded into it. The picker leaves it out; a test that needs a real plugin takes it.
-    fn apple_instrument() -> AudioComponentDescription {
-        AudioComponentDescription {
-            componentType: MUSIC_DEVICE,
-            componentSubType: u32::from_be_bytes(*b"dls "),
-            componentManufacturer: u32::from_be_bytes(*b"appl"),
-            componentFlags: 0,
-            componentFlagsMask: 0,
-        }
-    }
-
     #[test]
     fn a_hosted_audio_unit_plays_in_the_samplers_place_and_hands_over_its_state() {
-        let unit = instantiate(apple_instrument()).unwrap();
+        let unit = hosted_instrument();
         let mut graph = Graph::build().unwrap();
         graph.set_plugin(unit);
         graph.start_offline(4096).unwrap();
@@ -410,14 +414,14 @@ mod tests {
         assert!(graph.render_peak(4410).unwrap() > 0.01);
 
         let state = unsafe { state_of(&graph.plugin().unwrap().AUAudioUnit()) }.unwrap();
-        let fresh = instantiate(apple_instrument()).unwrap();
+        let fresh = hosted_instrument();
         apply_state(&fresh, &state);
         assert_eq!(unsafe { state_of(&fresh.AUAudioUnit()) }.unwrap(), state);
     }
 
     #[test]
     fn a_plugin_that_is_no_longer_installed_says_so_instead_of_loading() {
-        assert!(component(apple_instrument()).is_some());
+        assert!(component(APPLE_INSTRUMENT).is_some());
         assert!(component(AudioComponentDescription { componentManufacturer: 1, ..wildcard() }).is_none());
     }
 

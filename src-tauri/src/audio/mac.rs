@@ -29,7 +29,9 @@ use objc2_avf_audio::{
 };
 #[cfg(test)]
 use objc2_avf_audio::AVAudioEngineManualRenderingStatus;
-use objc2_foundation::{NSError, NSNotification, NSNotificationCenter, NSString, NSURL};
+use objc2_foundation::{
+    NSError, NSNotification, NSNotificationCenter, NSOperationQueue, NSString, NSURL,
+};
 use std::path::{Path, PathBuf};
 use std::ptr::{NonNull, from_ref};
 use std::sync::{Mutex, Once};
@@ -298,6 +300,7 @@ impl Graph {
     fn drop_plugin(&mut self) {
         if let Some(old) = self.plugin.take() {
             unsafe { self.engine.detachNode(&old) };
+            release_on_main(old);
         }
     }
 
@@ -498,6 +501,19 @@ fn curved(velocity: u8) -> u8 {
     // A note on at zero velocity is a note off to every instrument, so the softest strikes keep
     // the quietest velocity there is rather than falling through the floor into silence.
     if velocity > 0 { bent.max(1) } else { 0 }
+}
+
+/// Hands the last reference to a hosted plugin to the main thread, which is the one thread a
+/// plugin is taken apart on. A switch of instrument or of the chain runs on the thread the command
+/// came in on, and a plugin freed there is freed while AppKit may be draining the teardown of the
+/// window that same plugin drew: two threads then run one plugin's own dealloc, and a plugin whose
+/// editor and instance share objects frees them twice over and takes the app down. Apple documents
+/// no thread for either side, so the app takes the one AppKit already tears windows down on.
+/// Nothing waits for this; the plugin is gone by the next turn of the main run loop.
+pub(super) fn release_on_main<T: objc2::Message + 'static>(unit: Retained<T>) {
+    let leaving = std::cell::RefCell::new(Some(unit));
+    let let_go = RcBlock::new(move || drop(leaving.borrow_mut().take()));
+    unsafe { NSOperationQueue::mainQueue().addOperationWithBlock(&let_go) };
 }
 
 /// A SoundFont goes into the sampler by a call of its own, and every other kind whole.
@@ -828,6 +844,16 @@ mod tests {
         peak
     }
 
+    use crate::audio::instruments::hosted_instrument;
+
+    /// True while something other than the test's own reference holds the plugin, which is how a
+    /// switch that handed the plugin to the main thread reads from here. A switch that let go of it
+    /// on this thread instead leaves the test holding the last one.
+    fn still_held_elsewhere(unit: &AVAudioUnitMIDIInstrument) -> bool {
+        let references: usize = unsafe { objc2::msg_send![unit, retainCount] };
+        references > 1
+    }
+
     fn preview_note(midi: u8, on: f64, off: f64) -> PreviewNote {
         PreviewNote { midi, velocity: 100, on, off }
     }
@@ -1097,6 +1123,46 @@ mod tests {
 
         graph.click(true, 0);
         assert_eq!(graph.render_peak(LOOK).unwrap(), 0.0);
+    }
+
+    /// The Audio dialog switches instrument on the worker thread its command came in on, and a
+    /// plugin's Audio Unit freed there races the main thread's teardown of the window that plugin
+    /// drew: two threads inside one plugin's dealloc free the same objects twice. So a switch never
+    /// lets go of the plugin itself; it leaves the last reference to the main thread.
+    #[test]
+    fn the_plugin_a_switch_takes_out_is_let_go_of_on_the_main_thread() {
+        let unit = hosted_instrument();
+        let mut graph = Graph::build().unwrap();
+        graph.set_plugin(unit.clone());
+
+        graph.load_file(Path::new(FIXTURE)).unwrap();
+        assert!(still_held_elsewhere(&unit), "the file switch left the plugin to the main thread");
+
+        // And the same the other way round, one plugin displacing another.
+        graph.set_plugin(unit.clone());
+        graph.set_plugin(hosted_instrument());
+        assert!(still_held_elsewhere(&unit), "and so does a plugin taking another plugin's place");
+    }
+
+    /// What the user does in the Audio dialog: pick, listen, pick again. Every switch rewires the
+    /// graph and reads the sampler's file back in, so the instrument that ends up in the path has
+    /// to be the one just chosen, however many switches came before it.
+    #[test]
+    fn switching_instrument_over_and_over_leaves_the_last_one_chosen_playing() {
+        let sine = the_samplers_own_sine();
+        let mut graph = Graph::build().unwrap();
+        graph.start_offline(PASS).unwrap();
+
+        for _ in 0..3 {
+            graph.load_file(Path::new(FIXTURE)).unwrap();
+            assert_ne!(note_peak(&mut graph), sine, "the file plays");
+
+            graph.set_plugin(hosted_instrument());
+            assert!(note_peak(&mut graph) > 0.01, "the plugin plays in its place");
+
+            graph.load_file(Path::new(FIXTURE)).unwrap();
+            assert_ne!(note_peak(&mut graph), sine, "and the file takes it back");
+        }
     }
 
     #[test]

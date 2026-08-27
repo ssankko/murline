@@ -6,7 +6,7 @@
 //! and its state blob and is simply left out of the wiring, as a bypassed one is, so nothing about
 //! the instrument stops when either changes.
 
-use crate::audio::mac::{GRAPH, Graph};
+use crate::audio::mac::{GRAPH, Graph, release_on_main};
 use crate::audio::{Effect, Slot};
 use block2::RcBlock;
 use objc2::rc::Retained;
@@ -164,6 +164,7 @@ pub fn apply(graph: &mut Graph, wanted: Vec<Slot>) -> Vec<Slot> {
     for gone in spare {
         if let Some(unit) = gone.unit {
             unsafe { engine.detachNode(&unit) };
+            release_on_main(unit);
         }
     }
     // AVAudioEngine flushes every sounding voice when a connection changes, so the path is touched
@@ -526,6 +527,7 @@ fn held_name(index: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio::instruments::hosted_instrument;
     use crate::audio::mac::Graph;
     use objc2_audio_toolbox::AudioUnitSetParameter;
     use std::path::Path;
@@ -565,19 +567,6 @@ mod tests {
             AudioUnitSetParameter(unit.audioUnit(), id, kAudioUnitScope_Global, 0, value, 0)
         };
         assert_eq!(status, 0, "the plugin took the parameter");
-    }
-
-    /// Apple's DLSMusicDevice: the one Audio Unit instrument on every Mac that sounds with nothing
-    /// loaded into it, so a test that needs a hosted instrument can take it.
-    fn hosted_instrument() -> Retained<objc2_avf_audio::AVAudioUnitMIDIInstrument> {
-        crate::audio::instruments::instantiate(AudioComponentDescription {
-            componentType: u32::from_be_bytes(*b"aumu"),
-            componentSubType: u32::from_be_bytes(*b"dls "),
-            componentManufacturer: u32::from_be_bytes(*b"appl"),
-            componentFlags: 0,
-            componentFlagsMask: 0,
-        })
-        .unwrap()
     }
 
     /// Plays a note, lets it go, and answers with the loudest sample left once the sampler's own

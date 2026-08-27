@@ -10,6 +10,7 @@ import {
   Lane,
   SPLIT_MAX,
   SPLIT_MIN,
+  TOP_BAR,
   type LaneLook,
 } from '@/lane/lane';
 import { setNotice } from '@/library/notice';
@@ -71,9 +72,6 @@ import { useEffect, useRef, useState } from 'react';
 /** One size and one stroke for every icon in the bar. */
 const ICON = { size: 18, strokeWidth: 1.75 } as const;
 
-/** Height of the top bar, the strip the split does not divide. */
-const TOP_BAR = 48;
-
 /** The order the hands button cycles in. */
 const NEXT_HANDS: Record<HandsSetting, HandsSetting> = {
   both: 'left',
@@ -115,7 +113,7 @@ const LANE_KNOBS = {
 } as const satisfies Partial<Record<keyof GlobalSettings, keyof LaneLook>>;
 
 /** What the screen was opened for: a practice Idle, or a performance armed at bar one. */
-export type PlayIntent = 'practice' | 'performance';
+export type PlayIntent = PlayKind;
 
 export function PlayScreen({
   folder,
@@ -128,6 +126,8 @@ export function PlayScreen({
   intent?: PlayIntent;
   onBack: () => void;
 }) {
+  /** False once the screen is gone or the piece changed, so a late write touches no state. */
+  const mounted = useRef(true);
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sheetRef = useRef<Sheet | null>(null);
@@ -135,6 +135,9 @@ export function PlayScreen({
   const laneRef = useRef<Lane | null>(null);
   /** Notes wearing a red miss mark, so the next start of motion can take them all off. */
   const missedRef = useRef<Note[]>([]);
+  /** The engine's counters as the last frame read them: a change is what the screen answers. */
+  const resetsRef = useRef(0);
+  const finishesRef = useRef(0);
   const dark = useDark();
   const darkRef = useRef(dark);
   darkRef.current = dark;
@@ -190,13 +193,11 @@ export function PlayScreen({
   liveRef.current = live;
 
   const midi = useMidiStatus((event) => engineRef.current?.strike(event));
-  const midiRef = useRef(midi);
-  midiRef.current = midi;
 
   // Opening a piece: bring its index up to date in case the file changed, read the bytes, render
   // the sheet and build the Score of what was rendered. Any failure goes back to the library.
   useEffect(() => {
-    let live = true;
+    mounted.current = true;
     const fileName = path.split('/').pop() ?? path;
     void (async () => {
       try {
@@ -212,7 +213,7 @@ export function PlayScreen({
         ]);
         const resolved = resolvePlaySettings(row ?? INHERITS_EVERYTHING, defaults);
         const sheet = await Sheet.open(hostRef.current!, bytes, fileName, darkRef.current);
-        if (!live) return sheet.dispose();
+        if (!mounted.current) return sheet.dispose();
         sheetRef.current = sheet;
         // The piece opens as it was left: its own settings over the global defaults over these.
         const engine = new Engine(sheet.score, {
@@ -245,11 +246,11 @@ export function PlayScreen({
         // The play screen has no error state: the library says what went wrong instead.
         const reason = error instanceof ScoreError ? error.reason : String(error);
         setNotice(`Could not open ${fileName}: ${reason}`);
-        if (live) backRef.current();
+        if (mounted.current) backRef.current();
       }
     })();
     return () => {
-      live = false;
+      mounted.current = false;
       // Leaving the screen is a stop, so the practice it ends is stored on the way out.
       engineRef.current?.abort();
       savePractice();
@@ -270,7 +271,8 @@ export function PlayScreen({
   useEffect(() => {
     const engine = engineRef.current;
     if (!engine || midi.devices.length > 0) return;
-    if (engine.snapshot().state === 'running') engine.pause();
+    const { state: at } = engine.snapshot();
+    if (at === 'running' || at === 'counting-in') engine.pause();
   }, [midi.devices]);
 
   // The Section and Loop are screen state: the engine gives them force and the sheet draws them.
@@ -292,22 +294,22 @@ export function PlayScreen({
   /** Nothing on screen announces the save; the library's History is where it shows. */
   function savePractice(): void {
     const done = engineRef.current?.takePractice();
-    if (done) void insertPlay(path, 'practice', done.startedAt, done.seconds);
+    if (done) insertPlay(path, 'practice', done.startedAt, done.seconds).catch(console.error);
   }
 
   /** A complete performance leaves a row, and the card that says what it earned. */
   function savePerformance(): void {
     const done = engineRef.current?.takePerformance();
     if (!done) return;
-    void (async () => {
+    (async () => {
       // The best is read before the row goes in, so the card holds this run against the ones before.
       const best = await getPiece(path).then(
         (row) => row?.best_grade ?? null,
         () => null,
       );
-      setSummary({ record: done, best });
+      if (mounted.current) setSummary({ record: done, best });
       await insertPerformance(path, done);
-    })();
+    })().catch(console.error);
   }
 
   /**
@@ -316,7 +318,7 @@ export function PlayScreen({
    */
   function persist(values: PieceSettingValues): void {
     if (kindRef.current === 'performance') return;
-    void updatePieceSettings(path, values);
+    updatePieceSettings(path, values).catch(console.error);
   }
 
   /** Puts a resolved set of piece settings on the bar, the engine, the sheet and the keyboard. */
@@ -376,7 +378,9 @@ export function PlayScreen({
     setLook((held) => ({ ...held, ...next }));
     Object.assign(laneRef.current?.look ?? {}, next);
     for (const [key, field] of Object.entries(LANE_KNOBS)) {
-      if (field in next) void setSetting(key as keyof GlobalSettings, next[field] as never);
+      if (field in next) {
+        setSetting(key as keyof GlobalSettings, next[field] as never).catch(console.error);
+      }
     }
   }
 
@@ -404,6 +408,16 @@ export function PlayScreen({
     savePractice();
     savePerformance();
     const snapshot = engine.snapshot();
+    // The engine opened the notes again, so the red the sheet still wears belongs to nothing.
+    if (engine.resets !== resetsRef.current) {
+      resetsRef.current = engine.resets;
+      for (const note of missedRef.current) sheet.markNote(note, 'none');
+      missedRef.current.length = 0;
+    }
+    if (engine.finishes !== finishesRef.current) {
+      finishesRef.current = engine.finishes;
+      sheet.finish();
+    }
     for (const event of engine.events()) {
       lane.effect(event, now);
       if (event.verdict === 'miss') {
@@ -414,7 +428,7 @@ export function PlayScreen({
     }
     sheet.setWalk(engine.walk);
     sheet.frame(snapshot, engine.windowTicks, now);
-    lane.notice = midiRef.current.devices.length === 0 ? 'no MIDI device' : null;
+    lane.notice = midi.devices.length === 0 ? 'no MIDI device' : null;
     lane.frame(snapshot, engine.windowTicks, now);
     if (snapshot.state !== stateRef.current) {
       stateRef.current = snapshot.state;
@@ -444,8 +458,8 @@ export function PlayScreen({
         const engine = engineRef.current;
         if (engine?.kind === 'practice' && engine.snapshot().state === 'idle') setSection(null);
         else engine?.abort();
-      } else if (event.key === 'd') {
-        void setSetting('theme', flipTheme());
+      } else if (event.key === 'd' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        setSetting('theme', flipTheme()).catch(console.error);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -460,12 +474,8 @@ export function PlayScreen({
     // Pausing a count-in drops the play back to Idle, so the same key stops it as stops the clock.
     if (at === 'running' || at === 'counting-in') engine.pause();
     else if (at === 'paused') engine.resume();
-    else {
-      // Marks and colours of the last run stay on the sheet until motion starts again.
-      for (const note of missedRef.current) sheetRef.current?.markNote(note, 'none');
-      missedRef.current.length = 0;
-      engine.start();
-    }
+    // Marks and colours of the last run stay on the sheet until the engine opens the notes again.
+    else engine.start();
   }
 
   /** The next hands setting, on the engine and on the sheet; the lane reads the engine itself. */
@@ -530,7 +540,7 @@ export function PlayScreen({
             onKeyboard={changeKeyboard}
             onCountInBars={changeCountIn}
             onLook={changeLook}
-            onUseGlobalDefaults={() => void useGlobalDefaults()}
+            onUseGlobalDefaults={() => useGlobalDefaults().catch(console.error)}
             onAllSettings={() => setSettingsOpen(true)}
           />
 
@@ -777,7 +787,7 @@ function Split({ value, onChange }: { value: number; onChange: (value: number) =
         drag(event);
       }}
       onPointerMove={drag}
-      onPointerUp={() => void setSetting('sheet_split', value)}
+      onPointerUp={() => setSetting('sheet_split', value).catch(console.error)}
     >
       <i className="bg-edge-soft absolute inset-x-0 top-1 block h-px" />
       <i className="bg-edge group-hover:bg-muted-ink absolute top-[2px] left-1/2 block h-[5px] w-9 -translate-x-1/2 rounded-full transition-colors duration-150" />

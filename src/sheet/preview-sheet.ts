@@ -17,7 +17,7 @@ const MAX_ZOOM = 1.5;
 const SETTLED = 8;
 
 /** Notation size for a host of this width. */
-export function zoomFor(width: number): number {
+function zoomFor(width: number): number {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, width / BASE_WIDTH));
 }
 

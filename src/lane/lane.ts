@@ -32,7 +32,7 @@ export const SPLIT_MIN = 0.2;
 export const SPLIT_MAX = 0.6;
 
 /** Height of the top bar, which is not part of the split. */
-const TOP_BAR = 48;
+export const TOP_BAR = 48;
 
 const LANE_LINE = ['#e3e3e3', '#2c2c2c'] as const;
 const LANE_BAR = ['#c8c8c8', '#464646'] as const;

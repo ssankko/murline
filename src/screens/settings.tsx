@@ -84,12 +84,12 @@ export function SettingsDialog({
   const theme = useTheme();
 
   useEffect(() => {
-    void readSettings().then(setValues);
+    readSettings().then(setValues, console.error);
   }, []);
 
   function write<K extends keyof Settings>(key: K, value: Settings[K]): void {
     setValues((held) => held && { ...held, [key]: value });
-    void setSetting(key, value);
+    setSetting(key, value).catch(console.error);
     if (key === 'theme') setTheme(value as Theme);
     if (key === 'midi_device') pinMidiDevice(value as string | null);
     onGlobalChange?.(key, value);
@@ -121,10 +121,16 @@ export function SettingsDialog({
               note="A new library folder re-points the app. No file is moved."
             >
               <Row label="Library folder">
-                <Path value={values.library_folder} onChoose={() => void chooseFolder('library_folder')} />
+                <Path
+                  value={values.library_folder}
+                  onChoose={() => chooseFolder('library_folder').catch(console.error)}
+                />
               </Row>
               <Row label="PDMX folder">
-                <Path value={values.pdmx_folder} onChoose={() => void chooseFolder('pdmx_folder')} />
+                <Path
+                  value={values.pdmx_folder}
+                  onChoose={() => chooseFolder('pdmx_folder').catch(console.error)}
+                />
               </Row>
             </Group>
 
@@ -364,7 +370,7 @@ export function GearPopover({
               value={theme}
               onChange={(value) => {
                 setTheme(value);
-                void setSetting('theme', value);
+                setSetting('theme', value).catch(console.error);
               }}
             />
           </Row>

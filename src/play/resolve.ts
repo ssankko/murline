@@ -124,7 +124,7 @@ function handsOf(text: string | null): HandsSetting | null {
 }
 
 /** The preset column holds "piece", "custom" or the key count as text. */
-export function presetOf(text: string | null): KeyboardPreset | null {
+function presetOf(text: string | null): KeyboardPreset | null {
   if (text === 'piece' || text === 'custom') return text;
   const keys = Number(text);
   return text !== null && [25, 49, 61, 76, 88].includes(keys) ? (keys as KeyboardPreset) : null;

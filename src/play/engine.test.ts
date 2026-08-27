@@ -222,6 +222,22 @@ describe('the lifecycle', () => {
     expect(play.snapshot()).toMatchObject({ state: 'idle', playedTick: 0 });
   });
 
+  test('says when it opened the notes again, and when a practice ran off the end', () => {
+    const play = engine(scoreOf(2));
+    play.start();
+    const opened = play.resets;
+    play.advance(6000);
+    expect(play.resets).toBe(opened);
+    expect(play.finishes).toBe(0);
+
+    // A backward seek reopens everything behind the cursor, marks and all.
+    play.seek({ measure: 0 });
+    expect(play.resets).toBeGreaterThan(opened);
+
+    play.advance(60_000);
+    expect(play.finishes).toBe(1);
+  });
+
   test('the end tick holds the last written duration plus the matching window', () => {
     const play = engine(scoreOf(2));
 

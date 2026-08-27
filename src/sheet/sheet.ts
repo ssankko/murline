@@ -40,6 +40,12 @@ const DRAG_SLOP = 4;
 /** While Running a scroll detaches the view, and it snaps back this long after the last input. */
 const DETACH_MS = 2000;
 
+/** How long the cursor takes to slide when it is not being moved by the clock. */
+const GLIDE_MS = 220;
+
+/** The end of a practice: the cursor band fades away over this long and comes back at the start. */
+const FINISH_MS = 400;
+
 /** What a note carries besides its pitch colour. */
 export type MarkKind = 'none' | 'current' | 'miss';
 
@@ -141,7 +147,17 @@ export class Sheet {
   /** Which hand the play expects; the other hand's noteheads read as scaffolding. */
   private hands: HandsSetting = 'both';
   private outlined: Note[] = [];
-  private drawn = { scale: 0, onset: -1, step: -1, jumpAt: -Infinity, jumpBar: 0, running: true };
+  private drawn = {
+    scale: 0,
+    onset: -1,
+    step: -1,
+    tick: 0,
+    jumpAt: -Infinity,
+    jumpBar: 0,
+    running: true,
+    glide: false,
+    glideUntil: -Infinity,
+  };
 
   private constructor(host: HTMLElement, dark: boolean) {
     this.host = host;
@@ -291,14 +307,23 @@ export class Sheet {
     this.fit();
     const at = this.cursorAt(snap.playedTick, snap.stepIndex, windowTicks);
 
-    // While the clock runs the cursor is moved every frame, so a transition would fight it; a
-    // pause, a restart and the end of the piece glide instead.
     const running = snap.state === 'running' || snap.state === 'counting-in';
     if (running !== this.drawn.running) {
       this.drawn.running = running;
-      this.cursor.style.transition = running || reducedMotion() ? 'none' : 'left 220ms ease';
       // Play snaps the view to the cursor, whatever the reader scrolled to while it was still.
       this.scrolledAt = -Infinity;
+    }
+    // A loop wrap runs the cursor back over the sheet, so the frames after it glide. A written
+    // repeat snaps instead: `cursorAt` has already run the cursor to the measure's right edge.
+    if (running && snap.playedTick < this.drawn.tick && !this.jumpAfter[this.drawn.step]) {
+      this.drawn.glideUntil = now + GLIDE_MS;
+    }
+    this.drawn.tick = snap.playedTick;
+    // While the clock runs forward the cursor is moved every frame, so a transition would fight it.
+    const glide = (!running || now < this.drawn.glideUntil) && !reducedMotion();
+    if (glide !== this.drawn.glide) {
+      this.drawn.glide = glide;
+      this.cursor.style.transition = glide ? `left ${GLIDE_MS}ms ease` : 'none';
     }
     this.cursor.style.left = `${at.x - at.width / 2}px`;
     this.cursor.style.width = `${at.width}px`;
@@ -355,6 +380,12 @@ export class Sheet {
       onsetIndex: step?.onsetIndex ?? 0,
       stepIndex: i,
     };
+  }
+
+  /** The end of a practice: the cursor band fades out and comes back at the start point. */
+  finish(): void {
+    if (reducedMotion()) return;
+    this.cursor.animate([{ opacity: 1 }, { opacity: 0, offset: 0.75 }, { opacity: 1 }], FINISH_MS);
   }
 
   /** Takes only this sheet's own DOM out of the host, which may already hold the next one. */

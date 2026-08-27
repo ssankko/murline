@@ -143,6 +143,10 @@ export class Engine {
   /** Played ticks of the beats being counted in, before the tick the count-in leads to. */
   countInBeats: number[] = [];
   kind: PlayKind = 'practice';
+  /** Bumped every time the notes are opened again, which is what takes the sheet's marks off. */
+  resets = 0;
+  /** Bumped when a practice runs off the end of the piece, the one ending that is animated. */
+  finishes = 0;
 
   private state: PlayState = 'idle';
   private tick = 0;
@@ -298,6 +302,7 @@ export class Engine {
     const span = this.loopSpan();
     if (span && (this.startTick < span.from || this.startTick >= span.to)) this.startTick = span.from;
     this.tick = this.startTick;
+    this.resets++;
     this.states.fill('pending');
     this.resolved.fill(0);
     this.pending = [];
@@ -473,6 +478,7 @@ export class Engine {
   /** Takes the clock to a played tick: nothing behind it closes, everything from it is open again. */
   private moveTo(to: number): void {
     this.tick = to;
+    this.resets++;
     this.closed = this.firstNoteFrom(to);
     for (let i = this.closed; i < this.notes.length; i++) {
       this.states[i] = 'pending';
@@ -591,8 +597,10 @@ export class Engine {
           if (this.state !== 'running') return;
           continue;
         }
-        if (this.kind === 'practice') this.abort();
-        else {
+        if (this.kind === 'practice') {
+          this.finishes++;
+          this.abort();
+        } else {
           this.state = 'ended';
           this.endRecord();
         }

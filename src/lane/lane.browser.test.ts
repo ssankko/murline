@@ -1,6 +1,6 @@
 import { DEFAULT_LANE_LOOK, Lane } from '@/lane/lane';
 import { KEYBOARD_H } from '@/lane/keyboard';
-import { colorOf } from '@/look/color';
+import { PAPER, colorOf, tone } from '@/look/color';
 import { Engine } from '@/play/engine';
 import { DEFAULT_PLAY_SETTINGS } from '@/play/settings';
 import { TICKS_PER_QUARTER, type Note, type Score } from '@/score/types';
@@ -52,7 +52,12 @@ function scoreOf(): Score {
   };
 }
 
-function mount(): { engine: Engine; lane: Lane; ctx: CanvasRenderingContext2D } {
+function mount(): {
+  engine: Engine;
+  lane: Lane;
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+} {
   const canvas = document.createElement('canvas');
   canvas.style.cssText = `width:${WIDTH}px;height:${HEIGHT}px;display:block`;
   document.body.replaceChildren(canvas);
@@ -63,7 +68,7 @@ function mount(): { engine: Engine; lane: Lane; ctx: CanvasRenderingContext2D } 
   });
   engine.start();
   const lane = new Lane(canvas, engine, { ...DEFAULT_LANE_LOOK }, false);
-  return { engine, lane, ctx: canvas.getContext('2d')! };
+  return { engine, lane, canvas, ctx: canvas.getContext('2d')! };
 }
 
 /** The hex at a point of a lane's canvas. */
@@ -89,5 +94,31 @@ test('a hit stamped on another clock leaves the frame and the keyboard standing'
 
   // The keyboard is painted, and middle C wears the colour of the note the strike matched.
   expect(hex(ctx, 20, laneH + 20)).toBe(colorOf(60, 'muted', false));
+  lane.dispose();
+});
+
+test('the wheel takes the view off the clock and the detach window brings it back', () => {
+  const laneH = HEIGHT - KEYBOARD_H;
+  const { engine, lane, canvas, ctx } = mount();
+  // A column with no key of the piece under it, so only the now-line can colour it.
+  const bare = WIDTH / 2;
+  const line = () => hex(ctx, bare, laneH - 1);
+  // The lane ages the detach window against the engine's wall clock, so the frames run on it.
+  const wall = performance.timeOrigin + performance.now();
+  const frame = (at: number) => lane.frame(engine.snapshot(), engine.windowTicks, wall + at);
+  frame(0);
+  expect(line()).not.toBe(tone(PAPER, false));
+
+  // Wheel down looks back, so the clock rides up the lane and out of it, its line with it.
+  const wheel = new WheelEvent('wheel', { deltaY: 200, cancelable: true, bubbles: true });
+  canvas.dispatchEvent(wheel);
+  expect(wheel.defaultPrevented).toBe(true);
+  frame(10);
+  expect(line()).toBe(tone(PAPER, false));
+
+  // Two seconds after the wheel the view glides back onto the clock, and the line stands again.
+  frame(2100);
+  frame(2500);
+  expect(line()).not.toBe(tone(PAPER, false));
   lane.dispose();
 });

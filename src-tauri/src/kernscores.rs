@@ -14,6 +14,9 @@ use quick_xml::Reader;
 const TIMEOUT: Duration = Duration::from_secs(15);
 /// Children a `<note>` writes after its `<staff>`.
 const AFTER_STAFF: [&str; 4] = ["beam", "notations", "lyric", "play"];
+/// Element nesting `parse` accepts. MusicXML reaches about ten, and the tree walks that follow
+/// `parse` recurse once per level, so a deeper document is refused instead of overflowing the stack.
+const MAX_DEPTH: usize = 64;
 
 /// One request for the row's MusicXML, then the file rule.
 pub fn download(url: &str) -> Result<Vec<u8>, String> {
@@ -207,7 +210,7 @@ fn convert(measure: Elem, st: &mut State, first_measure: bool) -> Vec<Elem> {
                 out.push(el);
             }
             "note" => {
-                let chord = descendant_is_child(&el, "chord");
+                let chord = child(&el, "chord").is_some();
                 for lyric in take_all(&mut el, "lyric") {
                     let text = child(&lyric, "text").map(text_of).unwrap_or_default();
                     if is_dynamic(text.trim()) {
@@ -217,7 +220,7 @@ fn convert(measure: Elem, st: &mut State, first_measure: bool) -> Vec<Elem> {
                         if chord {
                             while pos > 0 && out[pos - 1].name == "note" {
                                 pos -= 1;
-                                if !descendant_is_child(&out[pos], "chord") {
+                                if child(&out[pos], "chord").is_none() {
                                     break;
                                 }
                             }
@@ -280,15 +283,15 @@ fn open_staves(target: &mut Elem, opening: &[Option<Elem>; 2], by_clef: bool) {
 
 /// Ticks a measure's content advances: durations of non-chord notes plus forward minus backup.
 fn length(measure: &Elem) -> i64 {
-    let mut ticks = 0;
+    let mut ticks: i64 = 0;
     for node in &measure.children {
         let Node::Elem(el) = node else { continue };
         let Some(duration) = child(el, "duration") else { continue };
         let n: i64 = text_of(duration).trim().parse().unwrap_or(0);
         match el.name.as_str() {
-            "note" if !descendant_is_child(el, "chord") => ticks += n,
-            "forward" => ticks += n,
-            "backup" => ticks -= n,
+            "note" if child(el, "chord").is_none() => ticks = ticks.saturating_add(n),
+            "forward" => ticks = ticks.saturating_add(n),
+            "backup" => ticks = ticks.saturating_sub(n),
             _ => {}
         }
     }
@@ -362,10 +365,6 @@ fn child_mut<'a>(el: &'a mut Elem, name: &str) -> Option<&'a mut Elem> {
     })
 }
 
-fn descendant_is_child(el: &Elem, name: &str) -> bool {
-    child(el, name).is_some()
-}
-
 /// The first element of that name anywhere below `el`, in document order.
 fn descendant<'a>(el: &'a Elem, name: &str) -> Option<&'a Elem> {
     for node in &el.children {
@@ -421,7 +420,12 @@ fn parse(xml: &[u8]) -> Result<(Vec<u8>, Elem), String> {
     loop {
         let event = reader.read_event_into(&mut buf).map_err(|e| e.to_string())?;
         match event {
-            Event::Start(e) => stack.push(open(&e)),
+            Event::Start(e) => {
+                if stack.len() == MAX_DEPTH {
+                    return Err("XML nested too deep".to_string());
+                }
+                stack.push(open(&e));
+            }
             Event::Empty(e) => {
                 let el = open(&e);
                 match stack.last_mut() {
@@ -696,5 +700,26 @@ mod tests {
     #[test]
     fn a_file_that_is_not_musicxml_is_refused() {
         assert_eq!(merge(b"<html><body>nope</body></html>"), Err("not MusicXML".to_string()));
+    }
+
+    #[test]
+    fn a_document_nested_past_the_cap_is_refused_instead_of_walked() {
+        let deep = format!(
+            "<score-partwise>{}{}</score-partwise>",
+            "<a>".repeat(100),
+            "</a>".repeat(100)
+        );
+        assert_eq!(merge(deep.as_bytes()), Err("XML nested too deep".to_string()));
+    }
+
+    #[test]
+    fn durations_that_would_overflow_a_measure_saturate() {
+        let xml = format!(
+            "<measure><note><duration>{max}</duration></note>\
+             <note><duration>{max}</duration></note></measure>",
+            max = i64::MAX
+        );
+        let (_, measure) = parse(xml.as_bytes()).unwrap();
+        assert_eq!(length(&measure), i64::MAX);
     }
 }

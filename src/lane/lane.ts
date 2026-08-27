@@ -72,19 +72,20 @@ const SPLASH_MS = 250;
 const SPLASH_RADIUS = [16, 40] as const;
 const SPLASH_ALPHA = [0.35, 0.8] as const;
 
-/** How much wider a struck block pops, and how long it takes to settle back. */
-const POP = 0.3;
-const POP_MS = 300;
+/** How far a struck block swells at the peak of its pulse, and how long the whole pulse runs. */
+const POP = 0.33;
+const POP_MS = 280;
 
 /**
  * A missed block: how long it takes to go grey, how far it sinks and how much of its alpha it
- * gives up on the way, and the specks it spills as it goes.
+ * gives up on the way, and the sparks it grinds off the keyboard as it crosses.
  */
 const MISS_MS = 300;
 const MISS_SINK = 4;
 const MISS_DIM = 0.3;
-const SPILL = [3, 5] as const;
-const SPILL_GRAVITY = 300;
+const GRIND_PER_S = 25;
+const GRIND_SPREAD = Math.PI / 3;
+const GRIND_GRAVITY = 300;
 
 /**
  * The beat pulse at the now-line: the share of a beat it decays over, and what a full pulse adds to
@@ -97,6 +98,10 @@ const PULSE_BAND = 0.06;
 /** How far a sounding key's face drains toward its base, and how long its release blink lasts. */
 const DRAIN_FLOOR = 0.4;
 const BLINK_MS = 120;
+
+/** How long a key takes to sink under a finger and to come back up, both through the overshoot. */
+const PRESS_MS = 120;
+const RELEASE_MS = 160;
 
 /**
  * Specks: how many a strike throws between the softest and the hardest, how wide each source aims,
@@ -217,6 +222,11 @@ export class Lane {
   private particles: Speck[] = [];
   /** Specks the sounding keys have earned but not yet been given, as a fraction of one each. */
   private owed = 0;
+  /** The same for a grinding miss, with this frame's whole share of it. */
+  private groundOwed = 0;
+  private groundDue = 0;
+  /** When each key last went down or came up, which is what the press eases from. */
+  private readonly presses = new Map<number, { down: boolean; at: number }>();
   /** When each key last began its release blink. */
   private readonly blinks = new Map<number, number>();
   private now = 0;
@@ -356,8 +366,11 @@ export class Lane {
     );
     const pxPerTick = reference / Math.max(this.look.lookaheadBeats, 1) / TICKS_PER_QUARTER;
 
-    this.stepParticles(step);
+    this.stepParticles(step, laneH);
     this.heldKeys(laneH, sinceTick, step);
+    this.groundOwed += this.reduced ? 0 : (step / 1000) * GRIND_PER_S;
+    this.groundDue = Math.floor(this.groundOwed);
+    this.groundOwed -= this.groundDue;
     if (!this.reduced) {
       for (const effect of this.effects) {
         if (effect.kind === 'hit' && effect.start > this.sinceWall) this.burst(effect, laneH);
@@ -367,6 +380,9 @@ export class Lane {
       this.particles.splice(0, this.particles.length - SPECK_CAP);
     }
     for (const [midi, at] of this.blinks) if (now - at > BLINK_MS) this.blinks.delete(midi);
+    for (const [midi, press] of this.presses) {
+      if (!press.down && now - press.at > RELEASE_MS) this.presses.delete(midi);
+    }
 
     ctx.fillStyle = tone(PAPER, this.dark);
     ctx.fillRect(0, 0, width, height);
@@ -402,7 +418,7 @@ export class Lane {
       this.dark,
       this.look.keyLabels,
       this.keyFill,
-      this.keyPressed,
+      this.keyDepth,
     );
     this.drawParticles();
     if (this.notice) this.drawNotice(width, laneH);
@@ -558,20 +574,23 @@ export class Lane {
       if (y > laneH) continue;
       const state = live ? engine.noteState(i) : 'pending';
       const age = live ? this.now - engine.resolvedAt(i) : Infinity;
-      // A struck block pops out and settles back through the overshoot, centred on its key.
-      const pop =
-        state === 'hit' && !this.reduced ? POP * (1 - easeOutBack(clamp(age / POP_MS, 0, 1))) : 0;
-      const width = key.w * (this.look.noteWidthPct / 100) * (1 + pop);
+      // A struck block pulses out and back about its bottom edge, which is on the now-line at the
+      // strike, so the block reads as taking the blow rather than growing sideways.
+      const beat = state === 'hit' && !this.reduced ? bounceAt(age / POP_MS) : 1;
+      const width = key.w * (this.look.noteWidthPct / 100) * beat;
       const x = key.x + (key.w - width) / 2;
-      const height = Math.max(bottom - y - this.look.gapPx, 3);
+      const full = Math.max(bottom - y - this.look.gapPx, 3);
+      const height = full * beat;
       const radius = Math.min(NOTE_RADIUS, width / 3, height / 3);
       // How far a miss has gone grey. It sinks and dims as it goes and stays that way in view.
       const missed = state === 'miss';
       const gone = missed ? (this.reduced ? 1 : clamp(age / MISS_MS, 0, 1)) : 0;
-      const blockY = y + MISS_SINK * gone;
-      // The specks a miss spills are thrown once, on the frame the window closed over it.
-      if (missed && !this.reduced && engine.resolvedAt(i) > this.sinceWall) {
-        this.spill(x, width, bottom);
+      const blockY = y + full - height + MISS_SINK * gone;
+      // A missed block grinds sparks off the keys for as long as it is crossing them.
+      const crossing =
+        note.tick <= this.playedTick && this.playedTick < note.tick + note.durationTicks;
+      if (missed && !this.reduced && (crossing || engine.resolvedAt(i) > this.sinceWall)) {
+        this.grind(x, width, laneH);
       }
       // How much of a ghost the note is now: a change of hands cross-fades it over the two looks.
       const ghost = isInactiveHand(this.hands, note.hand)
@@ -635,7 +654,7 @@ export class Lane {
         ctx.globalAlpha = GHOST_ALPHA * ghost;
         ctx.fillStyle = tone(INK.duration, this.dark);
         ctx.beginPath();
-        ctx.roundRect(x, y, width, height, radius);
+        ctx.roundRect(x, blockY, width, height, radius);
         ctx.fill();
       }
       ctx.restore();
@@ -709,20 +728,25 @@ export class Lane {
   }
 
   /**
-   * What the held keys owe this frame: the blink of a key whose note has just reached its written
-   * end, and the trickle of specks a key gives while its note sounds.
+   * What every key owes this frame: the moment it went down or came up, the blink of a key whose
+   * note has just reached its written end, and the trickle of specks a sounding key gives.
    */
   private heldKeys(laneH: number, sinceTick: number, step: number): void {
     this.owed += this.reduced ? 0 : (step / 1000) * TRICKLE_PER_S;
     const due = Math.floor(this.owed);
     this.owed -= due;
     for (const key of this.layout.keys) {
+      const state = this.engine.keyState(key.midi);
+      const down = state !== 'base';
+      if (down !== (this.presses.get(key.midi)?.down ?? false)) {
+        this.presses.set(key.midi, { down, at: this.now });
+      }
       const index = this.engine.heldNote(key.midi);
       if (index < 0) continue;
       const note = this.engine.notes[index]!;
       const end = note.tick + note.durationTicks;
       if (sinceTick < end && end <= this.playedTick) this.blinks.set(key.midi, this.now);
-      if (this.engine.keyState(key.midi) !== 'color') continue;
+      if (state !== 'color') continue;
       for (let i = 0; i < due; i++) this.trickle(key, laneH);
     }
   }
@@ -746,17 +770,16 @@ export class Lane {
     }
   }
 
-  /** The grey specks a missed block spills off its bottom edge as it dies. */
-  private spill(x: number, width: number, bottom: number): void {
+  /** The sparks a missed block grinds off the key tops it is crossing. */
+  private grind(x: number, width: number, laneH: number): void {
     const color = tone(INK.miss, this.dark);
-    const count = Math.round(ramp(SPILL, Math.random()));
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < this.groundDue; i++) {
       this.particles.push(
-        speck(x + Math.random() * width, bottom, Math.PI / 2, between(10, 30), color, {
-          gravity: SPILL_GRAVITY,
+        speck(x + Math.random() * width, laneH, GRIND_SPREAD, between(40, 120), color, {
+          gravity: GRIND_GRAVITY,
           radius: between(1, 2),
           born: this.now,
-          life: between(350, 450),
+          life: between(250, 400),
           alpha: 1,
         }),
       );
@@ -777,12 +800,12 @@ export class Lane {
     );
   }
 
-  /** Moves every speck on by one step and drops the ones whose life has run out. */
-  private stepParticles(step: number): void {
+  /** Moves every speck on by one step and drops the ones that died or fell back to the keys. */
+  private stepParticles(step: number, laneH: number): void {
     const seconds = step / 1000;
     let kept = 0;
     for (const spark of this.particles) {
-      if (this.now - spark.born >= spark.life) continue;
+      if (this.now - spark.born >= spark.life || spark.y > laneH) continue;
       spark.vy += spark.gravity * seconds;
       spark.x += spark.vx * seconds;
       spark.y += spark.vy * seconds;
@@ -828,8 +851,18 @@ export class Lane {
     return mix(color, base, gone);
   }
 
-  /** A key reads as pressed while it is held, whatever its strike turned out to be. */
-  private readonly keyPressed = (midi: number): boolean => this.engine.keyState(midi) !== 'base';
+  /**
+   * How far down a key stands: 1 while it is held, 0 while it is up, and the overshoot of the ease
+   * between the two, which sinks it past its stop and lets it bounce back up on release.
+   */
+  private readonly keyDepth = (midi: number): number => {
+    const press = this.presses.get(midi);
+    if (!press) return 0;
+    if (this.reduced) return press.down ? 1 : 0;
+    const over = press.down ? PRESS_MS : RELEASE_MS;
+    const eased = easeOutBack(clamp((this.now - press.at) / over, 0, 1));
+    return press.down ? eased : 1 - eased;
+  };
 
   /**
    * The chord sounding now and the two after it, each on its own panel at the top right. A next
@@ -1087,6 +1120,15 @@ export function lerpRect(from: PanelRect, to: PanelRect, t: number): PanelRect {
     size: at(from.size, to.size),
     weight: t < 0.5 ? from.weight : to.weight,
   };
+}
+
+/**
+ * One swing of a struck block: out to about a quarter over its size and back through a shallow
+ * undershoot, damped to nothing at the end of its time.
+ */
+function bounceAt(t: number): number {
+  if (t >= 1) return 1;
+  return 1 + POP * Math.sin(2 * Math.PI * t) * (1 - t);
 }
 
 /** Fast out with a small overshoot, so a panel settles into its slot with a bounce. */

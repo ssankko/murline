@@ -38,7 +38,7 @@ export function Detail({
   const fullPath = folder ? pathOf(folder, piece.path) : piece.path;
   return (
     <div className="flex-1 overflow-y-auto px-12 py-10">
-      <div className="flex max-w-[640px] flex-col">
+      <div className="flex max-w-[640px] flex-col select-text">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-[28px] leading-tight font-semibold tracking-tight">
@@ -88,7 +88,7 @@ export function Detail({
           <div className="mt-7 flex flex-col gap-1.5 text-[13px]">
             <b className="font-semibold">{splitError(piece.error!).reason}</b>
             <details className="text-muted-ink text-[12px]">
-              <summary className="cursor-pointer select-none">Details</summary>
+              <summary className="cursor-pointer">Details</summary>
               <code className="mt-1 block text-[11.5px] whitespace-pre-wrap">
                 {splitError(piece.error!).detail}
               </code>

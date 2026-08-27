@@ -86,9 +86,19 @@
     height: 100%;
   }
   body {
-    @apply bg-paper text-ink font-sans;
+    @apply bg-paper text-ink font-sans select-none;
     font-size: 13px;
     -webkit-font-smoothing: antialiased;
+  }
+  /* A control is clicked, never read, so the few places that turn selection back on stop here. */
+  button,
+  summary {
+    @apply select-none;
+  }
+  /* WebKit drops the caret and the selection of a field under an inherited `none`. */
+  input,
+  textarea {
+    @apply select-text;
   }
 }
 

@@ -403,7 +403,7 @@ function Row({
           row.favorite ? 'opacity-100' : 'opacity-0'
         }`}
       />
-      <span className="flex min-w-0 flex-col gap-px">
+      <span className="flex min-w-0 flex-col gap-px select-text">
         <b className={`truncate text-[13px] font-medium ${row.error ? 'text-muted-ink' : ''}`}>
           {row.title ?? row.path}
         </b>

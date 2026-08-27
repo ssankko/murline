@@ -347,7 +347,7 @@ export function SettingsDialog({
           </Group>
 
           <details className="flex flex-col gap-2">
-            <summary className="cursor-pointer text-[13px] font-semibold select-none">
+            <summary className="cursor-pointer text-[13px] font-semibold">
               Grade tuning
             </summary>
             <div className="mt-3">
@@ -542,7 +542,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 function Path({ value, onChoose }: { value: string; onChoose: () => void }) {
   return (
     <div className="flex min-w-0 items-center gap-2">
-      <code className="text-muted-ink truncate text-[11.5px]">{value || 'not set'}</code>
+      <code className="text-muted-ink truncate text-[11.5px] select-text">{value || 'not set'}</code>
       <Button variant="outline" size="sm" className="h-7 flex-none" onClick={onChoose}>
         Choose…
       </Button>

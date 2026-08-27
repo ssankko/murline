@@ -389,8 +389,10 @@ export function PlayScreen({
     const sheet = sheetRef.current;
     const lane = laneRef.current;
     if (!engine || !sheet || !lane) return;
-    // Strikes carry the plugin's Unix timestamp, so the clock takes wall time on the same timeline.
-    engine.advance(delta, performance.timeOrigin + now);
+    // Strikes carry the plugin's Unix timestamp, so the clock takes wall time on the same
+    // timeline. The lane runs on it too: it ages its feedback against the engine's own stamps.
+    const wall = performance.timeOrigin + now;
+    engine.advance(delta, wall);
     if (engine.beats() > 0) click();
     void savePractice();
     savePerformance();
@@ -406,7 +408,7 @@ export function PlayScreen({
       sheet.finish();
     }
     for (const event of engine.events()) {
-      lane.effect(event, now);
+      lane.effect(event, wall);
       if (event.verdict === 'miss') {
         const note = engine.notes[event.noteIndex]!.note;
         missedRef.current.push(note);
@@ -416,7 +418,7 @@ export function PlayScreen({
     sheet.setWalk(engine.walk);
     sheet.frame(snapshot, engine.windowTicks, now);
     lane.notice = midi.devices.length === 0 ? 'no MIDI device' : null;
-    lane.frame(snapshot, engine.windowTicks, now);
+    lane.frame(snapshot, engine.windowTicks, wall);
     if (snapshot.state !== state) {
       setState(snapshot.state);
       // The card belongs to the run that ended; anything that moves the play again takes it away.

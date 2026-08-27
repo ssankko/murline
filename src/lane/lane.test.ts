@@ -1,6 +1,15 @@
 import { TICKS_PER_QUARTER, type ChordEvent } from '@/score/types';
 import { describe, expect, test } from 'vitest';
-import { beatsBefore, chordsAt, chordsOf, lerpRect, pulseAt, slotRect, throughWrap } from './lane';
+import {
+  beatsBefore,
+  bounceAt,
+  chordsAt,
+  chordsOf,
+  lerpRect,
+  pulseAt,
+  slotRect,
+  throughWrap,
+} from './lane';
 
 const Q = TICKS_PER_QUARTER;
 /** Three bars of 3/4 in played time, counted in quarters. */
@@ -96,5 +105,17 @@ describe('the pulse at the now-line', () => {
   test('is nothing outside the bars of the play', () => {
     expect(pulseAt(BARS, -Q)).toEqual({ level: 0, strong: false });
     expect(pulseAt(BARS, 99 * Q)).toEqual({ level: 0, strong: false });
+  });
+});
+
+describe('the swing of a struck block', () => {
+  test('is out and back inside its time, and its own size outside it', () => {
+    expect(bounceAt(0)).toBe(1);
+    expect(bounceAt(0.25)).toBeGreaterThan(1.2);
+    expect(bounceAt(0.75)).toBeLessThan(1);
+    // A clock that hands over a wild number must never scale a block by one.
+    expect(bounceAt(-5)).toBe(1);
+    expect(bounceAt(5)).toBe(1);
+    expect(bounceAt(NaN)).toBe(1);
   });
 });

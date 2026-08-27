@@ -306,7 +306,10 @@ export class Lane {
     this.layout = keyLayout(this.range[0], this.range[1], this.size.width || 1);
   }
 
-  /** Feedback at the key: a ring for a hit or an extra. A miss shows on the block and the sheet. */
+  /**
+   * Feedback at the key: a ring for a hit or an extra. A miss shows on the block and the sheet.
+   * `now` is the engine's wall clock, the timeline every strike and `resolvedAt` is stamped on.
+   */
   effect(event: PlayEvent, now: number): void {
     if (event.verdict !== 'hit' && event.verdict !== 'extra') return;
     // The hit's ring is anchored where its block stood, so it must be measured as the key goes
@@ -321,7 +324,11 @@ export class Lane {
     });
   }
 
-  /** One frame. Nothing is kept between frames but the effects still playing out. */
+  /**
+   * One frame. Nothing is kept between frames but the effects still playing out. `now` is the
+   * engine's wall clock, not the raw animation clock: the age of every mark is read against
+   * `resolvedAt`, which the engine stamps from the strike that settled the note.
+   */
   frame(snap: Snapshot, windowTicks: number, now: number): void {
     this.now = now;
     this.playedTick = snap.playedTick;
@@ -573,7 +580,8 @@ export class Lane {
       const y = this.y(Math.min(note.tick + note.durationTicks, ceiling), laneH, pxPerTick);
       if (y > laneH) continue;
       const state = live ? engine.noteState(i) : 'pending';
-      const age = live ? this.now - engine.resolvedAt(i) : Infinity;
+      // A strike stamped a moment after the last frame would age negative, which no curve wants.
+      const age = live ? Math.max(this.now - engine.resolvedAt(i), 0) : Infinity;
       // A struck block pulses out and back about its bottom edge, which is on the now-line at the
       // strike, so the block reads as taking the blow rather than growing sideways.
       const beat = state === 'hit' && !this.reduced ? bounceAt(age / POP_MS) : 1;
@@ -581,7 +589,7 @@ export class Lane {
       const x = key.x + (key.w - width) / 2;
       const full = Math.max(bottom - y - this.look.gapPx, 3);
       const height = full * beat;
-      const radius = Math.min(NOTE_RADIUS, width / 3, height / 3);
+      const radius = Math.max(Math.min(NOTE_RADIUS, width / 3, height / 3), 0);
       // How far a miss has gone grey. It sinks and dims as it goes and stays that way in view.
       const missed = state === 'miss';
       const gone = missed ? (this.reduced ? 1 : clamp(age / MISS_MS, 0, 1)) : 0;
@@ -711,8 +719,9 @@ export class Lane {
     for (const effect of this.effects) {
       const key = this.layout.byMidi.get(effect.midi);
       if (!key) continue;
+      // A ring outside its own time is no ring; a negative age would ask for a negative radius.
       const age = (this.now - effect.start) / RING_MS;
-      if (age > 1) continue;
+      if (!(age >= 0 && age <= 1)) continue;
       const hit = effect.kind === 'hit';
       // A hit rings where its block's bottom edge stood as the key went down: above the now-line
       // for a strike that came early, below it for one that came late.
@@ -1126,8 +1135,9 @@ export function lerpRect(from: PanelRect, to: PanelRect, t: number): PanelRect {
  * One swing of a struck block: out to about a quarter over its size and back through a shallow
  * undershoot, damped to nothing at the end of its time.
  */
-function bounceAt(t: number): number {
-  if (t >= 1) return 1;
+export function bounceAt(t: number): number {
+  // Outside its own time the block is its own size, whatever number the clock hands over.
+  if (!(t > 0 && t < 1)) return 1;
   return 1 + POP * Math.sin(2 * Math.PI * t) * (1 - t);
 }
 

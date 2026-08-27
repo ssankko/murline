@@ -22,7 +22,7 @@ import {
 } from '@/library/queries';
 import { reindexIfChanged } from '@/library/scan';
 import { flipTheme, useDark } from '@/look/use-dark';
-import { useMidiStatus } from '@/midi/useMidiStatus';
+import { useMidiStatus } from '@/midi/use-midi-status';
 import { click, setClickVolume } from '@/play/click';
 import {
   Engine,

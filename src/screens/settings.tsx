@@ -17,7 +17,7 @@ import { detectedRange } from '@/lane/keyboard';
 import type { LaneLook } from '@/lane/lane';
 import { noteName } from '@/look/color';
 import { setTheme, useTheme, type Theme } from '@/look/use-dark';
-import { pinMidiDevice, useMidiStatus } from '@/midi/useMidiStatus';
+import { pinMidiDevice, useMidiStatus } from '@/midi/use-midi-status';
 import { validNumber, type PieceSettings } from '@/play/resolve';
 import type { HandsSetting, KeyboardPreset } from '@/play/settings';
 import { open } from '@tauri-apps/plugin-dialog';

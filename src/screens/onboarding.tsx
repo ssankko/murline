@@ -1,7 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { setSetting } from '@/db/db';
 import { Input } from '@/components/ui/input';
-import { useMidiStatus } from '@/midi/useMidiStatus';
+import { useMidiStatus } from '@/midi/use-midi-status';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useEffect, useState } from 'react';

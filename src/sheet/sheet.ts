@@ -19,6 +19,7 @@ import {
 } from 'opensheetmusicdisplay';
 import { applyTheme, applyTiers, noteheadEl, paintHead, type VFNote } from './paint';
 import { projectStates, type Play } from './project';
+import { setTimed } from './spacing';
 
 /** Paper kept above the top staff line, the strip the chord bubbles sit in. */
 const BUBBLE_STRIP = 28;
@@ -73,12 +74,12 @@ const RUNNER_W = 2;
 const GLIDE_MS = 220;
 
 /**
- * Slack every measure of a sheet spaced by time keeps over the tightest measure's pixels per tick.
- * VexFlow spreads only the width a measure has over its own minimum packing, so slack is what
- * carries the notes towards their time. A calibration knob: the whole sheet grows with it, and
- * OSMD breaks its one line into systems past 32767 px.
+ * Paper a sheet spaced by time takes over the tightest measure's pixels per tick, as a percent. The
+ * slack is what carries the notes of a crowded bar to their own time; a bar still too crowded for
+ * the width it gets keeps VexFlow's packing. The whole sheet grows with the percent, and OSMD
+ * breaks its one line into systems past 32767 px.
  */
-const STRETCH = 1.5;
+export const DEFAULT_SPACING = 150;
 
 /** How long the cursor band takes to grow or shrink into a new size, as the Section's tint fades. */
 const EASE_MS = 200;
@@ -149,6 +150,18 @@ export class Sheet {
   private dark: boolean;
   /** Whether the measures take their width from their duration rather than from their engraving. */
   private proportional = false;
+  /** Paper a measure spaced by time takes over the tightest measure's pixels per tick, a percent. */
+  private spacing = DEFAULT_SPACING;
+  /**
+   * What each measure's notes pack into, in units, read off the engraving once: a spacing percent
+   * is written against the tightest measure of these.
+   */
+  private engraved: number[] = [];
+  /**
+   * Pixels per tick of a sheet spaced by time, one for the whole of it, which the cursor band takes
+   * its width from. Zero while the sheet is spaced by its engraving.
+   */
+  private pxPerTick = 0;
   /** OSMD's own cap on how far a chord symbol or a lyric may stretch a measure. */
   private readonly elongation: number;
   private readonly host: HTMLElement;
@@ -289,14 +302,20 @@ export class Sheet {
     fileName: string,
     dark: boolean,
     proportional = false,
+    spacing = DEFAULT_SPACING,
   ): Promise<Sheet> {
     const sheet = new Sheet(host, dark);
     sheet.proportional = proportional;
+    sheet.spacing = spacing;
     await loadInto(sheet.osmd, bytes, fileName);
     sheet.osmd.render();
     sheet.score = buildScore(sheet.osmd.Sheet);
     sheet.score.harmony = analyzeHarmony(sheet.score);
-    // The measure widths are read off the render above, which stands at OSMD's own spacing.
+    // The engraving stands here, and it is the only render that says what a measure's notes pack
+    // into; every render after it carries the width factors of a spacing.
+    sheet.engraved = sheet.osmd.GraphicSheet.MeasureList.map(
+      (staves) => staves.find((measure) => measure)?.minimumStaffEntriesWidth ?? 0,
+    );
     if (proportional) sheet.space();
     sheet.layout();
     return sheet;
@@ -354,6 +373,21 @@ export class Sheet {
   setProportional(on: boolean): void {
     if (on === this.proportional) return;
     this.proportional = on;
+    this.reflow();
+  }
+
+  /**
+   * How much paper a measure spaced by time takes over the tightest one, as a percent. 100 packs
+   * the sheet as tight as its notes allow; above it the notes of a crowded bar reach their time.
+   */
+  setSpacing(percent: number): void {
+    if (percent === this.spacing) return;
+    this.spacing = percent;
+    if (this.proportional) this.reflow();
+  }
+
+  /** Spaces the sheet again and takes the geometry of the render, which the cursor stands on. */
+  private reflow(): void {
     this.space();
     this.layout();
     this.drawn.onset = -1;
@@ -362,13 +396,13 @@ export class Sheet {
 
   /**
    * Writes the width factor of every measure and renders. Spaced by time each measure's note area
-   * is proportional to its duration in ticks, and VexFlow spreads the width a measure gains that
-   * way over its onsets in time; OSMD's own spacing is every factor back at 1. The widths it reads
-   * come from the render standing, whose factors are all 1 either way round.
+   * is proportional to its duration in ticks, and `spacing.ts` then stands the notes inside it at
+   * their own share of the measure; OSMD's own spacing is every factor back at 1.
    */
   private space(): void {
     const measures = this.osmd.Sheet.SourceMeasures;
     const rules = this.osmd.EngravingRules;
+    setTimed(rules, this.proportional);
     if (!this.proportional) {
       for (const measure of measures) measure.WidthFactor = 1;
       rules.MaximumLyricsElongationFactor = this.elongation;
@@ -377,20 +411,18 @@ export class Sheet {
     }
     // An elongated measure would be wider than its duration asks for.
     rules.MaximumLyricsElongationFactor = 1;
-    const widths = this.osmd.GraphicSheet.MeasureList.map(
-      (staves) => staves.find((measure) => measure)?.minimumStaffEntriesWidth ?? 0,
-    );
-    const ticks = this.score.measures.map((measure) => measure.durationTicks);
-    // Pixels per tick of the tightest measure: every other measure opens up to it, so none is
-    // asked for less width than its own notes pack into.
-    let perTick = 0;
-    widths.forEach((width, i) => {
-      if (width > 0 && ticks[i]) perTick = Math.max(perTick, width / ticks[i]!);
+    // Every measure opens up to the tightest one's pixels per tick, so none is asked for less width
+    // than its own notes pack into. Every measure carries a factor of its own: OSMD keeps the last
+    // one it saw for a measure that has none.
+    const ticksOf = (i: number) => this.score.measures[i]?.durationTicks ?? 0;
+    let tightest = 0;
+    this.engraved.forEach((width, i) => {
+      if (width > 0 && ticksOf(i) > 0) tightest = Math.max(tightest, width / ticksOf(i));
     });
-    // Every measure carries a factor: OSMD keeps the last one it saw for a measure that has none.
+    const want = (tightest * this.spacing) / 100;
     measures.forEach((measure, i) => {
-      const width = widths[i] ?? 0;
-      measure.WidthFactor = width > 0 && ticks[i] ? (perTick * STRETCH * ticks[i]!) / width : 1;
+      const width = this.engraved[i] ?? 0;
+      measure.WidthFactor = width > 0 && ticksOf(i) > 0 ? (want * ticksOf(i)) / width : 1;
     });
     this.osmd.render();
   }
@@ -577,14 +609,16 @@ export class Sheet {
     const next = this.walk[1];
     const to = next ? (this.placed[next.onsetIndex]?.x ?? from) : from;
     const span = next ? next.tick - first.tick : 0;
-    const perTick = span > 0 ? Math.max(0, to - from) / span : 0;
+    const perTick = this.pxPerTick || (span > 0 ? Math.max(0, to - from) / span : 0);
     return Math.max(0, from - (first.tick - playedTick) * perTick);
   }
 
   /**
    * Cursor x for a played tick. Inside a system it runs from one Onset to the next; before a
    * system break or a backward jump it runs to its measure's right edge, so the next step is a
-   * snap and never a slide across the whole sheet.
+   * snap and never a slide across the whole sheet. Spaced by time the Onsets of a measure stand at
+   * their own ticks, so that walk is already one speed; the band takes its width from the sheet's
+   * one pixels per tick either way, and never changes size from Onset to Onset.
    */
   cursorAt(playedTick: number, hint: number, windowTicks: number): CursorAt {
     const order = this.walk;
@@ -600,7 +634,7 @@ export class Sheet {
     const toX = snap ? Math.max(here.measureRight, here.x) : there.x;
     const span = next && step ? next.tick - step.tick : 0;
     const done = span > 0 ? clamp((playedTick - step!.tick) / span, 0, 1) : 0;
-    const perTick = span > 0 ? Math.abs(toX - here.x) / span : 0;
+    const perTick = this.pxPerTick || (span > 0 ? Math.abs(toX - here.x) / span : 0);
     return {
       x: here.x + (toX - here.x) * done,
       width: Math.max(2, windowTicks * 2 * perTick),
@@ -754,8 +788,12 @@ export class Sheet {
         const measure = g?.parentVoiceEntry?.parentStaffEntry?.parentMeasure;
         if (!g || !measure) continue;
         const box = measure.PositionAndShape;
+        // Spaced by time an Onset stands at its own notehead, which `spacing.ts` put at its share
+        // of the measure; the engraved place is the whole staff entry, accidentals and all.
+        const head = this.proportional ? headX(g) : undefined;
+        const engraved = g.PositionAndShape.AbsolutePosition.x * unit;
         where = {
-          x: g.PositionAndShape.AbsolutePosition.x * unit,
+          x: head === undefined ? engraved : head * this.osmd.zoom,
           measureRight: (box.AbsolutePosition.x + box.BorderRight) * unit,
           system: systems.get(measure.ParentMusicSystem) ?? 0,
         };
@@ -768,6 +806,7 @@ export class Sheet {
       placed.push(where);
     }
     this.placed = placed;
+    this.pxPerTick = this.proportional ? perTickOf(this.score.onsets, placed) : 0;
 
     if (this.walk.length === 0) this.walk = this.score.playOrder;
     this.markJumps();
@@ -955,6 +994,30 @@ function clearOf(x: number, width: number, filled: number, spans: Span[]): numbe
     }
   }
   return at;
+}
+
+/** Left edge of the notehead VexFlow drew for a note, in pixels of the unzoomed sheet. */
+function headX(note: VFNote): number | undefined {
+  return (note as { vfnote?: [{ getAbsoluteX(): number }] }).vfnote?.[0]?.getAbsoluteX();
+}
+
+/**
+ * The one speed a sheet spaced by time runs at: every gap that stays inside a measure over the
+ * ticks it covers. Gaps across a bar line are left out, the bar line and its instructions being
+ * paper no duration asks for.
+ */
+function perTickOf(
+  onsets: readonly { tick: number; measureIndex: number }[],
+  placed: Placed[],
+): number {
+  let px = 0;
+  let ticks = 0;
+  for (let i = 1; i < onsets.length; i++) {
+    if (onsets[i]!.measureIndex !== onsets[i - 1]!.measureIndex) continue;
+    px += placed[i]!.x - placed[i - 1]!.x;
+    ticks += onsets[i]!.tick - onsets[i - 1]!.tick;
+  }
+  return ticks > 0 ? px / ticks : 0;
 }
 
 function child(parent: HTMLElement, style: string): HTMLElement {

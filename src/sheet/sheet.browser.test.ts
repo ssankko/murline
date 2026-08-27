@@ -9,7 +9,7 @@ import type { Note as OsmdNote } from 'opensheetmusicdisplay';
 import { expect, test } from 'vitest';
 import { noteheadEl } from './paint';
 import type { Play } from './project';
-import { Sheet } from './sheet';
+import { DEFAULT_SPACING, Sheet } from './sheet';
 
 // Vite serves the fixture files as URLs, the closest a browser test gets to the bytes the app
 // reads from the library folder.
@@ -758,16 +758,16 @@ for (const file of [BACH, VOLTA]) {
   }, 60_000);
 }
 
-/** Pixels per tick over each step of one bar, against that bar's own average. */
+/**
+ * Pixels per tick over each step inside one bar, against that bar's own average. The step out of
+ * the bar is left out: it crosses the bar line and the instructions after it, which are paper no
+ * duration asks for.
+ */
 function speeds(sheet: Sheet, measure: number): number[] {
-  const placed = sheet.score.onsets.map((onset, index) => ({
-    tick: onset.tick,
-    measure: onset.measureIndex,
-    x: sheet.xOfOnset(index),
-  }));
-  // The bar's own Onsets, and the first of the next bar, which closes its last step.
-  const from = placed.findIndex((onset) => onset.measure === measure);
-  const walk = placed.slice(from, placed.findIndex((onset) => onset.measure > measure) + 1);
+  const walk = sheet.score.onsets
+    .map((onset, i) => ({ tick: onset.tick, x: sheet.xOfOnset(i), measure: onset.measureIndex }))
+    .filter((onset) => onset.measure === measure);
+  if (walk.length < 3) return [];
   const last = walk[walk.length - 1]!;
   const mean = (last.x - walk[0]!.x) / (last.tick - walk[0]!.tick);
   return walk.slice(1).map((onset, i) => (onset.x - walk[i]!.x) / (onset.tick - walk[i]!.tick) / mean);
@@ -782,7 +782,8 @@ function bars(sheet: Sheet): number[] {
 
 test('spacing by time gives every bar the width of its duration, and gives it back', async () => {
   const sheet = await open();
-  const spreadOf = (bar: number) => Math.max(...speeds(sheet, bar).map((rate) => Math.abs(rate - 1)));
+  const spreadOf = (bar: number) =>
+    Math.max(0, ...speeds(sheet, bar).map((rate) => Math.abs(rate - 1)));
   const engraved = bars(sheet);
   const wasSpread = sheet.score.measures.slice(0, -1).map((measure) => spreadOf(measure.index));
 
@@ -797,15 +798,97 @@ test('spacing by time gives every bar the width of its duration, and gives it ba
   const mean = steps.reduce((a, b) => a + b, 0) / steps.length;
   for (const step of steps) expect(Math.abs(step / mean - 1)).toBeLessThan(0.04);
 
-  // Inside a bar VexFlow keeps a minimum packing around every notehead and spreads only the width
-  // over that in time, so the packing is the whole of the spread left. It falls as STRETCH rises,
-  // which the sheet's 32767 px ceiling holds down.
+  // Engraved, VexFlow packs each notehead against the next and every step of a bar has a speed of
+  // its own; spaced by time, every Onset stands at its own tick.
+  expect(Math.max(...wasSpread)).toBeGreaterThan(0.2);
   const now = sheet.score.measures.slice(0, -1).map((measure) => spreadOf(measure.index));
-  now.forEach((spread, bar) => expect(spread).toBeLessThan(wasSpread[bar]! * 0.8));
-  expect(Math.max(...now)).toBeLessThan(0.55);
+  expect(Math.max(...now)).toBeLessThan(0.01);
 
   sheet.setProportional(false);
   expect(bars(sheet)).toEqual(engraved);
+
+  sheet.dispose();
+}, 60_000);
+
+test('the cursor keeps one speed and one width over a sheet spaced by time', async () => {
+  const sheet = await open();
+  sheet.setProportional(true);
+  const window = 480;
+
+  // The band matches a window of time, and the sheet has one pixels per tick, so it never changes
+  // size wherever the play stands.
+  const widths = Array.from(
+    { length: 10 },
+    (_, i) => sheet.cursorAt(Math.round(((i + 0.5) / 10) * sheet.score.totalTicks), 0, window).width,
+  );
+  expect(new Set(widths).size).toBe(1);
+  expect(widths[0]).toBeGreaterThan(2);
+
+  // Speed sampled inside the steps and across them, everywhere but over a bar line. The first bar
+  // is left out: it carries the clef, the key and the time signature, and OSMD hands it more paper
+  // than its duration asks for.
+  const step = 30;
+  const rates: number[] = [];
+  const onsets = sheet.score.onsets;
+  for (let i = 1; i < onsets.length; i++) {
+    if (onsets[i]!.measureIndex !== onsets[i - 1]!.measureIndex) continue;
+    if (onsets[i]!.measureIndex === 0) continue;
+    for (let tick = onsets[i - 1]!.tick; tick + step <= onsets[i]!.tick; tick += step) {
+      const from = sheet.cursorAt(tick, 0, window).x;
+      rates.push((sheet.cursorAt(tick + step, 0, window).x - from) / step);
+    }
+  }
+  const perTick = rates.reduce((a, b) => a + b, 0) / rates.length;
+  expect(rates.length).toBeGreaterThan(1000);
+  expect(Math.max(...rates.map((rate) => Math.abs(rate / perTick - 1)))).toBeLessThan(0.001);
+
+  // Every notehead stands under the band at its own tick, at that one pixels per tick.
+  for (const measure of sheet.score.measures.slice(1)) {
+    const first = onsets.findIndex((onset) => onset.measureIndex === measure.index);
+    if (first < 0) continue;
+    for (let i = first; i < onsets.length && onsets[i]!.measureIndex === measure.index; i++) {
+      const want = sheet.xOfOnset(first) + (onsets[i]!.tick - onsets[first]!.tick) * perTick;
+      expect(Math.abs(sheet.xOfOnset(i) - want)).toBeLessThan(0.1);
+    }
+  }
+
+  sheet.dispose();
+}, 60_000);
+
+test('a sheet spaced by time draws every mark at the notes it moved', async () => {
+  const host = hostEl();
+  const sheet = await open(MAZURKA, host);
+  sheet.setProportional(true);
+  const svg = host.querySelector('svg')!;
+  const heads = [...svg.querySelectorAll('.vf-notehead')].map((el) =>
+    (el as SVGGraphicsElement).getBBox(),
+  );
+  expect(heads.length).toBeGreaterThan(500);
+  // Every mark VexFlow and OSMD draw takes its place from the notes at draw time, so both ends of
+  // one stand at a notehead, a hook beam reaching back off its stem and a slur arcing past the
+  // heads it joins. A mark left behind at its engraved place would be bars away: spacing by time
+  // carries the far end of this sheet several thousand pixels.
+  const near = (x: number) => heads.some((box) => x > box.x - 20 && x < box.x + box.width + 20);
+  for (const mark of svg.querySelectorAll('.vf-stem, .vf-beam, .vf-stavetie, .vf-slur')) {
+    const box = (mark as SVGGraphicsElement).getBBox();
+    expect(near(box.x)).toBe(true);
+    expect(near(box.x + box.width)).toBe(true);
+  }
+
+  sheet.dispose();
+}, 60_000);
+
+test('the spacing knob opens a sheet spaced by time up and packs it back', async () => {
+  const sheet = await open();
+  const last = () => sheet.xOfOnset(sheet.score.onsets.length - 1);
+
+  sheet.setProportional(true);
+  const wide = last();
+  sheet.setSpacing(100);
+  const tight = last();
+  expect(tight).toBeLessThan(wide * 0.8);
+  sheet.setSpacing(DEFAULT_SPACING);
+  expect(last()).toBe(wide);
 
   sheet.dispose();
 }, 60_000);

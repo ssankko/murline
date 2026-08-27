@@ -181,6 +181,7 @@ export function PlayScreen({
           fileName,
           darkRef.current,
           globals.sheet_proportional,
+          globals.sheet_spacing,
         );
         if (!live) return sheet.dispose();
         sheetRef.current = sheet;
@@ -392,6 +393,7 @@ export function PlayScreen({
     if (key === 'click_volume') setClickVolume(value);
     if (key === 'sheet_split') setSplit(value);
     if (key === 'sheet_proportional') sheetRef.current?.setProportional(value);
+    if (key === 'sheet_spacing') sheetRef.current?.setSpacing(value);
   }
 
   useFrameLoop((delta, now) => {

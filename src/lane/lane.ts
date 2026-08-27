@@ -19,6 +19,7 @@ import {
   NOTE_NAMES,
   PAPER,
   colorOf,
+  isBlackKey,
   labelInk,
   mix,
   pitchClass,
@@ -107,11 +108,11 @@ const NOTICE_FADE_MS = 150;
 /** The ring an extra leaves, and the cast a wrong key's face takes. */
 const GREY = '#8b8b93';
 /**
- * A wrong key stays close to its own face: this far toward the grey, then this far toward its
- * pitch, so it reads as pressed and as that key without the shout of a right one.
+ * A wrong key's face goes this far toward the grey, then a trace toward its pitch. A black key
+ * takes more of the trace: its face is dark and its sharp's colour dull, so less would vanish.
  */
-const WRONG_GREY = 0.35;
-const WRONG_TINT = 0.2;
+const WRONG_GREY = 0.5;
+const WRONG_TINT = { white: 0.12, black: 0.3 };
 
 const NOTE_RADIUS = 3;
 /** The name on a block: its font, the tab height a short block grows, and the room it wants each side. */
@@ -180,14 +181,14 @@ const RELEASE_MS = 160;
  * Specks: how many a strike throws between the softest and the hardest, how wide each source aims,
  * how many a sounding key gives per second, how many the lane keeps, and the pull on a burst.
  */
-const BURST = [6, 14] as const;
+const BURST = [12, 28] as const;
 const BURST_SPREAD = Math.PI / 6;
 const TRICKLE_SPREAD = (Math.PI * 5) / 12;
-const TRICKLE_PER_S = 12;
+const TRICKLE_PER_S = 24;
 /** How far a trickle speck wanders sideways and how fast it turns, in px/s and rad/s. */
 const TRICKLE_DRIFT = 25;
 const TRICKLE_TURN = 12;
-const SPECK_CAP = 400;
+const SPECK_CAP = 800;
 const SPECK_GRAVITY = 200;
 /** The longest step the specks take, so a frame the app slept through does not fling them away. */
 const MAX_STEP_MS = 100;
@@ -1172,12 +1173,12 @@ export class Lane {
     const count = Math.round(ramp(BURST, velocityForce(effect.velocity)));
     for (let i = 0; i < count; i++) {
       this.particles.push(
-        speck(key.x + key.w / 2, laneH, BURST_SPREAD, between(60, 140), color, {
+        speck(key.x + key.w / 2, laneH, BURST_SPREAD, between(100, 240), color, {
           gravity: SPECK_GRAVITY,
           wobble: 0,
-          radius: between(1.5, 2.5),
+          radius: between(2, 3.5),
           born: this.now,
-          life: between(350, 500),
+          life: between(400, 600),
           alpha: 1,
         }),
       );
@@ -1211,13 +1212,13 @@ export class Lane {
       ? colorOf(key.midi, 'full', true)
       : mix(colorOf(key.midi, 'muted', false), '#ffffff', 0.5);
     this.particles.push(
-      speck(key.x + Math.random() * key.w, laneH, TRICKLE_SPREAD, between(30, 90), color, {
+      speck(key.x + Math.random() * key.w, laneH, TRICKLE_SPREAD, between(60, 160), color, {
         gravity: 0,
         wobble: TRICKLE_DRIFT,
-        radius: between(1, 1.5),
+        radius: between(1.5, 2.5),
         born: this.now,
         life: between(300, 450),
-        alpha: 0.6,
+        alpha: 0.85,
       }),
     );
   }
@@ -1264,7 +1265,8 @@ export class Lane {
     let face = base;
     if (state === 'color') face = this.sounding(midi, base);
     else if (state === 'grey') {
-      face = mix(mix(base, GREY, WRONG_GREY), colorOf(midi, 'muted', this.dark), WRONG_TINT);
+      const tint = isBlackKey(midi) ? WRONG_TINT.black : WRONG_TINT.white;
+      face = mix(mix(base, GREY, WRONG_GREY), colorOf(midi, 'muted', this.dark), tint);
     }
     const blink = this.blinks.get(midi);
     if (blink === undefined || this.reduced) return face;

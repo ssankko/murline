@@ -33,7 +33,7 @@ const HANDLE_W = 5;
 const HANDLE_PAST = 3;
 
 /** Diameter of the × that clears the Section, and its whole hit area. */
-const CLEAR_SIZE = 24;
+const CLEAR_SIZE = 18;
 
 /** Paper between the top of the Section and the × hanging inside it. */
 const CLEAR_INSET = 4;
@@ -206,11 +206,10 @@ export class Sheet {
     this.clear = child(
       this.handles[1],
       `position:absolute;top:${CLEAR_INSET}px;width:${CLEAR_SIZE}px;height:${CLEAR_SIZE}px;` +
-        'border-radius:999px;display:flex;align-items:center;justify-content:center;' +
-        'cursor:pointer;font-size:15px;line-height:1;font-weight:600',
+        'border-radius:999px;cursor:pointer',
     );
+    // The cross itself is drawn by the class: two bars centred by CSS, not a glyph on a baseline.
     this.clear.className = 'sheet-section-clear';
-    this.clear.textContent = '×';
     this.clear.setAttribute('role', 'button');
     this.clear.setAttribute('aria-label', 'Clear section');
     this.clear.title = 'Clear section';

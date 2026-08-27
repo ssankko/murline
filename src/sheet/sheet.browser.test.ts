@@ -263,7 +263,7 @@ test('the Section fades in and hangs its clear button inside the tint', async ()
   sheet.setSection({ from: 0, to: 2 });
   expect(getComputedStyle(tint).display).toBe('block');
   // Layout pixels, so the sheet's fit-to-height scale cannot read the button smaller than it is.
-  expect(Math.min(clear.offsetWidth, clear.offsetHeight)).toBeGreaterThanOrEqual(22);
+  expect(Math.min(clear.offsetWidth, clear.offsetHeight)).toBeGreaterThanOrEqual(18);
 
   const band = tint.getBoundingClientRect();
   const button = clear.getBoundingClientRect();

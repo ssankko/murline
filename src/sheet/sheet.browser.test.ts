@@ -4,7 +4,7 @@ import { INK, PAPER, colorOf, tone } from '@/look/color';
 import { Engine, type NoteState, type SeekTarget, type Snapshot } from '@/play/engine';
 import type { Section } from '@/play/section';
 import { DEFAULT_PLAY_SETTINGS } from '@/play/settings';
-import type { Note } from '@/score/types';
+import { TICKS_PER_QUARTER, type Note } from '@/score/types';
 import type { Note as OsmdNote } from 'opensheetmusicdisplay';
 import { expect, test } from 'vitest';
 import { noteheadEl } from './paint';
@@ -25,6 +25,8 @@ const VOLTA = 'test_repeat_volta_simple.musicxml';
 const MAZURKA = 'kernscores-mazurka-50.musicxml';
 /** Short enough to stay one system at every spacing, and long enough that the view scrolls. */
 const HORSEMAN = 'Schumann_The_Wild_Horseman_Op._68_No._8.mxl';
+/** Two bars whose rests leave the opening beat of bar 1 and the second beat of bar 2 silent. */
+const RESTS = 'rest-then-notes.musicxml';
 
 async function bytesOf(file: string): Promise<Uint8Array> {
   const url = FIXTURES[`../score/fixtures/${file}`] as string;
@@ -506,6 +508,81 @@ test('a click seeks to the nearest Onset, over a bar line and far from any noteh
 
   sheet.dispose();
 }, 60_000);
+
+test('a click on a rest seeks to its place in the bar, and a notehead still to its Onset', async () => {
+  const host = hostEl();
+  const sheet = await open(RESTS, host);
+  let sought: SeekTarget | null = null;
+  sheet.onSeek = (target) => {
+    sought = target;
+  };
+
+  // No frame has run, so the content is unscaled and unscrolled: a content x is a client x.
+  const left = host.getBoundingClientRect().left;
+  const click = (x: number) => {
+    sought = null;
+    const at = { clientX: left + x, bubbles: true };
+    host.dispatchEvent(new PointerEvent('pointerdown', { ...at, button: 0 }));
+    host.dispatchEvent(new PointerEvent('pointerup', at));
+    return sought;
+  };
+
+  // Bar 1 opens with a quarter rest, so the leftmost moment of the sheet is no Onset at all.
+  expect(sheet.score.onsets[0]!.tick).toBe(TICKS_PER_QUARTER);
+  expect(click(0)).toEqual({ measure: 0, into: 0 });
+
+  // The rest on the second beat of bar 2 stands between the two noteheads that surround it.
+  const before = sheet.score.onsets.findIndex((onset) => onset.tick === 4 * TICKS_PER_QUARTER);
+  const after = before + 1;
+  expect(sheet.score.onsets[after]!.tick).toBe(6 * TICKS_PER_QUARTER);
+  const middle = (sheet.xOfOnset(before) + sheet.xOfOnset(after)) / 2;
+  expect(click(middle)).toEqual({ measure: 1, into: TICKS_PER_QUARTER });
+
+  // A notehead is still the Onset it draws, however many rests the bar holds.
+  expect(click(sheet.xOfOnset(after))).toEqual({ onset: after });
+
+  // Spaced by time the rest stands at its own tick, so the midpoint names it exactly.
+  sheet.setProportional(true);
+  const timed = (sheet.xOfOnset(before) + sheet.xOfOnset(after)) / 2;
+  expect(click(timed)).toEqual({ measure: 1, into: TICKS_PER_QUARTER });
+
+  sheet.dispose();
+}, 60_000);
+
+test('the cursor stands on the rest a bar opens with, not on the Onset after it', async () => {
+  const host = hostEl();
+  const sheet = await open(RESTS, host);
+  const engine = new Engine(sheet.score, { ...DEFAULT_PLAY_SETTINGS, countInBars: 0 });
+  const cursor = host.querySelector<HTMLElement>('.sheet-cursor')!;
+  // The band hangs at the content's left edge and travels by transform, so its middle is read back
+  // from the x it was moved to and the width the frame wrote, which no transition has caught up to.
+  const middle = () => new DOMMatrix(cursor.style.transform).e + parseFloat(cursor.style.width) / 2;
+
+  engine.seek({ measure: 0, into: 0 });
+  expect(engine.snapshot().playedTick).toBe(0);
+  sheet.frame(engine.snapshot(), 100, 0);
+
+  // Engraved, a moment stands at the middle of the glyph that draws it.
+  const engraved = restBox(sheet);
+  expect(Math.abs(middle() - (engraved.x + engraved.width / 2))).toBeLessThan(2);
+  expect(middle()).toBeLessThan(sheet.xOfOnset(0) - 40);
+
+  // Spaced by time, a moment stands at the notehead VexFlow drew, which opens the glyph's box.
+  sheet.setProportional(true);
+  sheet.frame(engine.snapshot(), 100, 16);
+  expect(Math.abs(middle() - restBox(sheet).x)).toBeLessThan(1);
+
+  sheet.dispose();
+}, 60_000);
+
+/** The SVG box of the rest that opens the first bar of the `RESTS` fixture. */
+function restBox(sheet: Sheet): DOMRect {
+  const entry = sheet.osmd.GraphicSheet.MeasureList[0]![0]!.staffEntries[0]!;
+  const head = entry.graphicalVoiceEntries[0]!.notes[0]! as unknown as {
+    getNoteheadSVGs(): SVGGraphicsElement[];
+  };
+  return head.getNoteheadSVGs()[0]!.getBBox();
+}
 
 test('the count-in runs a line towards the cursor, which stands where the count-in leads', async () => {
   const host = hostEl();

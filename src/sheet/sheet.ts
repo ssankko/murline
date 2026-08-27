@@ -11,7 +11,7 @@ import { isInactiveHand, type HandsSetting } from '@/play/settings';
 import { buildScore } from '@/score/build';
 import { loadInto } from '@/score/load';
 import { analyzeHarmony } from '@/score/harmony';
-import type { Note, PlayStep, Score } from '@/score/types';
+import { ticksOf, type Note, type PlayStep, type Score } from '@/score/types';
 import {
   OpenSheetMusicDisplay,
   type MusicSystem,
@@ -120,6 +120,16 @@ interface Placed {
   system: number;
 }
 
+/**
+ * One moment of the sheet held by rests alone: a place the cursor may stand at that no Onset names.
+ * The bar and the ticks past its opening line are what a seek to it asks for.
+ */
+interface RestMoment {
+  x: number;
+  measure: number;
+  into: number;
+}
+
 /** Where a click on the paper landed: what to seek to, and the bar it fell in. */
 interface SheetHit {
   seek: SeekTarget;
@@ -219,6 +229,8 @@ export class Sheet {
   private boxes: (Span | undefined)[] = [];
 
   private placed: Placed[] = [];
+  /** Rest moments in no order, which a click is measured against alongside the Onsets. */
+  private rests: RestMoment[] = [];
   private system = { top: 0, bottom: 200 };
   /** The top staff line of the first system: the bubble strip ends here. */
   private stafflineY = BUBBLE_STRIP;
@@ -418,8 +430,10 @@ export class Sheet {
   }
 
   /**
-   * What a click at a screen x means: the Onset nearest it, however far away, and the bar the
-   * click fell in, which is the Onset before it or the next one past that bar's edge.
+   * What a click at a screen x means: the moment nearest it, however far away, and the bar the
+   * click fell in, which is the Onset before it or the next one past that bar's edge. A rest that
+   * beats every notehead to the click is asked for by its place in its bar; equal distances go to
+   * the Onset.
    */
   private hitAt(clientX: number): SheetHit | null {
     const x = this.contentX(clientX);
@@ -430,7 +444,15 @@ export class Sheet {
     const next = i + 1 < onsets.length ? i + 1 : i;
     const near = Math.abs(this.placed[next]!.x - x) < Math.abs(this.placed[i]!.x - x) ? next : i;
     const bar = x > this.placed[i]!.measureRight ? next : i;
-    return { seek: { onset: near }, measure: onsets[bar]!.measureIndex };
+    let closest = Math.abs(this.placed[near]!.x - x);
+    let rest: RestMoment | undefined;
+    for (const moment of this.rests) {
+      if (Math.abs(moment.x - x) >= closest) continue;
+      closest = Math.abs(moment.x - x);
+      rest = moment;
+    }
+    const seek = rest ? { measure: rest.measure, into: rest.into } : { onset: near };
+    return { seek, measure: onsets[bar]!.measureIndex };
   }
 
   /** Repaints the whole sheet for the other theme. The clock never hears about it. */
@@ -703,9 +725,11 @@ export class Sheet {
   /**
    * Cursor x for a played tick. Inside a system it runs from one Onset to the next; before a
    * system break or a backward jump it runs to its measure's right edge, so the next step is a
-   * snap and never a slide across the whole sheet. Spaced by time the Onsets of a measure stand at
-   * their own ticks, so that walk is already one speed; the band takes its width from the sheet's
-   * one pixels per tick either way, and never changes size from Onset to Onset.
+   * snap and never a slide across the whole sheet. Before the first Onset of the walk, where a bar
+   * that opens with a rest puts it, the cursor runs back from that Onset instead. Spaced by time
+   * the Onsets of a measure stand at their own ticks, so that walk is already one speed; the band
+   * takes its width from the sheet's one pixels per tick either way, and never changes size from
+   * Onset to Onset.
    */
   cursorAt(playedTick: number, hint: number, windowTicks: number): CursorAt {
     const order = this.walk;
@@ -721,9 +745,19 @@ export class Sheet {
     const toX = snap ? Math.max(here.measureRight, here.x) : there.x;
     const span = next && step ? next.tick - step.tick : 0;
     const done = span > 0 ? clamp((playedTick - step!.tick) / span, 0, 1) : 0;
-    const perTick = this.pxPerTick || (span > 0 ? Math.abs(toX - here.x) / span : 0);
+    // The gap to the next Onset over the ticks it covers: the band's width falls back to it, and
+    // the run back off the first Onset takes it, which is that Onset's own bar rather than the
+    // sheet's average.
+    const local = span > 0 ? Math.abs(toX - here.x) / span : 0;
+    const perTick = this.pxPerTick || local;
+    // The walk's own ticks only rise, so a tick under the step is a tick under the first step: the
+    // rest a piece opens with. It stands back from that Onset, and no further back than the bar
+    // line it belongs to.
+    const behind = step && playedTick < step.tick ? (step.tick - playedTick) * local : 0;
+    const onset = this.score.onsets[step?.onsetIndex ?? 0];
+    const barLeft = this.boxes[onset?.measureIndex ?? -1]?.left ?? 0;
     return {
-      x: here.x + (toX - here.x) * done,
+      x: Math.max(barLeft, here.x + (toX - here.x) * done - behind),
       width: Math.max(2, windowTicks * 2 * perTick),
       onsetIndex: step?.onsetIndex ?? 0,
       stepIndex: i,
@@ -895,6 +929,7 @@ export class Sheet {
       placed.push(where);
     }
     this.placed = placed;
+    this.rests = restsOf(this.osmd, this.score, unit, this.proportional);
     this.pxPerTick = this.proportional ? perTickOf(this.score.onsets, placed) : 0;
 
     if (this.walk.length === 0) this.walk = this.score.playOrder;
@@ -1083,6 +1118,40 @@ function clearOf(x: number, width: number, filled: number, spans: Span[]): numbe
     }
   }
   return at;
+}
+
+/**
+ * Every moment of the sheet that rests alone hold, in pixels of the unscaled content. A tick some
+ * staff sounds at is an Onset already, and a click there means the Onset, so those are left out.
+ */
+function restsOf(
+  osmd: OpenSheetMusicDisplay,
+  score: Score,
+  unit: number,
+  proportional: boolean,
+): RestMoment[] {
+  const sounding = new Set(score.onsets.map((onset) => onset.tick));
+  const taken = new Set<number>();
+  const rests: RestMoment[] = [];
+  osmd.GraphicSheet.MeasureList.forEach((staves, index) => {
+    const measure = score.measures[index];
+    if (!measure) return;
+    for (const staff of staves) {
+      for (const entry of staff?.staffEntries ?? []) {
+        if (!entry.hasOnlyRests()) continue;
+        const into = ticksOf(entry.relInMeasureTimestamp.RealValue);
+        const tick = measure.startTick + into;
+        if (sounding.has(tick) || taken.has(tick)) continue;
+        taken.add(tick);
+        // Spaced by time a rest stands at its own glyph, as an Onset stands at its notehead.
+        const g = entry.graphicalVoiceEntries[0]?.notes[0] as VFNote | undefined;
+        const head = proportional && g ? headX(g) : undefined;
+        const engraved = entry.PositionAndShape.AbsolutePosition.x * unit;
+        rests.push({ x: head === undefined ? engraved : head * osmd.zoom, measure: index, into });
+      }
+    }
+  });
+  return rests;
 }
 
 /** Left edge of the notehead VexFlow drew for a note, in pixels of the unzoomed sheet. */

@@ -19,8 +19,11 @@ import {
 /** Where a play stands. A Wait mode stop is the clock standing still inside `running`. */
 export type PlayState = 'idle' | 'counting-in' | 'running' | 'paused' | 'ended';
 
-/** What a click asks for: a bar's opening line, one Onset, or a played tick the lane read off it. */
-export type SeekTarget = { measure: number } | { onset: number } | { tick: number };
+/**
+ * What a click asks for: a moment of a bar, one Onset, or a played tick the lane read off it. A bar
+ * target stands `into` ticks past its opening line, which is how a rest names itself.
+ */
+export type SeekTarget = { measure: number; into?: number } | { onset: number } | { tick: number };
 
 /** The stretch of played time one lap of the loop runs over. One lap is `to - from` ticks. */
 export interface LoopSpan {
@@ -413,8 +416,9 @@ export class Engine {
   }
 
   /**
-   * Moves the play to a bar's opening line or to an Onset, the start point with it while the clock
-   * is still. Nothing behind the target closes, so the notes passed over never become misses.
+   * Moves the play to a moment of a bar or to an Onset, the start point with it while the clock is
+   * still. The target needs no Onset of its own, so a rest is a place the cursor may stand. Nothing
+   * behind the target closes, so the notes passed over never become misses.
    */
   seek(target: SeekTarget): void {
     // A performance is one clean run: it takes no seek, and no Section has force during it.
@@ -572,7 +576,7 @@ export class Engine {
       const previous = before ? this.score.onsets[before.onsetIndex] : undefined;
       if (previous?.measureIndex === target.measure) continue;
       const measure = this.score.measures[target.measure]!;
-      ticks.push(barTickOf(step, onset, measure));
+      ticks.push(barTickOf(step, onset, measure) + (target.into ?? 0));
     }
     return ticks;
   }

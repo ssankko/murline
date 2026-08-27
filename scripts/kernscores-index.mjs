@@ -121,11 +121,13 @@ function barsOf(lines) {
   return max || null;
 }
 
-/** Per-directory title fixes; everything else is `OTL` as written, then the parent work, then the file name. */
+/** Per-directory title fixes, each one only for a segment that has the record it reads; everything
+ * else is `OTL` as written, then the parent work, then the file name. */
 function titleOf(dir, r, file) {
-  if (dir === 'musedata/bach/keyboard/wtc') return `${r.OPR ?? 'Well-Tempered Clavier'} ${r.OVM ?? ''}, ${r.OTL} ${r.ONM ?? ''}${r.OKY ? ` in ${r.OKY}` : ''}`.replace(/\s+/g, ' ');
-  if (dir === 'users/craig/classical/bach/wtc2preludes') return `Well-Tempered Clavier Book II, ${FILE_TITLE[file]?.[0] ?? r.OTL}`;
-  if (dir === 'users/craig/classical/clementi/op36') return r.OTL.replace(/^Sonata/, 'Sonatina').replace(/, Mvmt\. \d+$/, '');
+  if (dir === 'musedata/bach/keyboard/wtc' && r.OTL) return `${r.OPR ?? 'Well-Tempered Clavier'} ${r.OVM ?? ''}, ${r.OTL} ${r.ONM ?? ''}${r.OKY ? ` in ${r.OKY}` : ''}`.replace(/\s+/g, ' ');
+  const book2 = FILE_TITLE[file]?.[0] ?? r.OTL;
+  if (dir === 'users/craig/classical/bach/wtc2preludes' && book2) return `Well-Tempered Clavier Book II, ${book2}`;
+  if (dir === 'users/craig/classical/clementi/op36' && r.OTL) return r.OTL.replace(/^Sonata/, 'Sonatina').replace(/, Mvmt\. \d+$/, '');
   if (r.OTL) return r.OTL;
   if (r.OPR) return r.OPR;
   return FILE_TITLE[file]?.[0] ?? file.replace(/\.krn$/, '');

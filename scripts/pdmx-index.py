@@ -37,8 +37,8 @@ def csv_rows(path):
             na(r['song_name']),
             na(r['title']),
             na(r['subtitle']),
-            int(float(r['song_length.bars'] or 0)),
-            int(float(r['n_ratings'] or 0)),
+            int(float(na(r['song_length.bars']) or 0)),
+            int(float(na(r['n_ratings']) or 0)),
             r['mxl'][len('./mxl/'):],
         ]
 

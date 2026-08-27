@@ -393,17 +393,44 @@ pub fn finder_search(query: String) -> SearchResult {
 }
 
 /// Where the download landed, for the import path to pick up.
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Downloaded {
     pub file_name: String,
     pub temp_path: String,
 }
 
+/// One path segment and nothing else: no separator and no walk up the tree.
+fn plain_name(s: &str) -> bool {
+    !s.is_empty() && !s.contains('/') && s != "." && s != ".."
+}
+
+/// Whether the row's two paths are still the ones its provider hands out. The row makes the round
+/// trip through the webview, so `file` says what the app fetches or opens under the PDMX folder and
+/// `file_name` says what it writes in the temp directory; neither may address anything else.
+fn addressable(row: &Row) -> bool {
+    plain_name(&row.file_name)
+        && match row.provider {
+            Provider::KernScores => row.file.starts_with(KS_DATA),
+            // `<d>/<dd>/<hash>.mxl`, the shape of the unpacked tarball.
+            Provider::Pdmx => {
+                let mut parts = row.file.split('/');
+                matches!(
+                    (parts.next(), parts.next(), parts.next(), parts.next()),
+                    (Some(d), Some(dd), Some(hash), None)
+                        if plain_name(d) && plain_name(dd) && hash.ends_with(".mxl")
+                )
+            }
+        }
+}
+
 /// Fetches or unzips one row into a temp file. Nothing reaches the library folder from here; the
 /// import path a dropped file takes does that.
 #[tauri::command]
 pub async fn finder_download(row: Row, pdmx_folder: Option<String>) -> Result<Downloaded, String> {
+    if !addressable(&row) {
+        return Err("file not found".to_string());
+    }
     tauri::async_runtime::spawn_blocking(move || {
         let bytes = match row.provider {
             Provider::KernScores => crate::kernscores::download(&row.file)?,
@@ -599,6 +626,47 @@ Bach\tJohann Sebastian Bach\tMinuet in G\tMinuet in G\t\t32\t7\t1/2/QmB.mxl\n";
     fn an_artist_less_row_reads_unknown() {
         let ix = Index::build("[]", "Satie\t\tGymnopédie 1\tGymnopédie 1\t\t78\t0\t1/45/QmX.mxl\n");
         assert_eq!(search(&ix, "gymnopedie").rows[0].heading, "Unknown");
+    }
+
+    fn pdmx_row() -> Row {
+        Row {
+            provider: Provider::Pdmx,
+            heading: "Unknown".to_string(),
+            title: "Fixture".to_string(),
+            opus: None,
+            number: None,
+            movement: None,
+            movement_name: None,
+            key: None,
+            time: None,
+            bars: None,
+            ratings: 0,
+            alt: None,
+            file: "11/34/QmTNyLYrAi5Qgh37iTp9ieLYzAzb2q8JeNPSKEhDsafzeF.mxl".to_string(),
+            file_name: "Fixture.musicxml".to_string(),
+        }
+    }
+
+    /// A row leaves for the webview and comes back, so a crafted one must reach neither the PDMX
+    /// folder above its own file nor the temp directory above its own name.
+    #[test]
+    fn a_crafted_row_is_refused_where_a_whole_one_downloads() {
+        let folder = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/pdmx");
+        let run = |row: Row| {
+            tauri::async_runtime::block_on(finder_download(row, Some(folder.to_string())))
+        };
+
+        let good = run(pdmx_row()).unwrap();
+        std::fs::remove_file(&good.temp_path).unwrap();
+
+        let mut up = pdmx_row();
+        up.file = "11/34/../34/QmTNyLYrAi5Qgh37iTp9ieLYzAzb2q8JeNPSKEhDsafzeF.mxl".to_string();
+        assert_eq!(run(up).unwrap_err(), "file not found");
+
+        let mut escape = pdmx_row();
+        escape.file_name = "../escaped.musicxml".to_string();
+        assert_eq!(run(escape).unwrap_err(), "file not found");
+        assert!(!std::env::temp_dir().join("escaped.musicxml").exists());
     }
 
     /// The shipped index loads and answers every query. The time bounds are wide because a loaded

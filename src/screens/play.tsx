@@ -157,7 +157,7 @@ export function PlayScreen({
     keyboardHi: DEFAULT_PLAY_SETTINGS.keyboardHi,
   });
   const [mode, setMode] = useState<PlayMode>(DEFAULT_PLAY_SETTINGS.mode);
-  /** The mode carries over from one piece to the next, so the engine opens the next one in it. */
+  /** A mode clicked before the sheet loads has no engine to reach, so the new one opens in it. */
   const modeRef = useRef<PlayMode>(DEFAULT_PLAY_SETTINGS.mode);
   /** The score's own tempo, and whether it has only one, which is what BPM mode needs. */
   const [written, setWritten] = useState({ bpm: 120, constant: false });

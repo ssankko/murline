@@ -11,8 +11,6 @@ import {
   type PlaySettings,
 } from '@/play/settings';
 
-export type { PieceSettingRow };
-
 /** The settings a piece may hold of its own. Everything else about a play is global. */
 export type PieceSettings = Pick<PlaySettings, keyof typeof PIECE_SETTING_COLUMNS>;
 

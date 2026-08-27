@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import {
-  INHERITS_EVERYTHING,
-  resolvePlaySettings,
-  validNumber,
-  type PieceSettingRow,
-} from '@/play/resolve';
+import type { PieceSettingRow } from '@/library/queries';
+import { INHERITS_EVERYTHING, resolvePlaySettings, validNumber } from '@/play/resolve';
 import { DEFAULT_PLAY_SETTINGS } from '@/play/settings';
 
 const row = (own: Partial<PieceSettingRow> = {}): PieceSettingRow => ({

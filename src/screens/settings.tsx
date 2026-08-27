@@ -12,7 +12,14 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { LANE_KNOBS, readSettings, setSetting, SETTING_DEFAULTS, type Settings } from '@/db/db';
+import {
+  LANE_KNOBS,
+  PIECE_DEFAULT_KEYS,
+  readSettings,
+  setSetting,
+  SETTING_DEFAULTS,
+  type Settings,
+} from '@/db/db';
 import type { LaneLook } from '@/lane/lane';
 import { noteName } from '@/look/color';
 import { setTheme, useTheme, type Theme } from '@/look/use-dark';
@@ -147,17 +154,7 @@ export function SettingsDialog({
             <Group
               title="Playing defaults"
               note="A piece that holds a setting of its own keeps it."
-              onReset={() =>
-                reset([
-                  'default_tempo_value',
-                  'default_metronome',
-                  'default_count_in_bars',
-                  'default_hands',
-                  'default_keyboard_preset',
-                  'default_keyboard_lo',
-                  'default_keyboard_hi',
-                ])
-              }
+              onReset={() => reset(Object.keys(PIECE_DEFAULT_KEYS) as (keyof Settings)[])}
             >
               <Row label="Tempo (%)">
                 <NumberField
@@ -213,9 +210,7 @@ export function SettingsDialog({
               title="Play screen"
               onReset={() =>
                 reset([
-                  'lane_lookahead',
-                  'lane_note_width',
-                  'lane_gap',
+                  ...LANE_FIELDS.map(([key]) => key),
                   'sheet_split',
                   'keyboard_labels',
                   'click_volume',

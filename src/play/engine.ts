@@ -46,7 +46,7 @@ export interface StrikeEvent {
 }
 
 /** What one strike turned out to be, and what an expected note running out of window turns into. */
-export type Verdict = 'hit' | 'extra' | 'miss' | 'absorbed';
+type Verdict = 'hit' | 'extra' | 'miss' | 'absorbed';
 
 /** One thing that happened since the last frame. The screen drains them with `events()`. */
 export interface PlayEvent {
@@ -102,10 +102,10 @@ interface Struck {
 }
 
 /** How a note reads in the lane. */
-export type NoteState = 'pending' | 'hit' | 'miss';
+type NoteState = 'pending' | 'hit' | 'miss';
 
 /** How a key reads on the keyboard: its pitch colour, grey while held wrong, or unheld. */
-export type KeyState = 'base' | 'grey' | 'color';
+type KeyState = 'base' | 'grey' | 'color';
 
 /** Everything a frame needs to draw. Read once per frame; never held across frames. */
 export interface Snapshot {

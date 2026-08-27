@@ -52,7 +52,7 @@ const FINISH_MS = 400;
 type MarkKind = 'none' | 'current' | 'miss';
 
 /** Where the cursor stands, in pixels of the unscaled sheet content. */
-export interface CursorAt {
+interface CursorAt {
   x: number;
   /** Width of the band: the matching window, drawn at the sheet's own spacing. */
   width: number;

@@ -26,7 +26,7 @@ const SWELL = 'cubic-bezier(0.22, 1, 0.36, 1)';
 
 /** What the frame loop drives the icon with, once for every beat the engine owes. */
 export interface MetronomeHandle {
-  /** `periodMs` is the beat the swing takes, so the arm is upright again on the next beat. */
+  /** `periodMs` is the beat one half-swing takes, so the arm crosses upright on every beat. */
   tick(strong: boolean, periodMs: number): void;
 }
 
@@ -44,19 +44,56 @@ export function Metronome({
 }) {
   const bodyRef = useRef<SVGSVGElement>(null);
   const armRef = useRef<SVGGElement>(null);
-  /** Which side the arm swings to: every beat sends it to the other one. */
-  const lean = useRef(1);
+  /** The pendulum in flight and the beat it was built for; the ticks only keep it in phase. */
+  const swing = useRef<{ animation: Animation; period: number } | null>(null);
   const resting = useRef<ReturnType<typeof setTimeout>>(undefined);
   // Beats arrive through a handle that outlives any render, so the rest angle is read from here.
   const onRef = useRef(on);
   onRef.current = on;
 
-  /** Turns the arm to where it waits for the next beat, or stays if the beats keep coming. */
+  /** Turns the arm from wherever it is to where it waits for the next beat. */
   function rest(): void {
     const arm = armRef.current;
     if (!arm) return;
+    if (swing.current) {
+      // The angle in flight is written down first, so the turn to rest starts from it.
+      swing.current.animation.commitStyles();
+      swing.current.animation.cancel();
+      swing.current = null;
+    }
     arm.style.transition = reducedMotion() ? '' : `transform ${REST_MS}ms ${EASE}`;
     arm.style.transform = `rotate(${onRef.current ? UPRIGHT : 0}deg)`;
+  }
+
+  /**
+   * Keeps the pendulum crossing upright on the beat. One cycle is two beats, out to each side and
+   * back, and runs on its own clock; a beat that finds it early or late trims its rate so the
+   * error is gone by the next beat, and a change of tempo or a wide miss starts it afresh.
+   */
+  function sync(arm: SVGGElement, period: number): void {
+    const flight = swing.current;
+    if (flight && Math.abs(flight.period - period) < period * 0.02) {
+      const at = Number(flight.animation.currentTime ?? 0) % period;
+      const error = at < period / 2 ? at : at - period;
+      if (Math.abs(error) < period * 0.25) {
+        flight.animation.playbackRate = 1 - error / period;
+        return;
+      }
+    }
+    flight?.animation.cancel();
+    arm.style.transition = '';
+    arm.style.transform = `rotate(${UPRIGHT}deg)`;
+    const animation = arm.animate(
+      [
+        { transform: `rotate(${UPRIGHT}deg)`, easing: OUT },
+        { transform: `rotate(${UPRIGHT + SWING}deg)`, offset: 0.25, easing: BACK },
+        { transform: `rotate(${UPRIGHT}deg)`, offset: 0.5, easing: OUT },
+        { transform: `rotate(${UPRIGHT - SWING}deg)`, offset: 0.75, easing: BACK },
+        { transform: `rotate(${UPRIGHT}deg)` },
+      ],
+      { duration: period * 2, iterations: Infinity },
+    );
+    swing.current = { animation, period };
   }
 
   useEffect(() => {
@@ -69,19 +106,8 @@ export function Metronome({
       const arm = armRef.current;
       const body = bodyRef.current;
       if (!arm || !body || reducedMotion()) return;
-      lean.current = -lean.current;
-      // A swing still running is dropped, so however close two beats fall each one is its own.
-      for (const running of arm.getAnimations()) running.cancel();
-      arm.style.transition = '';
-      arm.style.transform = `rotate(${UPRIGHT}deg)`;
-      arm.animate(
-        [
-          { transform: `rotate(${UPRIGHT}deg)`, easing: OUT },
-          { transform: `rotate(${UPRIGHT + lean.current * SWING}deg)`, offset: 0.5, easing: BACK },
-          { transform: `rotate(${UPRIGHT}deg)` },
-        ],
-        { duration: Math.round(periodMs) },
-      );
+      sync(arm, periodMs);
+      // A pulse still running is dropped, so however close two beats fall each one is its own.
       for (const running of body.getAnimations()) running.cancel();
       body.animate(
         [

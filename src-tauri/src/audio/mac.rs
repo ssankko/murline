@@ -15,6 +15,7 @@ use crate::audio::{OutputDevice, Status, progress};
 // The instrument the graph plays, and the window a hosted plugin brings with it.
 pub use crate::audio::instruments::{list as instruments, load as load_instrument};
 pub use crate::audio::window::show_instrument;
+use block2::RcBlock;
 use objc2::AllocAnyThread;
 use objc2::rc::Retained;
 use objc2_audio_toolbox::{
@@ -22,12 +23,13 @@ use objc2_audio_toolbox::{
     kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global,
 };
 use objc2_avf_audio::{
-    AVAudioEngine, AVAudioEngineManualRenderingMode, AVAudioFormat, AVAudioMixing,
-    AVAudioPCMBuffer, AVAudioPlayerNode, AVAudioUnitMIDIInstrument, AVAudioUnitSampler,
+    AVAudioEngine, AVAudioEngineConfigurationChangeNotification, AVAudioEngineManualRenderingMode,
+    AVAudioFormat, AVAudioMixing, AVAudioPCMBuffer, AVAudioPlayerNode, AVAudioUnitMIDIInstrument,
+    AVAudioUnitSampler,
 };
 #[cfg(test)]
 use objc2_avf_audio::AVAudioEngineManualRenderingStatus;
-use objc2_foundation::{NSError, NSString, NSURL};
+use objc2_foundation::{NSError, NSNotification, NSNotificationCenter, NSString, NSURL};
 use std::path::{Path, PathBuf};
 use std::ptr::{NonNull, from_ref};
 use std::sync::{Mutex, Once};
@@ -348,13 +350,19 @@ impl Graph {
 
     /// Takes the device list as it now is: stays put when the choice still resolves to the device
     /// playing, moves to the system default when the chosen device has gone, and moves back to the
-    /// chosen device when it returns.
+    /// chosen device when it returns. A graph that has stopped is started again even when the
+    /// device it plays through has not changed, because AVAudioEngine stops itself whenever the
+    /// output hardware changes under it and never starts itself back up.
     pub fn follow_devices(&mut self) -> Result<(), String> {
         let (device, fell_back) = device::resolve(self.chosen_device.as_deref())?;
-        if device == self.device && fell_back == self.fell_back {
+        if device == self.device && fell_back == self.fell_back && self.running() {
             return Ok(());
         }
         self.play_through(device, fell_back)
+    }
+
+    fn running(&self) -> bool {
+        unsafe { self.engine.isRunning() }
     }
 
     pub fn set_device(&mut self, chosen: Option<String>) -> Result<(), String> {
@@ -595,6 +603,7 @@ pub fn start() -> Result<(), String> {
     let mut graph = Graph::build()?;
     graph.start()?;
     graph.adopt();
+    watch_configuration(&graph.engine);
     *GRAPH.lock().unwrap() = Some(graph);
     device::watch(devices_changed);
     static PUMPING: Once = Once::new();
@@ -604,17 +613,39 @@ pub fn start() -> Result<(), String> {
     Ok(())
 }
 
-/// CoreAudio's answer to a plug or an unplug: the engine takes the new list into account, then the
-/// dialog is told to read its picker again. CoreAudio calls this on one of its own threads and
-/// wants it back at once, and stopping the engine there would run inside the HAL's own locks, so
-/// the work moves off it.
+/// The answer to a plug, an unplug, a change of system default, and AVAudioEngine's own report
+/// that the output hardware moved under it: the engine takes the new list into account, then the
+/// dialog is told to read its picker again. Both callers hand this work to a thread of its own:
+/// CoreAudio calls the listener on one of its threads and wants it back at once, and AVFAudio
+/// documents that tearing the engine down inside its notification can deadlock.
 fn devices_changed() {
     std::thread::spawn(|| {
-        if let Some(graph) = GRAPH.lock().unwrap().as_mut() {
-            let _ = graph.follow_devices();
+        if let Some(graph) = GRAPH.lock().unwrap().as_mut()
+            && let Err(why) = graph.follow_devices()
+        {
+            // The next notification tries again; until one succeeds this line is why it is silent.
+            eprintln!("The sound engine could not follow the output change: {why}");
         }
         crate::audio::tell_devices_changed();
     });
+}
+
+/// AVAudioEngine stops itself when the hardware it plays through changes, an unplugged interface
+/// among them, and posts this notification once it has. Without watching for it the engine can be
+/// left stopped for good: CoreAudio's device-list notification arrives on its own schedule, and a
+/// restart made from that one is undone by the stop that follows it. Registered once for the one
+/// engine the app has, so the observer token is deliberately never dropped.
+fn watch_configuration(engine: &AVAudioEngine) {
+    let follow = RcBlock::new(|_: NonNull<NSNotification>| devices_changed());
+    let token = unsafe {
+        NSNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(
+            Some(AVAudioEngineConfigurationChangeNotification),
+            Some(engine),
+            None,
+            &follow,
+        )
+    };
+    std::mem::forget(token);
 }
 
 /// The Preview's clock on the device path: wake, work out how many frames went by, send the events
@@ -824,6 +855,31 @@ mod tests {
             click(beat == 0, 70);
             sleep(Duration::from_millis(500));
         }
+    }
+
+    /// The one test that plays to a device rather than to a buffer, because a graph in manual
+    /// rendering mode has no output unit and so no device to lose. It sounds nothing: no instrument
+    /// is loaded and no note is sent. An open device is outside what the spec lets an ordinary run
+    /// touch, so: `cargo test -- --ignored a_graph_the_hardware_stopped`.
+    #[test]
+    #[ignore = "opens a real audio device"]
+    fn a_graph_the_hardware_stopped_is_playing_again_after_the_next_device_change() {
+        // A Mac with no output device at all has nothing to start on.
+        let Ok(default) = device::default_output() else { return };
+        let Some(chosen) = device::uid(default) else { return };
+        let mut graph = Graph::build().unwrap();
+        graph.start().unwrap();
+        // Pinned to one device, so a headphone connecting on the machine running the test cannot
+        // move the graph and the stop below is the only thing left that explains a silent engine.
+        graph.set_device(Some(chosen)).unwrap();
+
+        // What AVAudioEngine does to itself when the output hardware changes under it.
+        unsafe { graph.engine.stop() };
+        assert!(!graph.running());
+
+        graph.follow_devices().unwrap();
+        assert!(graph.running(), "the engine is playing again rather than silent for good");
+        assert_eq!(graph.device, default, "through the same device, nothing else having changed");
     }
 
     #[test]

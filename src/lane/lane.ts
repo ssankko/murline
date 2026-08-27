@@ -122,7 +122,7 @@ export class Lane {
     this.resize.observe(canvas);
   }
 
-  /** Lets the canvas go: nothing watches it and no frame draws after this. */
+  /** Stops watching the canvas, which is what a screen leaving the lane behind must call. */
   dispose(): void {
     this.resize.disconnect();
   }
@@ -351,7 +351,7 @@ export class Lane {
       const note = engine.notes[i]!;
       if (note.tick >= top) break;
       // The note that starts a tie carries the whole chain, so its continuations fall as nothing.
-      if (note.tick < floor || note.tiedFrom) continue;
+      if (note.tick < floor || !note.strikeable) continue;
       const bottom = this.y(note.tick, laneH, pxPerTick);
       if (bottom < -10) continue;
       const key = this.layout.byMidi.get(note.midi);

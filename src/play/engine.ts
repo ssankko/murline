@@ -66,8 +66,8 @@ export interface PlayNote {
   durationTicks: number;
   hand: Hand;
   grace: boolean;
-  /** A tie continuation: it sounds on from an earlier Onset, so the play never asks for it. */
-  tiedFrom: boolean;
+  /** False for a tie continuation, which sounds on from an earlier Onset and is never struck. */
+  strikeable: boolean;
   measureIndex: number;
   /** The written note, the identity the sheet marks. */
   note: Note;
@@ -831,7 +831,7 @@ export class Engine {
 
   /** What the play asks the player for: the struck notes of the active hand, graces aside. */
   private isExpected(note: PlayNote): boolean {
-    return !note.grace && !note.tiedFrom && !isInactiveHand(this.inForce.hands, note.hand);
+    return note.strikeable && !note.grace && !isInactiveHand(this.inForce.hands, note.hand);
   }
 
   /**
@@ -1076,7 +1076,7 @@ function playNotesOf(score: Score, walk: PlayStep[]): PlayNote[] {
         durationTicks: note.durationTicks,
         hand: note.hand,
         grace: note.grace,
-        tiedFrom: !note.strikeable,
+        strikeable: note.strikeable,
         measureIndex: note.measureIndex,
         note,
       });

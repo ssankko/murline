@@ -6,12 +6,6 @@ import { summarize, type PieceIndex } from '@/score/summarize';
 import { ScoreError } from '@/score/types';
 import { invoke } from '@tauri-apps/api/core';
 
-/** Reads a score file and summarises it. Every failure arrives as a `ScoreError`. */
-export async function indexFile(absolutePath: string): Promise<PieceIndex> {
-  const fileName = baseNameOf(absolutePath);
-  return indexBytes(await readScoreFile(absolutePath), fileName);
-}
-
 /** Summarises the bytes of a score file. The file name only fills in a missing title or composer. */
 export async function indexBytes(bytes: Uint8Array, fileName: string): Promise<PieceIndex> {
   const osmd = await loadSheet(bytes, fileName);
@@ -31,8 +25,12 @@ export async function readScoreFile(path: string): Promise<Uint8Array> {
   try {
     return new Uint8Array(await invoke<ArrayBuffer>('read_file', { path }));
   } catch (error) {
-    const detail = String(error);
-    const missing = /no such file|not found/i.test(detail);
-    throw new ScoreError(missing ? 'File not found' : 'Could not read the file', detail);
+    const reason = isMissingFile(error) ? 'File not found' : 'Could not read the file';
+    throw new ScoreError(reason, String(error));
   }
+}
+
+/** Whether a refusal from Rust is the file being gone rather than anything else. */
+export function isMissingFile(error: unknown): boolean {
+  return /no such file|not found/i.test(String(error));
 }

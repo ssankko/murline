@@ -3,7 +3,7 @@
 
 import { ScoreError } from '@/score/types';
 import { invoke } from '@tauri-apps/api/core';
-import { indexFile, pathOf } from './index-file';
+import { baseNameOf, indexBytes, pathOf, readScoreFile } from './index-file';
 import {
   knownFiles,
   markError,
@@ -85,13 +85,12 @@ async function apply(folder: string, actions: ScanAction[]): Promise<void> {
 
 async function index(folder: string, file: FileEntry): Promise<void> {
   try {
-    const summary = await indexFile(pathOf(folder, file.relPath));
+    const path = pathOf(folder, file.relPath);
+    const summary = await indexBytes(await readScoreFile(path), baseNameOf(path));
     await upsertIndex(file.relPath, summary, file.mtime, file.size);
   } catch (error) {
     const reason =
-      error instanceof ScoreError
-        ? `${error.reason}: ${error.detail}`
-        : `Could not read the file: ${String(error)}`;
+      error instanceof ScoreError ? error.message : `Could not read the file: ${String(error)}`;
     await markError(file.relPath, reason, file.mtime, file.size);
   }
 }

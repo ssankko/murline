@@ -56,12 +56,6 @@ export interface KnownFile {
   present: number;
 }
 
-/** Every column of `piece` the page reads, in the order `PieceRow` names them. */
-const COLUMNS = `path, title, composer, measure_count, duration_s, midi_lo, midi_hi, has_tempo,
-       constant_tempo, key_sharps, key_mode, part_count, part_name, favorite, error,
-       tempo_mode, tempo_value, metronome, count_in_bars, hands, keyboard_preset,
-       keyboard_lo, keyboard_hi`;
-
 const HISTORY = `
   (SELECT MAX(grade) FROM play WHERE piece_path = piece.path AND kind = 'performance') AS best_grade,
   (SELECT MAX(started_at) FROM play WHERE piece_path = piece.path) AS last_played,
@@ -74,21 +68,21 @@ const BY_TITLE = 'title COLLATE NOCASE';
 
 // SQLite sorts NULL below every value, so a descending sort puts the never-played and the
 // ungraded last on its own.
-const SORTS: Record<SortOrder, { where: string; order: string }> = {
-  recent: { where: '', order: `last_played DESC, ${BY_TITLE}` },
-  title: { where: '', order: BY_TITLE },
-  composer: { where: '', order: `composer COLLATE NOCASE, ${BY_TITLE}` },
-  grade: { where: '', order: `best_grade DESC, ${BY_TITLE}` },
-  favorites: { where: 'AND favorite = 1', order: BY_TITLE },
+const SORTS: Record<SortOrder, string> = {
+  recent: `last_played DESC, ${BY_TITLE}`,
+  title: BY_TITLE,
+  composer: `composer COLLATE NOCASE, ${BY_TITLE}`,
+  grade: `best_grade DESC, ${BY_TITLE}`,
+  favorites: BY_TITLE,
 };
 
 /** Every piece whose file is in the folder. A missing file hides its piece until it is back. */
 export async function listPieces(sort: SortOrder = 'title'): Promise<PieceRow[]> {
   const db = await getDb();
-  const { where, order } = SORTS[sort];
+  const favorites = sort === 'favorites' ? 'AND favorite = 1' : '';
   return db.select<PieceRow[]>(
-    `SELECT ${COLUMNS},${HISTORY}
-     FROM piece WHERE present = 1 ${where} ORDER BY ${order}`,
+    `SELECT piece.*,${HISTORY}
+     FROM piece WHERE present = 1 ${favorites} ORDER BY ${SORTS[sort]}`,
   );
 }
 
@@ -126,7 +120,7 @@ const SETTING_COLUMNS: readonly (keyof PieceSettingValues)[] = [
   'keyboard_hi',
 ];
 
-/** Stores what the play screen just changed. The SET clause is built from `SETTING_COLUMNS`. */
+/** Stores what the play screen just changed. */
 export async function updatePieceSettings(
   path: string,
   values: PieceSettingValues,
@@ -150,7 +144,7 @@ export async function setFavorite(path: string, favorite: boolean): Promise<void
 export async function getPiece(path: string): Promise<PieceRow | null> {
   const db = await getDb();
   const rows = await db.select<PieceRow[]>(
-    `SELECT ${COLUMNS},${HISTORY}
+    `SELECT piece.*,${HISTORY}
      FROM piece WHERE path = $1`,
     [path],
   );

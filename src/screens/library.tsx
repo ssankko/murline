@@ -14,7 +14,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { pathOf } from '@/library/index-file';
+import { isMissingFile, pathOf } from '@/library/index-file';
 import {
   importFiles,
   SCORE_EXTENSIONS,
@@ -187,7 +187,7 @@ export function Library({
       await invoke('trash_file', { path: pathOf(folder, target.path) });
     } catch (error) {
       // A file already gone from disk still drops its piece; any other refusal keeps the row.
-      if (!/no such file|not found/i.test(String(error))) {
+      if (!isMissingFile(error)) {
         setNotice(`Could not delete ${target.title ?? target.path}: ${String(error)}`);
         return;
       }

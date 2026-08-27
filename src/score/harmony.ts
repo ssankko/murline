@@ -136,7 +136,7 @@ function spell(p: number, key: KeyAt, written: number): string {
 
 /** Sharps and flats of any depth fold to one sign; naturals and none are 0. */
 function accidentalOf(note: Note): number {
-  const accidental = note.source?.Pitch?.Accidental;
+  const accidental = note.source.Pitch.Accidental;
   if (accidental === AccidentalEnum.SHARP || accidental === AccidentalEnum.DOUBLESHARP) return 1;
   if (accidental === AccidentalEnum.FLAT || accidental === AccidentalEnum.DOUBLEFLAT) return -1;
   return 0;
@@ -316,7 +316,7 @@ function segment(score: Score): ChordEvent[] {
   let k = 0;
   for (const [i, j] of cuts) {
     while (k + 1 < keys.length && keys[k + 1]!.tick <= ticks[i]!) k++;
-    const named = nameSegment(sounding.slice(i, j), label[j]!, keys[k] ?? C_MAJOR);
+    const named = nameSegment(sounding.slice(i, j), label[j]!, keys[k]!);
     const last = events[events.length - 1];
     if (!named || (last && last.absolute === named.absolute && last.degree === named.degree)) {
       continue;

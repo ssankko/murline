@@ -3,20 +3,8 @@
 
 import { playedSeconds, ScoreError, type Score } from './types';
 
-export type KeyMode =
-  | 'major'
-  | 'minor'
-  | 'none'
-  | 'dorian'
-  | 'phrygian'
-  | 'lydian'
-  | 'mixolydian'
-  | 'aeolian'
-  | 'ionian'
-  | 'locrian';
-
 /** OSMD's `KeyEnum` in the order of its members. */
-const KEY_MODES: KeyMode[] = [
+const KEY_MODES = [
   'major',
   'minor',
   'none',
@@ -27,7 +15,9 @@ const KEY_MODES: KeyMode[] = [
   'aeolian',
   'ionian',
   'locrian',
-];
+] as const;
+
+export type KeyMode = (typeof KEY_MODES)[number];
 
 /** What OSMD titles a sheet that names no work: a Blob carries no file name to fall back on. */
 const NO_TITLE = 'Untitled Score';
@@ -67,8 +57,9 @@ export function summarize(score: Score, fileName: string): PieceIndex {
   }
 
   const key = score.keys[0];
+  const title = score.title.trim();
   return {
-    title: title(score.title) || baseName(fileName),
+    title: (title === NO_TITLE ? '' : title) || baseName(fileName),
     composer: score.composer.trim() || baseName(fileName),
     measureCount: score.measures.length,
     durationS: playedSeconds(score),
@@ -81,11 +72,6 @@ export function summarize(score: Score, fileName: string): PieceIndex {
     partCount: score.partCount,
     partName: score.partName.trim() || 'Part 1',
   };
-}
-
-function title(raw: string): string {
-  const text = raw.trim();
-  return text === NO_TITLE ? '' : text;
 }
 
 function baseName(fileName: string): string {

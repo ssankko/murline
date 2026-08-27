@@ -150,11 +150,7 @@ export function Finder({
     setDl({ state: 'downloading' });
     let tempPath: string | null = null;
     try {
-      const got = await invoke<{ fileName: string; tempPath: string }>('finder_download', {
-        row,
-        pdmxFolder,
-      });
-      tempPath = got.tempPath;
+      tempPath = await invoke<string>('finder_download', { row, pdmxFolder });
       // The name is free: an owned row never gets here. Keep both covers a file the index missed.
       const { imported, failures } = await importFiles(folder, [tempPath], async () => 'keep-both');
       if (failures.length || !imported[0]) throw new Error(failures[0]?.reason ?? 'Import failed');

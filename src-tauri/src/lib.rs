@@ -12,14 +12,6 @@ fn ensure_dir(path: String) -> Result<(), String> {
     std::fs::create_dir_all(&path).map_err(|e| e.to_string())
 }
 
-/// The user's home directory, so the frontend can offer `~/Music/Piano/` as an absolute path.
-#[tauri::command]
-fn home_dir() -> Result<String, String> {
-    std::env::home_dir()
-        .ok_or_else(|| "no home directory".to_string())
-        .map(|p| p.to_string_lossy().into_owned())
-}
-
 /// Numbered SQL files applied in order and tracked by `PRAGMA user_version`.
 fn migrations() -> Vec<Migration> {
     vec![Migration {
@@ -46,7 +38,6 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             ensure_dir,
-            home_dir,
             library::copy_file,
             library::list_library,
             library::read_file,

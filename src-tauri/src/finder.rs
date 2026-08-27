@@ -384,14 +384,6 @@ pub async fn finder_search(query: String) -> Result<SearchResult, String> {
         .map_err(|e| e.to_string())
 }
 
-/// Where the download landed, for the import path to pick up.
-#[derive(Serialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct Downloaded {
-    pub file_name: String,
-    pub temp_path: String,
-}
-
 /// One path segment and nothing else: no separator and no walk up the tree.
 fn plain_name(s: &str) -> bool {
     !s.is_empty() && !s.contains('/') && s != "." && s != ".."
@@ -416,10 +408,10 @@ fn addressable(row: &Row) -> bool {
         }
 }
 
-/// Fetches or unzips one row into a temp file. Nothing reaches the library folder from here; the
-/// import path a dropped file takes does that.
+/// Fetches or unzips one row into a temp file and answers with its path. Nothing reaches the
+/// library folder from here; the import path a dropped file takes does that.
 #[tauri::command]
-pub async fn finder_download(row: Row, pdmx_folder: Option<String>) -> Result<Downloaded, String> {
+pub async fn finder_download(row: Row, pdmx_folder: Option<String>) -> Result<String, String> {
     if !addressable(&row) {
         return Err("file not found".to_string());
     }
@@ -435,10 +427,7 @@ pub async fn finder_download(row: Row, pdmx_folder: Option<String>) -> Result<Do
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let path = dir.join(&row.file_name);
         std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
-        Ok(Downloaded {
-            file_name: row.file_name,
-            temp_path: path.to_string_lossy().into_owned(),
-        })
+        Ok(path.to_string_lossy().into_owned())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -674,7 +663,7 @@ Morris\tLelia N. Morris\tThe Fight Is On\tThe Fight Is On\t\t24\t0\t1/3/QmC.mxl\
         };
 
         let good = run(pdmx_row()).unwrap();
-        std::fs::remove_file(&good.temp_path).unwrap();
+        std::fs::remove_file(&good).unwrap();
 
         let mut up = pdmx_row();
         up.file = "11/34/../34/QmTNyLYrAi5Qgh37iTp9ieLYzAzb2q8JeNPSKEhDsafzeF.mxl".to_string();

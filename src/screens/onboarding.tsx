@@ -3,6 +3,7 @@ import { setSetting } from '@/db/db';
 import { Input } from '@/components/ui/input';
 import { useMidiStatus } from '@/midi/use-midi-status';
 import { invoke } from '@tauri-apps/api/core';
+import { homeDir } from '@tauri-apps/api/path';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useEffect, useState } from 'react';
 
@@ -15,7 +16,7 @@ export function Onboarding({ onDone }: { onDone: (folder: string) => void }) {
 
   // A home directory the app cannot read leaves the field empty for the user to fill or choose.
   useEffect(() => {
-    void invoke<string>('home_dir').then((home) => setFolder(`${home}/Music/Piano`), () => {});
+    void homeDir().then((home) => setFolder(`${home}/Music/Piano`), () => {});
   }, []);
 
   async function choose() {

@@ -79,6 +79,9 @@ const HANDS_FADE_MS = 200;
 const SECTION_ALPHA = 0.09;
 const SECTION_FADE_MS = 200;
 
+/** How long the keys and the blocks over them take to travel to a new keyboard range. */
+const RANGE_MS = 200;
+
 /**
  * The glow a strike throws off its key top: how long it lives, and the radius and the peak alpha
  * it reaches between the softest strike and the hardest.
@@ -244,7 +247,12 @@ export class Lane {
   /** The walk the bars and the dividers were read from; Loop swaps it for the linear one. */
   private walk: PlayStep[];
   private range: [number, number];
+  /** The layout of the range in force, the one the keys travel from, and when they set off. */
   private layout: KeyLayout;
+  private layoutFrom: KeyLayout | null = null;
+  private layoutAt = -Infinity;
+  /** The layout every key and block is drawn on: part way between the two while they travel. */
+  private shownLayout: KeyLayout;
   private dark: boolean;
   private effects: Effect[] = [];
   private particles: Speck[] = [];
@@ -304,18 +312,23 @@ export class Lane {
   private shownSection: Section | null = null;
   private sectionOn = false;
   private sectionAt = -Infinity;
+  /** The Section the band's edges travel from and when they set off, null while it fades in place. */
+  private sectionFrom: Section | null = null;
+  private spanAt = -Infinity;
   /** The notice the panel is drawn for, which outlives `notice` by its fade, and when it changed. */
   private shownNotice: string | null = null;
   private noticeOn = false;
   private noticeAt = -Infinity;
   /**
-   * What the harmony panel drew last frame: the chord in the top slot, the chord under it, when the
-   * panels last moved up a slot, and the chord leaving the top slot while it fades out.
+   * What the harmony panels drew last frame, slot by slot, how they are taking the chord that came
+   * after it, when that began, and the panels leaving their slots while they fade out.
    */
-  private shownCurrent: LaneChord | null = null;
-  private shownNext: LaneChord | null = null;
+  private shownRows: (LaneChord | undefined)[] = [];
+  private change: 'slide' | 'enter' | 'fade' = 'slide';
   private changeAt = -Infinity;
-  private leaving: LaneChord | null = null;
+  private leaving: { chord: LaneChord; slot: number }[] = [];
+  /** When the walk last changed, which is what tells a Loop toggle from a seek. */
+  private walkAt = -Infinity;
   /**
    * Canvas size and window height, taken only when they change. The sheet writes its own styles
    * every frame, so reading them here would make the browser lay the page out again each time.
@@ -340,6 +353,7 @@ export class Lane {
     this.range = keyRange(engine.notes, engine.settings);
     this.measure();
     this.layout = keyLayout(this.range[0], this.range[1], this.size.width || 1);
+    this.shownLayout = this.layout;
     this.resize = new ResizeObserver(() => this.measure());
     this.resize.observe(canvas);
     // The canvas never scrolls itself, so the wheel is the lane's own: it moves the view in ticks.
@@ -387,8 +401,10 @@ export class Lane {
     this.dark = dark;
   }
 
-  /** Lays the keyboard out again after the keyboard range setting changed. */
+  /** Lays the keyboard out for the range setting and sets the keys off to their new places. */
   setRange(): void {
+    this.layoutFrom = this.reduced ? null : this.layout;
+    this.layoutAt = performance.timeOrigin + performance.now();
     this.range = keyRange(this.engine.notes, this.engine.settings);
     this.layout = keyLayout(this.range[0], this.range[1], this.size.width || 1);
   }
@@ -433,6 +449,11 @@ export class Lane {
       this.handsAt = this.reduced ? -Infinity : now;
     }
     const section = this.engine.section;
+    // A band already up travels to its new bars; the first band of all fades in where it belongs.
+    if (section && this.sectionOn && this.shownSection && !sameSpan(section, this.shownSection)) {
+      this.sectionFrom = this.reduced ? null : this.shownSection;
+      this.spanAt = now;
+    }
     if (section) this.shownSection = section;
     if (this.sectionOn !== (section !== null)) {
       this.sectionOn = section !== null;
@@ -452,8 +473,15 @@ export class Lane {
       this.canvas.height = Math.round(height * dpr);
     }
     if (this.layout.width !== width) {
+      // A canvas that changed size puts every key straight where it now belongs.
       this.layout = keyLayout(this.range[0], this.range[1], width);
+      this.layoutFrom = null;
     }
+    const travel = clamp((now - this.layoutAt) / RANGE_MS, 0, 1);
+    if (travel === 1) this.layoutFrom = null;
+    this.shownLayout = this.layoutFrom
+      ? blendLayout(this.layoutFrom, this.layout, easeInOut(travel))
+      : this.layout;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     while (this.effects.length > 0 && now - this.effects[0]!.start > RING_MS) this.effects.shift();
@@ -495,6 +523,7 @@ export class Lane {
       this.bars = barsOf(this.engine.score, this.walk);
       this.jumps = jumpsOf(this.engine.score, this.walk);
       this.chords = chordsOf(this.engine.score.harmony, this.walk);
+      this.walkAt = now;
     }
 
     const loop = this.engine.loopSpan();
@@ -516,7 +545,7 @@ export class Lane {
     this.drawRings(laneH, pxPerTick);
     drawKeyboard(
       ctx,
-      this.layout,
+      this.shownLayout,
       laneH,
       this.dark,
       this.look.keyLabels,
@@ -679,21 +708,36 @@ export class Lane {
     this.view = view;
   }
 
-  /** The Section as a tinted band over its bars, whether or not Loop gives it force. */
+  /**
+   * The Section as a tinted band over its bars, whether or not Loop gives it force. Its edges are
+   * held in measure space, so a Section over repeated bars holds a band a pass and all of them
+   * travel together as it changes.
+   */
   private drawSection(width: number, laneH: number, pxPerTick: number): void {
     const section = this.shownSection;
     if (!section) return;
-    const eased = Math.min(1, (this.now - this.sectionAt) / SECTION_FADE_MS);
-    const alpha = SECTION_ALPHA * (this.sectionOn ? eased : 1 - eased);
+    const fade = easeInOut(clamp((this.now - this.sectionAt) / SECTION_FADE_MS, 0, 1));
+    const alpha = SECTION_ALPHA * (this.sectionOn ? fade : 1 - fade);
     if (alpha <= 0) return;
+    const travel = clamp((this.now - this.spanAt) / SECTION_FADE_MS, 0, 1);
+    if (travel === 1) this.sectionFrom = null;
+    const eased = easeInOut(travel);
+    // With nowhere to travel from, both edges stand where the Section itself puts them.
+    const was = this.sectionFrom ?? section;
+    const from = ramp([was.from, section.from], eased);
+    const to = ramp([was.to, section.to], eased);
     const ctx = this.ctx;
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.fillStyle = tone(INK.duration, this.dark);
     for (const bar of this.bars) {
-      if (bar.measure < section.from || bar.measure > section.to) continue;
-      const top = Math.round(this.y(bar.endTick, laneH, pxPerTick));
-      const bottom = Math.round(this.y(bar.tick, laneH, pxPerTick));
+      // An edge part way through a bar covers that share of it, which is what lets it travel.
+      const head = clamp(from - bar.measure, 0, 1);
+      const tail = clamp(to + 1 - bar.measure, 0, 1);
+      if (tail <= head) continue;
+      const span = bar.endTick - bar.tick;
+      const top = Math.round(this.y(bar.tick + span * tail, laneH, pxPerTick));
+      const bottom = Math.round(this.y(bar.tick + span * head, laneH, pxPerTick));
       if (bottom < 0 || top > laneH) continue;
       ctx.fillRect(0, top, width, bottom - top);
     }
@@ -754,7 +798,7 @@ export class Lane {
       if (note.tick < floor || !note.strikeable) continue;
       const bottom = this.y(note.tick, laneH, pxPerTick);
       if (bottom < -10) continue;
-      const key = this.layout.byMidi.get(note.midi);
+      const key = this.shownLayout.byMidi.get(note.midi);
       if (!key) continue;
 
       // A note hanging over the wrap is cut at the bar line the lap ends on.
@@ -885,7 +929,7 @@ export class Lane {
       if (effect.kind !== 'hit') continue;
       const age = (this.now - effect.start) / SPLASH_MS;
       if (age > 1) continue;
-      const key = this.layout.byMidi.get(effect.midi);
+      const key = this.shownLayout.byMidi.get(effect.midi);
       if (!key) continue;
       const force = velocityForce(effect.velocity);
       const radius = ramp(SPLASH_RADIUS, force);
@@ -905,7 +949,7 @@ export class Lane {
   private drawRings(laneH: number, pxPerTick: number): void {
     const ctx = this.ctx;
     for (const effect of this.effects) {
-      const key = this.layout.byMidi.get(effect.midi);
+      const key = this.shownLayout.byMidi.get(effect.midi);
       if (!key) continue;
       // A ring outside its own time is no ring; a negative age would ask for a negative radius.
       const age = (this.now - effect.start) / RING_MS;
@@ -932,7 +976,7 @@ export class Lane {
     this.owed += this.reduced ? 0 : (step / 1000) * TRICKLE_PER_S;
     const due = Math.floor(this.owed);
     this.owed -= due;
-    for (const key of this.layout.keys) {
+    for (const key of this.shownLayout.keys) {
       const state = this.engine.keyState(key.midi);
       const down = state !== 'base';
       if (down !== (this.presses.get(key.midi)?.down ?? false)) {
@@ -950,7 +994,7 @@ export class Lane {
 
   /** The specks a strike throws off its key top, more and faster the harder the key went down. */
   private burst(effect: Effect, laneH: number): void {
-    const key = this.layout.byMidi.get(effect.midi);
+    const key = this.shownLayout.byMidi.get(effect.midi);
     if (!key) return;
     const color = colorOf(effect.midi, 'muted', this.dark);
     const count = Math.round(ramp(BURST, velocityForce(effect.velocity)));
@@ -1096,18 +1140,24 @@ export class Lane {
       : this.bars;
 
     const [current, ...next] = chordsAt(chords, this.playedTick);
-    // Only the natural advance slides: the chord that was next has become the chord in force. A
-    // seek, a Loop toggle or the first chord of all snaps the panels into their slots.
-    if (current?.tick !== this.shownCurrent?.tick) {
-      const advanced =
-        current !== undefined &&
-        this.shownCurrent !== null &&
-        current.tick === this.shownNext?.tick;
-      this.changeAt = advanced && !this.reduced ? this.now : -Infinity;
-      this.leaving = advanced ? this.shownCurrent : null;
-      this.shownCurrent = current ?? null;
+    // How the row takes a new chord in force: the chord that stood next slides every panel up a
+    // slot, the first panels of all rise into their slots fading in, a Loop toggle onto any other
+    // chord cross-fades the row where it stands, and a seek, which may land anywhere, snaps.
+    if (current?.tick !== this.shownRows[0]?.tick) {
+      const advance = current !== undefined && current.tick === this.shownRows[1]?.tick;
+      const first = this.shownRows.every((chord) => chord === undefined);
+      // A Loop toggle lays the chords out again in this same frame; a seek leaves the list alone.
+      const relaid = this.walkAt === this.now;
+      this.change = advance ? 'slide' : first ? 'enter' : 'fade';
+      this.changeAt = (advance || first || relaid) && !this.reduced ? this.now : -Infinity;
+      const gone = this.shownRows[0];
+      // A slide takes the panel on top off the row; a cross-fade holds all three where they stand.
+      this.leaving = advance && gone ? [{ chord: gone, slot: -1 }] : [];
+      if (this.change === 'fade' && relaid) {
+        this.leaving = this.shownRows.flatMap((chord, slot) => (chord ? [{ chord, slot }] : []));
+      }
     }
-    this.shownNext = next[0] ?? null;
+    this.shownRows = [current, ...next];
 
     const rows: { chord: LaneChord; slot: number; glyphs: BeatGlyph[] }[] = [];
     if (current) rows.push({ chord: current, slot: 0, glyphs: [] });
@@ -1119,18 +1169,20 @@ export class Lane {
     const ctx = this.ctx;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    // Every panel comes from the slot below the one it takes, the newest from under the lot.
+    // A travelling panel comes from the slot below the one it takes, the newest from under the
+    // lot; a cross-fade leaves every panel in its slot and works on alpha alone.
     const t = Math.min(1, (this.now - this.changeAt) / PANEL_SLIDE_MS);
+    const travels = t < 1 && this.change !== 'fade';
     const eased = easeInOutBack(t);
     const step = (slot: number) =>
-      t === 1
-        ? slotRect(slot, width)
-        : lerpRect(slotRect(slot + 1, width), slotRect(slot, width), eased);
-    if (t < 1 && this.leaving) {
-      this.drawRow(step(-1), this.leaving, [], 1 - t);
-    }
+      travels
+        ? lerpRect(slotRect(slot + 1, width), slotRect(slot, width), eased)
+        : slotRect(slot, width);
+    if (t < 1) for (const gone of this.leaving) this.drawRow(step(gone.slot), gone.chord, [], 1 - t);
     for (const row of rows) {
-      this.drawRow(step(row.slot), row.chord, row.glyphs, row.slot === 2 ? t : 1);
+      // A slide fades in only the panel that has just come into the row; the others are already up.
+      const alpha = this.change === 'slide' && row.slot < 2 ? 1 : t;
+      this.drawRow(step(row.slot), row.chord, row.glyphs, alpha);
     }
     // The rest of the lane draws on the defaults.
     ctx.textAlign = 'left';
@@ -1201,6 +1253,22 @@ const backToBar = (number: number) => `↺ back to bar ${number}`;
 // Dash patterns as constants, because setLineDash takes a fresh array otherwise on every frame.
 const DASH = [7, 5];
 const SOLID: number[] = [];
+
+/** Two Sections over the same bars. */
+const sameSpan = (a: Section, b: Section) => a.from === b.from && a.to === b.to;
+
+/**
+ * The keys part way to a new range: each one travels from where it stood, and a key the old range
+ * did not hold grows out of the edge it comes in over.
+ */
+function blendLayout(from: KeyLayout, to: KeyLayout, t: number): KeyLayout {
+  const first = from.keys[0]?.midi ?? Infinity;
+  const keys = to.keys.map((key) => {
+    const was = from.byMidi.get(key.midi) ?? { x: key.midi < first ? 0 : from.width, w: 0 };
+    return { ...key, x: ramp([was.x, key.x], t), w: ramp([was.w, key.w], t) };
+  });
+  return { keys, byMidi: new Map(keys.map((key) => [key.midi, key])), width: to.width };
+}
 
 /** Where in a range a share of the way lands. */
 const ramp = (range: readonly [number, number], t: number) => range[0] + (range[1] - range[0]) * t;

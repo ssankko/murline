@@ -1,5 +1,5 @@
-import { DEFAULT_LANE_LOOK, GLIDE_MS, Lane } from '@/lane/lane';
-import { KEYBOARD_H } from '@/lane/keyboard';
+import { DEFAULT_LANE_LOOK, GLIDE_MS, Lane, type LaneLook } from '@/lane/lane';
+import { KEYBOARD_H, keyLayout, type KeyLayout } from '@/lane/keyboard';
 import { PAPER, colorOf, tone } from '@/look/color';
 import { Engine } from '@/play/engine';
 import { DEFAULT_PLAY_SETTINGS } from '@/play/settings';
@@ -10,9 +10,9 @@ const BAR = 4 * TICKS_PER_QUARTER;
 const WIDTH = 400;
 const HEIGHT = 200;
 
-/** One bar of 4/4 with a quarter note on every beat, all on middle C. */
-function scoreOf(): Score {
-  const notes: Note[] = [0, 1, 2, 3].map((beat) => ({
+/** `bars` bars of 4/4 with a quarter note on every beat, all on middle C. */
+function scoreOf(bars = 1): Score {
+  const notes: Note[] = [...Array(bars * 4).keys()].map((beat) => ({
     midi: 60,
     staff: 0,
     hand: 'right',
@@ -22,12 +22,12 @@ function scoreOf(): Score {
     grace: false,
     strikeable: true,
     velocity: 80,
-    measureIndex: 0,
+    measureIndex: Math.floor(beat / 4),
     source: undefined as never,
   }));
   const onsets = notes.map((note) => ({
     tick: note.onsetTick,
-    measureIndex: 0,
+    measureIndex: note.measureIndex,
     notes: [note],
   }));
   return {
@@ -38,36 +38,44 @@ function scoreOf(): Score {
     staffCount: 1,
     onsets,
     playOrder: onsets.map((onset, i) => ({ onsetIndex: i, tick: onset.tick })),
-    totalTicks: BAR,
+    totalTicks: bars * BAR,
     tempoMap: [{ tick: 0, bpm: 60 }],
     hasTempo: true,
     constantTempo: true,
     hasDynamics: true,
-    measures: [
-      { index: 0, number: 1, startTick: 0, durationTicks: BAR, beatsPerBar: 4, beatUnit: 4 },
-    ],
+    measures: [...Array(bars).keys()].map((i) => ({
+      index: i,
+      number: i + 1,
+      startTick: i * BAR,
+      durationTicks: BAR,
+      beatsPerBar: 4,
+      beatUnit: 4,
+    })),
     keys: [],
     chords: [],
     harmony: [],
   };
 }
 
-function mount(): {
+function mount(
+  options: { score?: Score; look?: Partial<LaneLook>; height?: number } = {},
+): {
   engine: Engine;
   lane: Lane;
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
 } {
   const canvas = document.createElement('canvas');
-  canvas.style.cssText = `width:${WIDTH}px;height:${HEIGHT}px;display:block`;
+  const height = options.height ?? HEIGHT;
+  canvas.style.cssText = `width:${WIDTH}px;height:${height}px;display:block`;
   document.body.replaceChildren(canvas);
-  const engine = new Engine(scoreOf(), {
+  const engine = new Engine(options.score ?? scoreOf(), {
     ...DEFAULT_PLAY_SETTINGS,
     countInBars: 0,
     keyboardPreset: 'piece',
   });
   engine.start();
-  const lane = new Lane(canvas, engine, { ...DEFAULT_LANE_LOOK }, false);
+  const lane = new Lane(canvas, engine, { ...DEFAULT_LANE_LOOK, ...options.look }, false);
   return { engine, lane, canvas, ctx: canvas.getContext('2d')! };
 }
 
@@ -291,5 +299,69 @@ test('a click on the keyboard asks for nothing', () => {
   clickAt(canvas, laneH + 10);
   expect(asked).toBe(0);
   expect(engine.snapshot().playedTick).toBe(0);
+  lane.dispose();
+});
+
+/** Where a key stands in the layout the lane drew its last frame on. */
+function keyX(lane: Lane, midi: number): number {
+  return (lane as unknown as { shownLayout: KeyLayout }).shownLayout.byMidi.get(midi)!.x;
+}
+
+test('a range change carries the keys to their new places', () => {
+  const { engine, lane } = mount();
+  const wall = performance.timeOrigin + performance.now();
+  lane.frame(engine.snapshot(), engine.windowTicks, wall);
+  const from = keyX(lane, 60);
+
+  // Two octaves join the keyboard under middle C, which sends middle C off to the right.
+  Object.assign(engine.settings, { keyboardPreset: 'custom', keyboardLo: 36, keyboardHi: 71 });
+  lane.setRange();
+  const set = performance.timeOrigin + performance.now();
+  const frame = (at: number) => lane.frame(engine.snapshot(), engine.windowTicks, set + at);
+  const to = keyLayout(36, 71, WIDTH).byMidi.get(60)!.x;
+  expect(to).toBeGreaterThan(from);
+
+  // Half the travel on it stands between the two, and at the end of it on its new place.
+  frame(100);
+  expect(keyX(lane, 60)).toBeGreaterThan(from);
+  expect(keyX(lane, 60)).toBeLessThan(to);
+  frame(200);
+  expect(keyX(lane, 60)).toBe(to);
+  lane.dispose();
+});
+
+/** How much ink a column of the lane carries, which grows with the Section band over it. */
+function ink(ctx: CanvasRenderingContext2D, x: number, laneH: number): number {
+  let sum = 0;
+  for (let y = 0; y < laneH; y++) sum += 0xff - level(ctx, x, y);
+  return sum;
+}
+
+test('the Section band travels from the bars it had to the bars it takes', () => {
+  const height = 600;
+  const laneH = height - KEYBOARD_H;
+  // Four bars, and a long enough lookahead that all four stand in the lane at once.
+  const { engine, lane, ctx } = mount({ score: scoreOf(4), look: { lookaheadBeats: 40 }, height });
+  // A column with no key of the piece under it, so only the band changes what it carries.
+  const bare = WIDTH / 2;
+  const wall = performance.timeOrigin + performance.now();
+  const frame = (at: number) => lane.frame(engine.snapshot(), engine.windowTicks, wall + at);
+  engine.setSection({ from: 0, to: 0 });
+  frame(0);
+  frame(200);
+  const one = ink(ctx, bare, laneH);
+  expect(one).toBeGreaterThan(0);
+
+  // Three bars now, and the band takes the whole fade to grow over them: the frame of the change
+  // still covers one bar, half a fade on it covers two, and the end of it three.
+  engine.setSection({ from: 0, to: 2 });
+  frame(201);
+  expect(ink(ctx, bare, laneH)).toBe(one);
+  frame(301);
+  const midway = ink(ctx, bare, laneH);
+  frame(401);
+  const three = ink(ctx, bare, laneH);
+  expect(midway).toBeGreaterThan(one);
+  expect(midway).toBeLessThan(three);
   lane.dispose();
 });

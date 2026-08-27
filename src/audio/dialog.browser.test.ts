@@ -8,6 +8,7 @@ let answer: unknown = { available: false, reason: 'No instrument chosen' };
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: async (command: string) => {
     if (command === 'audio_status') return answer;
+    if (command === 'audio_instruments') return [];
     throw new Error(`unexpected command ${command}`);
   },
 }));

@@ -1,6 +1,7 @@
 // The start-up sequence: the work the app does before its first screen, and the line each step
 // prints when it lands. The boot screen in src/App.tsx shows the lines as they arrive.
 
+import { restoreInstrument } from '@/audio/instrument';
 import { getDb, readSettings, type Settings } from '@/db/db';
 import { reasonOf } from '@/library/notice';
 import { scanLibrary } from '@/library/scan';
@@ -38,7 +39,10 @@ export async function boot(print: (lines: string[]) => void): Promise<Settings> 
   setTheme(settings.theme);
   say(`> theme: ${settings.theme}`);
 
-  await step('starting sound engine', () => invoke('audio_start'));
+  await step('starting sound engine', async () => {
+    await invoke('audio_start');
+    await restoreInstrument(settings);
+  });
 
   // The library screen walks the same folder on mount, and `scanLibrary` walks a folder once, so
   // the wait for it happens here instead of behind an empty list.

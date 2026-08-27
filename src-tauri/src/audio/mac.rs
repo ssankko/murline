@@ -11,11 +11,15 @@
 #![allow(dead_code)]
 
 use crate::audio::Status;
+// The instrument the graph plays, and the window a hosted plugin brings with it.
+pub use crate::audio::instruments::{list as instruments, load as load_instrument};
+pub use crate::audio::window::show_instrument;
 use objc2::AllocAnyThread;
 use objc2::rc::Retained;
 use objc2_avf_audio::{
     AVAudioEngine, AVAudioEngineManualRenderingMode, AVAudioEngineManualRenderingStatus,
-    AVAudioFormat, AVAudioMixing, AVAudioPCMBuffer, AVAudioPlayerNode, AVAudioUnitSampler,
+    AVAudioFormat, AVAudioMixing, AVAudioPCMBuffer, AVAudioPlayerNode, AVAudioUnitMIDIInstrument,
+    AVAudioUnitSampler,
 };
 use objc2_foundation::{NSError, NSString, NSURL};
 use std::path::Path;
@@ -43,22 +47,35 @@ const ALL_NOTES_OFF: u8 = 123;
 const MELODIC_BANK_MSB: u8 = 0x79;
 
 /// The one graph the app plays through, empty until `start` builds it.
-static GRAPH: Mutex<Option<Graph>> = Mutex::new(None);
+pub(super) static GRAPH: Mutex<Option<Graph>> = Mutex::new(None);
 /// AUSampler keeps its loaded samples in one map per process, and two loads at once abort inside
-/// it, so every load in this process takes its turn.
+/// it, so every load in this process takes its turn. Starting a graph counts as one: a hosted unit
+/// reads its own samples in as the engine initialises the node.
 static LOADING: Mutex<()> = Mutex::new(());
+
+/// The instrument the user picked: its opaque id, the name the status line says, and why it is
+/// silent when the load failed.
+#[derive(Clone)]
+pub struct Chosen {
+    pub id: String,
+    pub name: String,
+    pub failure: Option<String>,
+}
 
 pub struct Graph {
     engine: Retained<AVAudioEngine>,
     sampler: Retained<AVAudioUnitSampler>,
+    /// The hosted Audio Unit instrument, when the choice is a plugin instead of a file. It plays
+    /// in the sampler's place; the sampler stays in the graph, silent.
+    plugin: Option<Retained<AVAudioUnitMIDIInstrument>>,
     clicker: Retained<AVAudioPlayerNode>,
     format: Retained<AVAudioFormat>,
     strong: Retained<AVAudioPCMBuffer>,
     weak: Retained<AVAudioPCMBuffer>,
     /// Frames one offline render pass may take at most, zero while the graph plays to a device.
     offline_frames: u32,
-    /// Name of the instrument loaded into the sampler, which is what makes the engine playable.
-    instrument: Option<String>,
+    /// The instrument the user picked, which is what makes the engine playable.
+    chosen: Option<Chosen>,
 }
 
 // AVFAudio's classes carry no main-thread requirement, and every call into one goes through the
@@ -87,15 +104,17 @@ impl Graph {
                 format,
                 engine,
                 sampler,
+                plugin: None,
                 clicker,
                 offline_frames: 0,
-                instrument: None,
+                chosen: None,
             })
         }
     }
 
     /// Starts the graph on the output device.
     pub fn start(&self) -> Result<(), String> {
+        let _turn = LOADING.lock().unwrap();
         unsafe {
             self.engine.prepare();
             self.engine.startAndReturnError().map_err(reason)?;
@@ -162,30 +181,80 @@ impl Graph {
         }
     }
 
-    /// Loads a SoundFont or DLS bank's first melodic program into the sampler, which is what makes
-    /// the engine playable. Reads from disk, so never from the audio thread.
-    pub fn load_sound_bank(&mut self, path: &Path, name: String) -> Result<(), String> {
+    /// Loads an instrument file into the sampler: a SoundFont's first melodic program, or an EXS
+    /// or AUPreset whole. Reads from disk, so never from the audio thread.
+    pub fn load_file(&mut self, path: &Path) -> Result<(), String> {
+        let sound_bank = path.extension().is_some_and(|kind| kind.eq_ignore_ascii_case("sf2"));
+        if sound_bank && not_a_sound_font(path) {
+            return Err("That file is not a SoundFont".into());
+        }
         let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
         let _turn = LOADING.lock().unwrap();
         unsafe {
-            self.sampler
-                .loadSoundBankInstrumentAtURL_program_bankMSB_bankLSB_error(&url, 0, MELODIC_BANK_MSB, 0)
-                .map_err(reason)?;
+            if sound_bank {
+                self.sampler
+                    .loadSoundBankInstrumentAtURL_program_bankMSB_bankLSB_error(
+                        &url,
+                        0,
+                        MELODIC_BANK_MSB,
+                        0,
+                    )
+                    .map_err(reason)?;
+            } else {
+                self.sampler.loadInstrumentAtURL_error(&url).map_err(reason)?;
+            }
         }
-        self.instrument = Some(name);
+        self.drop_plugin();
         Ok(())
     }
 
+    /// Puts a hosted Audio Unit instrument in the sampler's place, taking out whichever one played
+    /// before it.
+    pub fn set_plugin(&mut self, unit: Retained<AVAudioUnitMIDIInstrument>) {
+        self.drop_plugin();
+        let _turn = LOADING.lock().unwrap();
+        unsafe {
+            self.engine.attachNode(&unit);
+            let mixer = self.engine.mainMixerNode();
+            self.engine.connect_to_format(&unit, &mixer, Some(&self.format));
+        }
+        self.plugin = Some(unit);
+    }
+
+    fn drop_plugin(&mut self) {
+        if let Some(old) = self.plugin.take() {
+            unsafe { self.engine.detachNode(&old) };
+        }
+    }
+
+    /// The hosted plugin, which is the one instrument that has a window of its own.
+    pub fn plugin(&self) -> Option<&AVAudioUnitMIDIInstrument> {
+        self.plugin.as_deref()
+    }
+
+    pub fn chosen(&self) -> Option<&Chosen> {
+        self.chosen.as_ref()
+    }
+
+    pub fn choose(&mut self, chosen: Chosen) {
+        self.chosen = Some(chosen);
+    }
+
     pub fn instrument(&self) -> Option<&str> {
-        self.instrument.as_deref()
+        self.chosen.as_ref().filter(|chosen| chosen.failure.is_none()).map(|chosen| chosen.name.as_str())
+    }
+
+    /// Whichever node the notes go to: the plugin when one is hosted, the sampler otherwise.
+    fn target(&self) -> &AVAudioUnitMIDIInstrument {
+        self.plugin.as_deref().unwrap_or(&self.sampler)
     }
 
     pub fn note_on(&self, note: u8, velocity: u8) {
-        unsafe { self.sampler.startNote_withVelocity_onChannel(note, velocity, CHANNEL) };
+        unsafe { self.target().startNote_withVelocity_onChannel(note, velocity, CHANNEL) };
     }
 
     pub fn note_off(&self, note: u8) {
-        unsafe { self.sampler.stopNote_onChannel(note, CHANNEL) };
+        unsafe { self.target().stopNote_onChannel(note, CHANNEL) };
     }
 
     /// The sustain pedal. A note let go while it is down keeps sounding until it comes up.
@@ -201,7 +270,7 @@ impl Graph {
     }
 
     fn controller(&self, controller: u8, value: u8) {
-        unsafe { self.sampler.sendController_withValue_onChannel(controller, value, CHANNEL) };
+        unsafe { self.target().sendController_withValue_onChannel(controller, value, CHANNEL) };
     }
 
     /// One metronome click, at a volume of 0 to 100.
@@ -212,6 +281,16 @@ impl Graph {
             self.clicker.scheduleBuffer_completionHandler(buffer, std::ptr::null_mut());
         }
     }
+}
+
+/// True when the file opens and holds something that is plainly no SoundFont. AUSampler traps
+/// inside itself on one of those and takes the app with it, so the header is read here first. A
+/// file that will not open at all is left to the sampler, whose own error says so better.
+fn not_a_sound_font(path: &Path) -> bool {
+    use std::io::Read;
+    let mut head = [0u8; 12];
+    std::fs::File::open(path).and_then(|mut file| file.read_exact(&mut head)).is_ok()
+        && (&head[..4] != b"RIFF" || &head[8..] != b"sfbk")
 }
 
 /// One click as a buffer of samples: a sine falling to silence, because a square end would pop.
@@ -236,7 +315,7 @@ fn blip(format: &AVAudioFormat, hz: f64, peak: f32) -> Result<Retained<AVAudioPC
 }
 
 /// An NSError as the plain-text line the boot screen and the Audio dialog print.
-fn reason(error: Retained<NSError>) -> String {
+pub(super) fn reason(error: Retained<NSError>) -> String {
     error.localizedDescription().to_string()
 }
 
@@ -248,10 +327,15 @@ pub fn start() -> Result<(), String> {
 }
 
 pub fn status() -> Status {
-    match GRAPH.lock().unwrap().as_ref() {
-        None => Status::unavailable("The sound engine did not start"),
-        // Later tickets choose an instrument; until one is loaded the graph is silent by design.
-        Some(graph) if graph.instrument().is_none() => Status::unavailable("No instrument chosen"),
+    let held = GRAPH.lock().unwrap();
+    let Some(graph) = held.as_ref() else {
+        return Status::unavailable("The sound engine did not start");
+    };
+    match graph.chosen() {
+        None => Status::unavailable("No instrument chosen"),
+        Some(Chosen { name, failure: Some(failure), .. }) => {
+            Status::unavailable(&format!("{name} did not load: {failure}"))
+        }
         Some(_) => Status { available: true, reason: String::new() },
     }
 }
@@ -277,7 +361,7 @@ mod tests {
     /// A graph with the fixture in its sampler, rendering to nothing but the test's own buffer.
     fn offline() -> Graph {
         let mut graph = Graph::build().unwrap();
-        graph.load_sound_bank(Path::new(FIXTURE), "Sine".into()).unwrap();
+        graph.load_file(Path::new(FIXTURE)).unwrap();
         graph.start_offline(PASS).unwrap();
         graph
     }
@@ -285,7 +369,6 @@ mod tests {
     #[test]
     fn the_fixture_loads_and_an_untouched_graph_is_silent() {
         let graph = offline();
-        assert_eq!(graph.instrument(), Some("Sine"));
         assert_eq!(graph.render_peak(LOOK).unwrap(), 0.0);
     }
 

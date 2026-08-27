@@ -426,7 +426,7 @@ export class Sheet {
     const took = attached && !this.drawn.attached;
     this.drawn.attached = attached;
     // A jump carries the view with the band: always while the view follows the cursor, and while
-    // the reader holds it only when the cursor would otherwise land off the paper he is reading.
+    // the reader holds it only when the cursor would otherwise land off the paper they are reading.
     if (took || (jumped && (attached || this.offView(at)))) {
       this.drawn.scrollFrom = reducedMotion() ? 0 : this.scroll.scrollLeft - follow;
       this.drawn.scrollAt = now;
@@ -435,7 +435,7 @@ export class Sheet {
     if (attached || this.drawn.chasing) {
       const done = easeInOut(clamp((now - this.drawn.scrollAt) / SCROLL_GLIDE_MS, 0, 1));
       this.scroll.scrollLeft = follow + this.drawn.scrollFrom * (1 - done);
-      // A view that follows the cursor never stops; one the reader holds is his again at the end.
+      // A view that follows the cursor never stops; one the reader holds is theirs again at the end.
       this.drawn.chasing = !attached && done < 1;
     }
   }

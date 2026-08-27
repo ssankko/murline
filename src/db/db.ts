@@ -99,9 +99,15 @@ export const SETTING_DEFAULTS: Settings = {
 
 let opening: Promise<Database> | undefined;
 
-/** The one SQLite file, opened once and shared. Migrations run inside `load`. */
+/**
+ * The one SQLite file, opened once and shared. Migrations run inside `load`. A failed open is
+ * forgotten, so the next call opens again and a transient failure is one the user can retry.
+ */
 export function getDb(): Promise<Database> {
-  opening ??= Database.load('sqlite:piano.db');
+  opening ??= Database.load('sqlite:piano.db').catch((error: unknown) => {
+    opening = undefined;
+    throw error;
+  });
   return opening;
 }
 

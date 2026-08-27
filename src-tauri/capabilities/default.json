@@ -6,10 +6,9 @@
   "permissions": [
     "core:default",
     "dialog:allow-open",
-    "midi:default",
+    "midi:allow-open-input",
+    "midi:allow-close-input",
     "sql:default",
-    "sql:allow-load",
-    "sql:allow-select",
     "sql:allow-execute"
   ]
 }

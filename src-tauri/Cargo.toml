@@ -3,7 +3,7 @@ name = "piano"
 version = "0.1.0"
 description = "Practise piano from sheet music with a MIDI keyboard"
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.88"
 
 [lib]
 name = "piano_lib"

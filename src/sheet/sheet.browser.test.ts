@@ -9,7 +9,7 @@ import type { Note as OsmdNote } from 'opensheetmusicdisplay';
 import { expect, test } from 'vitest';
 import { noteheadEl } from './paint';
 import type { Play } from './project';
-import { DEFAULT_SPACING, Sheet } from './sheet';
+import { DEFAULT_SPACING, SPACING_MAX, SPACING_MIN, Sheet, type Pinch } from './sheet';
 
 // Vite serves the fixture files as URLs, the closest a browser test gets to the bytes the app
 // reads from the library folder.
@@ -990,24 +990,58 @@ test('a bar of long notes is spaced as wide as a bar of short ones', async () =>
   sheet.dispose();
 }, 60_000);
 
+/** Where the fingers are in every pinch of these tests. */
+const AT = { x: 300, y: 90 };
+
 /** A pinch on the trackpad, which reaches the page as a wheel with ctrl held. */
-function pinch(host: HTMLElement, deltaY: number): WheelEvent {
-  const event = new WheelEvent('wheel', { deltaY, ctrlKey: true, bubbles: true, cancelable: true });
+function pinch(host: HTMLElement, deltaY: number, at = AT): WheelEvent {
+  const event = new WheelEvent('wheel', {
+    deltaY,
+    ctrlKey: true,
+    clientX: at.x,
+    clientY: at.y,
+    bubbles: true,
+    cancelable: true,
+  });
   host.dispatchEvent(event);
   return event;
 }
 
-/** Real time, which the throttle behind a pinch runs on. */
+/** One event of the WebKit gesture a trackpad pinch arrives as on macOS. */
+function gesture(host: HTMLElement, type: string, scale: number, at = AT): Event {
+  const event = Object.assign(new Event(type, { bubbles: true, cancelable: true }), {
+    scale,
+    clientX: at.x,
+    clientY: at.y,
+  });
+  host.dispatchEvent(event);
+  return event;
+}
+
+/** Real time, which the wait for the fingers to stop runs on. */
 function wait(ms: number): Promise<void> {
   return new Promise((done) => setTimeout(done, ms));
 }
 
-test('a pinch spaces the sheet by time around the cursor and stops at the clamps', async () => {
+/** Counts the renders of a sheet, each of which is the whole of the paper. */
+function renderCount(sheet: Sheet): () => number {
+  let renders = 0;
+  const render = sheet.osmd.render.bind(sheet.osmd);
+  sheet.osmd.render = () => {
+    renders++;
+    render();
+  };
+  return () => renders;
+}
+
+test('a pinch draws once the fingers stop, at what they settled on, around the cursor', async () => {
   const host = hostEl();
   const sheet = await open(HORSEMAN, host);
   const scroll = host.firstElementChild as HTMLElement;
   const stored: { spacing: number }[] = [];
+  const shown: (Pinch | null)[] = [];
   sheet.onLook = (look) => void stored.push(look);
+  sheet.onPinch = (at) => void shown.push(at);
   sheet.setProportional(true);
 
   const step = 60;
@@ -1025,33 +1059,38 @@ test('a pinch spaces the sheet by time around the cursor and stops at the clamps
 
   const tight = width();
   const stood = standing();
-  pinch(host, -20);
-  pinch(host, -20);
-  pinch(host, -20);
-  // The throttle lets the first step through and holds the rest; the newest target lands after it.
-  const first = width();
-  expect(first).toBeGreaterThan(tight);
-  await wait(200);
-  expect(width()).toBeGreaterThan(first);
+  const renders = renderCount(sheet);
+
+  // The fingers travel: every step is shown at the fingers and nothing is drawn. A render here
+  // holds the main thread for hundreds of milliseconds, and WebKit drops the events it takes.
+  gesture(host, 'gesturestart', 1);
+  for (let i = 1; i <= 20; i++) gesture(host, 'gesturechange', 1 + i / 40);
+  expect(renders()).toBe(0);
+  expect(width()).toBe(tight);
+  expect(shown.length).toBe(20);
+  expect(shown[0]).toEqual({ ...AT, spacing: Math.round(DEFAULT_SPACING * 1.025) });
+
+  // However much of the travel arrived, the end of the gesture carries all of it: one render, at
+  // 150 % of the spacing the fingers started from, and the panel goes away.
+  expect(gesture(host, 'gestureend', 1.5).defaultPrevented).toBe(true);
+  expect(renders()).toBe(1);
+  expect(stored).toEqual([{ spacing: DEFAULT_SPACING * 1.5 }]);
+  expect(shown[shown.length - 1]).toBe(null);
+  expect(width()).toBeGreaterThan(tight);
   // The paper opened up around the cursor, which never moved in the block the reader sees.
   expect(Math.abs(standing() - stood)).toBeLessThanOrEqual(1);
 
-  // The spacing the pinch settled on is handed over once, and it stands inside the 100 to 300 range.
-  await wait(300);
-  expect(stored.length).toBe(1);
-  expect(stored[0]!.spacing).toBeGreaterThan(250);
-  expect(stored[0]!.spacing).toBeLessThanOrEqual(300);
-
-  // However far the fingers spread or pinch, the sheet stops at the ends of that range.
+  // However far the fingers spread or pinch, the sheet stops at the ends of the range. A
+  // ctrl-wheel carries no end of its own, so the sheet is drawn once the steps stop coming.
   for (let i = 0; i < 4; i++) pinch(host, -100);
-  await wait(200);
+  await wait(400);
   const widest = width();
-  sheet.setSpacing(300);
+  sheet.setSpacing(SPACING_MAX);
   expect(width()).toBe(widest);
-  for (let i = 0; i < 4; i++) pinch(host, 100);
-  await wait(200);
+  for (let i = 0; i < 6; i++) pinch(host, 100);
+  await wait(400);
   const tightest = width();
-  sheet.setSpacing(100);
+  sheet.setSpacing(SPACING_MIN);
   expect(width()).toBe(tightest);
   expect(tightest).toBeLessThan(widest);
 
@@ -1062,14 +1101,40 @@ test('a pinch leaves a sheet spaced by its engraving alone', async () => {
   const host = hostEl();
   const sheet = await open(BACH, host);
   const stored: { spacing: number }[] = [];
+  const shown: (Pinch | null)[] = [];
   sheet.onLook = (look) => void stored.push(look);
+  sheet.onPinch = (at) => void shown.push(at);
   const engraved = sheet.xOfOnset(sheet.score.onsets.length - 1);
 
   // The page must never zoom under the fingers, whatever the sheet does with them.
   expect(pinch(host, -60).defaultPrevented).toBe(true);
+  gesture(host, 'gesturestart', 1);
+  expect(gesture(host, 'gestureend', 1.5).defaultPrevented).toBe(true);
   await wait(400);
   expect(sheet.xOfOnset(sheet.score.onsets.length - 1)).toBe(engraved);
   expect(stored).toEqual([]);
+  expect(shown).toEqual([]);
+
+  sheet.dispose();
+}, 60_000);
+
+test('spacing under 100 percent holds every bar at its engraved minimum', async () => {
+  const sheet = await open();
+  /** What each bar's notes pack into, which OSMD scales by the bar's width factor. */
+  const packed = () =>
+    sheet.osmd.GraphicSheet.MeasureList.map(
+      (staves) => staves.find((measure) => measure)?.minimumStaffEntriesWidth ?? 0,
+    );
+  const engraved = packed();
+  const last = () => sheet.xOfOnset(sheet.score.onsets.length - 1);
+
+  sheet.setProportional(true);
+  const wide = last();
+  sheet.setSpacing(SPACING_MIN);
+  expect(last()).toBeLessThan(wide);
+  // Under 100 % only the bars wider than their minimum tighten: a bar asked for less paper than
+  // its own notes pack into is one VexFlow prints over itself.
+  packed().forEach((width, i) => expect(width).toBeGreaterThanOrEqual(engraved[i]! * 0.999));
 
   sheet.dispose();
 }, 60_000);

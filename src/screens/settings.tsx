@@ -30,11 +30,13 @@ import {
 } from '@/db/db';
 import type { LaneLook } from '@/lane/lane';
 import { cancelPdmx, downloadPdmx, progressLabel, usePdmxDownload } from '@/library/pdmx';
+import { clamp } from '@/lib/utils';
 import { noteName } from '@/look/color';
 import { setTheme, useTheme, type Theme } from '@/look/use-dark';
 import { pinMidiDevice, useMidiStatus } from '@/midi/use-midi-status';
 import { validNumber, type PieceSettings } from '@/play/resolve';
 import { TEMPO_RANGE, type HandsSetting, type KeyboardPreset } from '@/play/settings';
+import { SPACING_MAX, SPACING_MIN, type Pinch } from '@/sheet/sheet';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { ChevronDown, Eye } from 'lucide-react';
@@ -567,8 +569,8 @@ export function ViewPopover({ onChange }: { onChange: (...change: SettingChange)
                   <input
                     type="range"
                     aria-label="Sheet spacing in percent"
-                    min={100}
-                    max={300}
+                    min={SPACING_MIN}
+                    max={SPACING_MAX}
                     step={5}
                     value={values.sheet_spacing}
                     disabled={!values.sheet_proportional}
@@ -606,6 +608,59 @@ export function ViewPopover({ onChange }: { onChange: (...change: SettingChange)
         )}
       </PopoverContent>
     </Popover>
+  );
+}
+
+/** Paper kept between the fingers and the panel a pinch raises, and from the window's edges. */
+const PINCH_GAP = 12;
+const PINCH_W = 200;
+const PINCH_H = 40;
+
+/**
+ * What a pinch on the sheet is choosing, shown at the fingers while they move: the spacing the
+ * sheet will be drawn at once they stop. It takes no input; the fingers are the control. The panel
+ * holds its last place and value while it fades away, so `null` reads as the end of the pinch.
+ */
+export function SpacingPopup({ pinch }: { pinch: Pinch | null }) {
+  const [held, setHeld] = useState<Pinch | null>(null);
+  const [shown, setShown] = useState(false);
+
+  useEffect(() => {
+    if (!pinch) {
+      setShown(false);
+      return;
+    }
+    setHeld(pinch);
+    // The fade starts on the frame after the panel is on the page, so it has a state to leave.
+    const raf = requestAnimationFrame(() => setShown(true));
+    return () => cancelAnimationFrame(raf);
+  }, [pinch]);
+
+  if (!held) return null;
+  return (
+    <div
+      role="status"
+      aria-label="Sheet spacing"
+      style={{
+        left: clamp(held.x + PINCH_GAP, PINCH_GAP, window.innerWidth - PINCH_W - PINCH_GAP),
+        top: clamp(held.y + PINCH_GAP, PINCH_GAP, window.innerHeight - PINCH_H - PINCH_GAP),
+        width: PINCH_W,
+      }}
+      className={`bg-chrome border-edge-soft pointer-events-none fixed z-50 flex items-center gap-2 rounded-md border px-3 py-2 text-[12px] shadow-md transition-opacity duration-150 ease-[var(--ease)] ${shown ? 'opacity-100' : 'opacity-0'}`}
+    >
+      {/* The track only draws the target; the readout beside it is what a reader is told. */}
+      <input
+        type="range"
+        readOnly
+        tabIndex={-1}
+        aria-hidden
+        min={SPACING_MIN}
+        max={SPACING_MAX}
+        value={held.spacing}
+        className="accent-ink min-w-0 flex-1"
+      />
+      <span className="w-10 flex-none text-right tabular-nums">{held.spacing} %</span>
+    </div>
   );
 }
 

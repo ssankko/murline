@@ -87,3 +87,13 @@ export function mix(from: string, to: string, t: number): string {
   };
   return `#${channel(0)}${channel(1)}${channel(2)}`;
 }
+
+/**
+ * The ink a label printed straight on `fill` wears: the dark paper or the light one, whichever the
+ * fill's luminance leaves readable.
+ */
+export function labelInk(fill: string): string {
+  const channel = (i: number) => parseInt(fill.slice(1 + i * 2, 3 + i * 2), 16) / 255;
+  const luma = 0.2126 * channel(0) + 0.7152 * channel(1) + 0.0722 * channel(2);
+  return luma > 0.55 ? PAPER[1] : PAPER[0];
+}

@@ -595,6 +595,12 @@ export function ViewPopover({ onChange }: { onChange: (...change: SettingChange)
                   onChange={(value) => write('lane_colour', value)}
                 />
               </Row>
+              <Row label="Note names on blocks">
+                <Toggle
+                  value={values.lane_names}
+                  onChange={(value) => write('lane_names', value)}
+                />
+              </Row>
             </PopoverGroup>
           </>
         )}

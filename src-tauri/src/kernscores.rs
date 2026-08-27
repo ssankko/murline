@@ -8,8 +8,9 @@
 
 use std::time::Duration;
 
+use quick_xml::escape::{escape, partial_escape, resolve_predefined_entity};
 use quick_xml::events::Event;
-use quick_xml::Reader;
+use quick_xml::{Reader, XmlVersion};
 
 const TIMEOUT: Duration = Duration::from_secs(15);
 /// Children a `<note>` writes after its `<staff>`.
@@ -74,7 +75,7 @@ struct Elem {
 #[derive(Clone)]
 enum Node {
     Elem(Elem),
-    /// Character data as it stands in the source, entities included.
+    /// Character data with every reference resolved; the writer escapes it again.
     Text(String),
 }
 
@@ -433,10 +434,10 @@ fn parse(xml: &[u8]) -> Result<(Vec<u8>, Elem), String> {
                 if stack.len() == MAX_DEPTH {
                     return Err("XML nested too deep".to_string());
                 }
-                stack.push(open(&e));
+                stack.push(open(&e)?);
             }
             Event::Empty(e) => {
-                let el = open(&e);
+                let el = open(&e)?;
                 match stack.last_mut() {
                     Some(parent) => parent.children.push(Node::Elem(el)),
                     None => root = Some(el),
@@ -449,12 +450,32 @@ fn parse(xml: &[u8]) -> Result<(Vec<u8>, Elem), String> {
                     None => root = Some(el),
                 }
             }
+            // Whitespace next to another piece of character data is content; whitespace between
+            // elements is the source's indentation and goes.
             Event::Text(e) => {
                 let text = e.as_ref();
-                if !text.trim().is_empty()
-                    && let Some(parent) = stack.last_mut()
+                if let Some(parent) = stack.last_mut()
+                    && (!text.trim().is_empty()
+                        || matches!(parent.children.last(), Some(Node::Text(_))))
                 {
                     parent.children.push(Node::Text(text.to_string()));
+                }
+            }
+            Event::CData(e) => {
+                if let Some(parent) = stack.last_mut() {
+                    parent.children.push(Node::Text(e.into_inner().into_owned()));
+                }
+            }
+            // A reference is its own event, so the character it stands for is put back here.
+            Event::GeneralRef(e) => {
+                let text = match e.resolve_char_ref().map_err(|err| err.to_string())? {
+                    Some(c) => c.to_string(),
+                    None => resolve_predefined_entity(&e)
+                        .ok_or_else(|| format!("unknown XML entity &{};", &*e))?
+                        .to_string(),
+                };
+                if let Some(parent) = stack.last_mut() {
+                    parent.children.push(Node::Text(text));
                 }
             }
             Event::Decl(e) => {
@@ -480,12 +501,18 @@ fn parse(xml: &[u8]) -> Result<(Vec<u8>, Elem), String> {
     root.map(|r| (prologue, r)).ok_or_else(|| "no root element".to_string())
 }
 
-fn open(e: &quick_xml::events::BytesStart) -> Elem {
-    Elem {
-        name: e.name().as_ref().to_string(),
-        attrs: e.attributes().flatten().map(|a| (a.key.as_ref().to_string(), a.value.into_owned())).collect(),
-        children: Vec::new(),
+/// Attribute values are held unescaped, so a value the source quoted with `'` writes correctly.
+fn open(e: &quick_xml::events::BytesStart) -> Result<Elem, String> {
+    let mut attrs = Vec::new();
+    for attr in e.attributes() {
+        let attr = attr.map_err(|err| format!("bad XML attribute: {err}"))?;
+        let value = attr
+            .normalized_value(XmlVersion::Implicit1_0)
+            .map_err(|err| err.to_string())?
+            .into_owned();
+        attrs.push((attr.key.as_ref().to_string(), value));
     }
+    Ok(Elem { name: e.name().as_ref().to_string(), attrs, children: Vec::new() })
 }
 
 fn write(el: &Elem, depth: usize, out: &mut Vec<u8>) {
@@ -495,7 +522,7 @@ fn write(el: &Elem, depth: usize, out: &mut Vec<u8>) {
         out.push(b' ');
         out.extend_from_slice(k.as_bytes());
         out.extend_from_slice(b"=\"");
-        out.extend_from_slice(v.as_bytes());
+        out.extend_from_slice(escape(v.as_str()).as_bytes());
         out.push(b'"');
     }
     if el.children.is_empty() {
@@ -513,7 +540,7 @@ fn write(el: &Elem, depth: usize, out: &mut Vec<u8>) {
                 }
                 write(child, depth + 1, out);
             }
-            Node::Text(t) => out.extend_from_slice(t.as_bytes()),
+            Node::Text(t) => out.extend_from_slice(partial_escape(t.as_str()).as_bytes()),
         }
     }
     if block {
@@ -698,6 +725,40 @@ mod tests {
                 "{first} over {second}"
             );
         }
+    }
+
+    /// A download whose title or credit carries a reference, and an attribute delimited with `'`
+    /// around both quote characters: the merged file must hold the same text and parse again.
+    #[test]
+    fn references_and_quotes_come_through_the_merge() {
+        let xml = r#"<score-partwise version="3.1">
+ <work><work-title>Prelude &amp; Fugue in C&#233; &lt;fast&gt;</work-title></work>
+ <movement-title><![CDATA[Piu mosso < forte]]></movement-title>
+ <part-list><score-part id='P"1" &amp; only'><part-name>right</part-name></score-part></part-list>
+ <part id="P1"><measure number="1">
+  <note><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration></note>
+ </measure></part>
+</score-partwise>"#;
+        let out = merge(xml.as_bytes()).unwrap();
+        let text = String::from_utf8(out.clone()).unwrap();
+        assert!(text.contains("Prelude &amp; Fugue in C\u{e9} &lt;fast&gt;"), "{text}");
+
+        let (_, root) = parse(&out).unwrap();
+        assert_eq!(
+            text_of(find(&root, "work-title")[0]),
+            "Prelude & Fugue in C\u{e9} <fast>"
+        );
+        assert_eq!(text_of(find(&root, "movement-title")[0]), "Piu mosso < forte");
+        assert_eq!(
+            find(&root, "score-part")[0].attrs,
+            [("id".to_string(), "P\"1\" & only".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_malformed_attribute_is_refused_instead_of_dropped() {
+        let xml = "<score-partwise><part id=unquoted><measure/></part></score-partwise>";
+        assert!(merge(xml.as_bytes()).unwrap_err().starts_with("bad XML attribute"));
     }
 
     #[test]

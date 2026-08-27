@@ -114,12 +114,19 @@ impl<R: Read> Read for Counting<R> {
 }
 
 /// Every `mxl/**/*.mxl` member of the gzipped tarball into `folder`; anything else in the archive
-/// is skipped. A failure or a raised `cancel` removes the folder, so a half unpacked tree never
-/// stays behind for `pdmx_status` to call finished.
+/// is skipped. The entries land beside `folder` under `pdmx.part` and are renamed onto it once the
+/// last one is in, so nothing a failure, a cancel or a killed app leaves behind is ever a folder
+/// `pdmx_status` calls ready.
 fn unpack(reader: impl Read, folder: &Path, cancel: &AtomicBool) -> Result<(), String> {
-    let result = unpack_entries(reader, folder, cancel);
-    if result.is_err() {
+    let part = folder.with_extension("part");
+    let _ = std::fs::remove_dir_all(&part);
+    let result = unpack_entries(reader, &part, cancel).and_then(|()| {
+        // A rename needs the way clear, and a second download replaces the first.
         let _ = std::fs::remove_dir_all(folder);
+        std::fs::rename(&part, folder).map_err(io_reason)
+    });
+    if result.is_err() {
+        let _ = std::fs::remove_dir_all(&part);
     }
     result
 }
@@ -321,9 +328,29 @@ mod tests {
         write_tar_gz(&tarball);
         let folder = temp.path().join("pdmx");
 
-        unpack(File::open(&tarball).unwrap(), &folder, &AtomicBool::new(false)).unwrap();
-        assert_eq!(files(&folder), ["mxl/1/11/a.mxl", "mxl/2/22/b.mxl"]);
+        // Twice, because a second download replaces the folder the first one left.
+        for _ in 0..2 {
+            unpack(File::open(&tarball).unwrap(), &folder, &AtomicBool::new(false)).unwrap();
+            assert_eq!(files(&folder), ["mxl/1/11/a.mxl", "mxl/2/22/b.mxl"]);
+        }
         assert!(pdmx_status(folder.to_string_lossy().into_owned()));
+    }
+
+    /// The folder an interrupted fetch leaves behind is `pdmx.part`, which is neither a library nor
+    /// something a later download has to work around.
+    #[test]
+    fn a_stale_part_folder_is_not_a_library_and_does_not_last() {
+        let temp = tempfile::tempdir().unwrap();
+        let tarball = temp.path().join("mxl.tar.gz");
+        write_tar_gz(&tarball);
+        let folder = temp.path().join("pdmx");
+        let part = temp.path().join("pdmx.part");
+        std::fs::create_dir_all(part.join("mxl").join("1")).unwrap();
+        assert!(!pdmx_status(folder.to_string_lossy().into_owned()));
+
+        unpack(File::open(&tarball).unwrap(), &folder, &AtomicBool::new(false)).unwrap();
+        assert!(!part.exists());
+        assert_eq!(files(&folder), ["mxl/1/11/a.mxl", "mxl/2/22/b.mxl"]);
     }
 
     #[test]
@@ -332,12 +359,11 @@ mod tests {
         let tarball = temp.path().join("mxl.tar.gz");
         write_tar_gz(&tarball);
         let folder = temp.path().join("pdmx");
-        unpack(File::open(&tarball).unwrap(), &folder, &AtomicBool::new(false)).unwrap();
 
         let cancel = AtomicBool::new(true);
-        let again = unpack(File::open(&tarball).unwrap(), &folder, &cancel);
-        assert_eq!(again, Err("cancelled".to_string()));
-        assert!(!folder.exists());
+        let stopped = unpack(File::open(&tarball).unwrap(), &folder, &cancel);
+        assert_eq!(stopped, Err("cancelled".to_string()));
+        assert!(!folder.exists() && !temp.path().join("pdmx.part").exists());
         assert!(!pdmx_status(folder.to_string_lossy().into_owned()));
         assert!(!pdmx_status(String::new()));
     }
@@ -353,6 +379,6 @@ mod tests {
         let half = &whole[..whole.len() / 2];
         let torn = unpack(half, &folder, &AtomicBool::new(false));
         assert_eq!(torn, Err("download failed".to_string()));
-        assert!(!folder.exists());
+        assert!(!folder.exists() && !temp.path().join("pdmx.part").exists());
     }
 }

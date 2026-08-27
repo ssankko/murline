@@ -7,18 +7,21 @@
 
 use crate::audio::OutputDevice;
 use objc2::rc::Retained;
+use objc2::runtime::AnyObject;
 use objc2_core_audio::{
     AudioObjectAddPropertyListener, AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize,
     AudioObjectID, AudioObjectPropertyAddress, AudioObjectPropertyScope,
-    AudioObjectPropertySelector, AudioObjectSetPropertyData, kAudioDevicePropertyBufferFrameSize,
-    kAudioDevicePropertyDeviceUID, kAudioDevicePropertyLatency,
+    AudioObjectPropertySelector, AudioObjectSetPropertyData,
+    kAudioAggregateDeviceIsPrivateKey, kAudioAggregateDevicePropertyComposition,
+    kAudioDevicePropertyBufferFrameSize, kAudioDevicePropertyDeviceUID,
+    kAudioDevicePropertyIsHidden, kAudioDevicePropertyLatency,
     kAudioDevicePropertyNominalSampleRate, kAudioDevicePropertySafetyOffset,
     kAudioDevicePropertyStreams, kAudioHardwarePropertyDefaultOutputDevice,
     kAudioHardwarePropertyDevices, kAudioObjectPropertyElementMain, kAudioObjectPropertyName,
     kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyScopeOutput, kAudioObjectSystemObject,
     kAudioStreamPropertyLatency,
 };
-use objc2_foundation::NSString;
+use objc2_foundation::{NSDictionary, NSNumber, NSString};
 use std::ffi::c_void;
 use std::mem::MaybeUninit;
 use std::ptr::{NonNull, null, null_mut};
@@ -111,18 +114,41 @@ fn read_text(
     unsafe { Retained::from_raw(text) }.map(|text| text.to_string())
 }
 
-/// Every device that can play sound, in the order CoreAudio lists them. A device with no output
+/// Every device the user may pick, in the order CoreAudio lists them. A device with no output
 /// stream, a microphone, is not one the app can play through, so it is left out.
 pub fn outputs() -> Vec<OutputDevice> {
     read_all::<AudioObjectID>(SYSTEM, kAudioHardwarePropertyDevices, WHOLE)
         .into_iter()
-        .filter(|&device| plays(device))
+        .filter(|&device| plays(device) && offerable(device))
         .filter_map(|device| Some(OutputDevice { id: uid(device)?, name: name(device) }))
         .collect()
 }
 
 fn plays(device: DeviceId) -> bool {
     !read_all::<AudioObjectID>(device, kAudioDevicePropertyStreams, PLAYING).is_empty()
+}
+
+/// False for a device that is CoreAudio's business and not the user's. The one that turns up here
+/// is `CADefaultDeviceAggregate-<pid>-0`, which the HAL mints for any process playing through the
+/// system default, this app among them: it has an output stream and a UID like any other device.
+/// It does not set the hidden flag, so what marks it is `private` in its aggregate composition.
+fn offerable(device: DeviceId) -> bool {
+    read::<u32>(device, kAudioDevicePropertyIsHidden, WHOLE).unwrap_or(0) == 0
+        && !private_aggregate(device)
+}
+
+fn private_aggregate(device: DeviceId) -> bool {
+    let composition: Option<*mut NSDictionary<NSString, AnyObject>> =
+        read(device, kAudioAggregateDevicePropertyComposition, WHOLE);
+    // Anything that is not an aggregate answers nothing, and is the user's to pick.
+    let Some(composition) = composition.and_then(|raw| unsafe { Retained::from_raw(raw) }) else {
+        return false;
+    };
+    let key = NSString::from_str(&kAudioAggregateDeviceIsPrivateKey.to_string_lossy());
+    composition
+        .objectForKey(&key)
+        .and_then(|flag| flag.downcast::<NSNumber>().ok())
+        .is_some_and(|flag| flag.boolValue())
 }
 
 /// The name to show, and the UID when the device will not give one, so a picker row is never blank.
@@ -227,7 +253,9 @@ unsafe extern "C-unwind" fn changed(
     0
 }
 
-/// Calls `tell` on a CoreAudio thread every time a device is plugged in or unplugged. Registered
+/// Calls `tell` on a CoreAudio thread every time a device is plugged in or unplugged, and every
+/// time the system default output changes: the second is how a switch made in System Settings
+/// reaches an engine that is playing through the default and has seen no plug event. Registered
 /// once and never taken off, because the engine wants it for the whole life of the app.
 pub fn watch(tell: fn()) {
     let mut listening = ON_CHANGE.lock().unwrap();
@@ -236,13 +264,25 @@ pub fn watch(tell: fn()) {
     if !first {
         return;
     }
-    let mut at = address(kAudioHardwarePropertyDevices, WHOLE);
-    unsafe { AudioObjectAddPropertyListener(SYSTEM, NonNull::from(&mut at), Some(changed), null_mut()) };
+    for selector in [kAudioHardwarePropertyDevices, kAudioHardwarePropertyDefaultOutputDevice] {
+        let mut at = address(selector, WHOLE);
+        unsafe {
+            AudioObjectAddPropertyListener(SYSTEM, NonNull::from(&mut at), Some(changed), null_mut())
+        };
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use objc2_core_audio::{
+        AudioHardwareCreateAggregateDevice, AudioHardwareDestroyAggregateDevice,
+        kAudioAggregateDeviceNameKey, kAudioAggregateDeviceSubDeviceListKey,
+        kAudioAggregateDeviceUIDKey, kAudioSubDeviceUIDKey,
+    };
+    use objc2_core_foundation::CFDictionary;
+    use objc2_foundation::NSArray;
+    use std::ffi::CStr;
 
     #[test]
     fn the_latency_is_the_four_frame_counts_at_the_devices_rate() {
@@ -287,5 +327,57 @@ mod tests {
             assert!(!device.id.is_empty());
             assert!(!device.name.is_empty(), "{} has no name", device.id);
         }
+    }
+
+    /// The only way to have a private aggregate to filter is to make one, which is a real device on
+    /// the machine for as long as the test runs. That is outside what the spec lets an ordinary run
+    /// touch, so: `cargo test -- --ignored a_private_aggregate`.
+    #[test]
+    #[ignore = "makes a real CoreAudio device"]
+    fn a_private_aggregate_is_a_device_with_an_output_but_never_a_picker_row() {
+        let Ok(default) = default_output() else {
+            return; // A Mac with no output at all: nothing to aggregate over.
+        };
+        let Some(over) = uid(default) else { return };
+        let aggregate = make_private_aggregate("piano-test-aggregate", &over);
+
+        let plays_sound = plays(aggregate);
+        let may_be_picked = offerable(aggregate);
+        let listed = outputs().iter().any(|device| device.id == "piano-test-aggregate");
+        unsafe { AudioHardwareDestroyAggregateDevice(aggregate) };
+
+        assert!(plays_sound, "it has an output stream, so an output filter alone would offer it");
+        assert!(!may_be_picked, "but it is CoreAudio's own and must not be a picker row");
+        assert!(!listed, "and so the picker never sees it");
+    }
+
+    /// One aggregate of the same kind the HAL makes for a process that follows the system default:
+    /// private, over one real output device. Made here rather than waited for, so the filter is
+    /// checked without starting the engine on a device.
+    fn make_private_aggregate(id: &str, over: &str) -> AudioObjectID {
+        let key = |text: &CStr| NSString::from_str(&text.to_string_lossy());
+        let name = NSString::from_str(id);
+        let sub: Retained<NSDictionary<NSString, NSString>> =
+            NSDictionary::from_slices(&[&*key(kAudioSubDeviceUIDKey)], &[&*NSString::from_str(over)]);
+        let subs = NSArray::from_retained_slice(&[sub]);
+        let private = NSNumber::new_bool(true);
+        let description: Retained<NSDictionary<NSString, AnyObject>> = NSDictionary::from_slices(
+            &[
+                &*key(kAudioAggregateDeviceUIDKey),
+                &*key(kAudioAggregateDeviceNameKey),
+                &*key(kAudioAggregateDeviceIsPrivateKey),
+                &*key(kAudioAggregateDeviceSubDeviceListKey),
+            ],
+            &[&name, &name, &private, &subs],
+        );
+        // NSDictionary is toll-free bridged with CFDictionary, which is what the HAL takes.
+        let description: &CFDictionary =
+            unsafe { &*Retained::as_ptr(&description).cast::<CFDictionary>() };
+        let mut aggregate: AudioObjectID = 0;
+        let status = unsafe {
+            AudioHardwareCreateAggregateDevice(description, NonNull::from(&mut aggregate))
+        };
+        assert_eq!(status, 0, "CoreAudio would not make the test aggregate");
+        aggregate
     }
 }

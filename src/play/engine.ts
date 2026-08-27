@@ -387,8 +387,9 @@ export class Engine {
   seek(target: SeekTarget): void {
     // A performance is one clean run: it takes no seek, and no Section has force during it.
     if (this.kind !== 'practice') return;
-    const to = this.occurrenceOf(target);
-    if (to === null) return;
+    const ticks = this.playedTicksOf(target);
+    if (ticks.length === 0) return;
+    const to = this.nearestTick(ticks, this.tick);
     this.moveTo(to);
     if (this.state === 'counting-in') this.beginMotion(to);
     else if (this.state !== 'running') this.startTick = to;
@@ -466,20 +467,23 @@ export class Engine {
     this.moveTo(this.replay(at, this.tick));
   }
 
-  /** Where a played tick stands in the written score: its Onset, and the ticks it stands past it. */
-  private writtenAt(playedTick: number): { onsetTick: number; past: number } {
+  /**
+   * Where a played tick stands in the written score: its Onset, and the ticks it stands past it.
+   * Only an empty walk leaves the index at -1, and an empty walk names no Onset to replay onto.
+   */
+  private writtenAt(playedTick: number): { onsetIndex: number; onsetTick: number; past: number } {
     const step = this.walk[this.stepAt(playedTick)];
-    if (!step) return { onsetTick: playedTick, past: 0 };
+    if (!step) return { onsetIndex: -1, onsetTick: playedTick, past: 0 };
     const onsetTick = this.score.onsets[step.onsetIndex]?.tick ?? 0;
-    return { onsetTick, past: playedTick - step.tick };
+    return { onsetIndex: step.onsetIndex, onsetTick, past: playedTick - step.tick };
   }
 
   /**
    * The played tick of a written moment on the walk in force, the pass nearest the tick it had.
    * A moment between two Onsets keeps its distance from the Onset before it.
    */
-  private replay(at: { onsetTick: number; past: number }, was: number): number {
-    return this.nearestTick(this.playedTicksOf(at.onsetTick), was - at.past) + at.past;
+  private replay(at: { onsetIndex: number; past: number }, was: number): number {
+    return this.nearestTick(this.playedTicksOf({ onset: at.onsetIndex }), was - at.past) + at.past;
   }
 
   /** Takes the clock to a played tick: nothing behind it closes, everything from it is open again. */
@@ -515,16 +519,12 @@ export class Engine {
   }
 
   /** Every played tick a seek target stands at: once per pass through it. */
-  private playedTicksOf(target: SeekTarget | number): number[] {
+  private playedTicksOf(target: SeekTarget): number[] {
     const ticks: number[] = [];
     for (let i = 0; i < this.walk.length; i++) {
       const step = this.walk[i]!;
       const onset = this.score.onsets[step.onsetIndex];
       if (!onset) continue;
-      if (typeof target === 'number') {
-        if (onset.tick === target) ticks.push(step.tick);
-        continue;
-      }
       if ('onset' in target) {
         if (step.onsetIndex === target.onset) ticks.push(step.tick);
         continue;
@@ -538,12 +538,6 @@ export class Engine {
       ticks.push(barTickOf(step, onset, measure));
     }
     return ticks;
-  }
-
-  /** Where a seek lands: the occurrence in the walk nearest the played tick, the first on a tie. */
-  private occurrenceOf(target: SeekTarget): number | null {
-    const ticks = this.playedTicksOf(target);
-    return ticks.length === 0 ? null : this.nearestTick(ticks, this.tick);
   }
 
   /** The tick of the list nearest a played tick, the first of them on a tie. */
@@ -856,9 +850,8 @@ export class Engine {
 
   /** Sheet tick of the played tick: the same bar played twice reads the same written moment. */
   private sheetTickOf(playedTick: number): number {
-    const step = this.walk[this.stepAt(playedTick)];
-    if (!step) return playedTick;
-    return (this.score.onsets[step.onsetIndex]?.tick ?? 0) + (playedTick - step.tick);
+    const { onsetTick, past } = this.writtenAt(playedTick);
+    return onsetTick + past;
   }
 
   private ticksPerMs(playedTick: number): number {

@@ -1453,6 +1453,15 @@ describe('Section and Loop', () => {
     expect(where(play).measureIndex).toBe(0);
   });
 
+  // A score with no Onset gives an empty walk, so the swap has no written moment to replay onto.
+  test('a walk swap over a score with no Onset leaves the clock at the start', () => {
+    const play = engine(scoreOf(0));
+    play.start();
+    play.setSection({ from: 0, to: 0 });
+    play.setLoop(true);
+    expect(play.snapshot().playedTick).toBe(0);
+  });
+
   test('a key held from the last lap blocks nothing on the next one', () => {
     const play = engine(scoreOf(2), { mode: 'wait' });
     play.setLoop(true);

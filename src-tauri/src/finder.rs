@@ -137,11 +137,12 @@ impl Index {
             blob.push_str(&composer);
             blob.push(' ');
             blob.push_str(&norm(&format!(
-                "{} {} {} {} {} {} {}",
+                "{} {} {} {} {} {} {} {}",
                 f.title,
                 f.alt.unwrap_or(""),
                 f.opus.unwrap_or(""),
                 f.number.unwrap_or(""),
+                f.movement.map(|m| m.to_string()).unwrap_or_default(),
                 f.movement_name.unwrap_or(""),
                 f.credit.unwrap_or(""),
                 f.file,
@@ -159,7 +160,8 @@ impl Index {
 }
 
 /// Every token of the query must start a word in the row's haystack (composer, title, opus,
-/// number, movement, the uploader's lines and the file URL); a digit token must match a whole
+/// number, movement number and name, the uploader's composer and title lines, and the file URL);
+/// a digit token must match a whole
 /// number, so "op 9" skips Op. 59. Rows whose composer matches more tokens come first, so "satie"
 /// lists Erik Satie before the Goudimel harmonisations; inside a rank the rows keep list order.
 pub fn search(ix: &Index, query: &str) -> SearchResult {
@@ -486,6 +488,16 @@ Chopin\tFrederic Chopin\tMazurka Op. 50 No. 1\tChopin Mazurka 50/1\t\t103\t9\t3/
             providers,
             [Provider::KernScores, Provider::KernScores, Provider::Pdmx]
         );
+    }
+
+    #[test]
+    fn a_movement_number_answers_its_digit_token() {
+        let ks = r#"[{"dir":"d","file":"waldstein.krn","composer":"Beethoven, Ludwig van",
+          "surname":"Beethoven","title":"Sonata for Piano (Waldstein)","opus":"53","number":null,
+          "movement":4,"movementName":null,"key":"C major","time":"2/4","bars":543}]"#;
+        let ix = Index::build(ks, "");
+        assert_eq!(search(&ix, "waldstein 4").rows.len(), 1);
+        assert!(search(&ix, "waldstein 3").rows.is_empty());
     }
 
     #[test]

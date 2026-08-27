@@ -1,4 +1,4 @@
-import { SettingsPanel } from '@/screens/settings';
+import { SettingsPanel, type SettingChange } from '@/screens/settings';
 import { userEvent } from 'vitest/browser';
 import { createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -93,9 +93,56 @@ test('a tab name finds every row on that tab', async () => {
   expect(labels(await search('playing'))).toContain('Velocity offset');
 });
 
+test('a word for the harmony display finds the sheet row and the falling-notes row', async () => {
+  await open();
+
+  // "Chords" is what CONTEXT.md tells the app not to call the harmony display. The two views each
+  // switch their own, so the same label stands under two headings and the heading tells them apart.
+  const results = await search('chords');
+  expect(labels(results)).toEqual(['Harmony', 'Harmony']);
+  expect(results.map((each) => each.textContent)).toEqual([
+    'HarmonyLook · Sheet',
+    'HarmonyLook · Falling notes',
+  ]);
+
+  await userEvent.click(results[1]!);
+  expect(activeTab()).toBe('Look');
+  expect(marked('lane_harmony')).toBe(true);
+  expect(marked('sheet_harmony')).toBe(false);
+});
+
+test('a pinch behind the panel moves the row it belongs to', async () => {
+  host = document.createElement('div');
+  document.body.append(host);
+  root = createRoot(host);
+  const show = (live?: SettingChange) =>
+    root!.render(createElement(SettingsPanel, { open: true, onClose: () => {}, live }));
+  show();
+  await vi.waitFor(() => expect(host!.querySelector('#setting-row-click_volume')).toBeTruthy());
+  await openTab('Look');
+
+  const slider = (label: string) =>
+    host!.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
+  const spacing = () => slider('Sheet spacing in percent').value;
+  const lookahead = () => slider('Lane lookahead in beats').value;
+  expect(spacing()).not.toBe('200');
+
+  // Every step of a pinch on the sheet arrives as one of these, so the slider drags with it.
+  show(['sheet_spacing', 140]);
+  await vi.waitFor(() => expect(spacing()).toBe('140'));
+  show(['sheet_spacing', 200]);
+  await vi.waitFor(() => expect(spacing()).toBe('200'));
+
+  // A pinch on the lane moves the other slider, and leaves the sheet's where the fingers left it.
+  show(['lane_lookahead', 4.3]);
+  await vi.waitFor(() => expect(lookahead()).toBe('4.3'));
+  expect(spacing()).toBe('200');
+});
+
 test('the search names no row the panel does not render', async () => {
   await open();
-  for (const query of ['volume', 'storage', 'playing', 'window', 'midi', 'download', 'grade']) {
+  const queries = ['volume', 'storage', 'playing', 'window', 'midi', 'download', 'grade'];
+  for (const query of queries.concat('chords', 'theme', 'pinch', 'labels')) {
     const found = labels(await search(query));
     expect(found.length, query).toBeGreaterThan(0);
     for (const label of found) {

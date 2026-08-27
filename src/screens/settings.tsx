@@ -1,6 +1,6 @@
-// The settings surfaces: the panel, a right-hand slide-over opened from every screen, and the two
-// popovers on the play screen that tickets 02 and 03 fold into it. Every control writes on change;
-// there is no Save.
+// The settings surfaces: the panel, a right-hand slide-over opened from every screen, and the gear
+// popover on the play screen that holds what the open piece plays at. Every control writes on
+// change; there is no Save.
 
 import { Button } from '@/components/ui/button';
 import {
@@ -12,20 +12,19 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { LANE_KNOBS, readSettings, setSetting, type Settings } from '@/db/db';
-import type { LaneLook } from '@/lane/lane';
+import { readSettings, setSetting, type Settings } from '@/db/db';
+import { LOOKAHEAD_MAX, LOOKAHEAD_MIN } from '@/lane/lane';
 import { cancelPdmx, downloadPdmx, progressLabel, usePdmxDownload } from '@/library/pdmx';
 import { clamp } from '@/lib/utils';
 import { noteName } from '@/look/color';
-import { setTheme, useTheme, type Theme } from '@/look/use-dark';
+import { setTheme, type Theme } from '@/look/use-dark';
 import { pinMidiDevice, useMidiStatus } from '@/midi/use-midi-status';
 import { validNumber, type PieceSettings } from '@/play/resolve';
 import { type KeyboardPreset } from '@/play/settings';
 import { SPACING_MAX, SPACING_MIN, type Pinch } from '@/sheet/sheet';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
-import { ChevronDown, Eye, X } from 'lucide-react';
+import { ChevronDown, X } from 'lucide-react';
 import { Tabs } from 'radix-ui';
 import { useEffect, useRef, useState } from 'react';
 
@@ -46,13 +45,6 @@ const PRESETS: [KeyboardPreset, string][] = [
   [76, '76'],
   [88, '88'],
   ['custom', 'Custom'],
-];
-
-/** The lane's numbers, drawn by the dialog and by the gear popover from the one span each. */
-const LANE_FIELDS: [key: keyof typeof LANE_KNOBS, label: string, min: number, max: number][] = [
-  ['lane_lookahead', 'Lookahead (beats)', 1, 32],
-  ['lane_note_width', 'Note width (%)', 10, 100],
-  ['lane_gap', 'Gap (px)', 0, 20],
 ];
 
 /** The eleven knobs that shape a Grade. Uncalibrated, so they ship only in a dev build. */
@@ -91,13 +83,105 @@ const TABS = Object.entries(TAB_LABELS) as [SettingsTab, string][];
  *
  * A row belongs here only once the panel renders it. An entry for a row that is not on screen
  * sends the search to a tab with nothing on it, which is worse than finding nothing at all.
+ *
+ * `group` names the heading a row sits under, which the Look tab needs: its two Harmony rows and
+ * its two Pitch colours rows are told apart by their heading and by nothing else.
  */
-const SEARCH_ROWS: { id: string; tab: SettingsTab; label: string; words: string[] }[] = [
+const SEARCH_ROWS: {
+  id: string;
+  tab: SettingsTab;
+  label: string;
+  group?: string;
+  words: string[];
+}[] = [
   {
     id: 'click_volume',
     tab: 'sound',
     label: 'Click volume',
     words: ['metronome', 'loudness', 'beat', 'tick'],
+  },
+  {
+    id: 'theme',
+    tab: 'look',
+    label: 'Theme',
+    words: ['dark', 'light', 'appearance', 'colour scheme'],
+  },
+  {
+    id: 'sheet_proportional',
+    tab: 'look',
+    label: 'Space notes by time',
+    group: 'Sheet',
+    words: ['proportional', 'even', 'rhythm'],
+  },
+  {
+    id: 'sheet_spacing',
+    tab: 'look',
+    label: 'Spacing',
+    group: 'Sheet',
+    words: ['zoom', 'pinch', 'width', 'stretch'],
+  },
+  {
+    id: 'sheet_harmony',
+    tab: 'look',
+    label: 'Harmony',
+    group: 'Sheet',
+    words: ['chords', 'chord track', 'roman numerals'],
+  },
+  {
+    id: 'sheet_colour',
+    tab: 'look',
+    label: 'Pitch colours',
+    group: 'Sheet',
+    words: ['color', 'rainbow', 'notes'],
+  },
+  {
+    id: 'lane_lookahead',
+    tab: 'look',
+    label: 'Lookahead (beats)',
+    group: 'Falling notes',
+    words: ['zoom', 'pinch', 'speed', 'ahead'],
+  },
+  {
+    id: 'lane_note_width',
+    tab: 'look',
+    label: 'Note width (%)',
+    group: 'Falling notes',
+    words: ['block', 'bar', 'thickness'],
+  },
+  {
+    id: 'lane_gap',
+    tab: 'look',
+    label: 'Gap (px)',
+    group: 'Falling notes',
+    words: ['block', 'space', 'padding'],
+  },
+  {
+    id: 'lane_names',
+    tab: 'look',
+    label: 'Note names on blocks',
+    group: 'Falling notes',
+    words: ['letters', 'labels', 'pitch'],
+  },
+  {
+    id: 'lane_harmony',
+    tab: 'look',
+    label: 'Harmony',
+    group: 'Falling notes',
+    words: ['chords', 'chord track', 'roman numerals'],
+  },
+  {
+    id: 'lane_colour',
+    tab: 'look',
+    label: 'Pitch colours',
+    group: 'Falling notes',
+    words: ['color', 'rainbow', 'notes'],
+  },
+  {
+    id: 'keyboard_labels',
+    tab: 'look',
+    label: 'Note names on keys',
+    group: 'Falling notes',
+    words: ['letters', 'labels', 'piano'],
   },
   {
     id: 'midi_device',
@@ -158,7 +242,7 @@ function searchRows(query: string): typeof SEARCH_ROWS {
   const needle = query.trim().toLowerCase();
   if (!needle) return [];
   return SEARCH_ROWS.filter((row) =>
-    [row.label, TAB_LABELS[row.tab], ...row.words].some((word) =>
+    [row.label, TAB_LABELS[row.tab], row.group ?? '', ...row.words].some((word) =>
       word.toLowerCase().includes(needle),
     ),
   );
@@ -175,16 +259,19 @@ function rowId(id: string): string {
  * be judged by eye and ear. It reads nothing the play clock owns and writes nothing to it.
  *
  * A knob the running play reads is handed to `onGlobalChange` as it is written, so a change
- * mid-practice applies at once.
+ * mid-practice applies at once. `live` is the way back: a setting the screen behind the panel has
+ * just changed itself, which is how a pinch on the lane or the sheet moves its own row.
  */
 export function SettingsPanel({
   open,
   onClose,
   onGlobalChange,
+  live,
 }: {
   open: boolean;
   onClose: () => void;
   onGlobalChange?: (...change: SettingChange) => void;
+  live?: SettingChange | null;
 }) {
   const [values, setValues] = useState<Settings | null>(null);
   const [tab, setTab] = useState<SettingsTab>('sound');
@@ -227,10 +314,19 @@ export function SettingsPanel({
     if (marked) document.getElementById(rowId(marked))?.scrollIntoView({ block: 'center' });
   }, [marked]);
 
+  // A pinch writes the setting itself, so the panel only has to follow the value. The two halves
+  // are the dependencies, so a pinch step moves the row and a render on its own does not.
+  const [liveKey, liveValue] = live ?? [];
+  useEffect(() => {
+    if (liveKey) setValues((held) => held && { ...held, [liveKey]: liveValue });
+  }, [liveKey, liveValue]);
+
   function write<K extends keyof Settings>(key: K, value: Settings[K]): void {
     setValues((held) => held && { ...held, [key]: value });
     setSetting(key, value).catch(console.error);
     if (key === 'midi_device') pinMidiDevice(value as string | null);
+    // The theme paints the whole app, so it is applied here rather than by whatever is behind.
+    if (key === 'theme') setTheme(value as Theme);
     // The pair comes straight out of this function's own key type, so it is one of the union.
     onGlobalChange?.(...([key, value] as SettingChange));
   }
@@ -300,7 +396,7 @@ export function SettingsPanel({
                 >
                   <span className="min-w-0 truncate">{row.label}</span>
                   <span className="text-muted-ink ml-auto flex-none text-[11px]">
-                    {TAB_LABELS[row.tab]}
+                    {row.group ? `${TAB_LABELS[row.tab]} · ${row.group}` : TAB_LABELS[row.tab]}
                   </span>
                 </button>
               </li>
@@ -349,8 +445,135 @@ export function SettingsPanel({
                 </Rows>
               </Tabs.Content>
 
-              <Tabs.Content value="look">
-                <p className="text-muted-ink text-[12px]">Theme, sheet and falling notes move here.</p>
+              <Tabs.Content value="look" className="flex flex-col gap-6">
+                <Rows>
+                  <Row id="theme" marked={marked === 'theme'} label="Theme">
+                    <Segmented
+                      options={THEMES}
+                      value={values.theme}
+                      onChange={(value) => write('theme', value)}
+                    />
+                  </Row>
+                </Rows>
+
+                {/* Sheet and falling notes each carry their own harmony and their own colours, so
+                    each heading names the view its rows move and nothing else. */}
+                <section className="flex flex-col gap-1.5">
+                  <h3 className="text-muted-ink text-[11px] tracking-wide uppercase">Sheet</h3>
+                  <Rows>
+                    <Row
+                      id="sheet_proportional"
+                      marked={marked === 'sheet_proportional'}
+                      label="Space notes by time"
+                    >
+                      <Toggle
+                        value={values.sheet_proportional}
+                        onChange={(value) => write('sheet_proportional', value)}
+                      />
+                    </Row>
+                    <Row id="sheet_spacing" marked={marked === 'sheet_spacing'} label="Spacing">
+                      <Slider
+                        label="Sheet spacing in percent"
+                        value={values.sheet_spacing}
+                        min={SPACING_MIN}
+                        max={SPACING_MAX}
+                        step={5}
+                        disabled={!values.sheet_proportional}
+                        onChange={(value) => write('sheet_spacing', value)}
+                      />
+                    </Row>
+                    <Row id="sheet_harmony" marked={marked === 'sheet_harmony'} label="Harmony">
+                      <Toggle
+                        value={values.sheet_harmony}
+                        onChange={(value) => write('sheet_harmony', value)}
+                      />
+                    </Row>
+                    <Row
+                      id="sheet_colour"
+                      marked={marked === 'sheet_colour'}
+                      label="Pitch colours"
+                    >
+                      <Toggle
+                        value={values.sheet_colour}
+                        onChange={(value) => write('sheet_colour', value)}
+                      />
+                    </Row>
+                  </Rows>
+                </section>
+
+                <section className="flex flex-col gap-1.5">
+                  <h3 className="text-muted-ink text-[11px] tracking-wide uppercase">
+                    Falling notes
+                  </h3>
+                  <Rows>
+                    <Row
+                      id="lane_lookahead"
+                      marked={marked === 'lane_lookahead'}
+                      label="Lookahead (beats)"
+                    >
+                      <Slider
+                        label="Lane lookahead in beats"
+                        value={values.lane_lookahead}
+                        min={LOOKAHEAD_MIN}
+                        max={LOOKAHEAD_MAX}
+                        step={0.1}
+                        onChange={(value) => write('lane_lookahead', value)}
+                      />
+                    </Row>
+                    <Row
+                      id="lane_note_width"
+                      marked={marked === 'lane_note_width'}
+                      label="Note width (%)"
+                    >
+                      <NumberField
+                        value={values.lane_note_width}
+                        min={10}
+                        max={100}
+                        onChange={(value) => write('lane_note_width', value)}
+                      />
+                    </Row>
+                    <Row id="lane_gap" marked={marked === 'lane_gap'} label="Gap (px)">
+                      <NumberField
+                        value={values.lane_gap}
+                        min={0}
+                        max={20}
+                        onChange={(value) => write('lane_gap', value)}
+                      />
+                    </Row>
+                    <Row
+                      id="lane_names"
+                      marked={marked === 'lane_names'}
+                      label="Note names on blocks"
+                    >
+                      <Toggle
+                        value={values.lane_names}
+                        onChange={(value) => write('lane_names', value)}
+                      />
+                    </Row>
+                    <Row id="lane_harmony" marked={marked === 'lane_harmony'} label="Harmony">
+                      <Toggle
+                        value={values.lane_harmony}
+                        onChange={(value) => write('lane_harmony', value)}
+                      />
+                    </Row>
+                    <Row id="lane_colour" marked={marked === 'lane_colour'} label="Pitch colours">
+                      <Toggle
+                        value={values.lane_colour}
+                        onChange={(value) => write('lane_colour', value)}
+                      />
+                    </Row>
+                    <Row
+                      id="keyboard_labels"
+                      marked={marked === 'keyboard_labels'}
+                      label="Note names on keys"
+                    >
+                      <Toggle
+                        value={values.keyboard_labels}
+                        onChange={(value) => write('keyboard_labels', value)}
+                      />
+                    </Row>
+                  </Rows>
+                </section>
               </Tabs.Content>
 
               <Tabs.Content value="playing" className="flex flex-col gap-7">
@@ -512,18 +735,16 @@ export function SettingsPanel({
 }
 
 /**
- * The gear under the play screen's bar: the look of the app and of the lane, the keyboard range of
- * the open piece, and the way out to every other setting.
+ * The gear under the play screen's bar: the keyboard range of the open piece, its count-in, and the
+ * way out to every app-wide setting. What the app looks like in general is the Look tab's.
  */
 export function GearPopover({
   trigger,
   performing,
   keyboard,
   countInBars,
-  look,
   onKeyboard,
   onCountInBars,
-  onLook,
   onUseGlobalDefaults,
   onAllSettings,
 }: {
@@ -532,32 +753,15 @@ export function GearPopover({
   performing: boolean;
   keyboard: Pick<PieceSettings, 'keyboardPreset' | 'keyboardLo' | 'keyboardHi'>;
   countInBars: number;
-  look: LaneLook;
   onKeyboard: (preset: KeyboardPreset, lo: number, hi: number) => void;
   onCountInBars: (bars: number) => void;
-  onLook: (key: keyof typeof LANE_KNOBS, value: number | boolean) => void;
   onUseGlobalDefaults: () => void;
   onAllSettings: () => void;
 }) {
-  const theme = useTheme();
-
   return (
     <Popover>
       <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       <PopoverContent side="bottom" align="start" className="flex w-72 flex-col gap-4 p-3">
-        <PopoverGroup title="Look">
-          <Row label="Theme">
-            <Segmented
-              options={THEMES}
-              value={theme}
-              onChange={(value) => {
-                setTheme(value);
-                setSetting('theme', value).catch(console.error);
-              }}
-            />
-          </Row>
-        </PopoverGroup>
-
         {!performing && (
           <PopoverGroup title="Keyboard">
             <Segmented
@@ -583,22 +787,6 @@ export function GearPopover({
           </PopoverGroup>
         )}
 
-        <PopoverGroup title="Falling notes">
-          {LANE_FIELDS.map(([key, label, min, max]) => (
-            <Row key={key} label={label}>
-              <NumberField
-                value={look[LANE_KNOBS[key]] as number}
-                min={min}
-                max={max}
-                onChange={(value) => onLook(key, value)}
-              />
-            </Row>
-          ))}
-          <Row label="Note names on keys">
-            <Toggle value={look.keyLabels} onChange={(value) => onLook('keyboard_labels', value)} />
-          </Row>
-        </PopoverGroup>
-
         {!performing && (
           <div className="border-edge-soft flex flex-col items-start gap-1.5 border-t pt-3">
             <button
@@ -614,109 +802,6 @@ export function GearPopover({
               All settings…
             </button>
           </div>
-        )}
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-/**
- * The eye in the play bar: what the two views show of a note beyond its place in time. Every
- * control is a global setting, written at once and handed to `onChange` so the play applies it.
- */
-export function ViewPopover({ onChange }: { onChange: (...change: SettingChange) => void }) {
-  const [values, setValues] = useState<Settings | null>(null);
-
-  useEffect(() => {
-    readSettings().then(setValues, console.error);
-  }, []);
-
-  function write<K extends keyof Settings>(key: K, value: Settings[K]): void {
-    setValues((held) => held && { ...held, [key]: value });
-    setSetting(key, value).catch(console.error);
-    // The pair comes straight out of this function's own key type, so it is one of the union.
-    onChange(...([key, value] as SettingChange));
-  }
-
-  // Reading again at every open keeps this popover in step with the settings dialog.
-  return (
-    <Popover onOpenChange={(open) => open && readSettings().then(setValues, console.error)}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <PopoverTrigger asChild>
-            <button
-              aria-label="View"
-              className="hover:bg-ink/8 relative flex h-8 w-8 flex-none items-center justify-center rounded-md transition-colors duration-150"
-            >
-              <Eye size={18} strokeWidth={1.75} />
-            </button>
-          </PopoverTrigger>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">View</TooltipContent>
-      </Tooltip>
-      <PopoverContent side="bottom" align="start" className="flex w-64 flex-col gap-4 p-3">
-        {values && (
-          <>
-            <PopoverGroup title="Sheet">
-              <Row label="Harmony">
-                <Toggle
-                  value={values.sheet_harmony}
-                  onChange={(value) => write('sheet_harmony', value)}
-                />
-              </Row>
-              <Row label="Pitch colours">
-                <Toggle
-                  value={values.sheet_colour}
-                  onChange={(value) => write('sheet_colour', value)}
-                />
-              </Row>
-              <Row label="Space notes by time">
-                <Toggle
-                  value={values.sheet_proportional}
-                  onChange={(value) => write('sheet_proportional', value)}
-                />
-              </Row>
-              <Row label="Spacing">
-                <span className="flex flex-none items-center gap-2">
-                  <input
-                    type="range"
-                    aria-label="Sheet spacing in percent"
-                    min={SPACING_MIN}
-                    max={SPACING_MAX}
-                    step={5}
-                    value={values.sheet_spacing}
-                    disabled={!values.sheet_proportional}
-                    onChange={(event) => write('sheet_spacing', Number(event.target.value))}
-                    className="accent-ink w-24 disabled:opacity-30"
-                  />
-                  <span className="text-muted-ink w-8 text-right text-[11px] tabular-nums">
-                    {values.sheet_spacing}
-                  </span>
-                </span>
-              </Row>
-            </PopoverGroup>
-
-            <PopoverGroup title="Falling notes">
-              <Row label="Harmony">
-                <Toggle
-                  value={values.lane_harmony}
-                  onChange={(value) => write('lane_harmony', value)}
-                />
-              </Row>
-              <Row label="Pitch colours">
-                <Toggle
-                  value={values.lane_colour}
-                  onChange={(value) => write('lane_colour', value)}
-                />
-              </Row>
-              <Row label="Note names on blocks">
-                <Toggle
-                  value={values.lane_names}
-                  onChange={(value) => write('lane_names', value)}
-                />
-              </Row>
-            </PopoverGroup>
-          </>
         )}
       </PopoverContent>
     </Popover>
@@ -876,6 +961,42 @@ function NumberField({
         className="h-7 w-20 px-2 text-right text-[12px] tabular-nums"
       />
       {error && <span className="text-[11px] text-red-600 dark:text-red-400">{error}</span>}
+    </span>
+  );
+}
+
+/** A number dragged rather than typed, with its value beside it. A pinch moves one of these. */
+function Slider({
+  label,
+  value,
+  min,
+  max,
+  step,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  disabled?: boolean;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <span className="flex flex-none items-center gap-2">
+      <input
+        type="range"
+        aria-label={label}
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="accent-ink w-24 disabled:opacity-30"
+      />
+      <span className="text-muted-ink w-8 text-right text-[11px] tabular-nums">{value}</span>
     </span>
   );
 }

@@ -11,15 +11,7 @@ import {
   readSettings,
   setSetting,
 } from '@/db/db';
-import {
-  DEFAULT_LANE_LOOK,
-  DEFAULT_SPLIT,
-  Lane,
-  SPLIT_MAX,
-  SPLIT_MIN,
-  TOP_BAR,
-  type LaneLook,
-} from '@/lane/lane';
+import { DEFAULT_SPLIT, Lane, SPLIT_MAX, SPLIT_MIN, TOP_BAR } from '@/lane/lane';
 import { baseNameOf, pathOf, readScoreFile } from '@/library/index-file';
 import { setNotice } from '@/library/notice';
 import {
@@ -33,7 +25,7 @@ import { reindexIfChanged } from '@/library/scan';
 import { clamp } from '@/lib/utils';
 import { Collapse } from '@/look/collapse';
 import { Metronome, type MetronomeHandle } from '@/look/metronome';
-import { flipTheme, useDark } from '@/look/use-dark';
+import { useDark } from '@/look/use-dark';
 import { useMidiStatus } from '@/midi/use-midi-status';
 import { click, setClickVolume } from '@/play/click';
 import {
@@ -62,13 +54,7 @@ import { clampSection, sectionLabel, type Section } from '@/play/section';
 import { useFrameLoop } from '@/play/use-frame-loop';
 import { bpmAt, ScoreError, type Measure } from '@/score/types';
 import { Button } from '@/components/ui/button';
-import {
-  GearPopover,
-  SettingsPanel,
-  SpacingPopup,
-  ViewPopover,
-  type SettingChange,
-} from '@/screens/settings';
+import { GearPopover, SettingsPanel, SpacingPopup, type SettingChange } from '@/screens/settings';
 import { Sheet, type Pinch } from '@/sheet/sheet';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
@@ -145,8 +131,9 @@ export function PlayScreen({
 
   /** What a pinch on the sheet is choosing while it lasts, which the panel over the paper shows. */
   const [pinch, setPinch] = useState<Pinch | null>(null);
+  /** The setting the pinch under way is moving, so the settings panel's row moves with it. */
+  const [live, setLive] = useState<SettingChange | null>(null);
   const [split, setSplit] = useState(DEFAULT_SPLIT);
-  const [look, setLook] = useState<LaneLook>(DEFAULT_LANE_LOOK);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [audioOpen, setAudioOpen] = useState(false);
   const [hands, setHands] = useState(DEFAULT_PLAY_SETTINGS.hands);
@@ -208,12 +195,14 @@ export function PlayScreen({
         engineRef.current = engine;
         // The sheet knows where a click landed; the screen decides what it means.
         sheet.onSeek = (target) => engine.seek(target);
-        // A pinch has already spaced the sheet; this only stores what it settled on. A View
-        // popover standing open keeps its own slider until it is reopened and rereads the setting.
+        // A pinch has already spaced the sheet; this only stores what it settled on.
         sheet.onLook = ({ spacing }) => {
           setSetting('sheet_spacing', spacing).catch(console.error);
         };
-        sheet.onPinch = setPinch;
+        sheet.onPinch = (moving) => {
+          setPinch(moving);
+          if (moving) setLive(['sheet_spacing', moving.spacing]);
+        };
         sheet.onSection = (picked) => {
           if (engine.kind !== 'practice') return;
           setSection(picked && clampSection(sheet.score.measures, picked));
@@ -223,13 +212,12 @@ export function PlayScreen({
         const lane = knobValues(globals, LANE_KNOBS);
         laneRef.current = new Lane(canvasRef.current!, engine, lane, darkRef.current);
         laneRef.current.onSeek = (target) => engine.seek(target);
-        // A pinch has already scaled the lane; this only shows the beats it settled on in the gear
-        // and writes them down.
+        // A pinch has already scaled the lane; this only writes down the beats it settled on.
         laneRef.current.onLook = ({ lookaheadBeats }) => {
           if (lookaheadBeats !== undefined) changeLook('lane_lookahead', lookaheadBeats);
         };
+        laneRef.current.onPinch = (lookaheadBeats) => setLive(['lane_lookahead', lookaheadBeats]);
         setSplit(clamp(globals.sheet_split, SPLIT_MIN, SPLIT_MAX));
-        setLook(lane);
         setOneStaff(sheet.score.staffCount < 2);
         show(resolved.settings);
         setClickVolume(globals.click_volume);
@@ -391,17 +379,15 @@ export function PlayScreen({
     persist({ keyboard_preset: String(preset), keyboard_lo: lo, keyboard_hi: hi });
   }
 
-  /** A look knob the gear turns: the next frame reads the same object the lane holds. */
+  /** A look knob a pinch turned: the next frame reads the same object the lane holds. */
   function changeLook(key: keyof typeof LANE_KNOBS, value: number | boolean): void {
     showLook(key, value);
     setSetting(key, value as never).catch(console.error);
   }
 
-  /** The lane's look as the gear or the dialog just wrote it, on the screen and on the lane. */
+  /** The lane's look as the panel just wrote it, on the lane the next frame draws. */
   function showLook(key: keyof typeof LANE_KNOBS, value: number | boolean): void {
-    const field = LANE_KNOBS[key];
-    setLook((held) => ({ ...held, [field]: value }));
-    Object.assign(laneRef.current?.look ?? {}, { [field]: value });
+    Object.assign(laneRef.current?.look ?? {}, { [LANE_KNOBS[key]]: value });
   }
 
   /** A global knob the dialog writes reaches the running play through the same live objects. */
@@ -472,8 +458,6 @@ export function PlayScreen({
         const engine = engineRef.current;
         if (engine?.kind === 'practice' && engine.snapshot().state === 'idle') setSection(null);
         else engine?.abort();
-      } else if (event.key === 'd' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        setSetting('theme', flipTheme()).catch(console.error);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -551,17 +535,14 @@ export function PlayScreen({
             performing={performing}
             keyboard={keyboard}
             countInBars={countInBars}
-            look={look}
             onKeyboard={changeKeyboard}
             onCountInBars={changeCountIn}
-            onLook={changeLook}
             onUseGlobalDefaults={() => useGlobalDefaults().catch(console.error)}
             onAllSettings={() => setSettingsOpen(true)}
           />
           <BarButton label="Audio" onClick={() => setAudioOpen(true)}>
             <AudioLines {...ICON} />
           </BarButton>
-          <ViewPopover onChange={applyGlobal} />
           <BarButton label="Settings" onClick={() => setSettingsOpen(true)}>
             <SlidersHorizontal {...ICON} />
           </BarButton>
@@ -689,6 +670,7 @@ export function PlayScreen({
           open={settingsOpen}
           onClose={() => setSettingsOpen(false)}
           onGlobalChange={applyGlobal}
+          live={live}
         />
 
         {/* Both are global, so they change nothing the frame loop reads and the clock runs on. */}

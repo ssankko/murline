@@ -3,11 +3,13 @@ import { describe, expect, test } from 'vitest';
 import {
   beatsBefore,
   bounceAt,
+  burnAt,
   chordsAt,
   chordsOf,
   glideLeft,
   jumpOf,
   lerpRect,
+  popAt,
   pulseAt,
   slotRect,
   throughWrap,
@@ -157,5 +159,50 @@ describe('the swing of a struck block', () => {
     expect(bounceAt(-5)).toBe(1);
     expect(bounceAt(5)).toBe(1);
     expect(bounceAt(NaN)).toBe(1);
+  });
+});
+
+/** The share of the pop the number spends growing, and the share of a burn its collapse takes. */
+const RISE = 0.4;
+const COLLAPSE = 0.18;
+
+describe('the count-in number as its beat is struck', () => {
+  test('breathes out and settles back to its own size', () => {
+    expect(popAt(0)).toBe(1);
+    expect(popAt(RISE)).toBeCloseTo(1.18);
+    expect(popAt(0.99)).toBeCloseTo(1);
+    expect(popAt(RISE / 2)).toBeGreaterThan(1);
+    expect(popAt(RISE / 2)).toBeLessThan(popAt(RISE));
+  });
+
+  test('is its own size outside its time, whatever the clock hands over', () => {
+    expect(popAt(-5)).toBe(1);
+    expect(popAt(5)).toBe(1);
+    expect(popAt(NaN)).toBe(1);
+  });
+});
+
+describe('a countdown glyph burning up on its beat', () => {
+  test('rests whole and ends as nothing', () => {
+    expect(burnAt(1)).toEqual({ alpha: 1, scale: 1, heat: 0 });
+    expect(burnAt(2)).toEqual({ alpha: 1, scale: 1, heat: 0 });
+    expect(burnAt(NaN)).toEqual({ alpha: 1, scale: 1, heat: 0 });
+    expect(burnAt(0)).toEqual({ alpha: 0, scale: 0, heat: 1 });
+  });
+
+  test('flares to its widest at full heat before it collapses', () => {
+    const flare = burnAt(COLLAPSE);
+    expect(flare).toEqual({ alpha: 1, scale: 1.3, heat: 1 });
+    // Half way through the collapse it is half the flare and half gone.
+    const dying = burnAt(COLLAPSE / 2);
+    expect(dying.alpha).toBeCloseTo(0.5);
+    expect(dying.scale).toBeCloseTo(0.65);
+  });
+
+  test('grows and heats up all the way through the burn', () => {
+    expect(burnAt(0.8).scale).toBeGreaterThan(1);
+    expect(burnAt(0.8).scale).toBeLessThan(burnAt(0.5).scale);
+    expect(burnAt(0.8).heat).toBeLessThan(burnAt(0.5).heat);
+    expect(burnAt(0.5).alpha).toBe(1);
   });
 });

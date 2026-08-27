@@ -87,17 +87,11 @@ describe('a file the app can read', () => {
     ]);
   });
 
-  test('Keep both writes the next free copy of the name', async () => {
-    folderFiles = ['dynamics-and-tempo.musicxml', 'dynamics-and-tempo (2).musicxml'];
+  test('Keep both writes the next free copy of the name, whatever the case on disk', async () => {
+    folderFiles = ['Dynamics-And-Tempo.MUSICXML', 'dynamics-and-tempo (2).musicxml'];
     const result = await importOne('dynamics-and-tempo.musicxml');
     expect(result.imported).toEqual(['dynamics-and-tempo (3).musicxml']);
     expect(copies[0]!.dst).toBe('/library/dynamics-and-tempo (3).musicxml');
-  });
-
-  test('a name that differs only in case is the same file to the folder', async () => {
-    folderFiles = ['Dynamics-And-Tempo.MUSICXML'];
-    const result = await importOne('dynamics-and-tempo.musicxml');
-    expect(result.imported).toEqual(['dynamics-and-tempo (2).musicxml']);
   });
 
   test('Replace keeps the path, so the row and its history survive', async () => {

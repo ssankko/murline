@@ -37,15 +37,11 @@ function nameInBar(built: Score, bar: number): string | undefined {
 }
 
 describe('Bach BWV 846', () => {
-  test('names one chord per bar as the textbook does', async () => {
+  test('names one chord per bar as the textbook does, on the Onset that opens it', async () => {
     const built = await score('JohannSebastianBach_PraeludiumInCDur_BWV846_1.xml');
     expect(built.harmony.map((e) => e.absolute)).toEqual(BACH);
     // 35 bars for 33 names: three bars carry the name of the change before them.
     for (const [bar, name] of DEPARTURES) expect(nameInBar(built, bar)).toBe(name);
-  });
-
-  test('every event sits on the Onset that opens its bar, and reads in degrees', async () => {
-    const built = await score('JohannSebastianBach_PraeludiumInCDur_BWV846_1.xml');
     for (const event of built.harmony) expect(built.onsets[event.onsetIndex]!.tick).toBe(event.tick);
     // One change alone starts inside a bar: the D of the closing chord enters on bar 33's last beat.
     const offBar = built.harmony.filter(

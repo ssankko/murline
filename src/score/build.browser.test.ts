@@ -33,7 +33,6 @@ describe('the walk of the OSMD corpus', () => {
     ['MuzioClementi_SonatinaOpus36No1_Part1.xml', 444, 222, 2],
     ['ScottJoplin_The_Entertainer.xml', 904, 538, 4],
     ['Schumann_The_Wild_Horseman_Op._68_No._8.mxl', 184, 138, 1],
-    ['test_repeat_volta_simple.musicxml', 4, 3, 1],
     ['JohannSebastianBach_PraeludiumInCDur_BWV846_1.xml', 545, 545, 0],
   ];
 
@@ -46,7 +45,7 @@ describe('the walk of the OSMD corpus', () => {
 });
 
 describe('the Score of a piece', () => {
-  test('Bach BWV 846 reads as one part in C major with no tempo of its own', async () => {
+  test('Bach BWV 846 reads as one part of two staves in C major', async () => {
     const built = await score('JohannSebastianBach_PraeludiumInCDur_BWV846_1.xml');
     expect(built.partCount).toBe(1);
     expect(built.staffCount).toBe(2);
@@ -76,14 +75,12 @@ describe('the Score of a piece', () => {
     expect(Math.max(...bar34.map((n) => n.durationTicks))).toBe(4 * TICKS_PER_QUARTER);
   });
 
-  test('a repeat replays the same Onsets at later played ticks', async () => {
+  test('a repeat replays the same Onsets at later played ticks, under a default tempo', async () => {
     const built = await score('test_repeat_volta_simple.musicxml');
+    expect(built.onsets.length).toBe(3);
     expect(built.playOrder.map((s) => s.onsetIndex)).toEqual([0, 1, 0, 2]);
     expect(built.playOrder.map((s) => s.tick)).toEqual([0, 1920, 3840, 5760]);
-  });
-
-  test('a file with no tempo mark gets the first measure tempo and no tempo of its own', async () => {
-    const built = await score('test_repeat_volta_simple.musicxml');
+    // The file names no tempo, so every measure carries OSMD's 120.
     expect(built.hasTempo).toBe(false);
     expect(built.tempoMap).toEqual([{ tick: 0, bpm: 120 }]);
   });
@@ -144,6 +141,17 @@ describe('the index', () => {
     expect(index.durationS).toBeGreaterThan(60);
     expect(index.durationS).toBeLessThan(180);
   });
+
+  // What each provider hands the import path: the KernScores merge's output, and the one `.xml`
+  // taken out of a PDMX `.mxl`. Both must index as a single playable part.
+  test.each([['kernscores-mazurka-50.musicxml'], ['pdmx-score.xml']])(
+    '%s indexes as one part',
+    async (file) => {
+      const index = summarize(await score(file), file);
+      expect(index.partCount).toBe(1);
+      expect(index.measureCount).toBeGreaterThan(0);
+    },
+  );
 
   test('a compressed file indexes like any other', async () => {
     const file = 'Schumann_The_Wild_Horseman_Op._68_No._8.mxl';

@@ -15,7 +15,7 @@ import {
 } from '@/lane/keyboard';
 import { clamp } from '@/lib/utils';
 import { INK, PAPER, colorOf, mix, tone } from '@/look/color';
-import { reducedMotion } from '@/look/motion';
+import { easeInOut, reducedMotion } from '@/look/motion';
 import type { Engine, LoopSpan, PlayEvent, SeekTarget, Snapshot } from '@/play/engine';
 import type { Section } from '@/play/section';
 import { isInactiveHand, type HandsSetting } from '@/play/settings';
@@ -1315,11 +1315,6 @@ export function jumpOf(
 export function glideLeft(t: number): number {
   if (!(t > 0)) return 1;
   return t < 1 ? 1 - easeInOut(t) : 0;
-}
-
-/** Slow at both ends and fast between them, the shape every movement of the view takes. */
-function easeInOut(t: number): number {
-  return t < 0.5 ? 4 * t ** 3 : 1 - (2 - 2 * t) ** 3 / 2;
 }
 
 /** Fast out with a small overshoot, so a key settles under a finger with a bounce. */

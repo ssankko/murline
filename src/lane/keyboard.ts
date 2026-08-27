@@ -27,8 +27,6 @@ export interface Key {
 export interface KeyLayout {
   keys: Key[];
   byMidi: Map<number, Key>;
-  lo: number;
-  hi: number;
   width: number;
 }
 
@@ -48,7 +46,7 @@ export function keyLayout(lo: number, hi: number, width: number): KeyLayout {
       placed++;
     }
   }
-  return { keys, byMidi: new Map(keys.map((key) => [key.midi, key])), lo, hi, width };
+  return { keys, byMidi: new Map(keys.map((key) => [key.midi, key])), width };
 }
 
 const PRESETS: Record<number, [number, number]> = {
@@ -66,7 +64,7 @@ const PRESETS: Record<number, [number, number]> = {
 export function keyRange(notes: readonly PlayNote[], settings: PlaySettings): [number, number] {
   const preset: KeyboardPreset = settings.keyboardPreset;
   if (preset === 'custom') return [settings.keyboardLo, settings.keyboardHi];
-  if (preset !== 'piece') return PRESETS[preset] ?? PRESETS[88]!;
+  if (preset !== 'piece') return PRESETS[preset]!;
   let lo = 127;
   let hi = 0;
   for (const note of notes) {
@@ -75,12 +73,6 @@ export function keyRange(notes: readonly PlayNote[], settings: PlaySettings): [n
   }
   if (lo > hi) return [48, 84];
   return [Math.floor(lo / 12) * 12, Math.floor(hi / 12) * 12 + 11];
-}
-
-/** The two strikes of "Detect from keyboard" as a range: the lower key is the low end, whichever
- * of the two was struck first. */
-export function detectedRange(first: number, second: number): [number, number] {
-  return first <= second ? [first, second] : [second, first];
 }
 
 /**

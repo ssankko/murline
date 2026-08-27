@@ -13,7 +13,6 @@ import {
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { LANE_KNOBS, readSettings, setSetting, SETTING_DEFAULTS, type Settings } from '@/db/db';
-import { detectedRange } from '@/lane/keyboard';
 import type { LaneLook } from '@/lane/lane';
 import { noteName } from '@/look/color';
 import { setTheme, useTheme, type Theme } from '@/look/use-dark';
@@ -611,7 +610,7 @@ function CustomRange({
     if (!detecting || !event.on) return;
     if (detecting.first === null) return setDetecting({ first: event.midi });
     setDetecting(null);
-    onChange(...detectedRange(detecting.first, event.midi));
+    onChange(Math.min(detecting.first, event.midi), Math.max(detecting.first, event.midi));
   });
 
   return (

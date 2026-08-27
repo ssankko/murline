@@ -1,4 +1,4 @@
-import { detectedRange, keyLayout, keyRange } from '@/lane/keyboard';
+import { keyLayout, keyRange } from '@/lane/keyboard';
 import { DEFAULT_PLAY_SETTINGS, type PlaySettings } from '@/play/settings';
 import type { PlayNote } from '@/play/engine';
 import { describe, expect, test } from 'vitest';
@@ -52,16 +52,3 @@ describe('the key layout', () => {
   });
 });
 
-describe('detectedRange', () => {
-  test('takes the lower strike as the low end', () => {
-    expect(detectedRange(36, 96)).toEqual([36, 96]);
-  });
-
-  test('takes the lower strike as the low end when it is struck second', () => {
-    expect(detectedRange(96, 36)).toEqual([36, 96]);
-  });
-
-  test('answers one key struck twice with a range of that key', () => {
-    expect(detectedRange(60, 60)).toEqual([60, 60]);
-  });
-});

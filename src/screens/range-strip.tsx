@@ -1,4 +1,5 @@
-import { colorOf, isBlackKey, pitchClass } from '@/look/color';
+import { keyLayout } from '@/lane/keyboard';
+import { colorOf, pitchClass } from '@/look/color';
 import { useDark } from '@/look/use-dark';
 
 const LOWEST = 21;
@@ -31,25 +32,12 @@ export function RangeStrip({
   tonic: number | null;
 }) {
   const dark = useDark();
-  const whites = [];
-  const blacks = [];
-  let x = 0;
-  for (let midi = LOWEST; midi <= HIGHEST; midi++) {
+  const keys = keyLayout(LOWEST, HIGHEST, WHITE_KEYS * KEY).keys;
+  const fillOf = ({ midi, black }: (typeof keys)[number]): string => {
     const used = midi >= lo && midi <= hi;
-    const black = isBlackKey(midi);
-    const fill =
-      used && pitchClass(midi) === tonic
-        ? colorOf(midi, 'muted', dark)
-        : FILL[black ? (used ? 'blackUsed' : 'black') : used ? 'whiteUsed' : 'white'];
-    if (black) {
-      blacks.push(
-        <rect key={midi} x={x - KEY * 0.3} y={0} width={KEY * 0.6} height={HEIGHT * 0.62} fill={fill} />,
-      );
-    } else {
-      whites.push(<rect key={midi} x={x} y={0} width={KEY - 1} height={HEIGHT} fill={fill} />);
-      x += KEY;
-    }
-  }
+    if (used && pitchClass(midi) === tonic) return colorOf(midi, 'muted', dark);
+    return FILL[black ? (used ? 'blackUsed' : 'black') : used ? 'whiteUsed' : 'white'];
+  };
   return (
     <svg
       className="block w-full"
@@ -58,8 +46,24 @@ export function RangeStrip({
       preserveAspectRatio="none"
       aria-hidden="true"
     >
-      {whites}
-      {blacks}
+      {keys
+        .filter((key) => !key.black)
+        .map((key) => (
+          // A hairline of paper between two white keys is what tells them apart.
+          <rect key={key.midi} x={key.x} y={0} width={key.w - 1} height={HEIGHT} fill={fillOf(key)} />
+        ))}
+      {keys
+        .filter((key) => key.black)
+        .map((key) => (
+          <rect
+            key={key.midi}
+            x={key.x}
+            y={0}
+            width={key.w}
+            height={HEIGHT * 0.62}
+            fill={fillOf(key)}
+          />
+        ))}
     </svg>
   );
 }

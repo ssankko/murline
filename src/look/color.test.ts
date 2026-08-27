@@ -1,4 +1,4 @@
-import { colorOf, isBlackKey, noteName } from '@/look/color';
+import { colorOf, isBlackKey, labelInk, noteName, PAPER } from '@/look/color';
 import { expect, test } from 'vitest';
 
 // The twelve hexes the spec fixes for the muted palette, C through B.
@@ -20,4 +20,14 @@ test('note names and black keys follow the same pitch class', () => {
   expect(noteName(21)).toBe('A0');
   expect(isBlackKey(61)).toBe(true);
   expect(isBlackKey(60)).toBe(false);
+});
+
+test('a label takes the ink its fill leaves readable', () => {
+  // A hit flashes white and a bright pitch stays light, so both carry the dark ink; a deep blue,
+  // a dark-paper block and the grey of a miss on light paper carry the light one.
+  expect(labelInk('#ffffff')).toBe(PAPER[1]);
+  expect(labelInk('#adcc33')).toBe(PAPER[1]);
+  expect(labelInk('#5433cc')).toBe(PAPER[0]);
+  expect(labelInk('#202020')).toBe(PAPER[0]);
+  expect(labelInk('#6b6b6b')).toBe(PAPER[0]);
 });

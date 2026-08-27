@@ -40,6 +40,8 @@ export type Settings = {
   sheet_colour: boolean;
   lane_harmony: boolean;
   lane_colour: boolean;
+  /** Whether each falling block carries the name of its note. */
+  lane_names: boolean;
 
   /** Loudness of the metronome click, 0 to 100. */
   click_volume: number;
@@ -102,6 +104,7 @@ export const LANE_KNOBS = {
   keyboard_labels: 'keyLabels',
   lane_harmony: 'harmony',
   lane_colour: 'colour',
+  lane_names: 'names',
 } as const satisfies Record<string, keyof LaneLook>;
 
 /** The global default of a piece setting, and the field of `PieceSettings` it stands for. */

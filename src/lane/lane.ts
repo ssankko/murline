@@ -14,7 +14,17 @@ import {
   type KeyLayout,
 } from '@/lane/keyboard';
 import { clamp } from '@/lib/utils';
-import { INK, PAPER, colorOf, mix, tone, type Palette } from '@/look/color';
+import {
+  INK,
+  NOTE_NAMES,
+  PAPER,
+  colorOf,
+  labelInk,
+  mix,
+  pitchClass,
+  tone,
+  type Palette,
+} from '@/look/color';
 import { easeInOut, reducedMotion } from '@/look/motion';
 import type { Engine, LoopSpan, PlayEvent, SeekTarget, Snapshot } from '@/play/engine';
 import type { Section } from '@/play/section';
@@ -33,6 +43,8 @@ export interface LaneLook {
   harmony: boolean;
   /** Whether a block wears the pitch colour of its note, against one neutral ink for every note. */
   colour: boolean;
+  /** Whether a block carries the name of its note, sharps and no octave, at its landing edge. */
+  names: boolean;
 }
 
 export const DEFAULT_LANE_LOOK: LaneLook = {
@@ -42,6 +54,7 @@ export const DEFAULT_LANE_LOOK: LaneLook = {
   keyLabels: true,
   harmony: true,
   colour: true,
+  names: false,
 };
 
 /** The span the gear offers for the lookahead, which a pinch zoom stays inside. */
@@ -95,6 +108,10 @@ const NOTICE_FADE_MS = 150;
 const GREY = '#8b8b93';
 
 const NOTE_RADIUS = 3;
+/** The name on a block: its font, the shortest block that holds it, and the room it wants each side. */
+const NAME_FONT = '600 11px system-ui, sans-serif';
+const NAME_MIN_H = 16;
+const NAME_PAD = 4;
 /** How long a struck block takes to fade from white back to its pitch colour. */
 const HIT_FLASH_MS = 350;
 const RING_MS = 300;
@@ -1005,6 +1022,18 @@ export class Lane {
           ctx.beginPath();
           ctx.roundRect(x + 0.5, blockY + 0.5, width - 1, height - 1, radius);
           ctx.stroke();
+        }
+
+        // The name rides the landing edge, where the eye already is, and only on a block with the
+        // room to hold it whole: a name is never shrunk to fit.
+        if (this.look.names && height >= NAME_MIN_H) {
+          const name = NOTE_NAMES[pitchClass(note.midi)]!;
+          ctx.font = NAME_FONT;
+          if (ctx.measureText(name).width <= width - NAME_PAD) {
+            ctx.fillStyle = labelInk(fill);
+            ctx.textAlign = 'center';
+            ctx.fillText(name, x + width / 2, blockY + height - 6);
+          }
         }
       }
 

@@ -13,7 +13,8 @@
   }
 }
 
-/* The Keyboard look: neutral greys only, system sans, flat surfaces with no radius or shadow.
+/* The Keyboard look: neutral greys only, system sans, flat surfaces with no shadow and the four
+   corner radii 4, 6, 8 and 12 px.
    Pitch colour is the one colour on screen and comes from src/look/color.ts, never from here.
    Each variable names both papers at once; `color-scheme` picks the one in force. */
 :root {
@@ -64,10 +65,10 @@
   --color-input: var(--edge);
   --color-ring: var(--edge);
 
-  --radius-sm: 0px;
-  --radius-md: 0px;
-  --radius-lg: 0px;
-  --radius-xl: 0px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
 
   --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 }

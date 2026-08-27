@@ -166,6 +166,9 @@ export function PlayScreen({
   // the sheet and build the Score of what was rendered. Any failure goes back to the library.
   useEffect(() => {
     mounted.current = true;
+    // One flag per run of the effect: `mounted` is shared, so a later mount puts it back up while
+    // the sheet of a run that is over is still on its way.
+    let live = true;
     const fileName = baseNameOf(path);
     void (async () => {
       try {
@@ -174,7 +177,7 @@ export function PlayScreen({
         const [globals, row] = await Promise.all([readSettings(), getPiece(path).catch(() => null)]);
         const resolved = resolvePlaySettings(row ?? INHERITS_EVERYTHING, pieceDefaultsOf(globals));
         const sheet = await Sheet.open(hostRef.current!, bytes, fileName, darkRef.current);
-        if (!mounted.current) return sheet.dispose();
+        if (!live) return sheet.dispose();
         sheetRef.current = sheet;
         // The piece opens as it was left: its own settings over the global defaults over these.
         const engine = new Engine(sheet.score, {
@@ -205,13 +208,16 @@ export function PlayScreen({
         });
         setTitle(sheet.score.title || fileName);
       } catch (error) {
-        // The play screen has no error state: the library says what went wrong instead.
+        // The play screen has no error state: the library says what went wrong instead, and only
+        // a failure while this run of the screen still stands is worth a notice.
+        if (!live) return;
         const reason = error instanceof ScoreError ? error.reason : String(error);
         setNotice(`Could not open ${fileName}: ${reason}`);
-        if (mounted.current) backRef.current();
+        backRef.current();
       }
     })();
     return () => {
+      live = false;
       mounted.current = false;
       // Leaving the screen is a stop, so the practice it ends is stored on the way out.
       engineRef.current?.abort();

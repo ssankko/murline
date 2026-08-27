@@ -1,4 +1,4 @@
-import { INK, colorOf, tone } from '@/look/color';
+import { INK, PAPER, colorOf, tone } from '@/look/color';
 import type { Snapshot } from '@/play/engine';
 import { expect, test } from 'vitest';
 import { noteheadEl } from './paint';
@@ -15,13 +15,20 @@ const FIXTURES = import.meta.glob('../score/fixtures/*', {
 const BACH = 'JohannSebastianBach_PraeludiumInCDur_BWV846_1.xml';
 const VOLTA = 'test_repeat_volta_simple.musicxml';
 
-async function open(file = BACH): Promise<Sheet> {
+async function bytesOf(file: string): Promise<Uint8Array> {
   const url = FIXTURES[`../score/fixtures/${file}`] as string;
-  const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer());
+  return new Uint8Array(await (await fetch(url)).arrayBuffer());
+}
+
+function hostEl(): HTMLElement {
   const host = document.createElement('div');
   host.style.cssText = 'width:900px;height:220px';
   document.body.append(host);
-  return Sheet.open(host, bytes, file, false);
+  return host;
+}
+
+async function open(file = BACH, host = hostEl(), dark = false): Promise<Sheet> {
+  return Sheet.open(host, await bytesOf(file), file, dark);
 }
 
 test('the sheet renders the piece on one horizontal line', async () => {
@@ -143,6 +150,68 @@ test('a chord bubble stands over every chord event and dims once the cursor is p
 
   sheet.dispose();
 }, 60_000);
+
+test('a disposed sheet leaves its host empty for the next one', async () => {
+  const host = hostEl();
+  const first = await open(BACH, host);
+  first.dispose();
+
+  expect(host.children.length).toBe(0);
+
+  const second = await open(BACH, host);
+  expect(host.querySelectorAll('#osmdCanvasPage1').length).toBe(1);
+  expect(host.querySelectorAll('svg').length).toBe(1);
+
+  second.dispose();
+}, 60_000);
+
+test('a sheet opened over one still in flight is the only one left on the paper', async () => {
+  const host = hostEl();
+  const bytes = await bytesOf(BACH);
+  // What StrictMode does: one host, two opens in flight at once, and the sheet of the mount React
+  // threw away is dropped as soon as its open lands.
+  const flying = Sheet.open(host, bytes, BACH, false);
+  const live = await Sheet.open(host, bytes, BACH, false);
+  (await flying).dispose();
+
+  expect(host.querySelectorAll('svg').length).toBe(1);
+  expect(host.contains(headOf(live))).toBe(true);
+
+  live.dispose();
+}, 60_000);
+
+test('the paper of a dark sheet is the dark tone', async () => {
+  const host = hostEl();
+  const sheet = await open(BACH, host, true);
+
+  expect(host.querySelector('svg')?.style.backgroundColor).toBe(hexToRgb(tone(PAPER, true)));
+
+  sheet.dispose();
+}, 60_000);
+
+test('the cursor band stands over the first Onset', async () => {
+  const host = hostEl();
+  const sheet = await open(BACH, host);
+
+  sheet.frame(snapshot(0), 100, 0);
+  const cursor = host.querySelector<HTMLElement>('.sheet-cursor')!;
+
+  expect(cursor.offsetWidth).toBeGreaterThan(0);
+  expect(cursor.offsetHeight).toBeGreaterThan(0);
+  expect(cursor.offsetLeft + cursor.offsetWidth / 2).toBeCloseTo(sheet.xOfOnset(0), 0);
+
+  sheet.dispose();
+}, 60_000);
+
+/** A notehead of the sheet's first Onset: which host it hangs in says which render is on screen. */
+function headOf(sheet: Sheet): HTMLElement {
+  return noteheadEl(sheet.osmd, sheet.score.onsets[0]!.notes[0]!.source)!;
+}
+
+function hexToRgb(hex: string): string {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
+}
 
 function snapshot(playedTick: number): Snapshot {
   return {

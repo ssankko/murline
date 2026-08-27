@@ -183,6 +183,7 @@ export class Sheet {
     );
     this.clear.textContent = '×';
     this.cursor = child(overlay, 'position:absolute;border-radius:12px');
+    this.cursor.className = 'sheet-cursor';
     this.marker = child(
       overlay,
       'position:absolute;display:none;padding:1px 6px;border-radius:999px;' +

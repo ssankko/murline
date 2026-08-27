@@ -38,10 +38,8 @@ function scoreOf(bars: Pitch[][], key = C_MAJOR, chords: ChordSymbol[] = []): Sc
         midi: typeof pitch === 'number' ? pitch : pitch[0],
         staff: 0,
         hand: 'right',
-        voice: 1,
         onsetTick: bar * BAR,
         durationTicks: BAR,
-        tieStart: false,
         tiedFrom: false,
         grace: false,
         strikeable: true,
@@ -50,7 +48,6 @@ function scoreOf(bars: Pitch[][], key = C_MAJOR, chords: ChordSymbol[] = []): Sc
         source: source(typeof pitch === 'number' ? 0 : pitch[1]),
       }),
     ),
-    timestamp: undefined as unknown as Onset['timestamp'],
   }));
   return {
     title: '',
@@ -73,7 +70,7 @@ function scoreOf(bars: Pitch[][], key = C_MAJOR, chords: ChordSymbol[] = []): Sc
       beatsPerBar: 4,
       beatUnit: 4,
     })),
-    keys: [{ measureIndex: 0, measureNumber: 1, sharps: key.sharps, mode: key.mode }],
+    keys: [{ measureIndex: 0, sharps: key.sharps, mode: key.mode }],
     chords,
     harmony: [],
   };
@@ -103,7 +100,7 @@ describe('the degree form', () => {
 
   test('follows the key in force, so a key change re-labels the same chord', () => {
     const score = scoreOf([[60, 64, 67], [62, 66, 69], [60, 64, 67]]);
-    score.keys.push({ measureIndex: 1, measureNumber: 2, sharps: 2, mode: 0 });
+    score.keys.push({ measureIndex: 1, sharps: 2, mode: 0 });
     expect(names(analyzeHarmony(score))).toEqual(['C 1', 'D 1', 'C ♭7']);
   });
 });
@@ -140,7 +137,6 @@ describe('the naming rules', () => {
     const score = scoreOf([[48, 60, 64, 67], [48, 67, 70, 74]]);
     const start = score.onsets[0]!.notes[0]!;
     start.durationTicks = 2 * BAR;
-    start.tieStart = true;
     const continuation = score.onsets[1]!.notes[0]!;
     continuation.tiedFrom = true;
     continuation.strikeable = false;

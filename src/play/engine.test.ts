@@ -24,7 +24,6 @@ function scoreOf(bars: number, tempoMap = [{ tick: 0, bpm: 60 }], hasTempo = tru
         tick,
         measureIndex: bar,
         notes: [note(tick, bar)],
-        timestamp: undefined as never,
       });
     }
   }
@@ -53,10 +52,8 @@ function note(onsetTick: number, measureIndex: number): Note {
     midi: 60,
     staff: 0,
     hand: 'right',
-    voice: 1,
     onsetTick,
     durationTicks: TICKS_PER_QUARTER,
-    tieStart: false,
     tiedFrom: false,
     grace: false,
     strikeable: true,
@@ -268,7 +265,6 @@ function scoreFrom(spec: { tick: number; notes: Partial<Note>[] }[], bars = 2): 
       tick: entry.tick,
       measureIndex,
       notes: entry.notes.map((n) => ({ ...note(entry.tick, measureIndex), ...n })),
-      timestamp: undefined as never,
     };
   });
   score.playOrder = score.onsets.map((onset, i) => ({ onsetIndex: i, tick: onset.tick }));
@@ -752,7 +748,6 @@ function compound(): Score {
     tick: index * bar,
     measureIndex: index,
     notes: [{ ...note(index * bar, index), durationTicks: bar }],
-    timestamp: undefined as never,
   }));
   score.playOrder = score.onsets.map((onset, i) => ({ onsetIndex: i, tick: onset.tick }));
   score.totalTicks = 2 * bar;
@@ -862,7 +857,7 @@ function restThenThreeFour(): Score {
   });
   for (const beat of [1, 2]) {
     const tick = BAR + beat * TICKS_PER_QUARTER;
-    score.onsets.push({ tick, measureIndex: 1, notes: [note(tick, 1)], timestamp: undefined as never });
+    score.onsets.push({ tick, measureIndex: 1, notes: [note(tick, 1)] });
   }
   score.playOrder = score.onsets.map((onset, i) => ({ onsetIndex: i, tick: onset.tick }));
   score.totalTicks = BAR + 3 * TICKS_PER_QUARTER;

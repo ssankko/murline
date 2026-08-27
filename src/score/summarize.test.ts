@@ -9,10 +9,8 @@ function note(midi: number, onsetTick: number, over: Partial<Note> = {}): Note {
     midi,
     staff: 0,
     hand: 'right',
-    voice: 1,
     onsetTick,
     durationTicks: TICKS_PER_QUARTER,
-    tieStart: false,
     tiedFrom: false,
     grace: false,
     strikeable: true,
@@ -28,7 +26,6 @@ function scoreOf(onsetNotes: Note[][]): Score {
     tick: i * TICKS_PER_QUARTER,
     measureIndex: 0,
     notes,
-    timestamp: undefined as unknown as Onset['timestamp'],
   }));
   return {
     title: '',
@@ -53,7 +50,7 @@ function scoreOf(onsetNotes: Note[][]): Score {
         beatUnit: 4,
       },
     ],
-    keys: [{ measureIndex: 0, measureNumber: 1, sharps: -3, mode: 1 }],
+    keys: [{ measureIndex: 0, sharps: -3, mode: 1 }],
     chords: [],
     harmony: [],
   };

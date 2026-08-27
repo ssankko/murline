@@ -74,10 +74,8 @@ export function buildScore(sheet: MusicSheet): Score {
             midi: source.Pitch.getHalfTone() + 12,
             staff,
             hand: oneStaff || staff === 0 ? 'right' : 'left',
-            voice: entry.ParentVoice?.VoiceId ?? 1,
             onsetTick: tick,
             durationTicks: durationOf(source),
-            tieStart: !!source.NoteTie && source.NoteTie.StartNote === source,
             tiedFrom,
             grace: source.IsGraceNote,
             strikeable: !tiedFrom,
@@ -92,7 +90,7 @@ export function buildScore(sheet: MusicSheet): Score {
         it.moveToNext();
         continue;
       }
-      onset = { tick, measureIndex, notes, timestamp: it.CurrentSourceTimestamp.clone() };
+      onset = { tick, measureIndex, notes };
       onsetByTick.set(tick, onset);
     }
     steps.push({ tick, playedTick });
@@ -215,7 +213,6 @@ function keysOf(sheet: MusicSheet): KeyChange[] {
     if (last && last.sharps === key.Key && last.mode === key.Mode) return;
     keys.push({
       measureIndex: index,
-      measureNumber: measure.MeasureNumber,
       sharps: key.Key,
       mode: key.Mode,
     });

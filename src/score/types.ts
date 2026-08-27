@@ -2,7 +2,7 @@
 // opens, never stored. Everything in it is integer ticks; the OSMD objects it keeps are the bridge
 // back to the drawn sheet.
 
-import type { Fraction, Note as OsmdNote } from 'opensheetmusicdisplay';
+import type { Note as OsmdNote } from 'opensheetmusicdisplay';
 
 /** Time unit of the whole app. A quarter note is 960 ticks, so triplets and 64ths stay integers. */
 export const TICKS_PER_QUARTER = 960;
@@ -21,12 +21,10 @@ export interface Note {
   staff: number;
   /** Staff 0 is the right hand, staff 1 the left; a one-staff part is all right hand. */
   hand: Hand;
-  voice: number;
   /** Sheet tick, the same value on every pass of a repeat. */
   onsetTick: number;
   /** The whole tie chain on the note that starts it, the written length otherwise; 0 for a grace. */
   durationTicks: number;
-  tieStart: boolean;
   /** A tie continuation: it sounds on from the previous note and is never struck. */
   tiedFrom: boolean;
   grace: boolean;
@@ -45,8 +43,6 @@ export interface Onset {
   tick: number;
   measureIndex: number;
   notes: Note[];
-  /** OSMD's own timestamp, opaque, the way to place a `MusicPartManagerIterator` here. */
-  timestamp: Fraction;
 }
 
 /** One step of the played timeline: which Onset sounds, and when in played time. */
@@ -81,7 +77,6 @@ export interface KeyChange {
   sharps: number;
   /** OSMD's `KeyEnum`: 0 major, 1 minor, and the church modes above. */
   mode: number;
-  measureNumber: number;
 }
 
 /** A `<harmony>` symbol written in the file. */

@@ -50,7 +50,7 @@ describe('the Score of a piece', () => {
     const built = await score('JohannSebastianBach_PraeludiumInCDur_BWV846_1.xml');
     expect(built.partCount).toBe(1);
     expect(built.staffCount).toBe(2);
-    expect(built.keys).toEqual([{ measureIndex: 0, measureNumber: 1, sharps: 0, mode: 0 }]);
+    expect(built.keys).toEqual([{ measureIndex: 0, sharps: 0, mode: 0 }]);
     expect(built.measures.length).toBe(35);
     expect(built.measures[0]).toMatchObject({
       number: 1,
@@ -69,10 +69,10 @@ describe('the Score of a piece', () => {
     expect(notes.every((n) => n.hand === (n.staff === 0 ? 'right' : 'left'))).toBe(true);
     expect(notes.every((n) => n.midi >= 21 && n.midi <= 108)).toBe(true);
     expect(notes.every((n) => n.strikeable === !n.tiedFrom)).toBe(true);
-    // The prelude ties its bass and tenor over each bar, so the chain is longer than one bar.
-    const tied = notes.filter((n) => n.tieStart);
-    expect(tied.length).toBeGreaterThan(0);
-    expect(tied.every((n) => n.durationTicks > 0)).toBe(true);
+    // The prelude ties its bass and tenor across each bar line, so a chain sounds a whole bar
+    // while every written note of the piece is a sixteenth or a quarter.
+    expect(notes.some((n) => n.tiedFrom)).toBe(true);
+    expect(Math.max(...notes.map((n) => n.durationTicks))).toBe(4 * TICKS_PER_QUARTER);
   });
 
   test('a repeat replays the same Onsets at later played ticks', async () => {

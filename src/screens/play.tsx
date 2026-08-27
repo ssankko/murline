@@ -61,7 +61,7 @@ import { clampSection, sectionLabel, type Section } from '@/play/section';
 import { useFrameLoop } from '@/play/use-frame-loop';
 import { bpmAt, ScoreError, type Measure } from '@/score/types';
 import { Button } from '@/components/ui/button';
-import { GearPopover, SettingsDialog, type SettingChange } from '@/screens/settings';
+import { GearPopover, SettingsDialog, ViewPopover, type SettingChange } from '@/screens/settings';
 import { Sheet } from '@/sheet/sheet';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
@@ -532,6 +532,7 @@ export function PlayScreen({
             onUseGlobalDefaults={() => useGlobalDefaults().catch(console.error)}
             onAllSettings={() => setSettingsOpen(true)}
           />
+          <ViewPopover onChange={applyGlobal} />
 
           {/* The play disc keeps the window's midline whatever the two sides hold. */}
           <div className="absolute left-1/2 flex -translate-x-1/2 items-center gap-0.5">

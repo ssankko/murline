@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   LANE_KNOBS,
   PIECE_DEFAULT_KEYS,
@@ -36,7 +37,7 @@ import { validNumber, type PieceSettings } from '@/play/resolve';
 import { TEMPO_RANGE, type HandsSetting, type KeyboardPreset } from '@/play/settings';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Eye } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 /** The whole keyboard, the span both note dropdowns offer. */
@@ -69,16 +70,6 @@ const LANE_FIELDS: [key: keyof typeof LANE_KNOBS, label: string, min: number, ma
   ['lane_lookahead', 'Lookahead (beats)', 1, 32],
   ['lane_note_width', 'Note width (%)', 10, 100],
   ['lane_gap', 'Gap (px)', 0, 20],
-];
-
-type ViewKey = 'sheet_harmony' | 'sheet_colour' | 'lane_harmony' | 'lane_colour';
-
-/** The harmony display and the pitch colouring, switchable on each of the two views. */
-const VIEW_FIELDS: [key: ViewKey, label: string][] = [
-  ['sheet_harmony', 'Harmony on sheet'],
-  ['sheet_colour', 'Pitch colours on sheet'],
-  ['lane_harmony', 'Harmony in falling notes'],
-  ['lane_colour', 'Pitch colours in falling notes'],
 ];
 
 /** Every Grade knob in one place: the group is uniform, so it is drawn from a list. */
@@ -286,9 +277,7 @@ export function SettingsDialog({
               reset([
                 ...LANE_FIELDS.map(([key]) => key),
                 'sheet_split',
-                'sheet_proportional',
                 'keyboard_labels',
-                ...VIEW_FIELDS.map(([key]) => key),
                 'click_volume',
                 'theme',
               ])
@@ -312,26 +301,12 @@ export function SettingsDialog({
                 onChange={(value) => write('sheet_split', value)}
               />
             </Row>
-            <Row
-              label="Space notes by time"
-              hint="Measures and notes take width in proportion to their duration, so the cursor moves at a constant speed."
-            >
-              <Toggle
-                value={values.sheet_proportional}
-                onChange={(value) => write('sheet_proportional', value)}
-              />
-            </Row>
             <Row label="Note names on keys">
               <Toggle
                 value={values.keyboard_labels}
                 onChange={(value) => write('keyboard_labels', value)}
               />
             </Row>
-            {VIEW_FIELDS.map(([key, label]) => (
-              <Row key={key} label={label}>
-                <Toggle value={values[key]} onChange={(value) => write(key, value)} />
-              </Row>
-            ))}
             <Row label="Click volume">
               <NumberField
                 value={values.click_volume}
@@ -534,6 +509,103 @@ export function GearPopover({
               All settings…
             </button>
           </div>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/**
+ * The eye in the play bar: what the two views show of a note beyond its place in time. Every
+ * control is a global setting, written at once and handed to `onChange` so the play applies it.
+ */
+export function ViewPopover({ onChange }: { onChange: (...change: SettingChange) => void }) {
+  const [values, setValues] = useState<Settings | null>(null);
+
+  useEffect(() => {
+    readSettings().then(setValues, console.error);
+  }, []);
+
+  function write<K extends keyof Settings>(key: K, value: Settings[K]): void {
+    setValues((held) => held && { ...held, [key]: value });
+    setSetting(key, value).catch(console.error);
+    // The pair comes straight out of this function's own key type, so it is one of the union.
+    onChange(...([key, value] as SettingChange));
+  }
+
+  // Reading again at every open keeps this popover in step with the settings dialog.
+  return (
+    <Popover onOpenChange={(open) => open && readSettings().then(setValues, console.error)}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <button
+              aria-label="View"
+              className="hover:bg-ink/8 relative flex h-8 w-8 flex-none items-center justify-center rounded-md transition-colors duration-150"
+            >
+              <Eye size={18} strokeWidth={1.75} />
+            </button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">View</TooltipContent>
+      </Tooltip>
+      <PopoverContent side="bottom" align="start" className="flex w-64 flex-col gap-4 p-3">
+        {values && (
+          <>
+            <PopoverGroup title="Sheet">
+              <Row label="Harmony">
+                <Toggle
+                  value={values.sheet_harmony}
+                  onChange={(value) => write('sheet_harmony', value)}
+                />
+              </Row>
+              <Row label="Pitch colours">
+                <Toggle
+                  value={values.sheet_colour}
+                  onChange={(value) => write('sheet_colour', value)}
+                />
+              </Row>
+              <Row label="Space notes by time">
+                <Toggle
+                  value={values.sheet_proportional}
+                  onChange={(value) => write('sheet_proportional', value)}
+                />
+              </Row>
+              <Row label="Spacing">
+                <span className="flex flex-none items-center gap-2">
+                  <input
+                    type="range"
+                    aria-label="Sheet spacing in percent"
+                    min={100}
+                    max={300}
+                    step={5}
+                    value={values.sheet_spacing}
+                    disabled={!values.sheet_proportional}
+                    onChange={(event) => write('sheet_spacing', Number(event.target.value))}
+                    className="accent-ink w-24 disabled:opacity-30"
+                  />
+                  <span className="text-muted-ink w-8 text-right text-[11px] tabular-nums">
+                    {values.sheet_spacing}
+                  </span>
+                </span>
+              </Row>
+            </PopoverGroup>
+
+            <PopoverGroup title="Falling notes">
+              <Row label="Harmony">
+                <Toggle
+                  value={values.lane_harmony}
+                  onChange={(value) => write('lane_harmony', value)}
+                />
+              </Row>
+              <Row label="Pitch colours">
+                <Toggle
+                  value={values.lane_colour}
+                  onChange={(value) => write('lane_colour', value)}
+                />
+              </Row>
+            </PopoverGroup>
+          </>
         )}
       </PopoverContent>
     </Popover>

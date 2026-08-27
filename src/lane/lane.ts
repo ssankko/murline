@@ -108,7 +108,7 @@ const NOTICE_FADE_MS = 150;
 const GREY = '#8b8b93';
 
 const NOTE_RADIUS = 3;
-/** The name on a block: its font, the shortest block that holds it, and the room it wants each side. */
+/** The name on a block: its font, the pill height a short block grows, and the room it wants each side. */
 const NAME_FONT = '600 11px system-ui, sans-serif';
 const NAME_MIN_H = 16;
 const NAME_PAD = 4;
@@ -1024,16 +1024,29 @@ export class Lane {
           ctx.stroke();
         }
 
-        // The name rides the landing edge, where the eye already is, and only on a block with the
-        // room to hold it whole: a name is never shrunk to fit.
-        if (this.look.names && height >= NAME_MIN_H) {
+        // The name rides the landing edge, where the eye already is. A block too thin or too short
+        // to hold it whole grows a pill in its own fill around the name, so the name is never
+        // shrunk and never left off.
+        if (this.look.names) {
           const name = NOTE_NAMES[pitchClass(note.midi)]!;
           ctx.font = NAME_FONT;
-          if (ctx.measureText(name).width <= width - NAME_PAD) {
-            ctx.fillStyle = labelInk(fill);
-            ctx.textAlign = 'center';
-            ctx.fillText(name, x + width / 2, blockY + height - 6);
+          const need = ctx.measureText(name).width + NAME_PAD * 2;
+          if (need > width || height < NAME_MIN_H) {
+            const pillW = Math.max(need, width);
+            ctx.fillStyle = fill;
+            ctx.beginPath();
+            ctx.roundRect(
+              x + width / 2 - pillW / 2,
+              blockY + height - NAME_MIN_H,
+              pillW,
+              NAME_MIN_H,
+              NAME_MIN_H / 2,
+            );
+            ctx.fill();
           }
+          ctx.fillStyle = labelInk(fill);
+          ctx.textAlign = 'center';
+          ctx.fillText(name, x + width / 2, blockY + height - 6);
         }
       }
 

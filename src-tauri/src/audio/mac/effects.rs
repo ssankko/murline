@@ -161,7 +161,7 @@ pub fn apply(graph: &mut Graph, wanted: Vec<Slot>) -> Vec<Slot> {
     // AVAudioEngine flushes every sounding voice when a connection changes, so the path is touched
     // only when it is really another one: a bypass or a state change alone never interrupts a note.
     if wiring(&graph.chain) != wired {
-        rewire(graph);
+        let _ = rewire(graph);
     }
     slots(graph)
 }
@@ -211,7 +211,11 @@ fn slots(graph: &Graph) -> Vec<Slot> {
 /// missing is left out; a bypassed one stays in the path and passes its sound through untouched.
 /// The head is whichever node the notes go to, so a hosted plugin instrument plays through the
 /// chain exactly as the sampler does and the one it replaces is left connected to nothing.
-pub(super) fn rewire(graph: &Graph) {
+///
+/// The sampler's file is read in on the way, while the node is out of the path: connecting it is
+/// what initialises it, and an initialised AUSampler loses whatever was loaded into it. Answers
+/// with what that read said, so the load a caller asked for has an outcome to report.
+pub(super) fn rewire(graph: &Graph) -> Result<(), String> {
     let engine = &graph.engine;
     unsafe {
         engine.disconnectNodeOutput(&graph.sampler);
@@ -223,6 +227,7 @@ pub(super) fn rewire(graph: &Graph) {
                 engine.disconnectNodeOutput(unit);
             }
         }
+        let loaded = graph.reload();
         let mixer = engine.mainMixerNode();
         let mut path: Vec<&AVAudioNode> = vec![graph.target()];
         for held in &graph.chain {
@@ -234,6 +239,7 @@ pub(super) fn rewire(graph: &Graph) {
         for pair in path.windows(2) {
             engine.connect_to_format(pair[0], pair[1], Some(&graph.format));
         }
+        loaded
     }
 }
 

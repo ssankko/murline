@@ -28,7 +28,7 @@ use objc2_avf_audio::{
 #[cfg(test)]
 use objc2_avf_audio::AVAudioEngineManualRenderingStatus;
 use objc2_foundation::{NSError, NSString, NSURL};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::ptr::{NonNull, from_ref};
 use std::sync::{Mutex, Once};
 use std::thread::sleep;
@@ -100,6 +100,10 @@ pub struct Graph {
     weak: Retained<AVAudioPCMBuffer>,
     /// The effects between the sampler and the mixer, in the order they play.
     chain: Vec<effects::Held>,
+    /// The file the sampler plays. AUSampler holds a loaded instrument only from the load to the
+    /// next time its node is initialised, and the engine initialises the node on every start and
+    /// on every change of the wiring, so the file goes back in each time.
+    file: Option<PathBuf>,
     /// Frames one offline render pass may take at most, zero while the graph plays to a device.
     offline_frames: u32,
     /// The instrument the user picked, which is what makes the engine playable.
@@ -145,6 +149,7 @@ impl Graph {
                 plugin: None,
                 clicker,
                 chain: Vec::new(),
+                file: None,
                 offline_frames: 0,
                 chosen: None,
                 chosen_device: None,
@@ -159,10 +164,16 @@ impl Graph {
     /// Starts the graph on the output device.
     pub fn start(&self) -> Result<(), String> {
         let _turn = LOADING.lock().unwrap();
+        // Starting initialises the sampler, which is what makes a load stick and what loses the
+        // load before it, so the file is read in first while the node is still uninitialised.
+        let _ = self.reload();
         unsafe {
             self.engine.prepare();
             self.engine.startAndReturnError().map_err(reason)?;
-            // The click player runs from here on; every click is one buffer scheduled onto it.
+            // The click player runs from here on; every click is one buffer scheduled onto it. A
+            // player the engine stopped underneath still answers that it is playing, so playing it
+            // again would be a no-op and every later click silent: it is stopped first.
+            self.clicker.stop();
             self.clicker.play();
         }
         Ok(())
@@ -232,32 +243,42 @@ impl Graph {
     /// Loads an instrument file into the sampler: a SoundFont's first melodic program, or an EXS
     /// or AUPreset whole. Reads from disk, so never from the audio thread.
     pub fn load_file(&mut self, path: &Path) -> Result<(), String> {
-        let sound_bank = path.extension().is_some_and(|kind| kind.eq_ignore_ascii_case("sf2"));
-        if sound_bank && not_a_sound_font(path) {
+        if sound_bank(path) && not_a_sound_font(path) {
             return Err("That file is not a SoundFont".into());
         }
         // Nothing of the old instrument may ring on through the new one.
         self.release_all();
-        let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
         let _turn = LOADING.lock().unwrap();
+        self.file = Some(path.to_path_buf());
+        self.drop_plugin();
+        // The sampler is the instrument again, so it takes the head of the chain back, and the
+        // rewire is what reads the file in on the way.
+        effects::rewire(self)
+    }
+
+    /// Reads the sampler's file into it again. Called with the node out of the path or the engine
+    /// stopped, which is the one state AUSampler takes a load in: a load made while the node is
+    /// initialised is answered with success and dropped, and the sampler goes on playing the sine
+    /// it plays when it holds nothing at all.
+    fn reload(&self) -> Result<(), String> {
+        if self.plugin.is_some() {
+            return Ok(());
+        }
+        let Some(path) = &self.file else { return Ok(()) };
+        let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
         unsafe {
-            if sound_bank {
-                self.sampler
-                    .loadSoundBankInstrumentAtURL_program_bankMSB_bankLSB_error(
-                        &url,
-                        0,
-                        MELODIC_BANK_MSB,
-                        0,
-                    )
-                    .map_err(reason)?;
+            if sound_bank(path) {
+                self.sampler.loadSoundBankInstrumentAtURL_program_bankMSB_bankLSB_error(
+                    &url,
+                    0,
+                    MELODIC_BANK_MSB,
+                    0,
+                )
             } else {
-                self.sampler.loadInstrumentAtURL_error(&url).map_err(reason)?;
+                self.sampler.loadInstrumentAtURL_error(&url)
             }
         }
-        self.drop_plugin();
-        // The sampler is the instrument again, so it takes the head of the chain back.
-        effects::rewire(self);
-        Ok(())
+        .map_err(reason)
     }
 
     /// Puts a hosted Audio Unit instrument in the sampler's place, taking out whichever one played
@@ -269,7 +290,7 @@ impl Graph {
         self.plugin = Some(unit);
         // Through the effects, not straight to the mixer: the chain belongs to the instrument
         // whichever kind it is.
-        effects::rewire(self);
+        let _ = effects::rewire(self);
     }
 
     fn drop_plugin(&mut self) {
@@ -455,6 +476,11 @@ impl Graph {
             self.clicker.scheduleBuffer_completionHandler(buffer, std::ptr::null_mut());
         }
     }
+}
+
+/// A SoundFont goes into the sampler by a call of its own, and every other kind whole.
+fn sound_bank(path: &Path) -> bool {
+    path.extension().is_some_and(|kind| kind.eq_ignore_ascii_case("sf2"))
 }
 
 /// True when the file opens and holds something that is plainly no SoundFont. AUSampler traps
@@ -739,6 +765,24 @@ mod tests {
         graph
     }
 
+    /// The sine AUSampler plays when it holds no instrument at all. Every test here that hears the
+    /// fixture is worth only the difference between the two sounds, so it has a name.
+    fn the_samplers_own_sine() -> f32 {
+        let mut graph = Graph::build().unwrap();
+        graph.start_offline(PASS).unwrap();
+        note_peak(&mut graph)
+    }
+
+    /// Plays a note and lets it go again, answering how loud it was. Two instruments differ in
+    /// that number, which is all a test needs to tell one from the other.
+    fn note_peak(graph: &mut Graph) -> f32 {
+        graph.note_on(60, 100);
+        let peak = graph.render_peak(LOOK).unwrap();
+        graph.release_all();
+        graph.render_peak(LOOK).unwrap();
+        peak
+    }
+
     fn preview_note(midi: u8, on: f64, off: f64) -> PreviewNote {
         PreviewNote { midi, velocity: 100, on, off }
     }
@@ -748,10 +792,92 @@ mod tests {
         (0..passes).find(|_| graph.render_peak(PASS).unwrap() > 0.01)
     }
 
+    /// The one test that plays out of the real output device, in the order the app boots, so that
+    /// a human can hear what no assertion here can tell: that the piano is a piano and that the
+    /// metronome clicks. Run it with `cargo test -- --ignored the_boot_order` and listen.
+    #[test]
+    #[ignore]
+    fn the_boot_order_on_this_mac_plays_a_piano_and_then_a_bar_of_clicks() {
+        let graph = Graph::build().unwrap();
+        graph.start().unwrap();
+        install(graph);
+
+        set_output_device(None).unwrap();
+        set_buffer_frames(DEFAULT_FRAMES).unwrap();
+        let piano = instruments("")
+            .into_iter()
+            .find(|one| one.name == "Concert Grand Piano")
+            .expect("Logic's Concert Grand Piano is on this Mac");
+        load_instrument(&piano.id, None).unwrap();
+        set_chain(Vec::new()).unwrap();
+        assert!(status().available, "{}", status().reason);
+
+        for midi in [60, 64, 67] {
+            note(midi, 90, true);
+        }
+        sleep(Duration::from_millis(2500));
+        for midi in [60, 64, 67] {
+            note(midi, 0, false);
+        }
+        sleep(Duration::from_millis(500));
+        for beat in 0..4 {
+            click(beat == 0, 70);
+            sleep(Duration::from_millis(500));
+        }
+    }
+
     #[test]
     fn the_fixture_loads_and_an_untouched_graph_is_silent() {
         let mut graph = offline();
         assert_eq!(graph.render_peak(LOOK).unwrap(), 0.0);
+    }
+
+    /// The app loads its instrument into an engine that has been running since boot, and AUSampler
+    /// takes a load in that state without a word and goes on playing its own sine.
+    #[test]
+    fn a_file_loaded_into_a_running_graph_is_what_sounds() {
+        let mut graph = Graph::build().unwrap();
+        graph.start_offline(PASS).unwrap();
+        graph.load_file(Path::new(FIXTURE)).unwrap();
+
+        let peak = note_peak(&mut graph);
+        assert!(peak > 0.01, "the fixture sounds");
+        assert_ne!(peak, the_samplers_own_sine(), "and it is the fixture, not the empty sampler");
+    }
+
+    /// Both settings put the sampler's node together again, and AUSampler drops its instrument
+    /// every time one is: the Audio dialog would otherwise turn the piano back into the sine.
+    #[test]
+    fn the_instrument_lives_through_a_restart_and_a_change_of_the_chain() {
+        let sine = the_samplers_own_sine();
+        let mut graph = offline();
+        assert_ne!(note_peak(&mut graph), sine, "the fixture is what plays");
+
+        // What a change of output device or buffer does underneath the graph.
+        unsafe { graph.engine.stop() };
+        graph.start().unwrap();
+        assert_ne!(note_peak(&mut graph), sine, "and after the engine has been round again");
+
+        effects::apply(&mut graph, vec![crate::audio::Slot {
+            id: "aufx:rvb2:appl".into(),
+            name: String::new(),
+            bypass: true,
+            state: String::new(),
+            missing: false,
+        }]);
+        assert_ne!(note_peak(&mut graph), sine, "and after the chain changed under it");
+    }
+
+    /// Every output device and buffer setting stops and starts the engine, and the app applies one
+    /// of each at boot, so the click has to live through it.
+    #[test]
+    fn the_click_sounds_after_the_engine_has_stopped_and_started() {
+        let mut graph = offline();
+        unsafe { graph.engine.stop() };
+        graph.start().unwrap();
+
+        graph.click(true, 100);
+        assert!(graph.render_peak(LOOK).unwrap() > 0.01);
     }
 
     #[test]

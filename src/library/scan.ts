@@ -3,7 +3,7 @@
 
 import { ScoreError } from '@/score/types';
 import { invoke } from '@tauri-apps/api/core';
-import { indexFile } from './index-file';
+import { indexFile, pathOf } from './index-file';
 import {
   knownFiles,
   markError,
@@ -48,10 +48,18 @@ export function planScan(files: FileEntry[], known: KnownFile[]): ScanAction[] {
   return actions;
 }
 
-/** Walks the whole library folder. Rejects when the folder itself is gone. */
+/** The folder whose scan has finished. A folder that failed is not remembered, so it is retried. */
+let scanned: string | null = null;
+
+/**
+ * Walks the whole library folder, once per folder value: the launch scan, and again only when the
+ * library points somewhere else. Rejects when the folder itself is gone.
+ */
 export async function scanLibrary(folder: string): Promise<void> {
+  if (scanned === folder) return;
   const files = await invoke<FileEntry[]>('list_library', { folder });
   await apply(folder, planScan(files, await knownFiles()));
+  scanned = folder;
 }
 
 /** Brings one piece up to date before it opens, in case the file changed under the app. */
@@ -77,7 +85,7 @@ async function apply(folder: string, actions: ScanAction[]): Promise<void> {
 
 async function index(folder: string, file: FileEntry): Promise<void> {
   try {
-    const summary = await indexFile(`${folder}/${file.rel_path}`);
+    const summary = await indexFile(pathOf(folder, file.rel_path));
     await upsertIndex(file.rel_path, summary, file.mtime, file.size);
   } catch (error) {
     const reason =
@@ -86,4 +94,12 @@ async function index(folder: string, file: FileEntry): Promise<void> {
         : `Could not read the file: ${String(error)}`;
     await markError(file.rel_path, reason, file.mtime, file.size);
   }
+}
+
+/** The `error` column of a piece, as `index` writes it: the fixed reason, then the raw message. */
+export function splitError(error: string): { reason: string; detail: string } {
+  const at = error.indexOf(': ');
+  return at < 0
+    ? { reason: error, detail: '' }
+    : { reason: error.slice(0, at), detail: error.slice(at + 2) };
 }

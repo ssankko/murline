@@ -69,6 +69,7 @@ export function buildScore(sheet: MusicSheet): Score {
         for (const source of entry.Notes) {
           const staff = staffIndexOf.get(source.ParentStaff);
           if (staff === undefined || !playable(source)) continue;
+          const tiedFrom = !!source.NoteTie && source.NoteTie.StartNote !== source;
           notes.push({
             midi: source.Pitch.getHalfTone() + 12,
             staff,
@@ -77,9 +78,9 @@ export function buildScore(sheet: MusicSheet): Score {
             onsetTick: tick,
             durationTicks: durationOf(source),
             tieStart: !!source.NoteTie && source.NoteTie.StartNote === source,
-            tiedFrom: !!source.NoteTie && source.NoteTie.StartNote !== source,
+            tiedFrom,
             grace: source.IsGraceNote,
-            strikeable: !(!!source.NoteTie && source.NoteTie.StartNote !== source),
+            strikeable: !tiedFrom,
             velocity: velocityAt(dynamics[staff], tick),
             measureIndex,
             source,

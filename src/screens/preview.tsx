@@ -2,8 +2,9 @@
 // column of systems that scrolls down. Nothing here clocks, listens to MIDI or writes.
 
 import { Button } from '@/components/ui/button';
-import { readScoreFile } from '@/library/index-file';
+import { baseNameOf, pathOf, readScoreFile } from '@/library/index-file';
 import { setNotice } from '@/library/notice';
+import { getPiece } from '@/library/queries';
 import { reindexIfChanged } from '@/library/scan';
 import { useDark } from '@/look/use-dark';
 import { ScoreError } from '@/score/types';
@@ -33,24 +34,25 @@ export function PreviewScreen({
   const backRef = useRef(onBack);
   backRef.current = onBack;
 
-  const [title, setTitle] = useState(path.split('/').pop() ?? path);
+  const [title, setTitle] = useState(baseNameOf(path));
 
   // Opening a piece: bring its index up to date in case the file changed, read the bytes and draw
   // them. Any failure goes back to the library, which says what went wrong.
   useEffect(() => {
     let live = true;
-    const fileName = path.split('/').pop() ?? path;
+    const fileName = baseNameOf(path);
     void (async () => {
       try {
         await reindexIfChanged(folder, path);
-        const bytes = await readScoreFile(`${folder}/${path}`);
+        const bytes = await readScoreFile(pathOf(folder, path));
         const sheet = await PreviewSheet.open(hostRef.current!, bytes, fileName, darkRef.current);
         if (!live) return sheet.dispose();
         sheetRef.current = sheet;
         setTitle(sheet.score.title || fileName);
       } catch (error) {
         const reason = error instanceof ScoreError ? error.reason : String(error);
-        setNotice(`Could not open ${fileName}: ${reason}`);
+        const row = await getPiece(path).catch(() => null);
+        setNotice(`Could not open ${row?.title ?? fileName}: ${reason}`);
         if (live) backRef.current();
       }
     })();

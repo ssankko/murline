@@ -17,7 +17,9 @@ const indexed: { path: string; title: string }[] = [];
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: async (command: string, args: Record<string, string>) => {
     if (command === 'read_file') {
-      const url = FIXTURES[`../score/fixtures/${args.path!.split('/').pop()}`];
+      const name = args.path!.split('/').pop()!;
+      if (name === 'locked.musicxml') throw new Error(`Permission denied (os error 13)`);
+      const url = FIXTURES[`../score/fixtures/${name}`];
       if (!url) throw new Error(`No such file or directory (os error 2): ${args.path}`);
       return (await fetch(url as string)).arrayBuffer();
     }
@@ -57,6 +59,7 @@ describe('a file the app cannot turn into a Score', () => {
     ['timewise.musicxml', 'Not a MusicXML file'],
     ['rests-only.musicxml', 'No notes in the first part'],
     ['gone.musicxml', 'File not found'],
+    ['locked.musicxml', 'Could not read the file'],
   ];
 
   test.each(cases)('%s fails with "%s" and is never copied', async (fileName, reason) => {
@@ -89,6 +92,12 @@ describe('a file the app can read', () => {
     const result = await importOne('dynamics-and-tempo.musicxml');
     expect(result.imported).toEqual(['dynamics-and-tempo (3).musicxml']);
     expect(copies[0]!.dst).toBe('/library/dynamics-and-tempo (3).musicxml');
+  });
+
+  test('a name that differs only in case is the same file to the folder', async () => {
+    folderFiles = ['Dynamics-And-Tempo.MUSICXML'];
+    const result = await importOne('dynamics-and-tempo.musicxml');
+    expect(result.imported).toEqual(['dynamics-and-tempo (2).musicxml']);
   });
 
   test('Replace keeps the path, so the row and its history survive', async () => {

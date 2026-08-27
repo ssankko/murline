@@ -13,8 +13,9 @@ export function Onboarding({ onDone }: { onDone: (folder: string) => void }) {
   const [error, setError] = useState<string | null>(null);
   const midi = useMidiStatus();
 
+  // A home directory the app cannot read leaves the field empty for the user to fill or choose.
   useEffect(() => {
-    invoke<string>('home_dir').then((home) => setFolder(`${home}/Music/Piano`));
+    void invoke<string>('home_dir').then((home) => setFolder(`${home}/Music/Piano`), () => {});
   }, []);
 
   async function choose() {
@@ -54,7 +55,7 @@ export function Onboarding({ onDone }: { onDone: (folder: string) => void }) {
             spellCheck={false}
             aria-label="Library folder"
           />
-          <Button variant="outline" onClick={choose}>
+          <Button variant="outline" onClick={() => void choose().catch((e: unknown) => setError(String(e)))}>
             Choose…
           </Button>
         </div>

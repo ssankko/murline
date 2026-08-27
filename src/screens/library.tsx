@@ -14,7 +14,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { baseNameOf } from '@/library/index-file';
+import { baseNameOf, pathOf } from '@/library/index-file';
 import {
   importFiles,
   SCORE_EXTENSIONS,
@@ -23,27 +23,19 @@ import {
 } from '@/library/import';
 import { setNotice, useNotice } from '@/library/notice';
 import {
+  allPiecePaths,
   deletePiece,
   listPieces,
-  recentPlays,
   setFavorite,
   type PieceRow,
-  type PlayRow,
   type SortOrder,
 } from '@/library/queries';
-import { scanLibrary } from '@/library/scan';
-import { colorOf, noteName } from '@/look/color';
-import { useDark } from '@/look/use-dark';
+import { scanLibrary, splitError } from '@/library/scan';
 import { setSetting } from '@/db/db';
-import {
-  readPieceDefaults,
-  resolvePlaySettings,
-  type Inherited,
-  type PieceSettings,
-} from '@/play/resolve';
+import { readPieceDefaults, type PieceSettings } from '@/play/resolve';
 import { Finder } from '@/screens/finder';
+import { Detail } from '@/screens/piece-detail';
 import { SettingsDialog } from '@/screens/settings';
-import { RangeStrip } from '@/screens/range-strip';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -81,7 +73,8 @@ export function Library({
   const [notice, dismissNotice] = useNotice();
   const [dragging, setDragging] = useState(false);
   const [clash, setClash] = useState<Clash | null>(null);
-  const [finding, setFinding] = useState(false);
+  /** The lower-cased file names of every present piece, read when the finder opens. */
+  const [finding, setFinding] = useState<Set<string> | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [defaults, setDefaults] = useState<Partial<PieceSettings>>({});
 
@@ -90,7 +83,8 @@ export function Library({
     void readPieceDefaults().then(setDefaults);
   }, [settingsOpen]);
 
-  // The scan runs once, at launch. Nothing watches the folder and the page never rescans.
+  // The scan runs once per folder, so only a re-point walks the folder again. The sort the user
+  // chose is read as it stands, which a re-point must not undo.
   useEffect(() => {
     let live = true;
     void (async () => {
@@ -100,8 +94,12 @@ export function Library({
       } catch {
         if (live) setFolderGone(true);
       }
-      const rows = await listPieces();
-      if (live) setPieces(rows);
+      try {
+        const rows = await listPieces(sort);
+        if (live) setPieces(rows);
+      } catch (error) {
+        if (live) setNotice(`Could not read the library: ${String(error)}`);
+      }
     })();
     return () => {
       live = false;
@@ -150,7 +148,8 @@ export function Library({
     const { imported, failures } = await importFiles(folder, paths, askClash);
     setPieces(await listPieces(sort));
     if (imported.length) setSelected(imported[imported.length - 1]!);
-    setNotice(failures.length ? failureNotice(failures) : null);
+    // Successes are silent, and they leave a notice about something else where it is.
+    if (failures.length) setNotice(failureNotice(failures));
   }
 
   /** A new library folder: the setting moves, the launch scan runs again, no file is touched. */
@@ -159,6 +158,12 @@ export function Library({
     if (typeof picked !== 'string') return;
     await setSetting('library_folder', picked);
     onFolder(picked);
+  }
+
+  /** "In library" answers for the whole folder, not for the rows the current sort shows. */
+  async function openFinder(): Promise<void> {
+    const paths = await allPiecePaths();
+    setFinding(new Set(paths.map((path) => baseNameOf(path).toLowerCase())));
   }
 
   async function pickFiles(): Promise<void> {
@@ -171,7 +176,16 @@ export function Library({
 
   /** Trash, row, plays, then the row that took its place in the list. */
   async function remove(target: PieceRow): Promise<void> {
-    await invoke('trash_file', { path: `${folder}/${target.path}` });
+    if (!folder) return;
+    try {
+      await invoke('trash_file', { path: pathOf(folder, target.path) });
+    } catch (error) {
+      // A file already gone from disk still drops its piece; any other refusal keeps the row.
+      if (!/no such file|not found/i.test(String(error))) {
+        setNotice(`Could not delete ${target.title ?? target.path}: ${String(error)}`);
+        return;
+      }
+    }
     await deletePiece(target.path);
     const at = pieces.findIndex((row) => row.path === target.path);
     const rows = await listPieces(sort);
@@ -267,7 +281,7 @@ export function Library({
             variant="outline"
             size="sm"
             disabled={!folder}
-            onClick={() => setFinding(true)}
+            onClick={() => void openFinder()}
           >
             Find online
           </Button>
@@ -302,13 +316,13 @@ export function Library({
       {finding && folder && (
         <Finder
           folder={folder}
-          libraryNames={new Set(pieces.map((row) => baseNameOf(row.path)))}
+          libraryNames={finding}
           onImported={async (relPath) => {
-            setFinding(false);
+            setFinding(null);
             setPieces(await listPieces(sort));
             setSelected(relPath);
           }}
-          close={() => setFinding(false)}
+          close={() => setFinding(null)}
         />
       )}
 
@@ -391,7 +405,7 @@ function Row({
           {row.title ?? row.path}
         </b>
         <span className="text-muted-ink truncate text-[13px]">
-          {row.error ? reasonOf(row.error) : (row.composer ?? ' ')}
+          {row.error ? splitError(row.error).reason : (row.composer ?? ' ')}
         </span>
       </span>
       <span className="ml-auto text-[13px] font-medium tabular-nums">
@@ -399,343 +413,4 @@ function Row({
       </span>
     </button>
   );
-}
-
-function Detail({
-  piece,
-  folder,
-  defaults,
-  onFavorite,
-  onDelete,
-  onPlay,
-  onPreview,
-}: {
-  piece: PieceRow;
-  folder: string | null;
-  /** The Playing defaults group, the level a piece falls back to. */
-  defaults: Partial<PieceSettings>;
-  onFavorite: () => void;
-  onDelete: () => void;
-  onPlay: (path: string, intent: 'practice' | 'performance') => void;
-  onPreview: (path: string) => void;
-}) {
-  const broken = !!piece.error;
-  const fullPath = folder ? `${folder}/${piece.path}` : piece.path;
-  return (
-    <div className="flex-1 overflow-y-auto px-12 py-10">
-      <div className="flex max-w-[640px] flex-col">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-[28px] leading-tight font-semibold tracking-tight">
-              {piece.title ?? piece.path}
-              {piece.composer && (
-                <span className="text-muted-ink ml-2.5 text-[15px] font-normal">
-                  {piece.composer}
-                </span>
-              )}
-            </h2>
-            <div className="text-muted-ink mt-2 flex gap-2.5 text-[12px]">
-              {(piece.part_count ?? 1) > 1 && (
-                <span>
-                  {piece.part_name}, 1 of {piece.part_count} parts
-                </span>
-              )}
-              <code className="text-[11.5px]">{fullPath}</code>
-              <button
-                onClick={() => void invoke('reveal_in_finder', { path: fullPath })}
-                className="hover:text-ink underline underline-offset-2"
-              >
-                Reveal in Finder
-              </button>
-            </div>
-          </div>
-          <div className="flex flex-none gap-1">
-            <Button
-              variant={piece.favorite ? 'default' : 'outline'}
-              size="sm"
-              className="duration-100 motion-reduce:transition-none"
-              aria-pressed={!!piece.favorite}
-              onClick={onFavorite}
-            >
-              Favorite
-            </Button>
-            <Button variant="outline" size="sm" onClick={onDelete}>
-              Delete
-            </Button>
-          </div>
-        </div>
-
-        {broken ? (
-          <div className="mt-7 flex flex-col gap-1.5 text-[13px]">
-            <b className="font-semibold">{reasonOf(piece.error!)}</b>
-            <details className="text-muted-ink text-[12px]">
-              <summary className="cursor-pointer select-none">Details</summary>
-              <code className="mt-1 block text-[11.5px] whitespace-pre-wrap">
-                {detailOf(piece.error!)}
-              </code>
-            </details>
-          </div>
-        ) : (
-          <>
-            <div className="mt-7">
-              <RangeStrip
-                lo={piece.midi_lo ?? 21}
-                hi={piece.midi_hi ?? 108}
-                tonic={tonicOf(piece)}
-              />
-            </div>
-            <Facts piece={piece} />
-          </>
-        )}
-
-        <div className="mt-8 flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={broken || !folder}
-            onClick={() => onPreview(piece.path)}
-          >
-            Preview
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={broken || !folder}
-            onClick={() => onPlay(piece.path, 'practice')}
-          >
-            Practice
-          </Button>
-          <Button
-            size="sm"
-            disabled={broken || !folder}
-            onClick={() => onPlay(piece.path, 'performance')}
-          >
-            Perform
-          </Button>
-        </div>
-
-        <div className="mt-12 grid grid-cols-[3fr_2fr] gap-12">
-          <History piece={piece} />
-          <PlaySettingsList piece={piece} defaults={defaults} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/**
- * What the piece plays at: its own settings where it holds any, the global default elsewhere. The
- * play screen is the editor; this list only reads.
- */
-function PlaySettingsList({
-  piece,
-  defaults,
-}: {
-  piece: PieceRow;
-  defaults: Partial<PieceSettings>;
-}) {
-  const { settings, inherited } = resolvePlaySettings(piece, defaults);
-  const rows: [string, string, keyof Inherited][] = [
-    [
-      'Tempo',
-      settings.tempoMode === 'bpm' ? `♩ = ${settings.tempoValue}` : `${settings.tempoValue} %`,
-      'tempoValue',
-    ],
-    ['Metronome', settings.metronome ? 'on' : 'off', 'metronome'],
-    ['Count-in', countInText(settings.countInBars), 'countInBars'],
-    ['Hands', settings.hands, 'hands'],
-    ['Keyboard', keyboardText(settings), 'keyboardPreset'],
-  ];
-  return (
-    <section className="flex flex-col gap-3">
-      <h3 className="text-[13px] font-semibold">Play settings</h3>
-      <dl className="divide-edge-soft border-edge-soft divide-y border-y">
-        {rows.map(([label, value, field]) => (
-          <div key={label} className="flex justify-between gap-3 py-1.5 text-[12px]">
-            <dt className="text-muted-ink">{label}</dt>
-            <dd
-              className={inherited[field] ? 'text-muted-ink' : ''}
-              title={inherited[field] ? 'Global default' : undefined}
-            >
-              {value}
-            </dd>
-          </div>
-        ))}
-      </dl>
-    </section>
-  );
-}
-
-function countInText(bars: number): string {
-  return bars === 0 ? 'off' : `${bars} bar${bars === 1 ? '' : 's'}`;
-}
-
-function keyboardText(settings: PieceSettings): string {
-  if (settings.keyboardPreset === 'piece') return 'piece range';
-  if (settings.keyboardPreset === 'custom') {
-    return `${noteName(settings.keyboardLo)}–${noteName(settings.keyboardHi)}`;
-  }
-  return `${settings.keyboardPreset} keys`;
-}
-
-/**
- * What the piece has been played: the summary over the ledger of the last six plays. A practice
- * shows its time, a performance the settings it ran at and its grade.
- */
-function History({ piece }: { piece: PieceRow }) {
-  const [plays, setPlays] = useState<PlayRow[]>([]);
-
-  useEffect(() => {
-    let live = true;
-    void recentPlays(piece.path).then((rows) => {
-      if (live) setPlays(rows);
-    });
-    return () => {
-      live = false;
-    };
-  }, [piece.path]);
-
-  return (
-    <section className="flex flex-col gap-3">
-      <h3 className="text-[13px] font-semibold">History</h3>
-      {plays.length === 0 ? (
-        <p className="text-muted-ink text-[12px]">Never played.</p>
-      ) : (
-        <>
-          <p className="text-[12px]">
-            <span className="tabular-nums">{duration(piece.practised_s ?? 0)}</span> practised
-            <span className="text-muted-ink"> · best </span>
-            <span className="tabular-nums">{piece.best_grade ?? '—'}</span>
-            <span className="text-muted-ink"> · last played {day(piece.last_played)}</span>
-          </p>
-          <ul className="divide-edge-soft border-edge-soft divide-y border-y">
-            {plays.map((play) => (
-              <li
-                key={play.id}
-                className={`grid grid-cols-[4.5rem_1fr_auto_2.5rem] items-baseline gap-3 py-1.5 text-[12px] ${
-                  play.kind === 'practice' ? 'text-muted-ink' : ''
-                }`}
-              >
-                <span>{play.kind === 'practice' ? 'Practice' : 'Performance'}</span>
-                <span>{day(play.started_at)}</span>
-                <span className="tabular-nums">
-                  {play.kind === 'practice' ? duration(play.duration_s) : settingsOf(play)}
-                </span>
-                <span className="text-right tabular-nums">
-                  {play.grade ?? <span className="text-edge">—</span>}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-    </section>
-  );
-}
-
-/** The tempo and hands a performance ran at, which is what makes two grades comparable. */
-function settingsOf(play: PlayRow): string {
-  const { tempo_value: value, tempo_mode: mode } = play;
-  const tempo = value === null ? '' : mode === 'bpm' ? `♩ = ${value}` : `${value} %`;
-  return [tempo, play.hands === 'both' ? '' : play.hands].filter(Boolean).join(' · ');
-}
-
-/** Today and yesterday by name, anything older by date. */
-function day(at: number | null): string {
-  if (at === null) return '—';
-  const date = new Date(at).toDateString();
-  if (date === new Date().toDateString()) return 'today';
-  if (date === new Date(Date.now() - 86_400_000).toDateString()) return 'yesterday';
-  return new Date(at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
-}
-
-/** Muted label over value: what the piece is, before it is opened. */
-function Facts({ piece }: { piece: PieceRow }) {
-  const tonic = tonicOf(piece);
-  const facts: [string, React.ReactNode][] = [
-    ['Bars', piece.measure_count],
-    ['Length', piece.duration_s === null ? null : duration(piece.duration_s)],
-    [
-      'Range',
-      piece.midi_lo === null || piece.midi_hi === null
-        ? null
-        : `${noteName(piece.midi_lo)}–${noteName(piece.midi_hi)}`,
-    ],
-    [
-      'Key',
-      <span key="key" className="flex items-center gap-1.5">
-        {tonic !== null && <TonicDot midi={60 + tonic} />}
-        {keyName(piece)}
-      </span>,
-    ],
-    ['Tempo', tempoText(piece)],
-  ];
-  return (
-    <dl className="mt-4 flex gap-8">
-      {facts.map(([label, value]) => (
-        <div key={label} className="flex flex-col gap-0.5">
-          <dt className="text-muted-ink text-[12px]">{label}</dt>
-          <dd className="text-[15px] font-medium tabular-nums">
-            {value ?? <span className="text-edge">—</span>}
-          </dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
-
-function TonicDot({ midi }: { midi: number }) {
-  const dark = useDark();
-  return (
-    <i
-      className="inline-block size-[9px] rounded-full"
-      style={{ background: colorOf(midi, 'muted', dark) }}
-    />
-  );
-}
-
-const MAJOR_SHARP = ['C', 'G', 'D', 'A', 'E', 'B', 'F♯', 'C♯'];
-const MAJOR_FLAT = ['C', 'F', 'B♭', 'E♭', 'A♭', 'D♭', 'G♭', 'C♭'];
-const MINOR_SHARP = ['A', 'E', 'B', 'F♯', 'C♯', 'G♯', 'D♯', 'A♯'];
-const MINOR_FLAT = ['A', 'D', 'G', 'C', 'F', 'B♭', 'E♭', 'A♭'];
-
-function keyName(piece: PieceRow): string | null {
-  if (piece.key_sharps === null) return null;
-  const minor = piece.key_mode === 'minor';
-  const names = minor
-    ? piece.key_sharps >= 0
-      ? MINOR_SHARP
-      : MINOR_FLAT
-    : piece.key_sharps >= 0
-      ? MAJOR_SHARP
-      : MAJOR_FLAT;
-  return `${names[Math.abs(piece.key_sharps)]} ${minor ? 'minor' : 'major'}`;
-}
-
-/** Pitch class of the key's tonic: seven semitones per sharp, three more down for a minor key. */
-function tonicOf(piece: PieceRow): number | null {
-  if (piece.key_sharps === null) return null;
-  const major = (((piece.key_sharps * 7) % 12) + 12) % 12;
-  return piece.key_mode === 'minor' ? (major + 9) % 12 : major;
-}
-
-/** The index stores whether the piece has one tempo, not which; the number lives in the Score. */
-function tempoText(piece: PieceRow): string | null {
-  if (piece.has_tempo === null) return null;
-  if (!piece.has_tempo) return 'no tempo mark';
-  return piece.constant_tempo ? 'one tempo' : 'varies';
-}
-
-function duration(seconds: number): string {
-  const minutes = Math.floor(seconds / 60);
-  const rest = `${minutes % 60}:${String(Math.round(seconds % 60)).padStart(2, '0')}`;
-  return minutes < 60 ? rest : `${Math.floor(minutes / 60)}:${rest.padStart(5, '0')}`;
-}
-
-function reasonOf(error: string): string {
-  return error.split(': ')[0] ?? error;
-}
-
-function detailOf(error: string): string {
-  return error.split(': ').slice(1).join(': ');
 }

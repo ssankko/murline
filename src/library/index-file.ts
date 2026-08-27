@@ -22,6 +22,11 @@ export function baseNameOf(path: string): string {
   return path.split('/').pop() || path;
 }
 
+/** A file of the library folder by its folder-relative path. The folder may end in a slash. */
+export function pathOf(folder: string, relPath: string): string {
+  return `${folder.replace(/\/+$/, '')}/${relPath}`;
+}
+
 export async function readScoreFile(path: string): Promise<Uint8Array> {
   try {
     return new Uint8Array(await invoke<ArrayBuffer>('read_file', { path }));

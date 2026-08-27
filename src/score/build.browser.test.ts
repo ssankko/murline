@@ -174,3 +174,10 @@ describe('a file OSMD cannot read', () => {
     expect(() => buildScore(sheet)).toThrow('No notes in the first part');
   });
 });
+
+describe('a file that names a chord before it names a key', () => {
+  test('the chord symbol reads against C major', async () => {
+    const built = await score('harmony-no-key.musicxml');
+    expect(built.chords).toMatchObject([{ tick: 0, measureIndex: 0, text: 'G7' }]);
+  });
+});

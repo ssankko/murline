@@ -236,7 +236,7 @@ function ornamentsOf(onsets: Onset[], beatLengthAt: (tick: number) => number): S
 /**
  * The notes sounding at each Onset: the ones that start there plus the ones still ringing. A tie
  * continuation is the note that started the chain, which already rings for the whole of it, so only
- * the start note enters the ring set.
+ * the start note enters the ring set. A grace note has no length, so it sounds in no unit.
  */
 function soundingOf(onsets: Onset[]): Note[][] {
   const sounding: Note[][] = [];
@@ -246,7 +246,7 @@ function soundingOf(onsets: Onset[]): Note[][] {
       const note = ringing[i]!;
       if (note.onsetTick + note.durationTicks <= onset.tick) ringing.splice(i, 1);
     }
-    ringing.push(...onset.notes.filter((n) => !n.tiedFrom));
+    ringing.push(...onset.notes.filter((n) => !n.tiedFrom && !n.grace));
     sounding.push([...ringing]);
   }
   return sounding;

@@ -52,7 +52,9 @@ pub fn run() {
                 .add_migrations("sqlite:piano.db", migrations())
                 .build(),
         )
-        .setup(|_app| {
+        .setup(|app| {
+            // The sound engine emits Preview progress on this handle.
+            audio::remember(app.handle().clone());
             finder::warm();
             Ok(())
         })
@@ -61,6 +63,12 @@ pub fn run() {
             audio::audio_start,
             audio::audio_status,
             audio::audio_click,
+            audio::preview_load,
+            audio::preview_play,
+            audio::preview_pause,
+            audio::preview_seek,
+            audio::preview_rate,
+            audio::preview_stop,
             library::copy_file,
             library::list_library,
             library::read_file,

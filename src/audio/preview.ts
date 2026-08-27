@@ -1,0 +1,80 @@
+// Preview playback's note list: the Score as the sound engine wants it, in seconds along the
+// played timeline. Repeats are expanded through `playOrder`, so a bar that comes round again is a
+// second set of notes at a later second. Nothing here talks to Rust; the Preview screen does.
+
+import { TICKS_PER_QUARTER, bpmAt, stepSeconds, type Score } from '@/score/types';
+
+/** One note as the engine schedules it. Times are the score's own seconds, tempo percent aside. */
+export interface PreviewNote {
+  midi: number;
+  /** From the note's dynamics mark, 80 where the score writes none. */
+  velocity: number;
+  on: number;
+  off: number;
+  /** Played tick of the note's Onset, which is what the highlight follows. */
+  tick: number;
+}
+
+/** Where a bar opens along the played timeline. A repeated bar appears once for every pass. */
+export interface PreviewBar {
+  measureIndex: number;
+  seconds: number;
+}
+
+/** The second a played tick falls on, read on from the step at `from`. */
+function secondsAt(score: Score, starts: number[], playedTick: number, from: number): number {
+  let i = from;
+  while (i + 1 < score.playOrder.length && score.playOrder[i + 1]!.tick <= playedTick) i++;
+  const step = score.playOrder[i]!;
+  const bpm = bpmAt(score, score.onsets[step.onsetIndex]!.tick);
+  const start = i === 0 ? 0 : step.tick;
+  return starts[i]! + ((playedTick - start) / TICKS_PER_QUARTER) * (60 / bpm);
+}
+
+/** Every note of both hands in played order, at the score's own tempo. */
+export function previewNotes(score: Score): PreviewNote[] {
+  const starts = stepSeconds(score);
+  const notes: PreviewNote[] = [];
+  score.playOrder.forEach((step, i) => {
+    for (const note of score.onsets[step.onsetIndex]!.notes) {
+      // A grace note has no length of its own, and a tie continuation is already sounding: the
+      // note that starts the chain carries the whole of it.
+      if (note.grace || note.tiedFrom) continue;
+      notes.push({
+        midi: note.midi,
+        velocity: note.velocity,
+        on: starts[i]!,
+        off: secondsAt(score, starts, step.tick + note.durationTicks, i),
+        tick: step.tick,
+      });
+    }
+  });
+  return notes;
+}
+
+/** The bars in played order with the second each opens at, which is what a click seeks to. */
+export function previewBars(score: Score): PreviewBar[] {
+  const starts = stepSeconds(score);
+  const bars: PreviewBar[] = [];
+  score.playOrder.forEach((step, i) => {
+    const measureIndex = score.onsets[step.onsetIndex]!.measureIndex;
+    if (bars[bars.length - 1]?.measureIndex === measureIndex) return;
+    bars.push({ measureIndex, seconds: starts[i]! });
+  });
+  return bars;
+}
+
+/** The bar sounding at a time, or -1 before the first one. */
+export function barAt(bars: PreviewBar[], seconds: number): number {
+  let index = -1;
+  for (const bar of bars) {
+    if (bar.seconds > seconds + 1e-6) break;
+    index = bar.measureIndex;
+  }
+  return index;
+}
+
+/** The second a bar opens at, taking the first pass when a repeat plays it twice. */
+export function barSeconds(bars: PreviewBar[], measureIndex: number): number {
+  return bars.find((bar) => bar.measureIndex === measureIndex)?.seconds ?? 0;
+}

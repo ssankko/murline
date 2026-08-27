@@ -144,17 +144,29 @@ export function bpmAt(score: Score, tick: number): number {
   return bpm;
 }
 
-/** How long the piece sounds at its written tempo, following the repeats. */
-export function playedSeconds(score: Score): number {
+/**
+ * The second each step of the played timeline starts at, at the written tempo, with the end of the
+ * piece as one more entry after the last step. The one walk of the tempo map along the repeats:
+ * the piece's length and the Preview's note list both read it.
+ */
+export function stepSeconds(score: Score): number[] {
+  const starts: number[] = [];
   let seconds = 0;
   for (let i = 0; i < score.playOrder.length; i++) {
     const step = score.playOrder[i]!;
+    starts.push(seconds);
     const from = i === 0 ? 0 : step.tick;
     const to = score.playOrder[i + 1]?.tick ?? score.totalTicks;
     const bpm = bpmAt(score, score.onsets[step.onsetIndex]!.tick);
     seconds += ((to - from) / TICKS_PER_QUARTER) * (60 / bpm);
   }
-  return seconds;
+  starts.push(seconds);
+  return starts;
+}
+
+/** How long the piece sounds at its written tempo, following the repeats. */
+export function playedSeconds(score: Score): number {
+  return stepSeconds(score).at(-1)!;
 }
 
 /** The four reasons a piece can carry; the raw message follows in `detail`. */

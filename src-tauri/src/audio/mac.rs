@@ -10,7 +10,8 @@
 // then the tests at the bottom of this file are their only caller.
 #![allow(dead_code)]
 
-use crate::audio::Status;
+use crate::audio::preview::{PreviewNote, Scheduler};
+use crate::audio::{Status, progress};
 use objc2::AllocAnyThread;
 use objc2::rc::Retained;
 use objc2_avf_audio::{
@@ -19,7 +20,9 @@ use objc2_avf_audio::{
 };
 use objc2_foundation::{NSError, NSString, NSURL};
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, Once};
+use std::thread::sleep;
+use std::time::{Duration, Instant};
 
 /// The sample rate the click blips are built at. The device runs at whatever it runs at; the mixer
 /// converts, and a metronome tick is far too short for the difference to be audible.
@@ -42,6 +45,17 @@ const ALL_NOTES_OFF: u8 = 123;
 /// The bank a melodic SoundFont instrument lives in, per Apple's `kAUSampler_DefaultMelodicBankMSB`.
 const MELODIC_BANK_MSB: u8 = 0x79;
 
+/// How often the Preview's pump wakes while a piece plays, and while nothing does.
+// ponytail: the pump runs on a wall-clock thread, not the device's own render callback, because
+// reaching that callback from Rust means an AVAudioSourceNode block holding the graph's lock on the
+// audio thread. Two milliseconds is inside one 64-frame buffer; move the pump into a render block
+// if the jitter is ever audible.
+const PUMP: Duration = Duration::from_millis(2);
+/// Idle wakes are what a press of play waits for, so they stay short enough not to be felt.
+const IDLE: Duration = Duration::from_millis(20);
+/// About thirty progress events a second, which is what the moving bar highlight needs.
+const PROGRESS: Duration = Duration::from_millis(33);
+
 /// The one graph the app plays through, empty until `start` builds it.
 static GRAPH: Mutex<Option<Graph>> = Mutex::new(None);
 /// AUSampler keeps its loaded samples in one map per process, and two loads at once abort inside
@@ -59,6 +73,8 @@ pub struct Graph {
     offline_frames: u32,
     /// Name of the instrument loaded into the sampler, which is what makes the engine playable.
     instrument: Option<String>,
+    /// Preview playback's note list and clock, pumped once per rendered buffer.
+    preview: Scheduler,
 }
 
 // AVFAudio's classes carry no main-thread requirement, and every call into one goes through the
@@ -90,6 +106,7 @@ impl Graph {
                 clicker,
                 offline_frames: 0,
                 instrument: None,
+                preview: Scheduler::default(),
             })
         }
     }
@@ -123,7 +140,7 @@ impl Graph {
 
     /// Renders `frames` of the offline graph and hands back the loudest sample in them. Silence is
     /// zero, so a test reads sound or its absence off one number.
-    pub fn render_peak(&self, frames: u32) -> Result<f32, String> {
+    pub fn render_peak(&mut self, frames: u32) -> Result<f32, String> {
         unsafe {
             let format = self.engine.manualRenderingFormat();
             let buffer = AVAudioPCMBuffer::initWithPCMFormat_frameCapacity(
@@ -136,6 +153,8 @@ impl Graph {
             let mut peak = 0f32;
             let mut left = frames;
             while left > 0 {
+                // One pump per pass, exactly as the device path pumps once per buffer.
+                self.pump(left.min(self.offline_frames));
                 // The frame length is set again every pass: the block writes back how much it
                 // rendered, and the next pass must be offered the whole buffer once more.
                 buffer.setFrameLength(self.offline_frames);
@@ -165,6 +184,8 @@ impl Graph {
     /// Loads a SoundFont or DLS bank's first melodic program into the sampler, which is what makes
     /// the engine playable. Reads from disk, so never from the audio thread.
     pub fn load_sound_bank(&mut self, path: &Path, name: String) -> Result<(), String> {
+        // Nothing of the old instrument may ring on through the new one.
+        self.release_all();
         let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
         let _turn = LOADING.lock().unwrap();
         unsafe {
@@ -204,6 +225,53 @@ impl Graph {
         unsafe { self.sampler.sendController_withValue_onChannel(controller, value, CHANNEL) };
     }
 
+    /// The Preview's note list, in seconds at the score's own tempo.
+    pub fn preview_load(&mut self, notes: Vec<PreviewNote>) {
+        self.preview.load(notes);
+        self.release_all();
+    }
+
+    pub fn preview_play(&mut self) {
+        self.preview.play();
+    }
+
+    pub fn preview_pause(&mut self) {
+        self.preview.pause();
+        self.release_all();
+    }
+
+    pub fn preview_seek(&mut self, seconds: f64) {
+        self.preview.seek(seconds);
+        self.release_all();
+    }
+
+    pub fn preview_rate(&mut self, percent: u32) {
+        self.preview.set_rate(percent);
+        self.release_all();
+    }
+
+    /// Stops and forgets the note list: what leaving the Preview sends.
+    pub fn preview_stop(&mut self) {
+        self.preview.load(Vec::new());
+        self.release_all();
+    }
+
+    /// Sends the Preview events of the next `frames` frames to the instrument, and ends the play
+    /// when the last note has been let go.
+    fn pump(&mut self, frames: u32) {
+        for event in self.preview.pump(frames, RATE) {
+            if event.on {
+                self.note_on(event.midi, event.velocity);
+            } else {
+                self.note_off(event.midi);
+            }
+        }
+        if self.preview.ended() {
+            self.preview.stop();
+            self.release_all();
+        }
+    }
+
     /// One metronome click, at a volume of 0 to 100.
     pub fn click(&self, strong: bool, volume: u32) {
         let buffer = if strong { &self.strong } else { &self.weak };
@@ -240,11 +308,77 @@ fn reason(error: Retained<NSError>) -> String {
     error.localizedDescription().to_string()
 }
 
+/// Every command that touches the running graph goes through here, so nothing reaches the nodes
+/// while another thread is inside them. Without a graph there is nothing to do and no error.
+fn with<T>(act: impl FnOnce(&mut Graph) -> T) -> Option<T> {
+    GRAPH.lock().unwrap().as_mut().map(act)
+}
+
 pub fn start() -> Result<(), String> {
     let graph = Graph::build()?;
     graph.start()?;
     *GRAPH.lock().unwrap() = Some(graph);
+    static PUMPING: Once = Once::new();
+    PUMPING.call_once(|| {
+        std::thread::spawn(pump_forever);
+    });
     Ok(())
+}
+
+/// The Preview's clock on the device path: wake, work out how many frames went by, send the events
+/// that fall in them, and tell the webview where the playback stands.
+fn pump_forever() {
+    let mut last = Instant::now();
+    let mut told = Instant::now() - PROGRESS;
+    loop {
+        let frames = (last.elapsed().as_secs_f64() * RATE) as u32;
+        let Some((was_playing, playing, seconds)) = with(|graph| {
+            let was_playing = graph.preview.playing();
+            if was_playing {
+                graph.pump(frames);
+            }
+            (was_playing, graph.preview.playing(), graph.preview.seconds())
+        }) else {
+            sleep(IDLE);
+            continue;
+        };
+        if !was_playing {
+            last = Instant::now();
+            sleep(IDLE);
+            continue;
+        }
+        last += Duration::from_secs_f64(frames as f64 / RATE);
+        // The end of the piece is told at once, so the play button comes back without a wait.
+        if !playing || told.elapsed() >= PROGRESS {
+            told = Instant::now();
+            progress(seconds, playing);
+        }
+        sleep(PUMP);
+    }
+}
+
+pub fn preview_load(notes: Vec<PreviewNote>) {
+    with(|graph| graph.preview_load(notes));
+}
+
+pub fn preview_play() {
+    with(|graph| graph.preview_play());
+}
+
+pub fn preview_pause() {
+    with(|graph| graph.preview_pause());
+}
+
+pub fn preview_seek(seconds: f64) {
+    with(|graph| graph.preview_seek(seconds));
+}
+
+pub fn preview_rate(percent: u32) {
+    with(|graph| graph.preview_rate(percent));
+}
+
+pub fn preview_stop() {
+    with(|graph| graph.preview_stop());
 }
 
 pub fn status() -> Status {
@@ -257,9 +391,7 @@ pub fn status() -> Status {
 }
 
 pub fn click(strong: bool, volume: u32) {
-    if let Some(graph) = GRAPH.lock().unwrap().as_ref() {
-        graph.click(strong, volume);
-    }
+    with(|graph| graph.click(strong, volume));
 }
 
 #[cfg(test)]
@@ -273,6 +405,8 @@ mod tests {
     /// a tenth of a second, long enough for a note to speak and for a release to finish.
     const PASS: u32 = 4096;
     const LOOK: u32 = 4410;
+    /// How long one offline pass lasts, which is the buffer a Preview event falls into.
+    const PASS_SECONDS: f64 = PASS as f64 / RATE;
 
     /// A graph with the fixture in its sampler, rendering to nothing but the test's own buffer.
     fn offline() -> Graph {
@@ -282,16 +416,25 @@ mod tests {
         graph
     }
 
+    fn preview_note(midi: u8, on: f64, off: f64) -> PreviewNote {
+        PreviewNote { midi, velocity: 100, on, off, tick: 0 }
+    }
+
+    /// Renders one pass at a time and hands back the first one that made a sound.
+    fn first_sounding_pass(graph: &mut Graph, passes: u32) -> Option<u32> {
+        (0..passes).find(|_| graph.render_peak(PASS).unwrap() > 0.01)
+    }
+
     #[test]
     fn the_fixture_loads_and_an_untouched_graph_is_silent() {
-        let graph = offline();
+        let mut graph = offline();
         assert_eq!(graph.instrument(), Some("Sine"));
         assert_eq!(graph.render_peak(LOOK).unwrap(), 0.0);
     }
 
     #[test]
     fn a_note_sounds_until_it_is_let_go() {
-        let graph = offline();
+        let mut graph = offline();
         graph.note_on(60, 100);
         assert!(graph.render_peak(LOOK).unwrap() > 0.01);
 
@@ -303,7 +446,7 @@ mod tests {
 
     #[test]
     fn releasing_everything_ends_a_note_that_was_never_let_go() {
-        let graph = offline();
+        let mut graph = offline();
         graph.note_on(72, 100);
         assert!(graph.render_peak(LOOK).unwrap() > 0.01);
 
@@ -314,7 +457,7 @@ mod tests {
 
     #[test]
     fn the_sustain_pedal_holds_a_released_note_until_it_comes_up() {
-        let graph = offline();
+        let mut graph = offline();
         graph.sustain(true);
         graph.note_on(64, 100);
         graph.note_off(64);
@@ -328,7 +471,7 @@ mod tests {
 
     #[test]
     fn a_click_puts_sound_on_the_mixer_and_a_volume_of_zero_does_not() {
-        let graph = offline();
+        let mut graph = offline();
         graph.click(true, 100);
         let strong = graph.render_peak(LOOK).unwrap();
         assert!(strong > 0.01);
@@ -339,5 +482,57 @@ mod tests {
 
         graph.click(true, 0);
         assert_eq!(graph.render_peak(LOOK).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn a_preview_note_sounds_in_the_pass_its_time_falls_in() {
+        let mut graph = offline();
+        graph.preview_load(vec![preview_note(60, PASS_SECONDS * 2.5, PASS_SECONDS * 3.5)]);
+        graph.preview_play();
+
+        assert_eq!(first_sounding_pass(&mut graph, 8), Some(2));
+    }
+
+    #[test]
+    fn half_the_tempo_stretches_the_schedule_twofold() {
+        let note = preview_note(60, PASS_SECONDS * 1.25, PASS_SECONDS * 2.0);
+
+        let mut graph = offline();
+        graph.preview_load(vec![note.clone()]);
+        graph.preview_play();
+        assert_eq!(first_sounding_pass(&mut graph, 8), Some(1));
+
+        let mut slow = offline();
+        slow.preview_load(vec![note]);
+        slow.preview_rate(50);
+        slow.preview_play();
+        assert_eq!(first_sounding_pass(&mut slow, 8), Some(2), "twice as long to come");
+    }
+
+    #[test]
+    fn a_seek_lets_go_of_what_was_sounding_and_carries_on_from_the_new_time() {
+        let mut graph = offline();
+        // The schedule never lets the first note go; only the seek can end it.
+        graph.preview_load(vec![preview_note(60, 0.0, 100.0), preview_note(72, 3.0, 3.5)]);
+        graph.preview_play();
+        assert_eq!(first_sounding_pass(&mut graph, 2), Some(0));
+
+        graph.preview_seek(2.0);
+        // The release runs out inside this pass; what comes after it is silence.
+        graph.render_peak(PASS).unwrap();
+        assert_eq!(graph.render_peak(PASS).unwrap(), 0.0, "the note under way was let go");
+
+        assert!(first_sounding_pass(&mut graph, 20).is_some(), "the next note still comes");
+    }
+
+    #[test]
+    fn the_end_of_the_piece_stops_the_playback_and_returns_to_the_start() {
+        let mut graph = offline();
+        graph.preview_load(vec![preview_note(60, 0.0, PASS_SECONDS * 0.5)]);
+        graph.preview_play();
+        graph.render_peak(PASS).unwrap();
+
+        assert!(!graph.preview.playing());
+        assert_eq!(graph.preview.seconds(), 0.0);
     }
 }

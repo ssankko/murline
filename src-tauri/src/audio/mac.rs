@@ -406,6 +406,7 @@ impl Graph {
     }
 
     pub fn note_on(&self, note: u8, velocity: u8) {
+        let velocity = curved(velocity);
         unsafe { self.target().startNote_withVelocity_onChannel(note, velocity, CHANNEL) };
     }
 
@@ -484,6 +485,19 @@ impl Graph {
             self.clicker.scheduleBuffer_completionHandler(buffer, std::ptr::null_mut());
         }
     }
+}
+
+/// The velocity the instrument hears, bent away from the keyboard's straight line so that a soft
+/// strike is soft and the loud end still reaches full. Only the sound is bent: the strike the
+/// webview grades carries the velocity the keyboard sent.
+// ponytail: the exponent is the whole feel knob. Higher makes soft playing softer and the
+// keyboard harder to fill out; 1.0 hands the keyboard's own response back.
+fn curved(velocity: u8) -> u8 {
+    const GAMMA: f64 = 1.6;
+    let bent = (127.0 * (f64::from(velocity) / 127.0).powf(GAMMA)).round() as u8;
+    // A note on at zero velocity is a note off to every instrument, so the softest strikes keep
+    // the quietest velocity there is rather than falling through the floor into silence.
+    if velocity > 0 { bent.max(1) } else { 0 }
 }
 
 /// A SoundFont goes into the sampler by a call of its own, and every other kind whole.
@@ -724,7 +738,7 @@ pub fn click(strong: bool, volume: u32) {
     with(|graph| graph.click(strong, volume));
 }
 
-/// One key of the MIDI keyboard, down or up. Velocity reaches the instrument raw.
+/// One key of the MIDI keyboard, down or up.
 pub fn note(midi: u8, velocity: u8, on: bool) {
     with(|graph| {
         if on {
@@ -880,6 +894,103 @@ mod tests {
         graph.follow_devices().unwrap();
         assert!(graph.running(), "the engine is playing again rather than silent for good");
         assert_eq!(graph.device, default, "through the same device, nothing else having changed");
+    }
+
+    /// What a note looks like on the way out of the real device, which is the only path with the
+    /// device's own buffer under it: taps the mixer, plays, and prints the attack of each note, any
+    /// gap in the render timeline and the biggest jump from one sample to the next. A note that
+    /// starts with a click reads as a rise to full inside a millisecond or as a jump the size of the
+    /// signal; a piano attack rises over tens of milliseconds. Run it and read the numbers:
+    /// `cargo test -- --ignored what_a_note_looks_like`.
+    #[test]
+    #[ignore = "opens a real audio device"]
+    fn what_a_note_looks_like_on_the_way_out_of_the_real_device() {
+        use objc2_avf_audio::AVAudioTime;
+        use std::sync::Arc;
+
+        let graph = Graph::build().unwrap();
+        graph.start().unwrap();
+        install(graph);
+        set_output_device(None).unwrap();
+        set_buffer_frames(DEFAULT_FRAMES).unwrap();
+        let piano = instruments("")
+            .into_iter()
+            .find(|one| one.name == "Concert Grand Piano")
+            .expect("Logic's Concert Grand Piano is on this Mac");
+        load_instrument(&piano.id, None).unwrap();
+        assert!(status().available, "{}", status().reason);
+
+        // Samples, and the render time each buffer of them claims to start at: a jump in that time
+        // is the engine having skipped a stretch of the render, which is what a dropout is.
+        type Tapped = (Vec<f32>, Vec<(i64, u32)>);
+        let taken: Arc<Mutex<Tapped>> = Arc::new(Mutex::new(Default::default()));
+        let into = taken.clone();
+        let tap = RcBlock::new(
+            move |buffer: NonNull<AVAudioPCMBuffer>, when: NonNull<AVAudioTime>| unsafe {
+                let buffer = buffer.as_ref();
+                let channel = (*buffer.floatChannelData()).as_ptr();
+                let mut held = into.lock().unwrap();
+                let frames = buffer.frameLength();
+                held.1.push((when.as_ref().sampleTime(), frames));
+                for frame in 0..frames as usize {
+                    held.0.push(channel.add(frame).read());
+                }
+            },
+        );
+        let rate = unsafe {
+            let held = GRAPH.lock().unwrap();
+            let mixer = held.as_ref().unwrap().engine.mainMixerNode();
+            mixer.installTapOnBus_bufferSize_format_block(0, 1024, None, RcBlock::as_ptr(&tap));
+            mixer.outputFormatForBus(0).sampleRate()
+        };
+        println!("tap at {rate} Hz, buffer {} frames", status().buffer_frames);
+
+        for velocity in [20u8, 60, 100, 127] {
+            sleep(Duration::from_millis(400));
+            *taken.lock().unwrap() = Default::default();
+            note(60, velocity, true);
+            sleep(Duration::from_millis(900));
+            note(60, 0, false);
+            sleep(Duration::from_millis(300));
+
+            let (samples, times) = taken.lock().unwrap().clone();
+            let gaps = times
+                .windows(2)
+                .filter(|pair| pair[0].0 + i64::from(pair[0].1) != pair[1].0)
+                .count();
+            let peak = samples.iter().fold(0f32, |top, one| top.max(one.abs()));
+            let onset = samples.iter().position(|one| one.abs() > 0.0005).unwrap_or(0);
+            let to_full = samples.iter().position(|one| one.abs() >= peak * 0.9);
+            let jump = samples.windows(2).fold(0f32, |top, pair| top.max((pair[1] - pair[0]).abs()));
+            println!(
+                "v{velocity}: peak {peak:.4}, 90% of it {:.1} ms after the first sound, \
+                 biggest jump between samples {jump:.4}, {gaps} gaps in the render",
+                to_full.map_or(-1.0, |at| (at - onset) as f64 / rate * 1000.0)
+            );
+            let step = (rate / 2000.0) as usize;
+            let head: Vec<String> = (0..24)
+                .map(|slot| {
+                    let at = onset + slot * step;
+                    let window = &samples[at.min(samples.len())..(at + step).min(samples.len())];
+                    format!("{:.3}", window.iter().fold(0f32, |top, one| top.max(one.abs())))
+                })
+                .collect();
+            println!("  peak per half ms from the first sound: {}", head.join(" "));
+        }
+        release_all();
+    }
+
+    #[test]
+    fn the_velocity_curve_keeps_both_ends_and_pulls_the_middle_down() {
+        assert_eq!(curved(0), 0, "a note off stays a note off");
+        assert_eq!(curved(127), 127, "the hardest strike still reaches full");
+        assert!(curved(64) < 64, "a middling strike is quieter than the keyboard meant it");
+
+        assert!((1..=127).all(|velocity| curved(velocity) > 0), "no strike is bent into silence");
+        assert!(
+            (1..=127).all(|velocity| curved(velocity) >= curved(velocity - 1)),
+            "harder is never quieter"
+        );
     }
 
     #[test]

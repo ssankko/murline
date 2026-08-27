@@ -92,7 +92,8 @@ export function Library({
     void readPieceDefaults().then(setDefaults);
   }, [settingsOpen]);
 
-  // The scan runs once, at launch. Nothing watches the folder and the page never rescans.
+  // The scan runs once per folder, so only a re-point walks the folder again. The sort the user
+  // chose is read as it stands, which a re-point must not undo.
   useEffect(() => {
     let live = true;
     void (async () => {
@@ -102,8 +103,12 @@ export function Library({
       } catch {
         if (live) setFolderGone(true);
       }
-      const rows = await listPieces();
-      if (live) setPieces(rows);
+      try {
+        const rows = await listPieces(sort);
+        if (live) setPieces(rows);
+      } catch (error) {
+        if (live) setNotice(`Could not read the library: ${String(error)}`);
+      }
     })();
     return () => {
       live = false;
@@ -152,7 +157,8 @@ export function Library({
     const { imported, failures } = await importFiles(folder, paths, askClash);
     setPieces(await listPieces(sort));
     if (imported.length) setSelected(imported[imported.length - 1]!);
-    setNotice(failures.length ? failureNotice(failures) : null);
+    // Successes are silent, and they leave a notice about something else where it is.
+    if (failures.length) setNotice(failureNotice(failures));
   }
 
   /** A new library folder: the setting moves, the launch scan runs again, no file is touched. */
@@ -179,7 +185,15 @@ export function Library({
 
   /** Trash, row, plays, then the row that took its place in the list. */
   async function remove(target: PieceRow): Promise<void> {
-    await invoke('trash_file', { path: `${folder}/${target.path}` });
+    try {
+      await invoke('trash_file', { path: `${folder}/${target.path}` });
+    } catch (error) {
+      // A file already gone from disk still drops its piece; any other refusal keeps the row.
+      if (!/no such file|not found/i.test(String(error))) {
+        setNotice(`Could not delete ${target.title ?? target.path}: ${String(error)}`);
+        return;
+      }
+    }
     await deletePiece(target.path);
     const at = pieces.findIndex((row) => row.path === target.path);
     const rows = await listPieces(sort);
@@ -467,7 +481,7 @@ function Detail({
             >
               Favorite
             </Button>
-            <Button variant="outline" size="sm" onClick={onDelete}>
+            <Button variant="outline" size="sm" disabled={!folder} onClick={onDelete}>
               Delete
             </Button>
           </div>

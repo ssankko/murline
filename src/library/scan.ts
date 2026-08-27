@@ -48,10 +48,18 @@ export function planScan(files: FileEntry[], known: KnownFile[]): ScanAction[] {
   return actions;
 }
 
-/** Walks the whole library folder. Rejects when the folder itself is gone. */
+/** The folder whose scan has finished. A folder that failed is not remembered, so it is retried. */
+let scanned: string | null = null;
+
+/**
+ * Walks the whole library folder, once per folder value: the launch scan, and again only when the
+ * library points somewhere else. Rejects when the folder itself is gone.
+ */
 export async function scanLibrary(folder: string): Promise<void> {
+  if (scanned === folder) return;
   const files = await invoke<FileEntry[]>('list_library', { folder });
   await apply(folder, planScan(files, await knownFiles()));
+  scanned = folder;
 }
 
 /** Brings one piece up to date before it opens, in case the file changed under the app. */

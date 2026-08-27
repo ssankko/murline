@@ -299,10 +299,12 @@ describe('matching a strike in Flow mode', () => {
     play.advance(BEAT_MS);
     down(play, 60, BEAT_MS);
 
+    // A hit carries the velocity of the strike behind it, which the lane spends on its splash.
     expect(play.events()).toEqual([
-      { verdict: 'hit', midi: 60, noteIndex: 0, time: BEAT_MS },
+      { verdict: 'hit', midi: 60, noteIndex: 0, time: BEAT_MS, velocity: 80 },
     ]);
     expect(play.noteState(0)).toBe('hit');
+    expect(play.heldNote(60)).toBe(0);
   });
 
   test('a strike on the far edge of the window still counts', () => {
@@ -378,7 +380,7 @@ describe('matching a strike in Flow mode', () => {
     down(play, 60, BEAT_MS);
 
     expect(play.events()).toEqual([
-      { verdict: 'absorbed', midi: 60, noteIndex: -1, time: BEAT_MS },
+      { verdict: 'absorbed', midi: 60, noteIndex: -1, time: BEAT_MS, velocity: 80 },
     ]);
     expect(play.keyState(60)).toBe('grey');
 
@@ -413,7 +415,7 @@ describe('a window that closes unmatched', () => {
 
     play.advance(2);
     expect(play.events()).toEqual([
-      { verdict: 'miss', midi: 60, noteIndex: 0, time: BEAT_MS + 151 },
+      { verdict: 'miss', midi: 60, noteIndex: 0, time: BEAT_MS + 151, velocity: 0 },
     ]);
     expect(play.noteState(0)).toBe('miss');
 
@@ -452,6 +454,8 @@ describe('the colour of a held key', () => {
     down(play, 67, BEAT_MS);
 
     expect(play.keyState(67)).toBe('grey');
+    // The key names no note, so nothing of it drains or blinks in the lane.
+    expect(play.heldNote(67)).toBe(-1);
   });
 
   test('is grey once a new walk has renumbered the notes under the held key', () => {
@@ -876,7 +880,9 @@ describe('the count-in', () => {
     // The Onset of the second beat now falls a count-in bar later than the play began.
     play.advance(2000 + BEAT_MS);
     down(play, 60, 5000);
-    expect(play.events()).toEqual([{ verdict: 'hit', midi: 60, noteIndex: 0, time: 5000 }]);
+    expect(play.events()).toEqual([
+      { verdict: 'hit', midi: 60, noteIndex: 0, time: 5000, velocity: 80 },
+    ]);
   });
 
   test('a pause during it returns to Idle where it was counting to', () => {

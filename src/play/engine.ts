@@ -52,6 +52,8 @@ export interface PlayEvent {
   noteIndex: number;
   /** Wall-clock milliseconds: the strike's own timestamp, or the frame that closed the window. */
   time: number;
+  /** How hard the key was struck, 1 to 127; 0 for a miss, which no strike stands behind. */
+  velocity: number;
 }
 
 /** One written note laid out in played time: what falls in the lane and what a strike may match. */
@@ -222,6 +224,12 @@ export class Engine {
     if (matched < 0) return 'grey';
     const note = this.notes[matched]!;
     return this.tick < note.tick + note.durationTicks ? 'color' : 'grey';
+  }
+
+  /** The note a held key matched, as an index into `notes`; -1 when the key matched none. */
+  heldNote(midi: number): number {
+    const matched = this.held.get(midi) ?? -1;
+    return matched < 0 ? -1 : matched;
   }
 
   /** Takes everything that happened since the last call. Nothing is kept for a second reader. */
@@ -767,7 +775,13 @@ export class Engine {
       this.states[hit] = 'hit';
       this.resolved[hit] = event.time;
       this.held.set(event.midi, hit);
-      this.pending.push({ verdict: 'hit', midi: event.midi, noteIndex: hit, time: event.time });
+      this.pending.push({
+        verdict: 'hit',
+        midi: event.midi,
+        noteIndex: hit,
+        time: event.time,
+        velocity: event.velocity,
+      });
       return;
     }
     const absorbed = this.nearest(event.midi, at, window, false) >= 0;
@@ -778,6 +792,7 @@ export class Engine {
       midi: event.midi,
       noteIndex: -1,
       time: event.time,
+      velocity: event.velocity,
     });
   }
 
@@ -822,7 +837,13 @@ export class Engine {
       if (this.states[index] !== 'pending' || !this.isExpected(note)) continue;
       this.states[index] = 'miss';
       this.resolved[index] = this.wall;
-      this.pending.push({ verdict: 'miss', midi: note.midi, noteIndex: index, time: this.wall });
+      this.pending.push({
+        verdict: 'miss',
+        midi: note.midi,
+        noteIndex: index,
+        time: this.wall,
+        velocity: 0,
+      });
     }
   }
 
@@ -903,7 +924,13 @@ export class Engine {
       this.states[index] = 'hit';
       this.resolved[index] = event.time;
       this.held.set(event.midi, index);
-      this.pending.push({ verdict: 'hit', midi: event.midi, noteIndex: index, time: event.time });
+      this.pending.push({
+        verdict: 'hit',
+        midi: event.midi,
+        noteIndex: index,
+        time: event.time,
+        velocity: event.velocity,
+      });
     } else {
       const absorbed = this.absorbs(event.midi);
       this.held.set(event.midi, absorbed ? ABSORBED : BLOCKING);
@@ -912,6 +939,7 @@ export class Engine {
         midi: event.midi,
         noteIndex: -1,
         time: event.time,
+        velocity: event.velocity,
       });
     }
     this.settleWait();

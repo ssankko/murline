@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { getSetting } from '@/db/db';
 import { importFiles } from '@/library/import';
 import { reasonOf } from '@/library/notice';
+import { Collapse } from '@/look/collapse';
 import { invoke } from '@tauri-apps/api/core';
 import { Download, Search } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -144,8 +145,14 @@ export function Finder({
   // sides of the comparison are lowercased and composed. `libraryPaths` arrives that way.
   const owned = (r: FinderRow) => libraryPaths.has(r.fileName.toLowerCase().normalize('NFC'));
 
+  /** The reason outlives its failure by one collapse, so the red bar has words to show as it closes. */
+  const lastFailure = useRef({ provider: '', reason: '' });
+  if (dl.state === 'failed') lastFailure.current = dl;
+
   useEffect(() => {
-    list.current?.querySelector('[data-selected]')?.scrollIntoView({ block: 'nearest' });
+    list.current
+      ?.querySelector('[data-selected]')
+      ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, [sel, rows]);
 
   async function download(): Promise<void> {
@@ -216,12 +223,14 @@ export function Finder({
                   {row.heading}
                 </h4>
               )}
+              {/* The Download button only renders on the selected row, so every row holds the
+                  height it would take (h-8 plus py-1.5) and the selection moves no row. */}
               <div
                 data-selected={row === selected || undefined}
                 onMouseMove={() => sel !== i && setSel(i)}
                 onClick={() => setSel(i)}
                 onDoubleClick={() => void download()}
-                className={`flex items-center gap-3 px-4 py-1.5 ${
+                className={`flex min-h-11 items-center gap-3 px-4 py-1.5 ${
                   row === selected ? 'bg-(--fill-selected)' : ''
                 }`}
               >
@@ -252,19 +261,19 @@ export function Finder({
           {result.more > 0 && <Hint>{result.more} more. Type more to narrow.</Hint>}
         </div>
 
-        {dl.state === 'failed' && (
+        <Collapse open={dl.state === 'failed'}>
           <div
             role="alert"
-            className="flex flex-none items-center gap-3 border-t border-red-500/40 bg-red-500/10 px-4 py-2 text-[12px] text-red-600 dark:text-red-400"
+            className="flex items-center gap-3 border-t border-red-500/40 bg-red-500/10 px-4 py-2 text-[12px] text-red-600 dark:text-red-400"
           >
             <span>
-              Could not download from {dl.provider}: {dl.reason}.
+              Could not download from {lastFailure.current.provider}: {lastFailure.current.reason}.
             </span>
             <button onClick={() => void download()} className="underline underline-offset-2">
               Retry
             </button>
           </div>
-        )}
+        </Collapse>
 
         <footer className="border-edge-soft text-muted-ink flex flex-none justify-end gap-3 border-t px-4 py-2 text-[12px]">
           {pdmx === false && (

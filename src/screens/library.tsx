@@ -32,6 +32,7 @@ import {
 } from '@/library/queries';
 import { scanLibrary, splitError } from '@/library/scan';
 import { setSetting } from '@/db/db';
+import { Collapse } from '@/look/collapse';
 import { readPieceDefaults, type PieceSettings } from '@/play/resolve';
 import { Finder } from '@/screens/finder';
 import { Detail } from '@/screens/piece-detail';
@@ -129,6 +130,19 @@ export function Library({
   }
 
   const piece = pieces.find((p) => p.path === selected) ?? pieces[0];
+
+  /** The text outlives its notice by one collapse, so the bar has words to show as it closes. */
+  const lastNotice = useRef('');
+  if (notice !== null) lastNotice.current = notice;
+
+  // The selected row can sit anywhere in the list: on a return from a play, on an import, on a
+  // delete. `nearest` moves nothing while the row is already in view.
+  const list = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    list.current
+      ?.querySelector('[data-selected]')
+      ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [piece?.path]);
 
   /** Asks Replace, Keep both or Cancel and waits for the click. */
   function askClash(fileName: string): Promise<ClashChoice> {
@@ -245,9 +259,9 @@ export function Library({
           </div>
         )}
 
-        {notice && (
+        <Collapse open={notice !== null}>
           <div className="border-edge-soft flex items-start gap-2 border-y px-4 py-2 text-[12px]">
-            <p className="whitespace-pre-line">{notice}</p>
+            <p className="whitespace-pre-line">{lastNotice.current}</p>
             <button
               onClick={dismissNotice}
               aria-label="Dismiss"
@@ -256,9 +270,9 @@ export function Library({
               ✕
             </button>
           </div>
-        )}
+        </Collapse>
 
-        <div className="flex-1 overflow-y-auto">
+        <div ref={list} className="flex-1 overflow-y-auto">
           {pieces.map((row) => (
             <Row
               key={row.path}
@@ -307,11 +321,14 @@ export function Library({
         </div>
       )}
 
-      {dragging && (
-        <div className="border-ink/40 bg-paper/80 pointer-events-none absolute inset-3 z-50 flex items-center justify-center rounded border-2 border-dashed text-[15px]">
-          Drop sheet music to import
-        </div>
-      )}
+      <div
+        aria-hidden={!dragging}
+        className={`border-ink/40 bg-paper/80 pointer-events-none absolute inset-3 z-50 flex items-center justify-center rounded border-2 border-dashed text-[15px] transition-opacity duration-150 ease-[var(--ease)] motion-reduce:transition-none ${
+          dragging ? 'opacity-100' : 'opacity-0'
+        }`}
+      >
+        Drop sheet music to import
+      </div>
 
       {finding && folder && (
         <Finder
@@ -392,6 +409,7 @@ function Row({
 }) {
   return (
     <button
+      data-selected={selected || undefined}
       onClick={onSelect}
       onDoubleClick={onOpen}
       className={`relative flex w-full items-center gap-3 px-4 py-2 text-left transition-colors duration-[120ms] motion-reduce:transition-none ${

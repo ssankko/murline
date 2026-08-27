@@ -126,11 +126,6 @@ const BLOCKING = -1;
 /** A held key that matched no note and blocks nothing: taken in silence, or struck before motion. */
 const ABSORBED = -2;
 
-/** The tempo the piece is written at, before the play's own tempo setting. */
-function writtenBpm(score: Score, sheetTick: number): number {
-  return score.hasTempo ? bpmAt(score, sheetTick) : 120;
-}
-
 export class Engine {
   readonly score: Score;
   /** The live settings of the play. A change to them applies from the next `advance`. */
@@ -205,8 +200,8 @@ export class Engine {
     this.score = score;
     this.settings = settings;
     this.walk = score.playOrder;
-    this.lastSoundingTick = lastSoundingTickOf(score, this.walk);
     this.notes = playNotesOf(score, this.walk);
+    this.lastSoundingTick = lastSoundingOf(this.notes);
     this.states = this.notes.map(() => 'pending');
     this.resolved = this.notes.map(() => 0);
     this.beatGrid = beatGridOf(score, this.walk);
@@ -237,7 +232,6 @@ export class Engine {
 
   /** Takes everything that happened since the last call. Nothing is kept for a second reader. */
   events(): PlayEvent[] {
-    if (this.pending.length === 0) return [];
     const events = this.pending;
     this.pending = [];
     return events;
@@ -362,7 +356,7 @@ export class Engine {
     // The bar is played again from its line, so its notes are open again and its Wait mode Onsets
     // are stops again. A paused play never stands at a stop; the resume finds it.
     this.state = 'paused';
-    this.moveTo(this.barStartOf(this.tick));
+    this.moveTo(this.barAt(this.tick)?.tick ?? this.tick);
   }
 
   resume(): void {
@@ -433,7 +427,7 @@ export class Engine {
       ? sectionTicks(this.score.measures, this.sectionRange)
       : { from: 0, to: this.endTick };
     const bars = Math.floor(this.settings.countInBars);
-    const measure = this.measureAt(range.from);
+    const measure = this.barAt(range.from)?.measure;
     const beat = bars >= 1 && measure ? beatOf(measure) : null;
     const countIn = beat ? bars * beat.perBar * beat.ticks : 0;
     return { ...range, lap: range.to - range.from + countIn, beat: beat?.ticks ?? 0 };
@@ -464,7 +458,7 @@ export class Engine {
     this.states = this.notes.map(() => 'pending');
     this.resolved = this.notes.map(() => 0);
     this.beatGrid = beatGridOf(this.score, walk);
-    this.lastSoundingTick = lastSoundingTickOf(this.score, walk);
+    this.lastSoundingTick = lastSoundingOf(this.notes);
     // The new walk renumbers both notes and steps, so a held key names nothing and the Wait state
     // names Onsets that are gone.
     this.absorbHeld();
@@ -494,10 +488,8 @@ export class Engine {
     this.tick = to;
     this.resets++;
     this.closed = this.firstNoteFrom(to);
-    for (let i = this.closed; i < this.notes.length; i++) {
-      this.states[i] = 'pending';
-      this.resolved[i] = 0;
-    }
+    this.states.fill('pending', this.closed);
+    this.resolved.fill(0, this.closed);
     // Wait mode asks for every Onset from here again.
     this.wait.forgetFrom(this.stepAt(to));
     this.stopStep = null;
@@ -642,7 +634,7 @@ export class Engine {
    */
   private beginMotion(to: number): void {
     const bars = Math.floor(this.settings.countInBars);
-    const measure = this.measureAt(to);
+    const measure = this.barAt(to)?.measure;
     this.countInTo = to;
     if (bars >= 1 && measure) {
       const beat = beatOf(measure);
@@ -695,14 +687,7 @@ export class Engine {
    * clock stands exactly on is still owed, so a play starting on a bar line clicks its downbeat.
    */
   private syncBeats(): void {
-    let lo = 0;
-    let hi = this.beatGrid.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (this.beatGrid[mid]! < this.tick) lo = mid + 1;
-      else hi = mid;
-    }
-    this.beatNext = lo;
+    this.beatNext = firstWhere(this.beatGrid.length, (i) => this.beatGrid[i]! >= this.tick);
   }
 
   /** A stop keeps the practice's motion for the library; a play that passed no Onset keeps none. */
@@ -744,10 +729,6 @@ export class Engine {
       hands: this.inForce.hands,
       grade: playGrade(notes, this.extras, this.settings, this.score.hasDynamics),
     };
-  }
-
-  private measureAt(playedTick: number): Measure | undefined {
-    return this.barAt(playedTick)?.measure;
   }
 
   /**
@@ -871,14 +852,7 @@ export class Engine {
 
   /** The first note at or after a played tick. `notes` is in played order. */
   private firstNoteFrom(tick: number): number {
-    let lo = 0;
-    let hi = this.notes.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (this.notes[mid]!.tick < tick) lo = mid + 1;
-      else hi = mid;
-    }
-    return lo;
+    return firstWhere(this.notes.length, (i) => this.notes[i]!.tick >= tick);
   }
 
   /** Sheet tick of the played tick: the same bar played twice reads the same written moment. */
@@ -890,7 +864,9 @@ export class Engine {
 
   private ticksPerMs(playedTick: number): number {
     const { tempoMode, tempoValue } = this.inForce;
-    const written = writtenBpm(this.score, this.sheetTickOf(playedTick));
+    // 120 stands in for a piece written with no tempo mark at all.
+    const sheetTick = this.sheetTickOf(playedTick);
+    const written = this.score.hasTempo ? bpmAt(this.score, sheetTick) : 120;
     const bpm = tempoMode === 'bpm' ? tempoValue : (written * tempoValue) / 100;
     return (bpm * TICKS_PER_QUARTER) / 60_000;
   }
@@ -919,22 +895,9 @@ export class Engine {
     return Math.min(nextStep, next);
   }
 
-  /** Played tick of the bar line that opens the bar the played tick stands in. */
-  private barStartOf(playedTick: number): number {
-    return this.barAt(playedTick)?.tick ?? playedTick;
-  }
-
   /** The last step at or before a played tick. A walk's ticks never go back. */
   private stepAt(playedTick: number): number {
-    const order = this.walk;
-    let lo = 0;
-    let hi = order.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1;
-      if (order[mid]!.tick <= playedTick) lo = mid;
-      else hi = mid - 1;
-    }
-    return lo;
+    return Math.max(0, firstWhere(this.walk.length, (i) => this.walk[i]!.tick > playedTick) - 1);
   }
 
   // Wait mode. The cursor glides at tempo and stands at every Onset the player has not satisfied.
@@ -1106,13 +1069,19 @@ function beatGridOf(score: Score, walk: PlayStep[]): number[] {
   return ticks;
 }
 
-/** End of the last written duration over the whole walk, both hands. */
-function lastSoundingTickOf(score: Score, walk: PlayStep[]): number {
-  let last = 0;
-  for (const step of walk) {
-    for (const note of score.onsets[step.onsetIndex]?.notes ?? []) {
-      last = Math.max(last, step.tick + note.durationTicks);
-    }
+/** First index of a sorted length where the test turns true, or the length when it never does. */
+function firstWhere(length: number, holds: (index: number) => boolean): number {
+  let lo = 0;
+  let hi = length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (holds(mid)) hi = mid;
+    else lo = mid + 1;
   }
-  return last;
+  return lo;
+}
+
+/** End of the last written duration over the whole walk, both hands. */
+function lastSoundingOf(notes: PlayNote[]): number {
+  return notes.reduce((last, note) => Math.max(last, note.tick + note.durationTicks), 0);
 }

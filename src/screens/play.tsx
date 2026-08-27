@@ -31,6 +31,7 @@ import {
 import { reindexIfChanged } from '@/library/scan';
 import { clamp } from '@/lib/utils';
 import { Collapse } from '@/look/collapse';
+import { Metronome, type MetronomeHandle } from '@/look/metronome';
 import { flipTheme, useDark } from '@/look/use-dark';
 import { useMidiStatus } from '@/midi/use-midi-status';
 import { click, setClickVolume } from '@/play/click';
@@ -67,7 +68,6 @@ import {
   ArrowLeft,
   FastForward,
   Hand,
-  Metronome,
   Minus,
   Pause,
   Play,
@@ -112,6 +112,7 @@ export function PlayScreen({
   const sheetRef = useRef<Sheet | null>(null);
   const engineRef = useRef<Engine | null>(null);
   const laneRef = useRef<Lane | null>(null);
+  const metronomeRef = useRef<MetronomeHandle>(null);
   /** The engine's counters as the last frame read them: a change is what the screen answers. */
   const finishesRef = useRef(0);
   const dark = useDark();
@@ -392,7 +393,11 @@ export function PlayScreen({
     // timeline. The lane runs on it too: it ages its feedback against the engine's own stamps.
     const wall = performance.timeOrigin + now;
     engine.advance(delta, wall);
-    if (engine.beats() > 0) click();
+    // Every owed beat is one click, and the icon reads the last of them.
+    if (engine.beats() > 0) {
+      click();
+      metronomeRef.current?.tick(engine.strongBeat, engine.beatMs);
+    }
     void savePractice();
     savePerformance();
     const snapshot = engine.snapshot();
@@ -549,7 +554,7 @@ export function PlayScreen({
               pressed={metronome}
               onClick={() => changeMetronome(!metronome)}
             >
-              <Metronome {...ICON} />
+              <Metronome {...ICON} ref={metronomeRef} />
             </BarButton>
           </div>
 

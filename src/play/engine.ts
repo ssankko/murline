@@ -119,6 +119,12 @@ export interface Snapshot {
   stopped: boolean;
 }
 
+/** One beat of the grid: where it falls in played ticks, and whether it is the beat a bar opens with. */
+interface Beat {
+  tick: number;
+  strong: boolean;
+}
+
 /** A held key whose strike matched nothing, so it blocks every Onset until it comes up. */
 const BLOCKING = -1;
 /** A held key that matched no note and blocks nothing: taken in silence, or struck before motion. */
@@ -146,6 +152,11 @@ export class Engine {
   wraps = 0;
   /** Bumped when a practice runs off the end of the piece, the one ending that is animated. */
   finishes = 0;
+  /**
+   * Whether the last beat the clicks of `beats()` were owed for opens a bar. A count-in beat never
+   * does: the count-in is counted down as one run of beats, as the lane draws it.
+   */
+  strongBeat = false;
 
   private state: PlayState = 'idle';
   private tick = 0;
@@ -172,7 +183,7 @@ export class Engine {
   private stopStep: number | null = null;
 
   /** Every beat of the play in played ticks, the grid the metronome clicks on. */
-  private beatGrid: number[];
+  private beatGrid: Beat[];
   /** First beat of the grid the clock has not passed yet. */
   private beatNext = 0;
   /** Clicks owed to the screen, taken by `beats()`. */
@@ -247,7 +258,8 @@ export class Engine {
 
   /**
    * Takes the clicks the metronome owes since the last call: a beat of the grid the clock crossed
-   * while the metronome is on, and every count-in beat whether it is on or not.
+   * while the metronome is on, and every count-in beat whether it is on or not. `strongBeat` and
+   * `beatMs` say what the last of them was and how long it lasts.
    */
   beats(): number {
     const clicks = this.clicks;
@@ -278,6 +290,16 @@ export class Engine {
   /** Played tick the play stops at: the last written duration plus the matching window. */
   get endTick(): number {
     return this.lastSoundingTick + this.msToTicks(this.settings.matchingWindowMs, this.lastSoundingTick);
+  }
+
+  /**
+   * How long one beat lasts where the clock stands, in milliseconds: the meter of the bar at the
+   * tempo in force. A count-in beats at the tempo of the bar it leads into.
+   */
+  get beatMs(): number {
+    const at = this.state === 'counting-in' ? this.countInTo : this.tick;
+    const measure = this.barAt(at)?.measure;
+    return measure ? beatOf(measure).ticks / this.ticksPerMs(at) : 0;
   }
 
   /** The matching window in played ticks, at the tempo the clock runs now. */
@@ -676,6 +698,7 @@ export class Engine {
     ) {
       this.countInNext++;
       this.clicks++;
+      this.strongBeat = false;
     }
     if (want < this.countInTo) return 0;
     this.countInBeats = [];
@@ -686,9 +709,12 @@ export class Engine {
 
   /** What the clock sets off by moving: the metronome's beats and the first Onset it passes. */
   private crossGrid(): void {
-    while (this.beatNext < this.beatGrid.length && this.beatGrid[this.beatNext]! <= this.tick) {
+    while (this.beatNext < this.beatGrid.length && this.beatGrid[this.beatNext]!.tick <= this.tick) {
+      const beat = this.beatGrid[this.beatNext]!;
       this.beatNext++;
-      if (this.settings.metronome) this.clicks++;
+      if (!this.settings.metronome) continue;
+      this.clicks++;
+      this.strongBeat = beat.strong;
     }
     if (!this.passedOnset && this.stepAt(this.tick) > this.startStep) this.passedOnset = true;
   }
@@ -698,7 +724,7 @@ export class Engine {
    * clock stands exactly on is still owed, so a play starting on a bar line clicks its downbeat.
    */
   private syncBeats(): void {
-    this.beatNext = firstWhere(this.beatGrid.length, (i) => this.beatGrid[i]! >= this.tick);
+    this.beatNext = firstWhere(this.beatGrid.length, (i) => this.beatGrid[i]!.tick >= this.tick);
   }
 
   /** A stop keeps the practice's motion for the library; a play that passed no Onset keeps none. */
@@ -1083,18 +1109,18 @@ function playNotesOf(score: Score, walk: PlayStep[]): PlayNote[] {
 
 /**
  * Every beat of the play in played ticks, one pass per repeat. A pickup bar's beats are laid from
- * its bar line backwards, so its last beat lands on the next bar line.
+ * its bar line backwards, so its last beat lands on the next bar line and none of them is strong.
  */
-function beatGridOf(score: Score, walk: PlayStep[]): number[] {
-  const ticks: number[] = [];
+function beatGridOf(score: Score, walk: PlayStep[]): Beat[] {
+  const beats: Beat[] = [];
   for (const { measure, tick: barTick } of barsOfWalk(score, walk)) {
     const { ticks: beat } = beatOf(measure);
     const end = barTick + measure.durationTicks;
     for (let tick = barTick + (measure.durationTicks % beat); tick < end - 1e-9; tick += beat) {
-      ticks.push(tick);
+      beats.push({ tick, strong: tick === barTick });
     }
   }
-  return ticks;
+  return beats;
 }
 
 /** First index of a sorted length where the test turns true, or the length when it never does. */

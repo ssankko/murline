@@ -778,6 +778,27 @@ describe('the metronome', () => {
     expect(play.beats()).toBe(0);
   });
 
+  test('says which beat opens the bar and how long one beat lasts', () => {
+    const play = engine(scoreOf(2), { metronome: true, countInBars: 0 });
+    play.start();
+
+    // 4/4 at 60 BPM: the bar opens on a strong beat and the three after it are weak.
+    play.advance(500);
+    expect(play.beats()).toBe(1);
+    expect(play.strongBeat).toBe(true);
+    expect(play.beatMs).toBeCloseTo(1000, 6);
+    for (let beat = 0; beat < 3; beat++) {
+      play.advance(1000);
+      expect(play.beats()).toBe(1);
+      expect(play.strongBeat).toBe(false);
+    }
+
+    // The next bar line is strong again.
+    play.advance(1000);
+    expect(play.beats()).toBe(1);
+    expect(play.strongBeat).toBe(true);
+  });
+
   test('a compound meter beats in dotted quarters', () => {
     const play = engine(compound(), { metronome: true, countInBars: 0 });
     play.start();
@@ -885,6 +906,24 @@ describe('the count-in', () => {
     play.advance(2);
     expect(play.snapshot().state).toBe('running');
     expect(play.snapshot().playedTick).toBeCloseTo(0.96, 6);
+  });
+
+  test('counts down with no strong beat of its own, and leads to a strong downbeat', () => {
+    const play = engine(scoreOf(2), { countInBars: 1, metronome: true });
+    play.start();
+
+    // The count-in beats at the tempo of the bar it leads into.
+    expect(play.beatMs).toBeCloseTo(1000, 6);
+    play.advance(500);
+    for (let beat = 0; beat < 4; beat++) {
+      expect(play.beats()).toBe(1);
+      expect(play.strongBeat).toBe(false);
+      play.advance(1000);
+    }
+
+    // The count-in ran out inside that last second, so the beat it leads to is the downbeat.
+    expect(play.beats()).toBe(1);
+    expect(play.strongBeat).toBe(true);
   });
 
   test('offsets the expected times: a strike lands on its note a count-in later', () => {

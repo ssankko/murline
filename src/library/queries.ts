@@ -102,18 +102,6 @@ export type PieceSettingValues = Partial<{
   keyboard_hi: number | null;
 }>;
 
-/** What "Use global defaults" writes: the piece forgets every setting of its own. */
-export const INHERIT_EVERY_SETTING: Required<PieceSettingValues> = {
-  tempo_mode: null,
-  tempo_value: null,
-  metronome: null,
-  count_in_bars: null,
-  hands: null,
-  keyboard_preset: null,
-  keyboard_lo: null,
-  keyboard_hi: null,
-};
-
 /** Stores what the play screen just changed. Column names come from the type, never from input. */
 export async function updatePieceSettings(
   path: string,

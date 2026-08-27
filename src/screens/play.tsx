@@ -15,7 +15,6 @@ import {
 import { setNotice } from '@/library/notice';
 import {
   getPiece,
-  INHERIT_EVERY_SETTING,
   insertPerformance,
   insertPlay,
   updatePieceSettings,
@@ -26,8 +25,7 @@ import { flipTheme, useDark } from '@/look/use-dark';
 import { useMidiStatus } from '@/midi/useMidiStatus';
 import { click, setClickVolume } from '@/play/click';
 import {
-  create,
-  type Engine,
+  Engine,
   type PerformanceRecord,
   type PlayKind,
   type PlayState,
@@ -217,7 +215,7 @@ export function PlayScreen({
         if (!live) return sheet.dispose();
         sheetRef.current = sheet;
         // The piece opens as it was left: its own settings over the global defaults over these.
-        const engine = create(sheet.score, {
+        const engine = new Engine(sheet.score, {
           ...DEFAULT_PLAY_SETTINGS,
           ...knobs,
           mode: liveRef.current.mode,
@@ -339,7 +337,7 @@ export function PlayScreen({
 
   /** The piece forgets every setting of its own and plays at the global defaults again. */
   async function useGlobalDefaults(): Promise<void> {
-    await updatePieceSettings(path, INHERIT_EVERY_SETTING);
+    await updatePieceSettings(path, INHERITS_EVERYTHING);
     show(resolvePlaySettings(INHERITS_EVERYTHING, await readPieceDefaults()).settings);
   }
 
@@ -434,13 +432,18 @@ export function PlayScreen({
     const onKey = (event: KeyboardEvent) => {
       const target = event.target;
       if (target instanceof HTMLElement && ['INPUT', 'TEXTAREA'].includes(target.tagName)) return;
+      // The settings dialog and every popover are `role="dialog"`: while one is open the keys are
+      // its own and never reach the clock.
+      if (document.querySelector('[role="dialog"][data-state="open"]')) return;
       if (event.key === ' ') {
         event.preventDefault();
         toggle();
       } else if (event.key === 'Escape') {
-        // Escape clears the Section only when the play is already still; otherwise it aborts.
-        if (engineRef.current?.snapshot().state === 'idle') setSection(null);
-        else engineRef.current?.abort();
+        // Escape clears the Section only in a practice that is already still; every other play,
+        // an armed performance included, it aborts.
+        const engine = engineRef.current;
+        if (engine?.kind === 'practice' && engine.snapshot().state === 'idle') setSection(null);
+        else engine?.abort();
       } else if (event.key === 'd') {
         void setSetting('theme', flipTheme());
       }
@@ -636,7 +639,12 @@ export function PlayScreen({
         <div ref={hostRef} className="bg-paper min-h-0" style={{ flex: `${split} 1 0` }} />
         <Split value={split} onChange={setSplit} />
         <div className="bg-paper relative min-h-0" style={{ flex: `${1 - split} 1 0` }}>
-          <canvas ref={canvasRef} className="block h-full w-full" />
+          {/* A click on the lane is the third way to drop a Section, next to its × and Escape. */}
+          <canvas
+            ref={canvasRef}
+            className="block h-full w-full"
+            onClick={() => kindRef.current === 'practice' && setSection(null)}
+          />
           {state === 'ended' && summary && (
             <Summary
               record={summary.record}
@@ -720,7 +728,7 @@ function handGlyph(hands: HandsSetting, hand: 'left' | 'right'): string {
   return `transition-opacity duration-200 ${hands === 'both' || hands === hand ? '' : 'opacity-30'}`;
 }
 
-/** The global settings the lane and the split open with. The gear writes them; ticket 13 draws it. */
+/** The global settings the lane, the split and the metronome open with. The gear writes them. */
 async function laneLook(): Promise<{ lane: LaneLook; split: number; clickVolume: number }> {
   const [lookaheadBeats, noteWidthPct, gapPx, keyLabels, split, clickVolume] = await Promise.all([
     getSettingOr('lane_lookahead', DEFAULT_LANE_LOOK.lookaheadBeats),

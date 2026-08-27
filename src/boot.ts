@@ -14,6 +14,16 @@ import { invoke } from '@tauri-apps/api/core';
  * after it still run, so a database that will not open lands on onboarding with the reason on
  * screen.
  */
+/** Why a call failed, or an empty string when it did not. */
+async function failure(run: () => Promise<unknown>): Promise<string> {
+  try {
+    await run();
+    return '';
+  } catch (error) {
+    return reasonOf(error);
+  }
+}
+
 export async function boot(print: (lines: string[]) => void): Promise<Settings> {
   const lines: string[] = [];
   const say = (line: string): void => {
@@ -41,10 +51,19 @@ export async function boot(print: (lines: string[]) => void): Promise<Settings> 
 
   await step('starting sound engine', async () => {
     await invoke('audio_start');
-    await invoke('audio_set_output_device', { id: settings.audio_output_device });
-    await invoke('audio_set_buffer_frames', { frames: settings.audio_buffer_frames });
-    await restoreInstrument(settings);
-    await invoke('audio_set_chain', { chain: settings.effect_chain });
+    // Every setting is applied whatever the one before it did: a device that has been unplugged or
+    // an instrument file that will not load must not cost the app its effect chain. Only the start
+    // itself stops the rest, because nothing can be applied to an engine that is not there.
+    const reasons = [
+      await failure(() => invoke('audio_set_output_device', { id: settings.audio_output_device })),
+      await failure(() =>
+        invoke('audio_set_buffer_frames', { frames: settings.audio_buffer_frames }),
+      ),
+      await failure(() => restoreInstrument(settings)),
+      await failure(() => invoke('audio_set_chain', { chain: settings.effect_chain })),
+    ];
+    const first = reasons.find(Boolean);
+    if (first) throw new Error(first);
   });
 
   // The library screen walks the same folder on mount, and `scanLibrary` walks a folder once, so

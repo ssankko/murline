@@ -49,8 +49,26 @@ test('the dialog holds its three sections and the reason there is no sound', asy
 });
 
 test('an engine that can play says nothing about why it cannot', async () => {
-  answer = { available: true, reason: '' };
+  answer = { available: true, reason: '', fallback: '' };
   const text = await open();
   await vi.waitFor(() => expect(text()).toContain('Effects'));
   expect(text()).not.toContain('No instrument chosen');
+});
+
+test('an engine playing somewhere other than the chosen device says so on the same line', async () => {
+  const moved = 'Your chosen output device is not connected; playing through the system default';
+  answer = { available: true, reason: '', fallback: moved };
+  const text = await open();
+  await vi.waitFor(() => expect(text()).toContain(moved));
+});
+
+test('silence outranks a fallback, so the line says why there is no sound', async () => {
+  answer = {
+    available: false,
+    reason: 'No instrument chosen',
+    fallback: 'Your chosen output device is not connected; playing through the system default',
+  };
+  const text = await open();
+  await vi.waitFor(() => expect(text()).toContain('No instrument chosen'));
+  expect(text()).not.toContain('not connected');
 });

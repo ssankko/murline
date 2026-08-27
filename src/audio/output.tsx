@@ -88,11 +88,10 @@ export function OutputSection() {
       () => invoke('audio_set_buffer_frames', { frames: choice }),
     );
 
-  // The picker shows the choice, even while the device it names is unplugged; the line under the
-  // rows is what says the engine had to play somewhere else.
+  // The picker shows the choice, even while the device it names is unplugged; the dialog's own
+  // line is what says the engine had to play somewhere else.
   const chosenName =
     chosen === null ? 'System default' : (devices.find((d) => d.id === chosen)?.name ?? chosen);
-  const note = failure || status?.fallback || '';
 
   return (
     <section className="flex flex-col gap-2">
@@ -150,7 +149,7 @@ export function OutputSection() {
         <span className="text-muted-ink text-[12px] tabular-nums">{latencyLine(status)}</span>
       </Row>
 
-      {note && <p className="text-muted-ink text-[12px]">{note}</p>}
+      {failure && <p className="text-muted-ink text-[12px]">{failure}</p>}
     </section>
   );
 }

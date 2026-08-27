@@ -8,6 +8,8 @@ let settings = {
   audio_buffer_frames: 128,
 };
 let engineReason: string | null = null;
+/** A command that answers with this reason instead of doing what it was asked. */
+let refuses: string | null = null;
 const sent: [string, unknown][] = [];
 
 vi.mock('@/db/db', () => ({
@@ -24,6 +26,7 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: async (command: string, args: unknown) => {
     sent.push([command, args]);
     if (command === 'audio_start' && engineReason) throw engineReason;
+    if (command === refuses) throw `${command} would not`;
     if (command === 'audio_instruments') return [];
   },
 }));
@@ -57,6 +60,21 @@ test('a step that fails prints its reason', async () => {
   const printed: string[][] = [];
   await boot((lines) => printed.push(lines));
   expect(printed[printed.length - 1]![5]).toBe('> scanning /gone … folder is gone');
+});
+
+test('a setting the engine refuses still leaves the chain applied, and prints why', async () => {
+  sent.length = 0;
+  refuses = 'audio_set_buffer_frames';
+  const printed: string[][] = [];
+  await boot((lines) => printed.push(lines));
+  refuses = null;
+
+  expect(printed[printed.length - 1]![4]).toBe(
+    '> starting sound engine … audio_set_buffer_frames would not',
+  );
+  // The buffer is what failed; the instrument and the chain after it went in all the same.
+  expect(sent.map(([command]) => command)).toContain('audio_set_chain');
+  expect(sent.map(([command]) => command)).toContain('audio_instruments');
 });
 
 test('a sound engine that will not start prints why, and the steps after it still run', async () => {

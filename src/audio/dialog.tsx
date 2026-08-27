@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { useEffect, useState } from 'react';
 
 /** What the engine answers about itself: whether sound can come out, and why not when it cannot. */
@@ -42,6 +43,14 @@ export const NO_STATUS: AudioStatus = {
   latency_ms: 0,
 };
 
+/** The one line the dialog says about the engine: why there is no sound at all, or where the sound
+ * had to go when the chosen device was not there. Never both, because silence is the bigger thing
+ * to say and a fallen-back engine is still playing. */
+function trouble(status: AudioStatus | null): string {
+  if (!status) return '';
+  return status.available ? status.fallback : status.reason;
+}
+
 export function AudioDialog({ onClose }: { onClose: () => void }) {
   const [status, setStatus] = useState<AudioStatus | null>(null);
   // A section that changed something the status line reads asks for this to go round again.
@@ -49,12 +58,17 @@ export function AudioDialog({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     let live = true;
-    invoke<AudioStatus>('audio_status').then(
-      (answer) => live && setStatus(answer),
-      (error: unknown) => live && setStatus({ ...NO_STATUS, reason: String(error) }),
-    );
+    const read = () =>
+      invoke<AudioStatus>('audio_status').then(
+        (answer) => live && setStatus(answer),
+        (error: unknown) => live && setStatus({ ...NO_STATUS, reason: String(error) }),
+      );
+    void read();
+    // Unplugging the chosen device is the other way the line below changes while the dialog is open.
+    const listening = listen('audio-devices-changed', () => void read());
     return () => {
       live = false;
+      void listening.then((stop) => stop());
     };
   }, [round]);
 
@@ -72,9 +86,7 @@ export function AudioDialog({ onClose }: { onClose: () => void }) {
           <OutputSection />
           <InstrumentSection onChanged={() => setRound((round) => round + 1)} />
           <EffectsSection />
-          {status && !status.available && (
-            <p className="text-muted-ink text-[12px]">{status.reason}</p>
-          )}
+          {trouble(status) && <p className="text-muted-ink text-[12px]">{trouble(status)}</p>}
         </div>
       </DialogContent>
     </Dialog>

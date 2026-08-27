@@ -144,7 +144,7 @@ test('choosing a buffer size writes the setting and applies it', async () => {
   );
 });
 
-test('a chosen device that is not connected reads as the fallback it caused', async () => {
+test('a chosen device that is not connected keeps its place in the picker', async () => {
   settings = { audio_output_device: 'Scarlett', audio_buffer_frames: 64 };
   devices = [{ id: 'BuiltInSpeakerDevice', name: 'MacBook Pro Speakers' }];
   status = {
@@ -156,7 +156,8 @@ test('a chosen device that is not connected reads as the fallback it caused', as
   };
 
   const text = await open();
-  await vi.waitFor(() => expect(text()).toContain('not connected'));
   // The picker keeps the user's choice, which is what makes the device come back when it does.
-  expect(text()).toContain('Scarlett');
+  await vi.waitFor(() => expect(text()).toContain('Scarlett'));
+  // Saying where the sound went is the dialog's one line, not a second one in this section.
+  expect(text()).not.toContain('not connected');
 });

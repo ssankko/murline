@@ -34,7 +34,15 @@ import {
 import { scanLibrary } from '@/library/scan';
 import { colorOf, noteName } from '@/look/color';
 import { useDark } from '@/look/use-dark';
+import { setSetting } from '@/db/db';
+import {
+  readPieceDefaults,
+  resolvePlaySettings,
+  type Inherited,
+  type PieceSettings,
+} from '@/play/resolve';
 import { Finder } from '@/screens/finder';
+import { SettingsDialog } from '@/screens/settings';
 import { RangeStrip } from '@/screens/range-strip';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
@@ -54,12 +62,15 @@ const SORTS: [SortOrder, string][] = [
 export function Library({
   folder,
   selected: opened,
+  onFolder,
   onPlay,
   onPreview,
 }: {
   folder: string | null;
   /** The piece the play screen came back from, so leaving a play lands on it again. */
   selected?: string;
+  /** A folder chosen here or in the settings dialog: the app re-points and moves no file. */
+  onFolder: (folder: string) => void;
   onPlay: (path: string, intent: 'practice' | 'performance') => void;
   onPreview: (path: string) => void;
 }) {
@@ -71,6 +82,13 @@ export function Library({
   const [dragging, setDragging] = useState(false);
   const [clash, setClash] = useState<Clash | null>(null);
   const [finding, setFinding] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [defaults, setDefaults] = useState<Partial<PieceSettings>>({});
+
+  // The Play settings list holds the resolved values, so it needs the middle level of every field.
+  useEffect(() => {
+    void readPieceDefaults().then(setDefaults);
+  }, [settingsOpen]);
 
   // The scan runs once, at launch. Nothing watches the folder and the page never rescans.
   useEffect(() => {
@@ -78,6 +96,7 @@ export function Library({
     void (async () => {
       try {
         if (folder) await scanLibrary(folder);
+        if (live) setFolderGone(false);
       } catch {
         if (live) setFolderGone(true);
       }
@@ -134,6 +153,14 @@ export function Library({
     setNotice(failures.length ? failureNotice(failures) : null);
   }
 
+  /** A new library folder: the setting moves, the launch scan runs again, no file is touched. */
+  async function chooseFolder(): Promise<void> {
+    const picked = await open({ directory: true, defaultPath: folder ?? undefined });
+    if (typeof picked !== 'string') return;
+    await setSetting('library_folder', picked);
+    onFolder(picked);
+  }
+
   async function pickFiles(): Promise<void> {
     const picked = await open({
       multiple: true,
@@ -176,16 +203,31 @@ export function Library({
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button variant="ghost" size="icon" aria-label="Settings">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Settings"
+            onClick={() => setSettingsOpen(true)}
+          >
             <Settings />
           </Button>
         </div>
 
         {folderGone && (
-          <p className="border-edge-soft border-y px-4 py-2 text-[12px]">
-            Library folder not found
-            <span className="text-muted-ink"> {folder}</span>
-          </p>
+          <div className="border-edge-soft flex items-center gap-2 border-y px-4 py-2 text-[12px]">
+            <p className="min-w-0">
+              Library folder not found
+              <span className="text-muted-ink"> {folder}</span>
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="ml-auto h-7 flex-none"
+              onClick={() => void chooseFolder()}
+            >
+              Choose…
+            </Button>
+          </div>
         )}
 
         {notice && (
@@ -235,6 +277,7 @@ export function Library({
         <Detail
           piece={piece}
           folder={folder}
+          defaults={defaults}
           onFavorite={() => void toggleFavorite(piece)}
           onDelete={() => void remove(piece)}
           onPlay={onPlay}
@@ -265,6 +308,15 @@ export function Library({
             setSelected(relPath);
           }}
           close={() => setFinding(false)}
+        />
+      )}
+
+      {settingsOpen && (
+        <SettingsDialog
+          onClose={() => setSettingsOpen(false)}
+          onGlobalChange={(key, value) => {
+            if (key === 'library_folder') onFolder(value as string);
+          }}
         />
       )}
 
@@ -351,6 +403,7 @@ function Row({
 function Detail({
   piece,
   folder,
+  defaults,
   onFavorite,
   onDelete,
   onPlay,
@@ -358,6 +411,8 @@ function Detail({
 }: {
   piece: PieceRow;
   folder: string | null;
+  /** The Playing defaults group, the level a piece falls back to. */
+  defaults: Partial<PieceSettings>;
   onFavorite: () => void;
   onDelete: () => void;
   onPlay: (path: string, intent: 'practice' | 'performance') => void;
@@ -460,14 +515,66 @@ function Detail({
 
         <div className="mt-12 grid grid-cols-[3fr_2fr] gap-12">
           <History piece={piece} />
-          <section className="flex flex-col gap-3">
-            <h3 className="text-[13px] font-semibold">Play settings</h3>
-            <p className="text-muted-ink text-[12px]">Global defaults.</p>
-          </section>
+          <PlaySettingsList piece={piece} defaults={defaults} />
         </div>
       </div>
     </div>
   );
+}
+
+/**
+ * What the piece plays at: its own settings where it holds any, the global default elsewhere. The
+ * play screen is the editor; this list only reads.
+ */
+function PlaySettingsList({
+  piece,
+  defaults,
+}: {
+  piece: PieceRow;
+  defaults: Partial<PieceSettings>;
+}) {
+  const { settings, inherited } = resolvePlaySettings(piece, defaults);
+  const rows: [string, string, keyof Inherited][] = [
+    [
+      'Tempo',
+      settings.tempoMode === 'bpm' ? `♩ = ${settings.tempoValue}` : `${settings.tempoValue} %`,
+      'tempoValue',
+    ],
+    ['Metronome', settings.metronome ? 'on' : 'off', 'metronome'],
+    ['Count-in', countInText(settings.countInBars), 'countInBars'],
+    ['Hands', settings.hands, 'hands'],
+    ['Keyboard', keyboardText(settings), 'keyboardPreset'],
+  ];
+  return (
+    <section className="flex flex-col gap-3">
+      <h3 className="text-[13px] font-semibold">Play settings</h3>
+      <dl className="divide-edge-soft border-edge-soft divide-y border-y">
+        {rows.map(([label, value, field]) => (
+          <div key={label} className="flex justify-between gap-3 py-1.5 text-[12px]">
+            <dt className="text-muted-ink">{label}</dt>
+            <dd
+              className={inherited[field] ? 'text-muted-ink' : ''}
+              title={inherited[field] ? 'Global default' : undefined}
+            >
+              {value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
+}
+
+function countInText(bars: number): string {
+  return bars === 0 ? 'off' : `${bars} bar${bars === 1 ? '' : 's'}`;
+}
+
+function keyboardText(settings: PieceSettings): string {
+  if (settings.keyboardPreset === 'piece') return 'piece range';
+  if (settings.keyboardPreset === 'custom') {
+    return `${noteName(settings.keyboardLo)}–${noteName(settings.keyboardHi)}`;
+  }
+  return `${settings.keyboardPreset} keys`;
 }
 
 /**

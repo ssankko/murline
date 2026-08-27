@@ -4,10 +4,9 @@
 
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
-import { getSetting, setSetting } from '@/db/db';
+import { getSetting } from '@/db/db';
 import { importFiles } from '@/library/import';
 import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
 import { Download, Search } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
@@ -146,14 +145,6 @@ export function Finder({
     }
   }
 
-  async function choosePdmxFolder(): Promise<void> {
-    const picked = await open({ directory: true });
-    if (typeof picked !== 'string') return;
-    await setSetting('pdmx_folder', picked);
-    setPdmxFolder(picked);
-    setDl({ state: 'idle' });
-  }
-
   function onKeyDown(event: React.KeyboardEvent): void {
     if (event.key === 'ArrowDown') {
       event.preventDefault();
@@ -249,17 +240,6 @@ export function Finder({
             <button onClick={() => void download()} className="underline underline-offset-2">
               Retry
             </button>
-            {dl.provider === 'PDMX' && dl.reason === 'file not found' && (
-              <span className="text-muted-ink ml-auto">
-                PDMX folder: {pdmxFolder ?? 'not set'}{' '}
-                <button
-                  onClick={() => void choosePdmxFolder()}
-                  className="hover:text-ink underline underline-offset-2"
-                >
-                  Choose…
-                </button>
-              </span>
-            )}
           </div>
         )}
 

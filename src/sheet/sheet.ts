@@ -81,6 +81,22 @@ const GLIDE_MS = 220;
  */
 export const DEFAULT_SPACING = 150;
 
+/** Range the time spacing may be pinched to, the same percents the settings slider writes. */
+const SPACING_MIN = 100;
+const SPACING_MAX = 300;
+
+/**
+ * Per trackpad pixel a pinch reports, how much it scales the spacing: `exp(-deltaY * ZOOM_K)`. A
+ * spread across the whole trackpad reports about seventy pixels, so it roughly doubles the paper.
+ */
+const ZOOM_K = 0.01;
+
+/** A re-spacing renders the whole sheet, so a live pinch gets at most one render per this long. */
+const ZOOM_MS = 80;
+
+/** The pinch is over once nothing has come in for this long, and what it settled on is stored. */
+const LOOK_MS = 300;
+
 /** How long the cursor band takes to grow or shrink into a new size, as the Section's tint fades. */
 const EASE_MS = 200;
 
@@ -146,6 +162,8 @@ export class Sheet {
   onSeek: ((target: SeekTarget) => void) | null = null;
   /** A drag picked or resized the Section, or the × cleared it. */
   onSection: ((section: Section | null) => void) | null = null;
+  /** A pinch has settled on a spacing: the screen stores it. */
+  onLook: ((look: { spacing: number }) => void) | null = null;
 
   private dark: boolean;
   /** Whether the measures take their width from their duration rather than from their engraving. */
@@ -188,6 +206,13 @@ export class Sheet {
   private drag: Drag | null = null;
   /** Wall-clock time of the last free scroll: the view snaps back two seconds after it. */
   private scrolledAt = -Infinity;
+  /** Spacing percent the newest pinch step asks for, which the throttled render carries. */
+  private zoomTo = 0;
+  /** Timers of a pinch: the throttle holding the next render, and the idle wait before `onLook`. */
+  private zoomTimer = 0;
+  private lookTimer = 0;
+  /** Spacing the running WebKit gesture started from, zero while no gesture is running. */
+  private gesturing = 0;
   /** The played timeline the cursor reads; the engine swaps it when Loop goes on. */
   private walk: PlayStep[] = [];
   /** Left and right edge of each bar in unscaled pixels, for the Section a drag picks. */
@@ -216,6 +241,8 @@ export class Sheet {
     scale: 0,
     /** Cursor x in unscaled content pixels as the last frame wrote it; a rescale anchors on it. */
     cursorX: 0,
+    /** The played tick of the last frame: a re-spacing reads the cursor's new x from it. */
+    tick: 0,
     onset: -1,
     step: -1,
     jumpAt: -Infinity,
@@ -287,12 +314,62 @@ export class Sheet {
       'wheel',
       (event) => {
         event.preventDefault();
+        // A trackpad pinch reaches the page as a wheel with ctrl held, and spaces the sheet
+        // instead of scrolling it.
+        if (event.ctrlKey) {
+          // Steps compound on the target the throttle still owes a render, not on the spacing
+          // already drawn, so a burst of them inside one throttle window keeps its whole travel.
+          const from = this.zoomTimer ? this.zoomTo : this.spacing;
+          if (!this.gesturing) this.pinch(from * Math.exp(-event.deltaY * ZOOM_K));
+          return;
+        }
         const by = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
         this.scroll.scrollLeft += by;
         this.scrolledAt = performance.now();
       },
       { passive: false, signal },
     );
+    // WebKit answers a trackpad pinch with these rather than with the ctrl-wheel above, and zooms
+    // the whole page unless every one of them is refused. A running gesture owns the pinch, so
+    // fingers reported both ways are only applied once.
+    const gesture = (event: Event): void => {
+      event.preventDefault();
+      const scale = (event as { scale?: number }).scale ?? 1;
+      if (event.type === 'gesturestart') this.gesturing = this.spacing;
+      else if (event.type === 'gestureend') this.gesturing = 0;
+      else if (this.gesturing) this.pinch(this.gesturing * scale);
+    };
+    for (const type of ['gesturestart', 'gesturechange', 'gestureend']) {
+      host.addEventListener(type, gesture, { passive: false, signal });
+    }
+  }
+
+  /**
+   * One step of a pinch on the paper: the spacing the fingers ask for. A sheet spaced by its
+   * engraving has no spacing to pinch and stands still. The render the change needs is the whole
+   * sheet, so at most one runs per ZOOM_MS and it always carries the newest target.
+   */
+  private pinch(percent: number): void {
+    if (!this.proportional) return;
+    this.zoomTo = clamp(Math.round(percent), SPACING_MIN, SPACING_MAX);
+    clearTimeout(this.lookTimer);
+    this.lookTimer = window.setTimeout(() => {
+      this.lookTimer = 0;
+      this.onLook?.({ spacing: this.spacing });
+    }, LOOK_MS);
+    if (!this.zoomTimer) this.applyZoom();
+  }
+
+  /** Renders the newest target and holds the next render back; the trailing timer runs that one. */
+  private applyZoom(): void {
+    if (this.zoomTo !== this.spacing) {
+      this.spacing = this.zoomTo;
+      this.reflow();
+    }
+    this.zoomTimer = window.setTimeout(() => {
+      this.zoomTimer = 0;
+      if (this.zoomTo !== this.spacing) this.applyZoom();
+    }, ZOOM_MS);
   }
 
   /** Loads the bytes, renders them on one line and builds the Score of what was rendered. */
@@ -386,12 +463,25 @@ export class Sheet {
     if (this.proportional) this.reflow();
   }
 
-  /** Spaces the sheet again and takes the geometry of the render, which the cursor stands on. */
+  /**
+   * Spaces the sheet again and takes the geometry of the render, which the cursor stands on. The
+   * cursor keeps its place in the block the reader sees: the paper opens up or packs around it,
+   * and the view holds it there instead of gliding after it.
+   */
   private reflow(): void {
+    const scale = this.drawn.scale;
+    const stood = this.drawn.cursorX * scale - this.scroll.scrollLeft;
     this.space();
     this.layout();
     this.drawn.onset = -1;
     this.drawn.scale = 0;
+    // Before the first frame there is nothing scaled or scrolled to hold; that frame writes both.
+    if (scale === 0) return;
+    this.fit();
+    this.drawn.cursorX = this.cursorAt(this.drawn.tick, this.drawn.step, 0).x;
+    this.scroll.scrollLeft = this.drawn.cursorX * this.drawn.scale - stood;
+    this.drawn.chasing = false;
+    this.drawn.scrollFrom = 0;
   }
 
   /**
@@ -497,11 +587,8 @@ export class Sheet {
     this.fit();
     // A count-in stands the cursor where it leads, and sends the runner over the bars it counts.
     const counting = snap.state === 'counting-in';
-    const at = this.cursorAt(
-      counting ? snap.countInTo : snap.playedTick,
-      snap.stepIndex,
-      windowTicks,
-    );
+    this.drawn.tick = counting ? snap.countInTo : snap.playedTick;
+    const at = this.cursorAt(this.drawn.tick, snap.stepIndex, windowTicks);
     this.drawRunner(counting ? snap : null, windowTicks);
     this.drawn.cursorX = at.x;
 
@@ -652,6 +739,8 @@ export class Sheet {
   /** Takes only this sheet's own DOM out of the host, which may already hold the next one. */
   dispose(): void {
     this.listeners.abort();
+    clearTimeout(this.zoomTimer);
+    clearTimeout(this.lookTimer);
     this.osmd.clear();
     this.scroll.remove();
   }

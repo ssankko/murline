@@ -393,6 +393,56 @@ test('a seek while the play is still glides the view only when the cursor lands 
   sheet.dispose();
 }, 60_000);
 
+test('a resize scales the sheet around the cursor and never moves it on screen', async () => {
+  const host = hostEl();
+  const sheet = await open(BACH, host);
+  const scroll = host.firstElementChild as HTMLElement;
+  const cursor = host.querySelector<HTMLElement>('.sheet-cursor')!;
+  // Where the band stands in the block the reader sees, whatever scale and scroll put it there.
+  // The band is read at its middle, the cursor's own x; its width is paper and scales with it.
+  const standing = () => {
+    const box = cursor.getBoundingClientRect();
+    return box.left + box.width / 2 - scroll.getBoundingClientRect().left;
+  };
+  const step = 200;
+  const frame = (now: number, state: Snapshot['state']) =>
+    sheet.frame(snapshot(sheet.score.playOrder[step]!.tick, { state, stepIndex: step }), 100, now);
+
+  // A bar mid-piece, the view glided onto it: paper stands on both sides of the cursor.
+  frame(0, 'idle');
+  frame(400, 'idle');
+  expect(scroll.scrollLeft).toBeGreaterThan(0);
+
+  // Idle, and the split drags the sheet block shorter: the paper shrinks around the cursor.
+  const stood = standing();
+  const scale = scaleOf(host);
+  host.style.height = '150px';
+  frame(416, 'idle');
+  expect(scaleOf(host)).toBeLessThan(scale);
+  expect(Math.abs(standing() - stood)).toBeLessThanOrEqual(1);
+
+  // Detached: the reader holds the view, and a taller block leaves the cursor where they see it.
+  host.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true, cancelable: true }));
+  frame(432, 'idle');
+  const held = standing();
+  host.style.height = '260px';
+  frame(448, 'idle');
+  expect(scaleOf(host)).toBeGreaterThan(scale);
+  expect(Math.abs(standing() - held)).toBeLessThanOrEqual(1);
+
+  // Attached: the view follows the cursor, and the resize neither jumps it nor glides it.
+  frame(1000, 'running');
+  frame(1400, 'running');
+  const followed = standing();
+  host.style.height = '190px';
+  frame(1416, 'running');
+  expect(Math.abs(standing() - followed)).toBeLessThanOrEqual(1);
+  frame(1432, 'running');
+  expect(Math.abs(standing() - followed)).toBeLessThanOrEqual(1);
+
+  sheet.dispose();
+}, 60_000);
+
 test('a click seeks to the nearest Onset, over a bar line and far from any notehead', async () => {
   const host = hostEl();
   const sheet = await open(BACH, host);

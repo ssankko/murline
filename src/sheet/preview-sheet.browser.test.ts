@@ -1,4 +1,4 @@
-import { colorOf } from '@/look/color';
+import { INK, colorOf, tone } from '@/look/color';
 import { expect, test } from 'vitest';
 import { noteheadEl } from './paint';
 import { PreviewSheet } from './preview-sheet';
@@ -12,9 +12,10 @@ const FIXTURES = import.meta.glob('../score/fixtures/*', {
 });
 
 const BACH = 'JohannSebastianBach_PraeludiumInCDur_BWV846_1.xml';
+const DYNAMICS = 'dynamics-and-tempo.musicxml';
 
-async function bytesOf(): Promise<Uint8Array> {
-  const url = FIXTURES[`../score/fixtures/${BACH}`] as string;
+async function bytesOf(file = BACH): Promise<Uint8Array> {
+  const url = FIXTURES[`../score/fixtures/${file}`] as string;
   return new Uint8Array(await (await fetch(url)).arrayBuffer());
 }
 
@@ -25,9 +26,13 @@ function hostEl(width: number): HTMLElement {
   return host;
 }
 
-async function open(width: number): Promise<{ sheet: PreviewSheet; host: HTMLElement }> {
+async function open(
+  width: number,
+  file = BACH,
+  dark = false,
+): Promise<{ sheet: PreviewSheet; host: HTMLElement }> {
   const host = hostEl(width);
-  return { sheet: await PreviewSheet.open(host, await bytesOf(), BACH, false), host };
+  return { sheet: await PreviewSheet.open(host, await bytesOf(file), file, dark), host };
 }
 
 function systemCount(sheet: PreviewSheet): number {
@@ -107,6 +112,37 @@ test('a preview opened over one still in flight is the only one left on the pape
   expect(host.contains(headOf(live))).toBe(true);
 
   live.dispose();
+}, 60_000);
+
+test('the dark theme reaches the clef and leaves no black ink on the paper', async () => {
+  const { sheet, host } = await open(600, DYNAMICS, true);
+
+  expect(host.querySelector('.vf-clef path')?.getAttribute('fill')).toBe(
+    tone(INK.scaffolding, true),
+  );
+  const black = [...host.querySelectorAll('svg *')].filter(
+    (el) => el.getAttribute('fill') === '#000000' || el.getAttribute('stroke') === '#000000',
+  );
+  expect(black.map((el) => `${el.tagName} in ${el.parentElement?.getAttribute('class')}`)).toEqual(
+    [],
+  );
+
+  sheet.setDark(false);
+  expect(host.querySelector('.vf-clef path')?.getAttribute('fill')).toBe(
+    tone(INK.scaffolding, false),
+  );
+
+  sheet.dispose();
+}, 60_000);
+
+test('a dynamic written as SMuFL glyph names prints as its letters', async () => {
+  const { sheet, host } = await open(600, DYNAMICS);
+
+  const texts = [...host.querySelectorAll('svg text')].map((el) => el.textContent);
+  expect(texts).toContain('mf');
+  expect(texts.filter((text) => text?.includes('sym'))).toEqual([]);
+
+  sheet.dispose();
 }, 60_000);
 
 /** A notehead of the sheet's first Onset: which host it hangs in says which render is on screen. */

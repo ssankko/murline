@@ -114,6 +114,12 @@
       <backup>
         <duration>4</duration>
       </backup>
+      <direction placement="above">
+        <direction-type>
+          <words font-family="FreeSerif" font-size="12" font-style="italic">&lt;sym&gt;dynamicMezzo&lt;/sym&gt;&lt;sym&gt;dynamicForte&lt;/sym&gt;</words>
+        </direction-type>
+        <staff>1</staff>
+      </direction>
       <direction placement="below">
         <direction-type>
           <dynamics>

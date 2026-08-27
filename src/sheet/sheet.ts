@@ -638,9 +638,11 @@ export class Sheet {
   /**
    * Cursor x for a played tick. Inside a system it runs from one Onset to the next; before a
    * system break or a backward jump it runs to its measure's right edge, so the next step is a
-   * snap and never a slide across the whole sheet. Spaced by time the Onsets of a measure stand at
-   * their own ticks, so that walk is already one speed; the band takes its width from the sheet's
-   * one pixels per tick either way, and never changes size from Onset to Onset.
+   * snap and never a slide across the whole sheet. Before the first Onset of the walk, where a bar
+   * that opens with a rest puts it, the cursor runs back from that Onset instead. Spaced by time
+   * the Onsets of a measure stand at their own ticks, so that walk is already one speed; the band
+   * takes its width from the sheet's one pixels per tick either way, and never changes size from
+   * Onset to Onset.
    */
   cursorAt(playedTick: number, hint: number, windowTicks: number): CursorAt {
     const order = this.walk;
@@ -656,9 +658,19 @@ export class Sheet {
     const toX = snap ? Math.max(here.measureRight, here.x) : there.x;
     const span = next && step ? next.tick - step.tick : 0;
     const done = span > 0 ? clamp((playedTick - step!.tick) / span, 0, 1) : 0;
-    const perTick = this.pxPerTick || (span > 0 ? Math.abs(toX - here.x) / span : 0);
+    // The gap to the next Onset over the ticks it covers: the band's width falls back to it, and
+    // the run back off the first Onset takes it, which is that Onset's own bar rather than the
+    // sheet's average.
+    const local = span > 0 ? Math.abs(toX - here.x) / span : 0;
+    const perTick = this.pxPerTick || local;
+    // The walk's own ticks only rise, so a tick under the step is a tick under the first step: the
+    // rest a piece opens with. It stands back from that Onset, and no further back than the bar
+    // line it belongs to.
+    const behind = step && playedTick < step.tick ? (step.tick - playedTick) * local : 0;
+    const onset = this.score.onsets[step?.onsetIndex ?? 0];
+    const barLeft = this.boxes[onset?.measureIndex ?? -1]?.left ?? 0;
     return {
-      x: here.x + (toX - here.x) * done,
+      x: Math.max(barLeft, here.x + (toX - here.x) * done - behind),
       width: Math.max(2, windowTicks * 2 * perTick),
       onsetIndex: step?.onsetIndex ?? 0,
       stepIndex: i,

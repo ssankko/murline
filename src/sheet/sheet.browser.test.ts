@@ -547,6 +547,41 @@ test('a click on a rest seeks to its place in the bar, and a notehead still to i
   sheet.dispose();
 }, 60_000);
 
+test('the cursor stands on the rest a bar opens with, not on the Onset after it', async () => {
+  const host = hostEl();
+  const sheet = await open(RESTS, host);
+  const engine = new Engine(sheet.score, { ...DEFAULT_PLAY_SETTINGS, countInBars: 0 });
+  const cursor = host.querySelector<HTMLElement>('.sheet-cursor')!;
+  // The band hangs at the content's left edge and travels by transform, so its middle is read back
+  // from the x it was moved to and the width the frame wrote, which no transition has caught up to.
+  const middle = () => new DOMMatrix(cursor.style.transform).e + parseFloat(cursor.style.width) / 2;
+
+  engine.seek({ measure: 0, into: 0 });
+  expect(engine.snapshot().playedTick).toBe(0);
+  sheet.frame(engine.snapshot(), 100, 0);
+
+  // Engraved, a moment stands at the middle of the glyph that draws it.
+  const engraved = restBox(sheet);
+  expect(Math.abs(middle() - (engraved.x + engraved.width / 2))).toBeLessThan(2);
+  expect(middle()).toBeLessThan(sheet.xOfOnset(0) - 40);
+
+  // Spaced by time, a moment stands at the notehead VexFlow drew, which opens the glyph's box.
+  sheet.setProportional(true);
+  sheet.frame(engine.snapshot(), 100, 16);
+  expect(Math.abs(middle() - restBox(sheet).x)).toBeLessThan(1);
+
+  sheet.dispose();
+}, 60_000);
+
+/** The SVG box of the rest that opens the first bar of the `RESTS` fixture. */
+function restBox(sheet: Sheet): DOMRect {
+  const entry = sheet.osmd.GraphicSheet.MeasureList[0]![0]!.staffEntries[0]!;
+  const head = entry.graphicalVoiceEntries[0]!.notes[0]! as unknown as {
+    getNoteheadSVGs(): SVGGraphicsElement[];
+  };
+  return head.getNoteheadSVGs()[0]!.getBBox();
+}
+
 test('the count-in runs a line towards the cursor, which stands where the count-in leads', async () => {
   const host = hostEl();
   const sheet = await open(BACH, host);

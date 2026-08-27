@@ -112,7 +112,6 @@ export function PlayScreen({
   const engineRef = useRef<Engine | null>(null);
   const laneRef = useRef<Lane | null>(null);
   /** The engine's counters as the last frame read them: a change is what the screen answers. */
-  const resetsRef = useRef(0);
   const finishesRef = useRef(0);
   const dark = useDark();
   const darkRef = useRef(dark);
@@ -396,21 +395,14 @@ export function PlayScreen({
     void savePractice();
     savePerformance();
     const snapshot = engine.snapshot();
-    // The engine opened the notes again: the sheet takes their whole state back from it, so what
-    // the cursor stands past reads as skipped and what lies ahead as never played.
-    if (engine.resets !== resetsRef.current) {
-      resetsRef.current = engine.resets;
-      sheet.setMarks(engine.notes, (i) => engine.noteState(i) === 'miss');
-    }
     if (engine.finishes !== finishesRef.current) {
       finishesRef.current = engine.finishes;
       sheet.finish();
     }
-    for (const event of engine.events()) {
-      lane.effect(event, wall);
-      if (event.verdict === 'miss') sheet.markNote(engine.notes[event.noteIndex]!.note, 'miss');
-    }
+    for (const event of engine.events()) lane.effect(event, wall);
     sheet.setWalk(engine.walk);
+    // The sheet is a projection of the engine: it draws the note states, never a copy of them.
+    sheet.project(engine, snapshot.playedTick);
     sheet.frame(snapshot, engine.windowTicks, now);
     lane.notice = midi.devices.length === 0 ? 'no MIDI device' : null;
     lane.frame(snapshot, engine.windowTicks, wall);

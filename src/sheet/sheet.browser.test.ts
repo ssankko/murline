@@ -1,10 +1,14 @@
 // The sheet's overlays take their fade from the app stylesheet, so the styles it asserts need it.
 import '@/index.css';
 import { INK, PAPER, colorOf, tone } from '@/look/color';
-import type { SeekTarget, Snapshot } from '@/play/engine';
+import { Engine, type NoteState, type SeekTarget, type Snapshot } from '@/play/engine';
 import type { Section } from '@/play/section';
+import { DEFAULT_PLAY_SETTINGS } from '@/play/settings';
+import type { Note } from '@/score/types';
+import type { Note as OsmdNote } from 'opensheetmusicdisplay';
 import { expect, test } from 'vitest';
 import { noteheadEl } from './paint';
+import type { Play } from './project';
 import { Sheet } from './sheet';
 
 // Vite serves the fixture files as URLs, the closest a browser test gets to the bytes the app
@@ -68,12 +72,13 @@ test('the current mark rings the notehead outside its fill and comes off again',
   const path = noteheadEl(sheet.osmd, note.source)!.firstElementChild!;
 
   // The ring is drawn behind the fill, so the whole pitch colour survives under the cursor band.
-  sheet.markNote(note, 'current');
+  sheet.outline([note], true);
   expect(path.getAttribute('paint-order')).toBe('stroke');
   expect(path.getAttribute('fill')).toBe(colorOf(note.midi, 'muted', false));
 
-  sheet.markNote(note, 'none');
+  sheet.outline([note], false);
   expect(path.getAttribute('paint-order')).toBe(null);
+  expect(path.getAttribute('stroke')).toBe(colorOf(note.midi, 'muted', false));
 
   sheet.dispose();
 }, 60_000);
@@ -500,33 +505,42 @@ function snapshot(playedTick: number, over: Partial<Snapshot> = {}): Snapshot {
   };
 }
 
-test("the play's note states come back over the whole sheet, the outline with them", async () => {
+/** A play the sheet can project, standing in for the engine with the states a test wants. */
+function play(notes: readonly Note[], stateOf: (index: number) => NoteState, version: number): Play {
+  return {
+    version,
+    notes: notes.map((note) => ({ note, tick: note.onsetTick })),
+    noteState: stateOf,
+  };
+}
+
+function fillOf(sheet: Sheet, source: OsmdNote): string | null | undefined {
+  return noteheadEl(sheet.osmd, source)?.firstElementChild?.getAttribute('fill');
+}
+
+test("the play's note states are projected over the whole sheet, the outline with them", async () => {
   const sheet = await open();
   // The cursor stands at the first Onset, which the frame outlines.
   sheet.frame(snapshot(0), 0, 0);
   const notes = sheet.score.onsets.flatMap((onset) => onset.notes);
   const first = notes[0]!;
   const last = notes[notes.length - 1]!;
-  const fill = (note: (typeof notes)[number]) =>
-    noteheadEl(sheet.osmd, note.source)?.firstElementChild?.getAttribute('fill');
 
   // Everything the play skipped greys at once, everything else reads as never played.
-  sheet.setMarks(
-    notes.map((note) => ({ note })),
-    (index) => index < notes.length / 2,
-  );
-  expect(fill(first)).toBe(tone(INK.miss, false));
-  expect(fill(last)).toBe(colorOf(last.midi, 'muted', false));
+  sheet.project(play(notes, (index) => (index < notes.length / 2 ? 'miss' : 'pending'), 1), Infinity);
+  expect(fillOf(sheet, first.source)).toBe(tone(INK.miss, false));
+  expect(fillOf(sheet, last.source)).toBe(colorOf(last.midi, 'muted', false));
   // The repaint went over the Onset the cursor stands at, which keeps its ring.
   expect(
     noteheadEl(sheet.osmd, first.source)!.firstElementChild!.getAttribute('paint-order'),
   ).toBe('stroke');
 
-  sheet.setMarks(
-    notes.map((note) => ({ note })),
-    () => false,
-  );
-  expect(fill(first)).toBe(colorOf(first.midi, 'muted', false));
+  sheet.project(play(notes, () => 'pending', 2), Infinity);
+  expect(fillOf(sheet, first.source)).toBe(colorOf(first.midi, 'muted', false));
+
+  // A projection of the same version changes nothing, however the states read.
+  sheet.project(play(notes, () => 'miss', 2), Infinity);
+  expect(fillOf(sheet, first.source)).toBe(colorOf(first.midi, 'muted', false));
 
   sheet.dispose();
 }, 60_000);
@@ -539,18 +553,66 @@ test('a missed tie greys its whole chain, and the colour comes back to all of it
     return tie && tie.StartNote === note.source && tie.Notes.length > 1;
   })!;
   const held = start.source.NoteTie!.Notes[1]!;
-  const fill = (source: typeof held) =>
-    noteheadEl(sheet.osmd, source)?.firstElementChild?.getAttribute('fill');
 
   // Only the note that starts the tie is ever struck, so only it is missed; the head it sounds on
   // must go grey with it.
-  sheet.markNote(start, 'miss');
-  expect(fill(start.source)).toBe(tone(INK.miss, false));
-  expect(fill(held)).toBe(tone(INK.miss, false));
+  sheet.project(play([start], () => 'miss', 1), Infinity);
+  expect(fillOf(sheet, start.source)).toBe(tone(INK.miss, false));
+  expect(fillOf(sheet, held)).toBe(tone(INK.miss, false));
 
-  sheet.markNote(start, 'none');
-  expect(fill(start.source)).toBe(colorOf(start.midi, 'muted', false));
-  expect(fill(held)).toBe(colorOf(start.midi, 'muted', false));
+  sheet.project(play([start], () => 'hit', 2), Infinity);
+  expect(fillOf(sheet, start.source)).toBe(colorOf(start.midi, 'muted', false));
+  expect(fillOf(sheet, held)).toBe(colorOf(start.midi, 'muted', false));
 
   sheet.dispose();
 }, 60_000);
+
+// The Bach holds ties over bar lines and the volta fixture plays its bars twice: both mappings have
+// to come off the engine the way the lane reads it.
+for (const file of [BACH, VOLTA]) {
+  test(`every notehead of ${file} reads what the engine gives the lane`, async () => {
+    const sheet = await open(file);
+    const engine = new Engine(sheet.score, { ...DEFAULT_PLAY_SETTINGS, countInBars: 0 });
+    const repeated = engine.notes.some(
+      ({ note }, i) => engine.notes.findIndex((other) => other.note === note) !== i,
+    );
+    expect(repeated || engine.notes.some(({ note }) => note.tiedFrom)).toBe(true);
+
+    /** The colour the lane's rule gives each head, with the tie and repeat mapping applied. */
+    const wanted = (playedTick: number) => {
+      const colours = new Map<OsmdNote, string>();
+      engine.notes.forEach(({ note, tick }, index) => {
+        if (tick > playedTick || note.tiedFrom) return;
+        const state = engine.noteState(index);
+        const colour = state === 'miss' ? tone(INK.miss, false) : colorOf(note.midi, 'muted', false);
+        const tie = note.source.NoteTie;
+        for (const head of tie?.StartNote === note.source ? tie.Notes : [note.source]) {
+          colours.set(head, colour);
+        }
+      });
+      return colours;
+    };
+
+    const agrees = (): number => {
+      const snap = engine.snapshot();
+      sheet.project(engine, snap.playedTick);
+      sheet.frame(snap, engine.windowTicks, 0);
+      const colours = wanted(snap.playedTick);
+      for (const [source, colour] of colours) expect(fillOf(sheet, source)).toBe(colour);
+      return colours.size;
+    };
+
+    // A forward seek: every expected note behind the cursor was skipped, whatever pass it fell in.
+    const half = Math.floor(sheet.score.playOrder.length / 2);
+    engine.seek({ tick: sheet.score.playOrder[half]!.tick });
+    expect(agrees()).toBeGreaterThan(0);
+    expect(engine.notes.some((_, i) => engine.noteState(i) === 'miss')).toBe(true);
+
+    // A live miss: the clock runs on and nothing is played at the notes it passes.
+    engine.start();
+    engine.advance(2000);
+    expect(agrees()).toBeGreaterThan(0);
+
+    sheet.dispose();
+  }, 60_000);
+}

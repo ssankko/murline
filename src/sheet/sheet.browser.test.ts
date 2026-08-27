@@ -326,6 +326,68 @@ test('the view glides back to the cursor slowest at both ends of the glide', asy
   sheet.dispose();
 }, 60_000);
 
+test('a seek while the play runs glides the cursor band either way', async () => {
+  const host = hostEl();
+  const sheet = await open(BACH, host);
+  const cursor = host.querySelector<HTMLElement>('.sheet-cursor')!;
+  const run = (step: number, now: number) =>
+    sheet.frame(snapshot(sheet.score.playOrder[step]!.tick, { stepIndex: step }), 100, now);
+
+  // The clock walking from one step to the next writes the x flat, so the band keeps the beat.
+  run(0, 0);
+  run(1, 16);
+  expect(getComputedStyle(cursor).transitionProperty).toBe('width, height, top');
+
+  // A forward seek: the band glides to the new bar instead of appearing there.
+  run(80, 32);
+  expect(getComputedStyle(cursor).transitionProperty).toBe('width, height, top, transform');
+  expect(getComputedStyle(cursor).transitionDuration).toBe('0.2s, 0.2s, 0.2s, 0.22s');
+
+  // A backward seek glides as well, and the window closes 220 ms after the seek.
+  run(2, 48);
+  expect(getComputedStyle(cursor).transitionProperty).toBe('width, height, top, transform');
+  run(3, 268);
+  expect(getComputedStyle(cursor).transitionProperty).toBe('width, height, top');
+
+  sheet.dispose();
+}, 60_000);
+
+test('a seek while the play is still glides the view only when the cursor lands off it', async () => {
+  const host = hostEl();
+  const sheet = await open(BACH, host);
+  const scroll = host.firstElementChild as HTMLElement;
+  const idle = (step: number, now: number) => {
+    const at = snapshot(sheet.score.playOrder[step]!.tick, { state: 'idle', stepIndex: step });
+    sheet.frame(at, 100, now);
+    return scroll.scrollLeft;
+  };
+
+  // The first frame scales the content, which is what turns an Onset's x into screen pixels.
+  expect(idle(0, 0)).toBe(0);
+  const scale = scaleOf(host);
+  const followOf = (step: number) =>
+    sheet.xOfOnset(sheet.score.playOrder[step]!.onsetIndex) * scale - scroll.clientWidth * 0.3;
+
+  // A far bar lands the cursor off the view: the paper glides after it and settles on the follow
+  // position, the cursor 30 % from the left edge.
+  expect(idle(200, 16)).toBe(0);
+  const mid = idle(200, 166);
+  expect(mid).toBeGreaterThan(0);
+  expect(mid).toBeLessThan(followOf(200));
+  expect(Math.abs(idle(200, 316) - followOf(200))).toBeLessThanOrEqual(1);
+
+  // A seek onto paper the reader can already see leaves the view where he put it.
+  const held = scroll.scrollLeft;
+  const near = sheet.score.playOrder.findIndex(
+    (step) => sheet.xOfOnset(step.onsetIndex) * scale - held > scroll.clientWidth * 0.5,
+  );
+  expect(near).toBeGreaterThan(202);
+  expect(idle(near, 332)).toBe(held);
+  expect(idle(near, 482)).toBe(held);
+
+  sheet.dispose();
+}, 60_000);
+
 test('a click seeks to the nearest Onset, over a bar line and far from any notehead', async () => {
   const host = hostEl();
   const sheet = await open(BACH, host);

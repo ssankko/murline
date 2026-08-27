@@ -61,7 +61,7 @@ import { clampSection, sectionLabel, type Section } from '@/play/section';
 import { useFrameLoop } from '@/play/use-frame-loop';
 import { bpmAt, ScoreError, type Measure } from '@/score/types';
 import { Button } from '@/components/ui/button';
-import { GearPopover, SettingsDialog, type SettingChange } from '@/screens/settings';
+import { GearPopover, SettingsDialog, ViewPopover, type SettingChange } from '@/screens/settings';
 import { Sheet } from '@/sheet/sheet';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
@@ -532,6 +532,7 @@ export function PlayScreen({
             onUseGlobalDefaults={() => useGlobalDefaults().catch(console.error)}
             onAllSettings={() => setSettingsOpen(true)}
           />
+          <ViewPopover onChange={applyGlobal} />
 
           {/* The play disc keeps the window's midline whatever the two sides hold. */}
           <div className="absolute left-1/2 flex -translate-x-1/2 items-center gap-0.5">
@@ -593,7 +594,7 @@ export function PlayScreen({
                   <Hand {...ICON} className={handGlyph(hands, 'left')} />
                   <Hand {...ICON} className={`scale-x-[-1] ${handGlyph(hands, 'right')}`} />
                 </BarButton>
-                <div className="flex items-center">
+                <div className="border-ink/55 divide-ink/55 flex items-center divide-x overflow-hidden rounded-md border">
                   <BarButton
                     label="Flow mode"
                     segment
@@ -846,8 +847,9 @@ function BarButton({
   segment?: boolean;
   children: React.ReactNode;
 }) {
-  // A segment pair fills its active side; every other toggle is dimmed while it is off and full
-  // ink with an under-bar while it is on. A control only placed here is `off`: dimmed and inert.
+  // A segment sits square inside the pair's shared border and fills when it is the active side;
+  // every other toggle is dimmed while off and full ink with an under-bar while on. A control only
+  // placed here is `off`: dimmed and inert.
   const filled = segment && pressed;
   const dim = off || (!segment && pressed === false);
   const paint = filled
@@ -855,7 +857,7 @@ function BarButton({
     : `${dim ? 'text-ink/35' : ''} ${off ? '' : 'hover:bg-ink/8'}`;
   const shape = disc
     ? 'size-[34px] rounded-full bg-ink text-paper mx-1 hover:bg-ink/85'
-    : `h-8 rounded-md ${wide ? 'px-1.5' : 'w-8'} ${paint}`;
+    : `h-8 ${segment ? 'rounded-none' : 'rounded-md'} ${wide ? 'px-1.5' : 'w-8'} ${paint}`;
   return (
     <Tooltip>
       <TooltipTrigger asChild>

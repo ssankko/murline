@@ -318,6 +318,16 @@ export class Sheet {
     for (const note of this.outlined) this.markNote(note, 'current');
   }
 
+  /**
+   * Puts the note states of a play back on every notehead: a note it names is skipped and reads in
+   * the miss grey, every other note in its pitch colour. One entry per played note, in played
+   * order, so a repeated bar takes the state of its last pass.
+   */
+  setMarks(notes: readonly { note: Note }[], missed: (index: number) => boolean): void {
+    notes.forEach((note, index) => this.markNote(note.note, missed(index) ? 'miss' : 'none'));
+    for (const note of this.outlined) this.markNote(note, 'current');
+  }
+
   /** The miss grey or the current Onset's outline; `none` puts the pitch colour back. */
   markNote(note: Note, kind: MarkKind): void {
     const head = noteheadEl(this.osmd, note.source);

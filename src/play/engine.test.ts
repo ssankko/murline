@@ -228,6 +228,27 @@ describe('the lifecycle', () => {
     expect(play.snapshot()).toMatchObject({ state: 'idle', playedTick: 0 });
   });
 
+  test('restart opens every note the run behind it settled', () => {
+    const play = engine(scoreOf(2));
+    play.start();
+    play.advance(2500);
+    expect(play.noteState(0)).toBe('miss');
+
+    play.restart();
+    expect(play.noteState(0)).toBe('pending');
+  });
+
+  test('a start at a later bar skips what lies behind it, and says nothing about it', () => {
+    const play = engine(scoreOf(3));
+    play.seek({ measure: 2 });
+    play.start();
+    play.advance(1000);
+
+    expect(play.noteState(0)).toBe('miss');
+    expect(play.resolvedAt(0)).toBe(0);
+    expect(play.events().every((event) => event.noteIndex >= 8)).toBe(true);
+  });
+
   test('the end of the piece parks at the start point', () => {
     const play = engine(scoreOf(2));
     play.start();
@@ -920,6 +941,21 @@ describe('the count-in', () => {
     expect(play.snapshot().playedTick).toBe(2 * BAR - 4 * TICKS_PER_QUARTER);
   });
 
+  test('skips the bar it counts over, so only what it leads to is open', () => {
+    const play = engine(scoreOf(3), { countInBars: 1 });
+    play.start();
+    // The count-in, then five beats: one bar and a beat into the piece.
+    play.advance(4000 + 5000);
+    play.pause();
+    play.resume();
+
+    // The resume counts over bar 1, which the cursor stands past; bar 2 is open again.
+    expect(play.snapshot().state).toBe('counting-in');
+    expect(play.noteState(3)).toBe('miss');
+    expect(play.resolvedAt(3)).toBe(0);
+    expect(play.noteState(4)).toBe('pending');
+  });
+
   test('counts the meter of a bar that opens with a rest', () => {
     const play = engine(restThenThreeFour(), { countInBars: 1 });
     play.seek({ measure: 1 });
@@ -1143,6 +1179,18 @@ describe('a performance', () => {
     expect(play.takePerformance()).toBeNull();
   });
 
+  test('a start opens every note, whatever the practice before it left', () => {
+    const play = engine(scoreOf(2));
+    play.seek({ measure: 1 });
+    play.start();
+    play.advance(2000);
+    expect(play.noteState(0)).toBe('miss');
+
+    play.arm();
+    play.start();
+    expect(play.notes.every((_, i) => play.noteState(i) === 'pending')).toBe(true);
+  });
+
   test('Play again from the end runs a fresh performance', () => {
     const play = twoNotes();
     play.start();
@@ -1206,17 +1254,36 @@ describe('seek', () => {
     expect(play.snapshot().playedTick).toBe(0);
   });
 
-  test('closes nothing behind it: a note passed over is neither missed nor expected', () => {
+  test('skips what it jumps over and opens what lies ahead', () => {
     const play = engine(scoreOf(3));
     play.start();
     play.advance(100);
-    // Bar 3 opens at note 8; the seven notes jumped over stay open and unmarked.
-    play.seek({ measure: 2 });
-    play.advance(1000);
+    down(play, 60, 100);
+    expect(play.noteState(0)).toBe('hit');
 
+    // Bar 3 opens at note 8: the eight notes jumped over are skipped, with no stamp behind them.
+    play.seek({ measure: 2 });
+    expect(play.noteState(0)).toBe('miss');
+    expect(play.resolvedAt(0)).toBe(0);
+    expect(play.noteState(4)).toBe('miss');
+    expect(play.noteState(8)).toBe('pending');
+
+    // Nothing the seek skipped is announced; only the windows the clock closes are.
+    play.advance(1000);
     const missed = play.events().filter((event) => event.verdict === 'miss');
     expect(missed.every((event) => event.noteIndex >= 8)).toBe(true);
-    expect(play.noteState(4)).toBe('pending');
+  });
+
+  test('a note struck ahead of a backward seek is open again', () => {
+    const play = engine(scoreOf(2));
+    play.start();
+    play.advance(BEAT_MS);
+    down(play, 60, BEAT_MS);
+    expect(play.noteState(1)).toBe('hit');
+
+    play.seek({ measure: 0 });
+    expect(play.noteState(1)).toBe('pending');
+    expect(play.resolvedAt(1)).toBe(0);
   });
 
   test('nothing happens during a performance', () => {

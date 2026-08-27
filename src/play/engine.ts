@@ -299,10 +299,7 @@ export class Engine {
     if (span && (this.startTick < span.from || this.startTick >= span.to)) this.startTick = span.from;
     this.tick = this.startTick;
     this.resets++;
-    this.states.fill('pending');
-    this.resolved.fill(0);
     this.pending = [];
-    this.closed = 0;
     this.wait.reset();
     this.stopStep = null;
     this.motionMs = 0;
@@ -385,6 +382,8 @@ export class Engine {
     const span = this.sectionRange ? this.loopSpan() : null;
     if (span) this.startTick = span.from;
     this.abort();
+    // A restart asks for the piece afresh, so the notes read from the start point again at once.
+    this.moveTo(this.startTick);
   }
 
   /**
@@ -488,13 +487,11 @@ export class Engine {
     return this.nearestTick(this.playedTicksOf({ onset: at.onsetIndex }), was - at.past) + at.past;
   }
 
-  /** Takes the clock to a played tick: nothing behind it closes, everything from it is open again. */
+  /** Takes the clock to a played tick: everything behind it is skipped, everything from it open. */
   private moveTo(to: number): void {
     this.tick = to;
     this.resets++;
-    this.closed = this.firstNoteFrom(to);
-    this.states.fill('pending', this.closed);
-    this.resolved.fill(0, this.closed);
+    this.openAt(to);
     // Wait mode asks for every Onset from here again.
     this.wait.forgetFrom(this.stepAt(to));
     this.stopStep = null;
@@ -502,6 +499,20 @@ export class Engine {
     const stop = this.nextStop();
     if (stop >= 0 && this.walk[stop]!.tick <= to) this.stopStep = stop;
     this.syncBeats();
+  }
+
+  /**
+   * The note states a play standing at a played tick reads with: every expected note behind it was
+   * skipped, every note from it is open again. The mass fill leaves `resolvedAt` at 0, which is
+   * what tells the lane these were never resolved live, and sends no event.
+   */
+  private openAt(to: number): void {
+    this.closed = this.firstNoteFrom(to);
+    for (let i = 0; i < this.closed; i++) {
+      this.states[i] = this.isExpected(this.notes[i]!) ? 'miss' : 'pending';
+    }
+    this.states.fill('pending', this.closed);
+    this.resolved.fill(0);
   }
 
   /**
@@ -623,6 +634,8 @@ export class Engine {
     const bars = Math.floor(this.settings.countInBars);
     const measure = this.barAt(to)?.measure;
     this.countInTo = to;
+    // The count-in runs over the bar before the tick motion starts at, so that bar reads as skipped.
+    this.openAt(to);
     if (bars >= 1 && measure) {
       const beat = beatOf(measure);
       this.countInBeats = [];

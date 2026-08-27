@@ -13,13 +13,21 @@ const FIXTURES = import.meta.glob('../score/fixtures/*', {
 
 const BACH = 'JohannSebastianBach_PraeludiumInCDur_BWV846_1.xml';
 
-async function open(width: number): Promise<{ sheet: PreviewSheet; host: HTMLElement }> {
+async function bytesOf(): Promise<Uint8Array> {
   const url = FIXTURES[`../score/fixtures/${BACH}`] as string;
-  const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer());
+  return new Uint8Array(await (await fetch(url)).arrayBuffer());
+}
+
+function hostEl(width: number): HTMLElement {
   const host = document.createElement('div');
   host.style.cssText = `width:${width}px`;
   document.body.append(host);
-  return { sheet: await PreviewSheet.open(host, bytes, BACH, false), host };
+  return host;
+}
+
+async function open(width: number): Promise<{ sheet: PreviewSheet; host: HTMLElement }> {
+  const host = hostEl(width);
+  return { sheet: await PreviewSheet.open(host, await bytesOf(), BACH, false), host };
 }
 
 function systemCount(sheet: PreviewSheet): number {
@@ -70,6 +78,41 @@ test('a wider host re-fits the sheet at a larger zoom', async () => {
 
   sheet.dispose();
 }, 60_000);
+
+test('a disposed preview leaves its host empty for the next one', async () => {
+  const host = hostEl(600);
+  const bytes = await bytesOf();
+  const first = await PreviewSheet.open(host, bytes, BACH, false);
+  first.dispose();
+
+  expect(host.children.length).toBe(0);
+
+  const second = await PreviewSheet.open(host, bytes, BACH, false);
+  expect(host.querySelectorAll('#osmdCanvasPage1').length).toBe(1);
+  expect(host.querySelectorAll('svg').length).toBe(1);
+
+  second.dispose();
+}, 60_000);
+
+test('a preview opened over one still in flight is the only one left on the paper', async () => {
+  const host = hostEl(600);
+  const bytes = await bytesOf();
+  // What StrictMode does: one host, two opens in flight at once, and the sheet of the mount React
+  // threw away is dropped as soon as its open lands.
+  const flying = PreviewSheet.open(host, bytes, BACH, false);
+  const live = await PreviewSheet.open(host, bytes, BACH, false);
+  (await flying).dispose();
+
+  expect(host.querySelectorAll('svg').length).toBe(1);
+  expect(host.contains(headOf(live))).toBe(true);
+
+  live.dispose();
+}, 60_000);
+
+/** A notehead of the sheet's first Onset: which host it hangs in says which render is on screen. */
+function headOf(sheet: PreviewSheet): HTMLElement {
+  return noteheadEl(sheet.osmd, sheet.score.onsets[0]!.notes[0]!.source)!;
+}
 
 function svgWidth(host: HTMLElement): number {
   return Number(host.querySelector('svg')?.getAttribute('width'));

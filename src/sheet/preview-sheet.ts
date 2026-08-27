@@ -29,13 +29,17 @@ export class PreviewSheet {
   score!: Score;
 
   private readonly host: HTMLElement;
+  /** The one element of the host this sheet owns: OSMD draws in it and `dispose` takes it away. */
+  private readonly paper: HTMLElement;
   private dark: boolean;
   private drawnWidth = 0;
 
   private constructor(host: HTMLElement, dark: boolean) {
     this.host = host;
     this.dark = dark;
-    this.osmd = new OpenSheetMusicDisplay(host, {
+    this.paper = document.createElement('div');
+    host.append(this.paper);
+    this.osmd = new OpenSheetMusicDisplay(this.paper, {
       backend: 'svg',
       autoResize: false,
       // One page of unbounded height: the systems wrap down the window and never break to a page.
@@ -77,6 +81,7 @@ export class PreviewSheet {
 
   dispose(): void {
     this.osmd.clear();
+    this.paper.remove();
   }
 
   private draw(): void {

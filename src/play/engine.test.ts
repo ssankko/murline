@@ -179,6 +179,21 @@ describe('the lifecycle', () => {
     expect(play.snapshot()).toMatchObject({ state: 'paused', playedTick: 2 * BAR });
   });
 
+  test('pause opens the notes of the bar again, so a resume expects them afresh', () => {
+    const play = engine(scoreOf(2));
+    play.start();
+    // Two beats into bar 2, with the first note of that bar left behind as a miss.
+    play.advance(6000);
+    expect(play.noteState(4)).toBe('miss');
+
+    play.pause();
+    expect(play.noteState(4)).toBe('pending');
+
+    play.resume();
+    down(play, 60, 6000);
+    expect(play.noteState(4)).toBe('hit');
+  });
+
   test('resume runs on from the bar start', () => {
     const play = engine(withRepeat());
     play.start();
@@ -1275,6 +1290,17 @@ describe('Section and Loop', () => {
 
     play.restart();
     expect(play.snapshot().state).toBe('idle');
+    expect(play.snapshot().playedTick).toBe(2 * BAR);
+  });
+
+  test('Restart with Loop on and no Section keeps the start bar', () => {
+    const play = engine(scoreOf(4));
+    play.setLoop(true);
+    play.seek({ measure: 2 });
+    play.start();
+    play.advance(1000);
+    play.restart();
+
     expect(play.snapshot().playedTick).toBe(2 * BAR);
   });
 

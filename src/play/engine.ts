@@ -355,10 +355,10 @@ export class Engine {
       return;
     }
     if (this.state !== 'running') return;
-    this.tick = this.barStartOf(this.tick);
+    // The bar is played again from its line, so its notes are open again and its Wait mode Onsets
+    // are stops again. A paused play never stands at a stop; the resume finds it.
     this.state = 'paused';
-    this.forgetSatisfied(this.stepAt(this.tick));
-    this.syncBeats();
+    this.moveTo(this.barStartOf(this.tick));
   }
 
   resume(): void {
@@ -388,8 +388,9 @@ export class Engine {
   }
 
   restart(): void {
-    // The Section is where a restart lands only while Loop is on; a Section alone is inert.
-    const span = this.loopSpan();
+    // A restart lands on the Section only while Loop gives it force; a Section alone is inert, and
+    // Loop over the whole piece leaves the start bar where the player put it.
+    const span = this.sectionRange ? this.loopSpan() : null;
     if (span) this.startTick = span.from;
     this.abort();
   }

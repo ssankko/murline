@@ -141,7 +141,7 @@ export function Finder({
     } catch (error) {
       setDl({ state: 'failed', provider: row.provider, reason: String(error) });
     } finally {
-      if (tempPath) await invoke('remove_file', { path: tempPath }).catch(() => {});
+      if (tempPath) await invoke('remove_temp_file', { path: tempPath }).catch(() => {});
     }
   }
 

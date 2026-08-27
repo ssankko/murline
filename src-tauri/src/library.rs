@@ -47,11 +47,18 @@ pub fn copy_file(src: String, dst: String) -> Result<Stamp, String> {
     copy(Path::new(&src), Path::new(&dst)).map_err(|e| e.to_string())
 }
 
-/// Deletes a file outright. The finder's temp download is the only caller: a file the user never
-/// saw does not belong in the Trash.
+/// Deletes the finder's download once the import has read it: a file the user never saw does not
+/// belong in the Trash. Nothing outside the OS temp directory is deleted, so the Trash stays the
+/// only way a file of the library folder goes.
 #[tauri::command]
-pub fn remove_file(path: String) -> Result<(), String> {
-    std::fs::remove_file(&path).map_err(|e| e.to_string())
+pub fn remove_temp_file(path: String) -> Result<(), String> {
+    let path = Path::new(&path);
+    let inside = path.starts_with(std::env::temp_dir())
+        && !path.components().any(|c| c == std::path::Component::ParentDir);
+    if !inside {
+        return Err(format!("not a temp file: {}", path.display()));
+    }
+    std::fs::remove_file(path).map_err(|e| e.to_string())
 }
 
 /// Opens the file's folder in the Finder with the file selected.
@@ -128,7 +135,7 @@ fn list_dir(root: &Path) -> std::io::Result<Vec<FileEntry>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{copy, list_dir, trash_file, FileEntry};
+    use super::{copy, list_dir, remove_temp_file, trash_file, FileEntry};
     use std::path::Path;
 
     fn write(root: &Path, rel: &str, body: &str) {
@@ -199,6 +206,22 @@ mod tests {
         trash_file(path.to_string_lossy().into_owned()).unwrap();
 
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn only_a_file_under_the_temp_directory_is_deleted_outright() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir()).unwrap();
+        write(temp.path(), "download.musicxml", "bytes");
+        let path = temp.path().join("download.musicxml");
+        remove_temp_file(path.to_string_lossy().into_owned()).unwrap();
+        assert!(!path.exists());
+
+        let library = tempfile::tempdir().unwrap();
+        write(library.path(), "piece.musicxml", "bytes");
+        let outside = library.path().join("..").join("piece.musicxml");
+        assert!(remove_temp_file("/Users/somebody/Music/Piano/piece.musicxml".to_string()).is_err());
+        assert!(remove_temp_file(outside.to_string_lossy().into_owned()).is_err());
+        assert!(library.path().join("piece.musicxml").exists());
     }
 
     #[test]

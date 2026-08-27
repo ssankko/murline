@@ -1,5 +1,6 @@
 use tauri_plugin_sql::{Migration, MigrationKind};
 
+mod audio;
 mod finder;
 mod kernscores;
 mod library;
@@ -57,6 +58,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             ensure_dir,
+            audio::audio_start,
+            audio::audio_status,
+            audio::audio_click,
             library::copy_file,
             library::list_library,
             library::read_file,
@@ -72,4 +76,3 @@ pub fn run() {
         .run(context)
         .expect("error while running tauri application");
 }
-

@@ -1,6 +1,7 @@
 // The play engine: the clock of one play and where it stands in the Score. Pure TypeScript, no
 // DOM, no React, no timer of its own. The screen owns the frame loop and feeds it wall time.
 
+import type { ClickStrength } from '@/play/click';
 import { playGrade, type NoteStrike, type PlayGrade } from '@/play/grade';
 import { clampSection, type Section } from '@/play/section';
 import { isInactiveHand, type HandsSetting, type PlaySettings, type TempoMode } from '@/play/settings';
@@ -155,11 +156,6 @@ export class Engine {
   wraps = 0;
   /** Bumped when a practice runs off the end of the piece, the one ending that is animated. */
   finishes = 0;
-  /**
-   * Whether the last beat the clicks of `beats()` were owed for opens a bar. A count-in beat never
-   * does: the count-in is counted down as one run of beats, as the lane draws it.
-   */
-  strongBeat = false;
 
   private state: PlayState = 'idle';
   private tick = 0;
@@ -189,10 +185,12 @@ export class Engine {
   private beatGrid: Beat[];
   /** First beat of the grid the clock has not passed yet. */
   private beatNext = 0;
-  /** Clicks owed to the screen, taken by `beats()`. */
-  private clicks = 0;
+  /** Clicks owed to the screen in the order the clock crossed them, taken by `beats()`. */
+  private clicks: ClickStrength[] = [];
   /** First count-in beat the clock has not passed yet. */
   private countInNext = 0;
+  /** Beats to a bar of the count-in in force, which is what makes one of its beats strong. */
+  private countInPerBar = 1;
   /** Played tick the count-in leads to, which is where motion starts. */
   private countInTo = 0;
 
@@ -260,13 +258,14 @@ export class Engine {
   }
 
   /**
-   * Takes the clicks the metronome owes since the last call: a beat of the grid the clock crossed
-   * while the metronome is on, and every count-in beat whether it is on or not. `strongBeat` and
-   * `beatMs` say what the last of them was and how long it lasts.
+   * Takes the clicks the metronome owes since the last call, in the order the clock crossed them:
+   * a beat of the grid it passed while the metronome is on, and every count-in beat whether it is
+   * on or not. A beat that opens a bar is strong, in the count-in as in the play; `beatMs` says how
+   * long one of them lasts.
    */
-  beats(): number {
+  beats(): ClickStrength[] {
     const clicks = this.clicks;
-    this.clicks = 0;
+    this.clicks = [];
     return clicks;
   }
 
@@ -676,6 +675,7 @@ export class Engine {
     if (bars >= 1 && measure) {
       const beat = beatOf(measure);
       this.countInBeats = [];
+      this.countInPerBar = beat.perBar;
       for (let left = bars * beat.perBar; left > 0; left--) {
         this.countInBeats.push(to - left * beat.ticks);
       }
@@ -700,9 +700,8 @@ export class Engine {
       this.countInNext < this.countInBeats.length &&
       this.countInBeats[this.countInNext]! <= this.tick
     ) {
+      this.clicks.push(this.countInNext % this.countInPerBar === 0 ? 'strong' : 'weak');
       this.countInNext++;
-      this.clicks++;
-      this.strongBeat = false;
     }
     if (want < this.countInTo) return 0;
     this.countInBeats = [];
@@ -717,8 +716,7 @@ export class Engine {
       const beat = this.beatGrid[this.beatNext]!;
       this.beatNext++;
       if (!this.settings.metronome) continue;
-      this.clicks++;
-      this.strongBeat = beat.strong;
+      this.clicks.push(beat.strong ? 'strong' : 'weak');
     }
     if (!this.passedOnset && this.stepAt(this.tick) > this.startStep) this.passedOnset = true;
   }

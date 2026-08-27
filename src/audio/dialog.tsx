@@ -1,0 +1,59 @@
+// The Audio dialog: the one global place for the sound engine, opened from the play screen and
+// from the library. Its three sections live in files of their own; this file holds the box, the
+// status line, and the reader that fills it.
+
+import { EffectsSection } from '@/audio/effects';
+import { InstrumentSection } from '@/audio/instrument';
+import { OutputSection } from '@/audio/output';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { invoke } from '@tauri-apps/api/core';
+import { useEffect, useState } from 'react';
+
+/** What the engine answers about itself: whether sound can come out, and why not when it cannot. */
+export interface AudioStatus {
+  available: boolean;
+  reason: string;
+}
+
+export function AudioDialog({ onClose }: { onClose: () => void }) {
+  const [status, setStatus] = useState<AudioStatus | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    invoke<AudioStatus>('audio_status').then(
+      (answer) => live && setStatus(answer),
+      (error: unknown) => live && setStatus({ available: false, reason: String(error) }),
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-[560px]">
+        <DialogHeader>
+          <DialogTitle className="text-[15px]">Audio</DialogTitle>
+          <DialogDescription className="sr-only">
+            The sound engine: output, instrument and effects.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex min-w-0 flex-col gap-7">
+          <OutputSection />
+          <InstrumentSection />
+          <EffectsSection />
+          {status && !status.available && (
+            <p className="text-muted-ink text-[12px]">{status.reason}</p>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}

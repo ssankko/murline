@@ -1,6 +1,7 @@
 import { expect, test, vi } from 'vitest';
 
 let settings = { theme: 'dark', onboarding_done: true, library_folder: '/scores' };
+let engineReason: string | null = null;
 
 vi.mock('@/db/db', () => ({
   getDb: async () => ({}),
@@ -10,6 +11,11 @@ vi.mock('@/look/use-dark', () => ({ setTheme: () => {} }));
 vi.mock('@/library/scan', () => ({
   scanLibrary: async (folder: string) => {
     if (folder === '/gone') throw new Error('folder is gone');
+  },
+}));
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: async (command: string) => {
+    if (command === 'audio_start' && engineReason) throw engineReason;
   },
 }));
 
@@ -23,15 +29,28 @@ test('every step prints its line, in the order the steps run', async () => {
     '> opening database … ok',
     '> reading settings … ok',
     '> theme: dark',
+    '> starting sound engine … ok',
     '> scanning /scores … ok',
   ]);
   // Each report holds the lines printed so far and no more.
-  expect(printed.map((lines) => lines.length)).toEqual([1, 2, 3, 4, 5]);
+  expect(printed.map((lines) => lines.length)).toEqual([1, 2, 3, 4, 5, 6]);
 });
 
 test('a step that fails prints its reason', async () => {
   settings = { ...settings, library_folder: '/gone' };
   const printed: string[][] = [];
   await boot((lines) => printed.push(lines));
-  expect(printed[printed.length - 1]![4]).toBe('> scanning /gone … folder is gone');
+  expect(printed[printed.length - 1]![5]).toBe('> scanning /gone … folder is gone');
+});
+
+test('a sound engine that will not start prints why, and the steps after it still run', async () => {
+  settings = { ...settings, library_folder: '/scores' };
+  engineReason = 'No sound engine on this platform';
+  const printed: string[][] = [];
+  await boot((lines) => printed.push(lines));
+  expect(printed[printed.length - 1]!.slice(4)).toEqual([
+    '> starting sound engine … No sound engine on this platform',
+    '> scanning /scores … ok',
+  ]);
+  engineReason = null;
 });

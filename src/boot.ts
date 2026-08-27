@@ -5,6 +5,7 @@ import { getDb, readSettings, type Settings } from '@/db/db';
 import { reasonOf } from '@/library/notice';
 import { scanLibrary } from '@/library/scan';
 import { setTheme } from '@/look/use-dark';
+import { invoke } from '@tauri-apps/api/core';
 
 /**
  * Runs the start-up steps in order, reporting every line printed so far after each one, and
@@ -36,6 +37,8 @@ export async function boot(print: (lines: string[]) => void): Promise<Settings> 
   if (opened) say('> reading settings … ok');
   setTheme(settings.theme);
   say(`> theme: ${settings.theme}`);
+
+  await step('starting sound engine', () => invoke('audio_start'));
 
   // The library screen walks the same folder on mount, and `scanLibrary` walks a folder once, so
   // the wait for it happens here instead of behind an empty list.

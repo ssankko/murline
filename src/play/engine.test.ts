@@ -777,13 +777,13 @@ describe('the metronome', () => {
 
     // Four beats of 4/4 at 60 BPM: one click a second, the first on the downbeat.
     play.advance(500);
-    expect(play.beats()).toBe(1);
+    expect(play.beats()).toHaveLength(1);
     play.advance(1000);
-    expect(play.beats()).toBe(1);
+    expect(play.beats()).toHaveLength(1);
 
     play.settings.metronome = false;
     play.advance(2000);
-    expect(play.beats()).toBe(0);
+    expect(play.beats()).toHaveLength(0);
   });
 
   test('says which beat opens the bar and how long one beat lasts', () => {
@@ -792,19 +792,25 @@ describe('the metronome', () => {
 
     // 4/4 at 60 BPM: the bar opens on a strong beat and the three after it are weak.
     play.advance(500);
-    expect(play.beats()).toBe(1);
-    expect(play.strongBeat).toBe(true);
+    expect(play.beats()).toEqual(['strong']);
     expect(play.beatMs).toBeCloseTo(1000, 6);
     for (let beat = 0; beat < 3; beat++) {
       play.advance(1000);
-      expect(play.beats()).toBe(1);
-      expect(play.strongBeat).toBe(false);
+      expect(play.beats()).toEqual(['weak']);
     }
 
     // The next bar line is strong again.
     play.advance(1000);
-    expect(play.beats()).toBe(1);
-    expect(play.strongBeat).toBe(true);
+    expect(play.beats()).toEqual(['strong']);
+  });
+
+  test('hands back every beat one advance crossed, in the order it crossed them', () => {
+    const play = engine(scoreOf(2), { metronome: true, countInBars: 0 });
+    play.start();
+
+    // A frame long enough to swallow a whole bar still owes its four beats, one by one.
+    play.advance(3500);
+    expect(play.beats()).toEqual(['strong', 'weak', 'weak', 'weak']);
   });
 
   test('a compound meter beats in dotted quarters', () => {
@@ -813,25 +819,25 @@ describe('the metronome', () => {
 
     // 6/8 at 60 BPM: a dotted quarter is 1.5 s, so two beats to the bar.
     play.advance(3000);
-    expect(play.beats()).toBe(3);
+    expect(play.beats()).toHaveLength(3);
     play.advance(1500);
-    expect(play.beats()).toBe(1);
+    expect(play.beats()).toHaveLength(1);
   });
 
   test('the clock standing still freezes it mid-beat and leaves the grid where it was', () => {
     const play = engine(scoreOf(2), { metronome: true, countInBars: 0 });
     play.start();
     play.advance(1500);
-    expect(play.beats()).toBe(2);
+    expect(play.beats()).toHaveLength(2);
 
     // The clock stands still half a beat in: no click, and the grid is not moved on.
     for (let i = 0; i < 5; i++) play.advance(0);
-    expect(play.beats()).toBe(0);
+    expect(play.beats()).toHaveLength(0);
 
     play.advance(499);
-    expect(play.beats()).toBe(0);
+    expect(play.beats()).toHaveLength(0);
     play.advance(2);
-    expect(play.beats()).toBe(1);
+    expect(play.beats()).toHaveLength(1);
     expect(play.snapshot().playedTick).toBeCloseTo(2 * TICKS_PER_QUARTER + 0.96, 6);
   });
 
@@ -840,14 +846,14 @@ describe('the metronome', () => {
 
     // The count-in first, then the downbeat and the beat the cursor stops at.
     play.advance(4000);
-    expect(play.beats()).toBe(4);
+    expect(play.beats()).toHaveLength(4);
     play.advance(1500);
-    expect(play.beats()).toBe(2);
+    expect(play.beats()).toHaveLength(2);
     expect(play.snapshot()).toMatchObject({ state: 'running', stopped: true });
 
     // Standing at the stop: no click, no state of its own, and the grid stays where it was.
     play.advance(3000);
-    expect(play.beats()).toBe(0);
+    expect(play.beats()).toHaveLength(0);
     expect(play.snapshot()).toMatchObject({
       state: 'running',
       stopped: true,
@@ -857,7 +863,7 @@ describe('the metronome', () => {
     down(play, 60, 8500);
     down(play, 64, 8500);
     play.advance(1000);
-    expect(play.beats()).toBe(1);
+    expect(play.beats()).toHaveLength(1);
     expect(play.snapshot().playedTick).toBeCloseTo(2 * TICKS_PER_QUARTER, 6);
   });
 
@@ -865,16 +871,16 @@ describe('the metronome', () => {
     const play = engine(scoreOf(2), { metronome: true, countInBars: 0 });
     play.start();
     play.advance(1500);
-    expect(play.beats()).toBe(2);
+    expect(play.beats()).toHaveLength(2);
 
     play.pause();
     play.advance(3000);
-    expect(play.beats()).toBe(0);
+    expect(play.beats()).toHaveLength(0);
 
     // The cursor fell back to the bar line, so the played tick meets those beats a second time.
     play.resume();
     play.advance(1000);
-    expect(play.beats()).toBe(2);
+    expect(play.beats()).toHaveLength(2);
   });
 });
 
@@ -908,7 +914,7 @@ describe('the count-in', () => {
 
     expect(play.snapshot()).toMatchObject({ state: 'counting-in', playedTick: -4 * TICKS_PER_QUARTER });
     play.advance(3999);
-    expect(play.beats()).toBe(4);
+    expect(play.beats()).toHaveLength(4);
     expect(play.snapshot().state).toBe('counting-in');
 
     play.advance(2);
@@ -916,22 +922,24 @@ describe('the count-in', () => {
     expect(play.snapshot().playedTick).toBeCloseTo(0.96, 6);
   });
 
-  test('counts down with no strong beat of its own, and leads to a strong downbeat', () => {
-    const play = engine(scoreOf(2), { countInBars: 1, metronome: true });
+  test('opens each of its bars with a strong beat, and leads to a strong downbeat', () => {
+    const play = engine(scoreOf(2), { countInBars: 2, metronome: true });
     play.start();
 
     // The count-in beats at the tempo of the bar it leads into.
     expect(play.beatMs).toBeCloseTo(1000, 6);
     play.advance(500);
-    for (let beat = 0; beat < 4; beat++) {
-      expect(play.beats()).toBe(1);
-      expect(play.strongBeat).toBe(false);
+    for (const bar of [0, 1]) {
+      expect(play.beats(), `count-in bar ${bar}`).toEqual(['strong']);
+      for (let beat = 0; beat < 3; beat++) {
+        play.advance(1000);
+        expect(play.beats()).toEqual(['weak']);
+      }
       play.advance(1000);
     }
 
     // The count-in ran out inside that last second, so the beat it leads to is the downbeat.
-    expect(play.beats()).toBe(1);
-    expect(play.strongBeat).toBe(true);
+    expect(play.beats()).toEqual(['strong']);
   });
 
   test('offsets the expected times: a strike lands on its note a count-in later', () => {

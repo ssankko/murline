@@ -96,6 +96,11 @@ export class Lane {
   private hands: HandsSetting;
   private handsBefore: HandsSetting;
   private handsAt = -Infinity;
+  /**
+   * Canvas size and window height, taken only when they change. The sheet writes its own styles
+   * every frame, so reading them here would make the browser lay the page out again each time.
+   */
+  private size = { width: 0, height: 0, windowHeight: 0 };
 
   constructor(canvas: HTMLCanvasElement, engine: Engine, look: LaneLook, dark: boolean) {
     this.canvas = canvas;
@@ -110,7 +115,17 @@ export class Lane {
     this.handsBefore = this.hands;
     // The range spans both hands, so a change of hands never re-lays the keyboard out.
     this.range = keyRange(engine.notes, engine.settings);
-    this.layout = keyLayout(this.range[0], this.range[1], canvas.clientWidth || 1);
+    this.measure();
+    this.layout = keyLayout(this.range[0], this.range[1], this.size.width || 1);
+    new ResizeObserver(() => this.measure()).observe(canvas);
+  }
+
+  private measure(): void {
+    this.size = {
+      width: this.canvas.clientWidth,
+      height: this.canvas.clientHeight,
+      windowHeight: window.innerHeight,
+    };
   }
 
   setDark(dark: boolean): void {
@@ -120,7 +135,7 @@ export class Lane {
   /** Lays the keyboard out again after the keyboard range setting changed. */
   setRange(): void {
     this.range = keyRange(this.engine.notes, this.engine.settings);
-    this.layout = keyLayout(this.range[0], this.range[1], this.canvas.clientWidth || 1);
+    this.layout = keyLayout(this.range[0], this.range[1], this.size.width || 1);
   }
 
   /** Feedback at the key: a ring for a hit or an extra, a red blink for a miss. */
@@ -139,8 +154,7 @@ export class Lane {
       this.handsAt = reducedMotion() ? -Infinity : now;
     }
     const ctx = this.ctx;
-    const width = this.canvas.clientWidth;
-    const height = this.canvas.clientHeight;
+    const { width, height } = this.size;
     if (width === 0 || height === 0) return;
     const dpr = window.devicePixelRatio || 1;
     if (this.canvas.width !== Math.round(width * dpr)) this.canvas.width = Math.round(width * dpr);
@@ -157,7 +171,10 @@ export class Lane {
     const laneH = Math.max(height - KEYBOARD_H, 40);
     // Pixels per beat come from the window, not from the lane, so dragging the split shows more or
     // fewer beats and never stretches a note.
-    const reference = Math.max((window.innerHeight - TOP_BAR) * (1 - DEFAULT_SPLIT) - KEYBOARD_H, 120);
+    const reference = Math.max(
+      (this.size.windowHeight - TOP_BAR) * (1 - DEFAULT_SPLIT) - KEYBOARD_H,
+      120,
+    );
     const pxPerTick = reference / Math.max(this.look.lookaheadBeats, 1) / TICKS_PER_QUARTER;
 
     ctx.fillStyle = tone(PAPER, this.dark);

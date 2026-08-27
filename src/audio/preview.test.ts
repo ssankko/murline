@@ -96,14 +96,14 @@ function scoreWithRepeat(): Score {
 
 test('the note list follows the repeat, drops graces and ties, and reads the tempo map', () => {
   expect(previewNotes(scoreWithRepeat())).toEqual([
-    { midi: 60, velocity: 100, on: 0, off: 2, tick: 0 },
-    { midi: 48, velocity: 100, on: 0, off: 4, tick: 0 },
-    { midi: 62, velocity: 100, on: 2, off: 4, tick: 2 * TICKS_PER_QUARTER },
+    { midi: 60, velocity: 100, on: 0, off: 2 },
+    { midi: 48, velocity: 100, on: 0, off: 4 },
+    { midi: 62, velocity: 100, on: 2, off: 4 },
     // The second bar is written at twice the tempo, so it takes two seconds, not four.
-    { midi: 64, velocity: 64, on: 4, off: 6, tick: BAR },
-    { midi: 60, velocity: 100, on: 6, off: 8, tick: 2 * BAR },
-    { midi: 48, velocity: 100, on: 6, off: 10, tick: 2 * BAR },
-    { midi: 62, velocity: 100, on: 8, off: 10, tick: 2 * BAR + 2 * TICKS_PER_QUARTER },
+    { midi: 64, velocity: 64, on: 4, off: 6 },
+    { midi: 60, velocity: 100, on: 6, off: 8 },
+    { midi: 48, velocity: 100, on: 6, off: 10 },
+    { midi: 62, velocity: 100, on: 8, off: 10 },
   ]);
 });
 

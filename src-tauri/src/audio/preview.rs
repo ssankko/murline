@@ -12,9 +12,6 @@ pub struct PreviewNote {
     /// Seconds from the start of the piece at the score's own tempo.
     pub on: f64,
     pub off: f64,
-    /// Played tick of the note's Onset, which is what the webview highlights.
-    #[allow(dead_code)]
-    pub tick: u32,
 }
 
 /// What the engine sends to the instrument: a note on with its velocity, or a note off.
@@ -141,7 +138,7 @@ mod tests {
     const BUFFER: f64 = FRAMES as f64 / RATE;
 
     fn note(midi: u8, on: f64, off: f64) -> PreviewNote {
-        PreviewNote { midi, velocity: 80, on, off, tick: 0 }
+        PreviewNote { midi, velocity: 80, on, off }
     }
 
     fn scheduler(notes: Vec<PreviewNote>) -> Scheduler {

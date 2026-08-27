@@ -11,8 +11,6 @@ export interface PreviewNote {
   velocity: number;
   on: number;
   off: number;
-  /** Played tick of the note's Onset, which is what the highlight follows. */
-  tick: number;
 }
 
 /** Where a bar opens along the played timeline. A repeated bar appears once for every pass. */
@@ -45,7 +43,6 @@ export function previewNotes(score: Score): PreviewNote[] {
         velocity: note.velocity,
         on: starts[i]!,
         off: secondsAt(score, starts, step.tick + note.durationTicks, i),
-        tick: step.tick,
       });
     }
   });

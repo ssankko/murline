@@ -182,7 +182,9 @@ fn component(wanted: AudioComponentDescription) -> Option<(AudioComponentDescrip
 
 /// Builds the Audio Unit behind a description. Apple hands the unit back on a queue of its own
 /// choosing, so the load waits here for it.
-fn instantiate(desc: AudioComponentDescription) -> Result<Retained<AVAudioUnitMIDIInstrument>, String> {
+pub(in crate::audio) fn instantiate(
+    desc: AudioComponentDescription,
+) -> Result<Retained<AVAudioUnitMIDIInstrument>, String> {
     /// The unit, already retained inside the completion handler, on its way to the waiting load.
     struct Handoff(*mut AVAudioUnitMIDIInstrument, Option<String>);
     // Nothing else holds the unit while it travels, and only the receiver ever touches it.

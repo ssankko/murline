@@ -255,6 +255,8 @@ impl Graph {
             }
         }
         self.drop_plugin();
+        // The sampler is the instrument again, so it takes the head of the chain back.
+        effects::rewire(self);
         Ok(())
     }
 
@@ -263,12 +265,11 @@ impl Graph {
     pub fn set_plugin(&mut self, unit: Retained<AVAudioUnitMIDIInstrument>) {
         self.drop_plugin();
         let _turn = LOADING.lock().unwrap();
-        unsafe {
-            self.engine.attachNode(&unit);
-            let mixer = self.engine.mainMixerNode();
-            self.engine.connect_to_format(&unit, &mixer, Some(&self.format));
-        }
+        unsafe { self.engine.attachNode(&unit) };
         self.plugin = Some(unit);
+        // Through the effects, not straight to the mixer: the chain belongs to the instrument
+        // whichever kind it is.
+        effects::rewire(self);
     }
 
     fn drop_plugin(&mut self) {
@@ -739,7 +740,7 @@ mod tests {
     }
 
     fn preview_note(midi: u8, on: f64, off: f64) -> PreviewNote {
-        PreviewNote { midi, velocity: 100, on, off, tick: 0 }
+        PreviewNote { midi, velocity: 100, on, off }
     }
 
     /// Renders one pass at a time and hands back the first one that made a sound.

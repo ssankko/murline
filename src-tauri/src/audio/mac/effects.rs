@@ -209,17 +209,22 @@ fn slots(graph: &Graph) -> Vec<Slot> {
 
 /// Connects the instrument through every installed plugin to the mixer. A slot whose plugin is
 /// missing is left out; a bypassed one stays in the path and passes its sound through untouched.
-fn rewire(graph: &Graph) {
+/// The head is whichever node the notes go to, so a hosted plugin instrument plays through the
+/// chain exactly as the sampler does and the one it replaces is left connected to nothing.
+pub(super) fn rewire(graph: &Graph) {
     let engine = &graph.engine;
     unsafe {
         engine.disconnectNodeOutput(&graph.sampler);
+        if let Some(plugin) = &graph.plugin {
+            engine.disconnectNodeOutput(plugin);
+        }
         for held in &graph.chain {
             if let Some(unit) = &held.unit {
                 engine.disconnectNodeOutput(unit);
             }
         }
         let mixer = engine.mainMixerNode();
-        let mut path: Vec<&AVAudioNode> = vec![&graph.sampler];
+        let mut path: Vec<&AVAudioNode> = vec![graph.target()];
         for held in &graph.chain {
             if let Some(unit) = &held.unit {
                 path.push(unit);
@@ -515,8 +520,13 @@ mod tests {
     const REVERB: &str = "aufx:rvb2:appl";
     /// Apple's delay, for the tests that need two effects to tell an order from.
     const DELAY: &str = "aufx:dely:appl";
-    /// Reverb parameter 0 is its dry/wet mix in percent; full wet makes the tail unmistakable.
+    /// Parameter 0 of both Apple units is the dry/wet mix in percent; full wet makes the reverb's
+    /// tail unmistakable and takes the direct sound out of the delay altogether.
     const DRY_WET: u32 = 0;
+    /// Parameter 1 of the delay is its time in seconds.
+    const DELAY_TIME: u32 = 1;
+    /// Longer than any render here, so a full-wet delay answers silence for the whole test.
+    const LONG: f32 = 2.0;
 
     const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/sine.sf2");
     const PASS: u32 = 4096;
@@ -533,14 +543,27 @@ mod tests {
         Slot { id: id.into(), name: id.into(), bypass: false, state: String::new(), missing: false }
     }
 
-    /// The dry/wet mix of the effect at one place in the chain, which is what makes a reverb's tail
-    /// something a test can hear.
-    fn mix(graph: &Graph, index: usize, percent: f32) {
+    /// Sets one parameter of the effect at one place in the chain, which is what makes a reverb's
+    /// tail and a delay's silence something a test can hear.
+    fn param(graph: &Graph, index: usize, id: u32, value: f32) {
         let unit = graph.chain[index].unit.clone().unwrap();
         let status = unsafe {
-            AudioUnitSetParameter(unit.audioUnit(), DRY_WET, kAudioUnitScope_Global, 0, percent, 0)
+            AudioUnitSetParameter(unit.audioUnit(), id, kAudioUnitScope_Global, 0, value, 0)
         };
-        assert_eq!(status, 0, "the reverb took its mix");
+        assert_eq!(status, 0, "the plugin took the parameter");
+    }
+
+    /// Apple's DLSMusicDevice: the one Audio Unit instrument on every Mac that sounds with nothing
+    /// loaded into it, so a test that needs a hosted instrument can take it.
+    fn hosted_instrument() -> Retained<objc2_avf_audio::AVAudioUnitMIDIInstrument> {
+        crate::audio::instruments::instantiate(AudioComponentDescription {
+            componentType: u32::from_be_bytes(*b"aumu"),
+            componentSubType: u32::from_be_bytes(*b"dls "),
+            componentManufacturer: u32::from_be_bytes(*b"appl"),
+            componentFlags: 0,
+            componentFlagsMask: 0,
+        })
+        .unwrap()
     }
 
     /// Plays a note, lets it go, and answers with the loudest sample left once the sampler's own
@@ -568,7 +591,7 @@ mod tests {
         assert_eq!(tail(&mut graph), 0.0, "a dry graph goes quiet");
 
         apply(&mut graph, vec![slot(REVERB)]);
-        mix(&graph, 0, 100.0);
+        param(&graph, 0, DRY_WET, 100.0);
         assert!(tail(&mut graph) > 0.0, "the reverb rings on");
 
         apply(&mut graph, vec![Slot { bypass: true, ..slot(REVERB) }]);
@@ -579,7 +602,7 @@ mod tests {
     fn a_plugins_settings_round_trip_through_the_blob() {
         let mut graph = offline();
         apply(&mut graph, vec![slot(REVERB)]);
-        mix(&graph, 0, 42.0);
+        param(&graph, 0, DRY_WET, 42.0);
         let saved = apply(&mut graph, vec![slot(REVERB)]);
         assert!(!saved[0].state.is_empty(), "the reverb has a state to save");
 
@@ -610,7 +633,7 @@ mod tests {
         assert!(chain[0].missing, "the plugin is gone");
         assert_eq!(chain[0].name, "Pro-R 2", "and is known by the name it had");
         assert!(!chain[1].missing);
-        mix(&graph, 1, 100.0);
+        param(&graph, 1, DRY_WET, 100.0);
         assert!(tail(&mut graph) > 0.0, "the reverb after it still plays");
     }
 
@@ -635,6 +658,46 @@ mod tests {
         // Only the wiring flushes the instrument's voices, and a bypass changes none of it.
         apply(&mut graph, vec![Slot { bypass: true, ..slot(REVERB) }]);
         assert!(graph.render_peak(LOOK).unwrap() > 0.01, "the note played through the change");
+    }
+
+    /// A delay that is all wet and longer than the test renders answers silence to anything put
+    /// through it, whatever the instrument's own envelope does. So sound here means the chain was
+    /// skipped, which is the one thing this test is about.
+    #[test]
+    fn a_hosted_instrument_plays_through_the_chain_and_the_sampler_takes_it_back() {
+        // The chain is built first and the instrument changed under it, which is the order the
+        // Audio dialog works in: the boot order, chain last, is what every other test here takes.
+        let mut graph = offline();
+        graph.note_on(60, 100);
+        assert!(graph.render_peak(LOOK).unwrap() > 0.01, "the sampler sounds with no chain");
+
+        apply(&mut graph, vec![slot(DELAY)]);
+        param(&graph, 0, DRY_WET, 100.0);
+        param(&graph, 0, DELAY_TIME, LONG);
+        graph.note_on(62, 100);
+        assert_eq!(graph.render_peak(LOOK).unwrap(), 0.0, "the sampler plays through the chain");
+
+        graph.set_plugin(hosted_instrument());
+        graph.note_on(64, 100);
+        assert_eq!(graph.render_peak(LOOK).unwrap(), 0.0, "the plugin takes the head of the chain");
+
+        graph.load_file(Path::new(FIXTURE)).unwrap();
+        graph.note_on(65, 100);
+        assert_eq!(graph.render_peak(LOOK).unwrap(), 0.0, "and the sampler takes it back");
+    }
+
+    #[test]
+    fn the_chain_is_still_in_the_path_after_the_engine_stops_and_starts() {
+        // What a device change does underneath the graph: the connections belong to the engine and
+        // not to the run, so everything has to sound the same on the other side of it.
+        let mut graph = offline();
+        apply(&mut graph, vec![slot(REVERB)]);
+        param(&graph, 0, DRY_WET, 100.0);
+        assert!(tail(&mut graph) > 0.0);
+
+        unsafe { graph.engine.stop() };
+        graph.start().unwrap();
+        assert!(tail(&mut graph) > 0.0, "the reverb is where it was");
     }
 
     #[test]

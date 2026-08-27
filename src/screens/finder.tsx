@@ -8,7 +8,7 @@ import { getSetting } from '@/db/db';
 import { importFiles } from '@/library/import';
 import { invoke } from '@tauri-apps/api/core';
 import { Download, Search } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 /** One search hit, as `finder_search` returns it. */
 export interface FinderRow {
@@ -135,7 +135,13 @@ export function Finder({
 
   const rows = result.rows;
   const selected = rows[Math.min(sel, rows.length - 1)] ?? null;
-  const owned = (r: FinderRow) => libraryPaths.has(r.fileName.toLowerCase());
+  // A volume that normalises names on write (HFS+, SMB) answers the scan decomposed, so both
+  // sides of the comparison compose first.
+  const paths = useMemo(
+    () => new Set([...libraryPaths].map((path) => path.normalize('NFC'))),
+    [libraryPaths],
+  );
+  const owned = (r: FinderRow) => paths.has(r.fileName.toLowerCase().normalize('NFC'));
 
   useEffect(() => {
     list.current?.querySelector('[data-selected]')?.scrollIntoView({ block: 'nearest' });

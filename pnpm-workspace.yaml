@@ -1,3 +1,4 @@
+# gl is an optional native dependency of opensheetmusicdisplay. Blocking its
+# build skips a node-gyp compile that the sheet rendering never calls.
 allowBuilds:
   gl: false
-  esbuild: true

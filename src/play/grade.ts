@@ -23,7 +23,8 @@ export interface PlayGrade {
   extras: number;
   /** Means of the three per-note curves over the matched notes, each 0 to 100. */
   meanTiming: number;
-  meanVelocity: number;
+  /** Null for a Score with no dynamics mark, which says nothing about how loud to play. */
+  meanVelocity: number | null;
   meanRelease: number;
 }
 
@@ -114,7 +115,7 @@ export function playGrade(
     matched,
     extras,
     meanTiming: mean(timing, matched),
-    meanVelocity: mean(velocity, matched),
+    meanVelocity: hasDynamics ? mean(velocity, matched) : null,
     meanRelease: mean(release, released),
   };
 }

@@ -124,6 +124,12 @@ describe('the play grade', () => {
     expect(grade.matched).toBe(2);
   });
 
+  test('has no mean velocity when the Score carries no dynamics mark', () => {
+    const notes = [perfect(), perfect({ velocity: 10 })];
+    expect(playGrade(notes, 0, s, false)!.meanVelocity).toBeNull();
+    expect(playGrade(notes, 0, s, true)!.meanVelocity).toBe(50);
+  });
+
   test('has no grade when no window closed', () => {
     expect(playGrade([], 0, s, true)).toBeNull();
     expect(playGrade([], 5, s, true)).toBeNull();

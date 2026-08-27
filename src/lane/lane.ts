@@ -1183,10 +1183,11 @@ export class Lane {
   };
 
   /**
-   * The chord sounding now and the two after it, each on its own panel at the top right. A next
-   * chord counts the beats left before it left of its panel: one glyph per beat, a capsule where a
-   * bar opens and a dot inside it, the leftmost the beat that ends first. When the harmony advances
-   * to the chord that stood next, every panel slides up one slot and the one on top leaves.
+   * The chord sounding now and the two after it, each on its own panel at the top right. A panel
+   * counts the beats before its chord left of it: one glyph per beat, a capsule where a bar opens
+   * and a dot inside it, the leftmost the beat that ends first. Only the next chord counts from the
+   * clock; the one after it counts from the next chord, so that row stands still until the harmony
+   * advances, when every panel slides up one slot and the one on top leaves.
    */
   private drawHarmony(width: number, loop: LoopSpan | null): void {
     if (this.chords.length === 0 || !this.look.harmony) return;
@@ -1202,7 +1203,7 @@ export class Lane {
         }))
       : this.bars;
 
-    const [current, ...next] = chordsAt(chords, this.playedTick);
+    const [current, ...ahead] = chordsAt(chords, this.playedTick);
     // How the row takes a new chord in force: the chord that stood next slides every panel up a
     // slot, the first panels of all rise into their slots fading in, a Loop toggle onto any other
     // chord cross-fades the row where it stands, and a seek, which may land anywhere, snaps.
@@ -1220,14 +1221,19 @@ export class Lane {
         this.leaving = this.shownRows.flatMap((chord, slot) => (chord ? [{ chord, slot }] : []));
       }
     }
-    this.shownRows = [current, ...next];
+    this.shownRows = [current, ...ahead];
 
+    const [next, after] = ahead;
     const rows: { chord: LaneChord; slot: number; glyphs: BeatGlyph[] }[] = [];
     if (current) rows.push({ chord: current, slot: 0, glyphs: [] });
-    next.forEach((chord, i) => {
-      if (!chord) return;
-      rows.push({ chord, slot: i + 1, glyphs: beatsBefore(bars, this.playedTick, chord.tick) });
-    });
+    if (next) {
+      rows.push({ chord: next, slot: 1, glyphs: beatsBefore(bars, this.playedTick, next.tick) });
+    }
+    // The last panel counts the beats from the next chord to itself, a row that starts ticking only
+    // once that chord is the one the clock counts down to.
+    if (next && after) {
+      rows.push({ chord: after, slot: 2, glyphs: beatsBefore(bars, next.tick, after.tick) });
+    }
 
     const ctx = this.ctx;
     ctx.textAlign = 'center';
@@ -1241,19 +1247,30 @@ export class Lane {
       travels
         ? lerpRect(slotRect(slot + 1, width), slotRect(slot, width), eased)
         : slotRect(slot, width);
-    if (t < 1) for (const gone of this.leaving) this.drawRow(step(gone.slot), gone.chord, [], 1 - t);
+    if (t < 1) {
+      for (const gone of this.leaving) this.drawRow(step(gone.slot), gone.chord, [], 1 - t, false);
+    }
     for (const row of rows) {
       // A slide fades in only the panel that has just come into the row; the others are already up.
       const alpha = this.change === 'slide' && row.slot < 2 ? 1 : t;
-      this.drawRow(step(row.slot), row.chord, row.glyphs, alpha);
+      this.drawRow(step(row.slot), row.chord, row.glyphs, alpha, row.slot === 1);
     }
     // The rest of the lane draws on the defaults.
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
   }
 
-  /** One panel where the step it is at puts it, its name inside and its countdown left of it. */
-  private drawRow(rect: PanelRect, chord: LaneChord, glyphs: BeatGlyph[], alpha: number): void {
+  /**
+   * One panel where the step it is at puts it, its name inside and its countdown left of it. Only a
+   * `live` row counts down from the clock, so the glyphs of the other rest whole.
+   */
+  private drawRow(
+    rect: PanelRect,
+    chord: LaneChord,
+    glyphs: BeatGlyph[],
+    alpha: number,
+    live: boolean,
+  ): void {
     const ctx = this.ctx;
     ctx.globalAlpha = alpha;
     ctx.fillStyle = tone(PANEL_FILL, this.dark);
@@ -1279,7 +1296,9 @@ export class Lane {
     const flare = tone(NOW_LINE, this.dark);
     glyphs.forEach((glyph, i) => {
       // How much of the burn a glyph still has, off the clock alone; a whole one is at rest.
-      const left = clamp((glyph.end - this.playedTick) / (glyph.span * BURN_SHARE), 0, 1);
+      const left = live
+        ? clamp((glyph.end - this.playedTick) / (glyph.span * BURN_SHARE), 0, 1)
+        : 1;
       const burn = this.reduced ? { alpha: left, scale: 1, heat: 0 } : burnAt(left);
       ctx.globalAlpha = alpha * burn.alpha;
       ctx.fillStyle = burn.heat > 0 ? mix(rest, flare, burn.heat) : rest;

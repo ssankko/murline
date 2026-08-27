@@ -82,6 +82,13 @@ describe('the countdown', () => {
   test('a chord on the next beat leaves one glyph', () => {
     expect(glyphs(0, Q)).toBe('|');
   });
+
+  test('the row after the next chord counts from that chord, not from the clock', () => {
+    const [, next, after] = chordsAt(chordsOf(HARMONY, WALK), 0);
+    expect(glyphs(next!.tick, after!.tick)).toBe('|..');
+    // Counted from the clock it would carry the beats before the next chord as well.
+    expect(glyphs(0, after!.tick)).toBe('|..|..');
+  });
 });
 
 test('a panel between two slots starts at the one and ends at the other', () => {

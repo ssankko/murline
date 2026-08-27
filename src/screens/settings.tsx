@@ -276,7 +276,6 @@ export function SettingsDialog({
             onReset={() =>
               reset([
                 ...LANE_FIELDS.map(([key]) => key),
-                'sheet_split',
                 'keyboard_labels',
                 'click_volume',
                 'theme',
@@ -293,14 +292,6 @@ export function SettingsDialog({
                 />
               </Row>
             ))}
-            <Row label="Sheet split">
-              <NumberField
-                value={values.sheet_split}
-                min={0.2}
-                max={0.6}
-                onChange={(value) => write('sheet_split', value)}
-              />
-            </Row>
             <Row label="Note names on keys">
               <Toggle
                 value={values.keyboard_labels}

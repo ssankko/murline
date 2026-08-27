@@ -10,6 +10,9 @@
 // then the tests at the bottom of this file are their only caller.
 #![allow(dead_code)]
 
+mod effects;
+pub use effects::{chain, effects, set_chain, show_effect};
+
 use crate::audio::Status;
 use objc2::AllocAnyThread;
 use objc2::rc::Retained;
@@ -55,6 +58,8 @@ pub struct Graph {
     format: Retained<AVAudioFormat>,
     strong: Retained<AVAudioPCMBuffer>,
     weak: Retained<AVAudioPCMBuffer>,
+    /// The effects between the sampler and the mixer, in the order they play.
+    chain: Vec<effects::Held>,
     /// Frames one offline render pass may take at most, zero while the graph plays to a device.
     offline_frames: u32,
     /// Name of the instrument loaded into the sampler, which is what makes the engine playable.
@@ -88,6 +93,7 @@ impl Graph {
                 engine,
                 sampler,
                 clicker,
+                chain: Vec::new(),
                 offline_frames: 0,
                 instrument: None,
             })

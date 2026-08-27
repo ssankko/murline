@@ -2,7 +2,7 @@
 //! text, and no Audio Unit or CoreAudio type crossing into the webview, so a backend for another
 //! platform can sit behind exactly these commands.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[cfg(target_os = "macos")]
 pub mod mac;
@@ -30,6 +30,34 @@ impl Status {
     }
 }
 
+/// One effect the machine has installed, as the Add menu lists it.
+#[derive(Debug, Serialize)]
+pub struct Effect {
+    /// Opaque to the webview, and the same string on every Mac that has the plugin.
+    pub id: String,
+    pub name: String,
+    pub manufacturer: String,
+}
+
+/// One place in the effect chain. The webview keeps the whole list as one global setting and hands
+/// it back whole; `missing` is the engine's answer, not the webview's to send.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Slot {
+    pub id: String,
+    /// What the plugin was called when it was last seen, which is how a missing slot is named.
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub bypass: bool,
+    /// The plugin's own settings: its property list, base64 so it is a plain string in JSON.
+    #[serde(default)]
+    pub state: String,
+    /// Whether the plugin is not installed on this machine, in which case the slot keeps its place
+    /// and its state but makes no sound.
+    #[serde(default)]
+    pub missing: bool,
+}
+
 /// Builds the graph and starts it on the output device. The boot screen prints ok or the reason,
 /// and a failure leaves every later step running.
 #[tauri::command]
@@ -49,6 +77,31 @@ pub fn audio_click(strength: String, volume: u32) {
     engine::click(strength == "strong", volume);
 }
 
+/// Every Audio Unit effect installed on the machine, Apple's own included.
+#[tauri::command]
+pub fn audio_effects() -> Vec<Effect> {
+    engine::effects()
+}
+
+#[tauri::command]
+pub fn audio_chain() -> Vec<Slot> {
+    engine::chain()
+}
+
+/// Takes the whole chain and answers with the chain as it ended up, so the webview learns which
+/// slots are missing and what the plugins call themselves. Nothing here stops the instrument.
+#[tauri::command]
+pub fn audio_set_chain(chain: Vec<Slot>) -> Result<Vec<Slot>, String> {
+    engine::set_chain(chain)
+}
+
+/// Opens one slot's plugin window. Closing it emits `audio-chain-changed` with the whole chain,
+/// which is how the plugin's settings reach the setting the webview keeps.
+#[tauri::command]
+pub fn audio_show_effect(app: tauri::AppHandle, index: usize) -> Result<(), String> {
+    engine::show_effect(app, index)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -64,5 +117,12 @@ mod tests {
         // The click is the one command that returns nothing: silence is the whole of its answer.
         stub::click(true, 70);
         stub::click(false, 0);
+
+        assert!(stub::effects().is_empty());
+        assert!(stub::chain().is_empty());
+        assert_eq!(
+            stub::set_chain(Vec::new()).err(),
+            Some("No sound engine on this platform".into())
+        );
     }
 }

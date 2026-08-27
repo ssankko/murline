@@ -1,3 +1,4 @@
+import type { EffectSlot } from '@/audio/effects';
 import { DEFAULT_LANE_LOOK, DEFAULT_SPLIT, type LaneLook } from '@/lane/lane';
 import type { Theme } from '@/look/use-dark';
 import {
@@ -48,6 +49,8 @@ export type Settings = {
 
   /** Loudness of the metronome click, 0 to 100. */
   click_volume: number;
+  /** The effects the sound engine plays the instrument through, in the order they play. */
+  effect_chain: EffectSlot[];
 
   // Defaults of the piece settings: what a piece plays at while it holds none of its own. Tempo
   // has no mode here, because BPM belongs to a piece written at one tempo.
@@ -154,6 +157,7 @@ export const SETTING_DEFAULTS: Settings = {
   sheet_harmony: true,
   sheet_colour: true,
   click_volume: 70,
+  effect_chain: [],
   ...knobDefaults(DEFAULT_LANE_LOOK, LANE_KNOBS),
   ...knobDefaults(DEFAULT_PLAY_SETTINGS, PIECE_DEFAULT_KEYS),
   ...knobDefaults(DEFAULT_PLAY_SETTINGS, ENGINE_KNOBS),

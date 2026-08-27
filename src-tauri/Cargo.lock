@@ -2474,6 +2474,7 @@ dependencies = [
  "bitflags 2.13.1",
  "block2",
  "objc2",
+ "objc2-core-foundation",
  "objc2-foundation",
 ]
 
@@ -2861,8 +2862,11 @@ dependencies = [
 name = "piano"
 version = "0.1.0"
 dependencies = [
+ "block2",
  "flate2",
  "objc2",
+ "objc2-app-kit",
+ "objc2-audio-toolbox",
  "objc2-avf-audio",
  "objc2-foundation",
  "quick-xml 0.42.0",

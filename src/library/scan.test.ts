@@ -3,7 +3,7 @@ import { planScan, type FileEntry } from './scan';
 import type { KnownFile } from './queries';
 
 const file = (path: string, mtime = 100, size = 10): FileEntry => ({
-  rel_path: path,
+  relPath: path,
   mtime,
   size,
 });

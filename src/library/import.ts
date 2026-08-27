@@ -70,8 +70,8 @@ async function importOne(
   // APFS is case-insensitive, so a name that differs only in case is the same file to the folder.
   const taken = new Map(
     (await invoke<FileEntry[]>('list_library', { folder })).map((file) => [
-      file.rel_path.toLowerCase(),
-      file.rel_path,
+      file.relPath.toLowerCase(),
+      file.relPath,
     ]),
   );
   const isTaken = (name: string) => taken.has(name.toLowerCase());

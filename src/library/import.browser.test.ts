@@ -24,7 +24,7 @@ vi.mock('@tauri-apps/api/core', () => ({
       return (await fetch(url as string)).arrayBuffer();
     }
     if (command === 'list_library') {
-      return folderFiles.map((rel_path) => ({ rel_path, mtime: 1, size: 1 }));
+      return folderFiles.map((relPath) => ({ relPath, mtime: 1, size: 1 }));
     }
     if (command === 'copy_file') {
       copies.push({ src: args.src!, dst: args.dst! });

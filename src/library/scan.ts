@@ -15,7 +15,7 @@ import {
 
 /** One score file of the library folder, as Rust reports it. */
 export interface FileEntry {
-  rel_path: string;
+  relPath: string;
   mtime: number;
   size: number;
 }
@@ -34,14 +34,14 @@ export function planScan(files: FileEntry[], known: KnownFile[]): ScanAction[] {
   const rows = new Map(known.map((row) => [row.path, row]));
   const actions: ScanAction[] = [];
   for (const file of files) {
-    const row = rows.get(file.rel_path);
+    const row = rows.get(file.relPath);
     if (!row || row.mtime !== file.mtime || row.size !== file.size) {
       actions.push({ kind: 'index', file });
     } else if (!row.present) {
       actions.push({ kind: 'restore', path: row.path });
     }
   }
-  const onDisk = new Set(files.map((f) => f.rel_path));
+  const onDisk = new Set(files.map((f) => f.relPath));
   for (const row of known) {
     if (row.present && !onDisk.has(row.path)) actions.push({ kind: 'hide', path: row.path });
   }
@@ -69,7 +69,7 @@ export async function reindexIfChanged(folder: string, relPath: string): Promise
   await apply(
     folder,
     planScan(
-      files.filter((f) => f.rel_path === relPath),
+      files.filter((f) => f.relPath === relPath),
       known.filter((row) => row.path === relPath),
     ),
   );
@@ -85,14 +85,14 @@ async function apply(folder: string, actions: ScanAction[]): Promise<void> {
 
 async function index(folder: string, file: FileEntry): Promise<void> {
   try {
-    const summary = await indexFile(pathOf(folder, file.rel_path));
-    await upsertIndex(file.rel_path, summary, file.mtime, file.size);
+    const summary = await indexFile(pathOf(folder, file.relPath));
+    await upsertIndex(file.relPath, summary, file.mtime, file.size);
   } catch (error) {
     const reason =
       error instanceof ScoreError
         ? `${error.reason}: ${error.detail}`
         : `Could not read the file: ${String(error)}`;
-    await markError(file.rel_path, reason, file.mtime, file.size);
+    await markError(file.relPath, reason, file.mtime, file.size);
   }
 }
 

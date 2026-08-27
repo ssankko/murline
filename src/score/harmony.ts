@@ -193,18 +193,16 @@ function keysOf(score: Score): KeyAt[] {
   return keys.length > 0 ? keys : [C_MAJOR];
 }
 
-/** Bar lines and beats of the whole piece; a compound meter beats in dotted quarters. */
-function gridOf(measures: Measure[]): { bars: number[]; beats: number[] } {
-  const bars: number[] = [];
+/** Every beat start of the whole piece; a compound meter beats in dotted quarters. */
+function beatStartsOf(measures: Measure[]): number[] {
   const beats: number[] = [];
   for (const measure of measures) {
-    bars.push(measure.startTick);
     const length = beatOf(measure).ticks;
     for (let t = measure.startTick; t < measure.startTick + measure.durationTicks; t += length) {
       beats.push(t);
     }
   }
-  return { bars, beats };
+  return beats;
 }
 
 /**
@@ -264,25 +262,31 @@ function segment(score: Score): ChordEvent[] {
   if (n === 0) return [];
 
   const keys = keysOf(score);
-  const { bars, beats: beatStarts } = gridOf(score.measures);
-  const barLine = new Set(bars);
-  const beatLine = new Set(beatStarts);
-  const spanOf = (starts: number[], tick: number, fallback: number) => {
+  const beatStarts = beatStartsOf(score.measures);
+  // How long the beat at a tick runs: to the next beat start, so a bar line cuts a ragged bar's
+  // last beat short. Past the last beat start there is none, so a quarter stands in.
+  const beatSpanAt = (tick: number) => {
     let i = -1;
-    while (i + 1 < starts.length && starts[i + 1]! <= tick) i++;
-    return i >= 0 && i + 1 < starts.length ? starts[i + 1]! - starts[i]! : fallback;
+    while (i + 1 < beatStarts.length && beatStarts[i + 1]! <= tick) i++;
+    return i >= 0 && i + 1 < beatStarts.length
+      ? beatStarts[i + 1]! - beatStarts[i]!
+      : TICKS_PER_QUARTER;
   };
 
   const ticks = onsets.map((o) => o.tick);
   const lastEnd = Math.max(...onsets[n - 1]!.notes.map((x) => x.onsetTick + x.durationTicks));
   const endOf = (i: number) => (i + 1 < n ? ticks[i + 1]! : lastEnd);
 
-  const ornamental = ornamentsOf(onsets, (tick) => spanOf(beatStarts, tick, TICKS_PER_QUARTER));
+  const barOf = (onset: Onset) => score.measures[onset.measureIndex];
+  const ornamental = ornamentsOf(onsets, beatSpanAt);
   const sounding = soundingOf(onsets);
-  const changeAt = ticks.map((t) =>
-    barLine.has(t) ? CHANGE.bar : beatLine.has(t) ? CHANGE.beat : CHANGE.off,
-  );
-  const capAt = ticks.map((t) => SEGMENT_BARS * spanOf(bars, t, WHOLE_NOTE));
+  const changeAt = onsets.map((o) => {
+    const bar = barOf(o);
+    if (!bar) return CHANGE.off;
+    const into = o.tick - bar.startTick;
+    return into === 0 ? CHANGE.bar : into % beatOf(bar).ticks === 0 ? CHANGE.beat : CHANGE.off;
+  });
+  const capAt = onsets.map((o) => SEGMENT_BARS * (barOf(o)?.durationTicks ?? WHOLE_NOTE));
 
   const best = [0, ...new Array<number>(n).fill(-Infinity)];
   const from = new Array<number>(n + 1).fill(0);

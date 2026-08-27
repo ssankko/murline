@@ -21,7 +21,7 @@ import { pinMidiDevice, useMidiStatus } from '@/midi/useMidiStatus';
 import { validNumber, type PieceSettings } from '@/play/resolve';
 import type { HandsSetting, KeyboardPreset } from '@/play/settings';
 import { open } from '@tauri-apps/plugin-dialog';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 /** The whole keyboard, the span both note dropdowns offer. */
 const NOTES = Array.from({ length: 88 }, (_, at) => 21 + at);
@@ -235,7 +235,6 @@ export function SettingsDialog({
                   value={values.sheet_split}
                   min={0.2}
                   max={0.6}
-                  step={0.05}
                   onChange={(value) => write('sheet_split', value)}
                 />
               </Row>
@@ -309,7 +308,6 @@ export function SettingsDialog({
                         value={values[key] as number}
                         min={min}
                         max={max}
-                        step={max <= 10 ? 0.05 : 1}
                         onChange={(value) => write(key, value as never)}
                       />
                     </Row>
@@ -537,20 +535,22 @@ function NumberField({
   value,
   min,
   max,
-  step = 1,
   onChange,
 }: {
   value: number;
   min: number;
   max: number;
-  step?: number;
   onChange: (value: number) => void;
 }) {
   const [text, setText] = useState(String(value));
   const [error, setError] = useState<string | null>(null);
+  /** What this field last wrote, so a value that moved elsewhere is told apart from typing. */
+  const written = useRef(value);
 
-  // The value can move without the field: "Reset group" and "Use global defaults" both write it.
+  // "Reset group" and "Use global defaults" both move the value without the field being touched.
   useEffect(() => {
+    if (value === written.current) return;
+    written.current = value;
     setText(String(value));
     setError(null);
   }, [value]);
@@ -561,12 +561,13 @@ function NumberField({
         type="text"
         inputMode="decimal"
         value={text}
-        step={step}
         onChange={(event) => {
           setText(event.target.value);
           const checked = validNumber(event.target.value, min, max, value);
           setError(checked.error);
-          if (!checked.error) onChange(checked.value);
+          if (checked.error) return;
+          written.current = checked.value;
+          onChange(checked.value);
         }}
         className="h-7 w-20 px-2 text-right text-[12px] tabular-nums"
       />

@@ -65,7 +65,12 @@ export function App() {
           folder={route.folder}
           path={route.path}
           intent={route.intent}
-          onBack={() => setRoute({ at: 'library', folder: route.folder, selected: route.path })}
+          onBack={() =>
+            // The library folder may have moved in the settings dialog while the piece was open.
+            void getSettingOr('library_folder', route.folder).then((folder) =>
+              setRoute({ at: 'library', folder, selected: route.path }),
+            )
+          }
         />
       );
   }

@@ -1,6 +1,6 @@
 import { TICKS_PER_QUARTER, type ChordEvent } from '@/score/types';
 import { describe, expect, test } from 'vitest';
-import { beatsBefore, chordsAt, chordsOf, throughWrap } from './lane';
+import { beatsBefore, chordsAt, chordsOf, lerpRect, slotRect, throughWrap } from './lane';
 
 const Q = TICKS_PER_QUARTER;
 /** Three bars of 3/4 in played time, counted in quarters. */
@@ -69,4 +69,11 @@ describe('the countdown', () => {
   test('a chord on the next beat leaves one glyph', () => {
     expect(glyphs(0, Q)).toBe('|');
   });
+});
+
+test('a panel between two slots starts at the one and ends at the other', () => {
+  const from = slotRect(1, 300);
+  const to = slotRect(0, 300);
+  expect(lerpRect(from, to, 0)).toEqual(from);
+  expect(lerpRect(from, to, 1)).toEqual(to);
 });

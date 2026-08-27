@@ -58,8 +58,10 @@ const SECTION_ALPHA = 0.09;
 const SECTION_FADE_MS = 200;
 
 /** The harmony panel at the lane's top right: its inset from the corner, the gap between rows. */
-const PANEL_INSET = 8;
+const PANEL_INSET = 16;
 const PANEL_GAP = 4;
+/** How long the panels take to move up a slot when the harmony advances. */
+const PANEL_SLIDE_MS = 250;
 /** Side padding a name keeps inside its panel; a name that needs more is set smaller. */
 const PANEL_PAD = 6;
 /** The chrome tone a panel over the lane wears: paper enough to read on, sheer enough to see past. */
@@ -103,6 +105,16 @@ export interface LaneChord {
   event: ChordEvent;
 }
 
+/** Where one panel stands and the type its name takes: a slot of the panel, or a step between two. */
+export interface PanelRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  size: number;
+  weight: number;
+}
+
 /** One beat of a countdown: the tick it ends at, how long it lasts, and whether it opens a bar. */
 export interface BeatGlyph {
   end: number;
@@ -142,6 +154,14 @@ export class Lane {
   private shownSection: Section | null = null;
   private sectionOn = false;
   private sectionAt = -Infinity;
+  /**
+   * What the harmony panel drew last frame: the chord in the top slot, the chord under it, when the
+   * panels last moved up a slot, and the chord leaving the top slot while it fades out.
+   */
+  private shownCurrent: LaneChord | null = null;
+  private shownNext: LaneChord | null = null;
+  private changeAt = -Infinity;
+  private leaving: LaneChord | null = null;
   /**
    * Canvas size and window height, taken only when they change. The sheet writes its own styles
    * every frame, so reading them here would make the browser lay the page out again each time.
@@ -536,7 +556,8 @@ export class Lane {
   /**
    * The chord sounding now and the two after it, each on its own panel at the top right. A next
    * chord counts the beats left before it left of its panel: one glyph per beat, a capsule where a
-   * bar opens and a dot inside it, the leftmost the beat that ends first.
+   * bar opens and a dot inside it, the leftmost the beat that ends first. When the harmony advances
+   * to the chord that stood next, every panel slides up one slot and the one on top leaves.
    */
   private drawHarmony(width: number, loop: LoopSpan | null): void {
     if (this.chords.length === 0) return;
@@ -553,56 +574,82 @@ export class Lane {
       : this.bars;
 
     const [current, ...next] = chordsAt(chords, this.playedTick);
-    const rows: { chord: LaneChord; panel: typeof CHORD_PANEL; glyphs: BeatGlyph[] }[] = [];
-    if (current) rows.push({ chord: current, panel: CHORD_PANEL, glyphs: [] });
-    for (const chord of next) {
-      if (!chord) continue;
-      const glyphs = beatsBefore(bars, this.playedTick, chord.tick);
-      rows.push({ chord, panel: NEXT_PANEL, glyphs });
+    // Only the natural advance slides: the chord that was next has become the chord in force. A
+    // seek, a Loop toggle or the first chord of all snaps the panels into their slots.
+    if (current?.tick !== this.shownCurrent?.tick) {
+      const advanced =
+        current !== undefined &&
+        this.shownCurrent !== null &&
+        current.tick === this.shownNext?.tick;
+      this.changeAt = advanced && !reducedMotion() ? this.now : -Infinity;
+      this.leaving = advanced ? this.shownCurrent : null;
+      this.shownCurrent = current ?? null;
     }
+    this.shownNext = next[0] ?? null;
+
+    const rows: { chord: LaneChord; slot: number; glyphs: BeatGlyph[] }[] = [];
+    if (current) rows.push({ chord: current, slot: 0, glyphs: [] });
+    next.forEach((chord, i) => {
+      if (!chord) return;
+      rows.push({ chord, slot: i + 1, glyphs: beatsBefore(bars, this.playedTick, chord.tick) });
+    });
 
     const ctx = this.ctx;
-    const fading = !reducedMotion();
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    let y = PANEL_INSET;
-    for (const { chord, panel, glyphs } of rows) {
-      const left = width - PANEL_INSET - panel.w;
-      ctx.fillStyle = tone(PANEL_FILL, this.dark);
-      ctx.beginPath();
-      ctx.roundRect(left, y, panel.w, panel.h, 4);
-      ctx.fill();
-
-      // A name too long for its panel steps down through smaller type until it fits.
-      let size = panel.size;
-      ctx.font = `${panel.weight} ${size}px system-ui, sans-serif`;
-      while (size > 10 && ctx.measureText(chord.event.absolute).width > panel.w - PANEL_PAD * 2) {
-        size -= 2;
-        ctx.font = `${panel.weight} ${size}px system-ui, sans-serif`;
-      }
-      ctx.fillStyle = tone(INK.duration, this.dark);
-      ctx.fillText(chord.event.absolute, left + panel.w / 2, y + panel.h / 2);
-
-      // The countdown stands outside the panel, its last glyph against the panel's left edge, so
-      // the beats still to come hold their place as the row shrinks toward the panel.
-      const bottom = y + panel.h / 2 + 2;
-      ctx.fillStyle = tone(INK.scaffolding, this.dark);
-      glyphs.forEach((glyph, i) => {
-        // A glyph fades over the last quarter of its beat, off the clock alone.
-        const remains = (glyph.end - this.playedTick) / (glyph.span / 4);
-        ctx.globalAlpha = fading ? clamp(remains, 0, 1) : 1;
-        const x = left - GLYPH_GAP - GLYPH_W - (glyphs.length - 1 - i) * GLYPH_STEP;
-        ctx.beginPath();
-        if (glyph.strong) ctx.roundRect(x, bottom - GLYPH_TALL, GLYPH_W, GLYPH_TALL, GLYPH_W / 2);
-        else ctx.arc(x + GLYPH_W / 2, bottom - GLYPH_W / 2, GLYPH_W / 2, 0, Math.PI * 2);
-        ctx.fill();
-      });
-      ctx.globalAlpha = 1;
-      y += panel.h + PANEL_GAP;
+    // Every panel comes from the slot below the one it takes, the newest from under the lot.
+    const t = Math.min(1, (this.now - this.changeAt) / PANEL_SLIDE_MS);
+    const eased = easeOutBack(t);
+    const step = (slot: number) =>
+      t === 1
+        ? slotRect(slot, width)
+        : lerpRect(slotRect(slot + 1, width), slotRect(slot, width), eased);
+    if (t < 1 && this.leaving) {
+      this.drawRow(step(-1), this.leaving, [], 1 - t);
+    }
+    for (const row of rows) {
+      this.drawRow(step(row.slot), row.chord, row.glyphs, row.slot === 2 ? t : 1);
     }
     // The rest of the lane draws on the defaults.
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
+  }
+
+  /** One panel where the step it is at puts it, its name inside and its countdown left of it. */
+  private drawRow(rect: PanelRect, chord: LaneChord, glyphs: BeatGlyph[], alpha: number): void {
+    const ctx = this.ctx;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = tone(PANEL_FILL, this.dark);
+    ctx.beginPath();
+    ctx.roundRect(rect.x, rect.y, rect.w, rect.h, 4);
+    ctx.fill();
+
+    // A name too long for its panel steps down through smaller type until it fits.
+    let size = rect.size;
+    ctx.font = `${rect.weight} ${size}px system-ui, sans-serif`;
+    while (size > 10 && ctx.measureText(chord.event.absolute).width > rect.w - PANEL_PAD * 2) {
+      size -= 2;
+      ctx.font = `${rect.weight} ${size}px system-ui, sans-serif`;
+    }
+    ctx.fillStyle = tone(INK.duration, this.dark);
+    ctx.fillText(chord.event.absolute, rect.x + rect.w / 2, rect.y + rect.h / 2);
+
+    // The countdown stands outside the panel, its last glyph against the panel's left edge, so
+    // the beats still to come hold their place as the row shrinks toward the panel.
+    const bottom = rect.y + rect.h / 2 + 2;
+    const fading = !reducedMotion();
+    ctx.fillStyle = tone(INK.scaffolding, this.dark);
+    glyphs.forEach((glyph, i) => {
+      // A glyph fades over the last quarter of its beat, off the clock alone.
+      const remains = (glyph.end - this.playedTick) / (glyph.span / 4);
+      ctx.globalAlpha = alpha * (fading ? clamp(remains, 0, 1) : 1);
+      const x = rect.x - GLYPH_GAP - GLYPH_W - (glyphs.length - 1 - i) * GLYPH_STEP;
+      ctx.beginPath();
+      if (glyph.strong) ctx.roundRect(x, bottom - GLYPH_TALL, GLYPH_W, GLYPH_TALL, GLYPH_W / 2);
+      else ctx.arc(x + GLYPH_W / 2, bottom - GLYPH_W / 2, GLYPH_W / 2, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.globalAlpha = 1;
   }
 
   private drawNotice(width: number, laneH: number): void {
@@ -697,4 +744,34 @@ export function throughWrap<T extends { tick: number }>(
       .filter((item) => item.tick >= loop.from && item.tick < loop.to)
       .map((item) => later(item, lap)),
   ];
+}
+
+/**
+ * Where a panel stands in slot `slot`: the chord in force takes slot 0, the two after it slots 1
+ * and 2. Slot -1 is where a panel leaves and slot 3 where one comes from, both off the panel.
+ */
+export function slotRect(slot: number, width: number): PanelRect {
+  const panel = slot === 0 ? CHORD_PANEL : NEXT_PANEL;
+  const small = NEXT_PANEL.h + PANEL_GAP;
+  // Over slot 0 the slots stack upward in the small panel's height, under it below the big one.
+  const down = slot <= 0 ? slot * small : CHORD_PANEL.h + PANEL_GAP + (slot - 1) * small;
+  return { x: width - PANEL_INSET - panel.w, y: PANEL_INSET + down, ...panel };
+}
+
+/** A panel part way from one slot to another; its weight changes over at the midpoint. */
+export function lerpRect(from: PanelRect, to: PanelRect, t: number): PanelRect {
+  const at = (a: number, b: number) => a + (b - a) * t;
+  return {
+    x: at(from.x, to.x),
+    y: at(from.y, to.y),
+    w: at(from.w, to.w),
+    h: at(from.h, to.h),
+    size: at(from.size, to.size),
+    weight: t < 0.5 ? from.weight : to.weight,
+  };
+}
+
+/** Fast out with a small overshoot, so a panel settles into its slot with a bounce. */
+function easeOutBack(t: number): number {
+  return 1 + 2.70158 * (t - 1) ** 3 + 1.70158 * (t - 1) ** 2;
 }

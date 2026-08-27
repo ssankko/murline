@@ -181,7 +181,7 @@ pub fn search(ix: &Index, query: &str) -> SearchResult {
         let hay = ix.hay(i);
         if tokens.iter().zip(&whole).all(|(t, &w)| has_word(hay, t, w)) {
             let who = &hay[..ix.who[i] as usize];
-            let rank = tokens.iter().zip(&whole).filter(|(t, &w)| has_word(who, t, w)).count();
+            let rank = tokens.iter().zip(&whole).filter(|&(t, &w)| has_word(who, t, w)).count();
             buckets[rank].push(i);
         }
         pos = ix.starts[i + 1] as usize;

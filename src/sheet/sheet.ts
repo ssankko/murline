@@ -28,6 +28,9 @@ const BUBBLE_ROW = 13;
 /** Clear paper kept between two bubbles of one row. */
 const BUBBLE_GAP = 6;
 
+/** Clear paper kept above the highest ink of the sheet. */
+const TOP_AIR = 4;
+
 /**
  * The ring drawn around the noteheads of the Onset the cursor stands at. It reads as paper
  * cleared out of the amber cursor band, so it works on either paper.
@@ -522,13 +525,11 @@ export class Sheet {
     applyTiers(this.paper, this.dark);
 
     // Paper above the top staff line is dead space apart from the strip the bubbles need. The lift
-    // stops short of the highest label, so the tempo mark and the bar numbers survive it.
-    let topLabel = this.stafflineY;
-    for (const text of this.paper.querySelectorAll('svg text')) {
-      const box = (text as SVGGraphicsElement).getBBox();
-      if (box.y < topLabel) topLabel = box.y;
-    }
-    this.offsetY = Math.max(0, Math.min(this.stafflineY - BUBBLE_STRIP, topLabel - 4));
+    // stops short of the sheet's highest ink, so a slur over the top staff survives it as a
+    // label does.
+    const svg = this.paper.querySelector('svg') as SVGSVGElement | null;
+    const inkTop = svg ? svg.getBBox().y : this.stafflineY;
+    this.offsetY = Math.max(0, Math.min(this.stafflineY - BUBBLE_STRIP, inkTop - TOP_AIR));
     this.contentHeight = bottom - this.offsetY + 8;
     this.contentWidth = Number(this.paper.querySelector('svg')?.getAttribute('width')) || 1200;
 
@@ -671,7 +672,5 @@ function makeOsmd(host: HTMLElement, dark: boolean): OpenSheetMusicDisplay {
     renderSingleHorizontalStaffline: true,
   });
   applyTheme(osmd, dark);
-  // Nothing prints above the staff but the tempo mark, so the page margin is dead space.
-  osmd.EngravingRules.PageTopMargin = 0;
   return osmd;
 }

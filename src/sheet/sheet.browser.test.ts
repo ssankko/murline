@@ -14,6 +14,8 @@ const FIXTURES = import.meta.glob('../score/fixtures/*', {
 
 const BACH = 'JohannSebastianBach_PraeludiumInCDur_BWV846_1.xml';
 const VOLTA = 'test_repeat_volta_simple.musicxml';
+/** Slurs arc high over its top staff, well above every label of the first bars. */
+const MAZURKA = 'kernscores-mazurka-50.musicxml';
 
 async function bytesOf(file: string): Promise<Uint8Array> {
   const url = FIXTURES[`../score/fixtures/${file}`] as string;
@@ -163,6 +165,18 @@ test('a chord bubble stands over every chord event and dims once the cursor is p
 
   expect(bubbles.filter((el) => el.classList.contains('past')).length).toBe(3);
   for (const el of bubbles.slice(0, 3)) expect(el.classList.contains('past')).toBe(true);
+
+  sheet.dispose();
+}, 60_000);
+
+test('the lift keeps the highest ink of the sheet on the paper', async () => {
+  const host = hostEl();
+  const sheet = await open(MAZURKA, host);
+  sheet.frame(snapshot(0), 100, 0);
+
+  const drawn = [...host.querySelectorAll('svg path, svg rect, svg text')];
+  const ink = Math.min(...drawn.map((el) => el.getBoundingClientRect().top));
+  expect(ink).toBeGreaterThanOrEqual(host.getBoundingClientRect().top);
 
   sheet.dispose();
 }, 60_000);

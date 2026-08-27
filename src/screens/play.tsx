@@ -3,7 +3,7 @@
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { getSettingOr, setSetting } from '@/db/db';
+import { getSettingOr, setSetting, type Settings as GlobalSettings } from '@/db/db';
 import {
   DEFAULT_LANE_LOOK,
   DEFAULT_SPLIT,
@@ -13,7 +13,14 @@ import {
   type LaneLook,
 } from '@/lane/lane';
 import { setNotice } from '@/library/notice';
-import { getPiece, insertPerformance, insertPlay } from '@/library/queries';
+import {
+  getPiece,
+  INHERIT_EVERY_SETTING,
+  insertPerformance,
+  insertPlay,
+  updatePieceSettings,
+  type PieceSettingValues,
+} from '@/library/queries';
 import { reindexIfChanged } from '@/library/scan';
 import { flipTheme, useDark } from '@/look/use-dark';
 import { useMidiStatus } from '@/midi/useMidiStatus';
@@ -26,8 +33,15 @@ import {
   type PlayState,
 } from '@/play/engine';
 import {
+  INHERITS_EVERYTHING,
+  readPieceDefaults,
+  resolvePlaySettings,
+  type PieceSettings,
+} from '@/play/resolve';
+import {
   DEFAULT_PLAY_SETTINGS,
   type HandsSetting,
+  type KeyboardPreset,
   type PlayMode,
   type PlaySettings,
   type TempoMode,
@@ -36,6 +50,7 @@ import { clampSection, sectionLabel, type Section } from '@/play/section';
 import { useFrameLoop } from '@/play/use-frame-loop';
 import { bpmAt, ScoreError, type Measure, type Note } from '@/score/types';
 import { Button } from '@/components/ui/button';
+import { GearPopover, SettingsDialog } from '@/screens/settings';
 import { Sheet } from '@/sheet/sheet';
 import { invoke } from '@tauri-apps/api/core';
 import {
@@ -75,8 +90,31 @@ const TEMPO_RANGE: Record<TempoMode, [number, number]> = {
   bpm: [40, 240],
 };
 
-/** Bars the count-in runs when it is on. The gear owns the number; the bar owns the on and off. */
-const COUNT_IN_BARS = 1;
+/** The global knobs a running play reads, and the field of `PlaySettings` each one lands in. */
+const ENGINE_KNOBS = {
+  grade_timing_flat_ms: 'timingFlatMs',
+  grade_timing_zero_ms: 'timingZeroMs',
+  grade_velocity_flat: 'velocityFlat',
+  grade_velocity_zero: 'velocityZero',
+  grade_release_flat_lo: 'releaseFlatLo',
+  grade_release_flat_hi: 'releaseFlatHi',
+  grade_release_zero_lo: 'releaseZeroLo',
+  grade_release_zero_hi: 'releaseZeroHi',
+  grade_weight_timing: 'weightTiming',
+  grade_weight_velocity: 'weightVelocity',
+  grade_weight_release: 'weightRelease',
+  velocity_offset: 'velocityOffset',
+  matching_window_ms: 'matchingWindowMs',
+  togetherness_ms: 'togethernessMs',
+} as const satisfies Partial<Record<keyof GlobalSettings, keyof PlaySettings>>;
+
+/** The same for the lane's look, which the next frame reads out of the live object. */
+const LANE_KNOBS = {
+  lane_lookahead: 'lookaheadBeats',
+  lane_note_width: 'noteWidthPct',
+  lane_gap: 'gapPx',
+  keyboard_labels: 'keyLabels',
+} as const satisfies Partial<Record<keyof GlobalSettings, keyof LaneLook>>;
 
 /** What the screen was opened for: a practice Idle, or a performance armed at bar one. */
 export type PlayIntent = 'practice' | 'performance';
@@ -121,6 +159,8 @@ export function PlayScreen({
   const [measures, setMeasures] = useState<Measure[]>([]);
 
   const [split, setSplit] = useState(DEFAULT_SPLIT);
+  const [look, setLook] = useState<LaneLook>(DEFAULT_LANE_LOOK);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [hands, setHands] = useState(DEFAULT_PLAY_SETTINGS.hands);
   /** A one-staff piece is all right hand, so it has no choice of hands to offer. */
   const [oneStaff, setOneStaff] = useState(false);
@@ -130,7 +170,14 @@ export function PlayScreen({
   const [tempoMode, setTempoMode] = useState<TempoMode>(DEFAULT_PLAY_SETTINGS.tempoMode);
   const [tempo, setTempo] = useState(DEFAULT_PLAY_SETTINGS.tempoValue);
   const [metronome, setMetronome] = useState(DEFAULT_PLAY_SETTINGS.metronome);
-  const [countIn, setCountIn] = useState(DEFAULT_PLAY_SETTINGS.countInBars > 0);
+  const [countInBars, setCountInBars] = useState(DEFAULT_PLAY_SETTINGS.countInBars);
+  /** The bar's count-in toggle turns it off with 0 and back on at the last number of bars. */
+  const countInLast = useRef(Math.max(DEFAULT_PLAY_SETTINGS.countInBars, 1));
+  const [keyboard, setKeyboard] = useState({
+    keyboardPreset: DEFAULT_PLAY_SETTINGS.keyboardPreset as KeyboardPreset,
+    keyboardLo: DEFAULT_PLAY_SETTINGS.keyboardLo,
+    keyboardHi: DEFAULT_PLAY_SETTINGS.keyboardHi,
+  });
   const [mode, setMode] = useState<PlayMode>(DEFAULT_PLAY_SETTINGS.mode);
   /** The score's own tempo, and whether it has only one, which is what BPM mode needs. */
   const [written, setWritten] = useState({ bpm: 120, constant: false });
@@ -138,7 +185,7 @@ export function PlayScreen({
     tempoMode,
     tempoValue: tempo,
     metronome,
-    countInBars: countIn ? COUNT_IN_BARS : 0,
+    countInBars,
     mode,
   };
   const liveRef = useRef(live);
@@ -159,14 +206,22 @@ export function PlayScreen({
         const bytes = new Uint8Array(
           await invoke<ArrayBuffer>('read_file', { path: `${folder}/${path}` }),
         );
-        const [look, knobs] = await Promise.all([laneLook(), gradeKnobs()]);
+        const [opening, knobs, row, defaults] = await Promise.all([
+          laneLook(),
+          engineKnobs(),
+          getPiece(path).catch(() => null),
+          readPieceDefaults(),
+        ]);
+        const resolved = resolvePlaySettings(row ?? INHERITS_EVERYTHING, defaults);
         const sheet = await Sheet.open(hostRef.current!, bytes, fileName, darkRef.current);
         if (!live) return sheet.dispose();
         sheetRef.current = sheet;
+        // The piece opens as it was left: its own settings over the global defaults over these.
         const engine = create(sheet.score, {
           ...DEFAULT_PLAY_SETTINGS,
           ...knobs,
-          ...liveRef.current,
+          mode: liveRef.current.mode,
+          ...resolved.settings,
         });
         if (intent === 'performance') engine.arm();
         engineRef.current = engine;
@@ -177,11 +232,12 @@ export function PlayScreen({
           setSection(picked && clampSection(sheet.score.measures, picked));
         };
         setMeasures(sheet.score.measures);
-        laneRef.current = new Lane(canvasRef.current!, engine, look.lane, darkRef.current);
-        setSplit(look.split);
+        laneRef.current = new Lane(canvasRef.current!, engine, opening.lane, darkRef.current);
+        setSplit(opening.split);
+        setLook(opening.lane);
         setOneStaff(sheet.score.staffCount < 2);
-        setHands(engine.settings.hands);
-        setClickVolume(look.clickVolume);
+        show(resolved.settings);
+        setClickVolume(opening.clickVolume);
         setWritten({
           bpm: sheet.score.hasTempo ? Math.round(bpmAt(sheet.score, 0)) : 120,
           constant: sheet.score.constantTempo,
@@ -233,7 +289,7 @@ export function PlayScreen({
   useEffect(() => {
     const engine = engineRef.current;
     if (engine) Object.assign(engine.settings, liveRef.current);
-  }, [tempoMode, tempo, metronome, countIn, mode]);
+  }, [tempoMode, tempo, metronome, countInBars, mode]);
 
   /** Nothing on screen announces the save; the library's History is where it shows. */
   function savePractice(): void {
@@ -254,6 +310,89 @@ export function PlayScreen({
       setSummary({ record: done, best });
       await insertPerformance(path, done);
     })();
+  }
+
+  /**
+   * Every piece setting the bar or the gear changes goes to the piece row at once, so the piece
+   * reopens as it was left. A performance hides those controls, so nothing is written during one.
+   */
+  function persist(values: PieceSettingValues): void {
+    if (kindRef.current === 'performance') return;
+    void updatePieceSettings(path, values);
+  }
+
+  /** Puts a resolved set of piece settings on the bar, the engine, the sheet and the keyboard. */
+  function show(settings: PieceSettings): void {
+    setTempoMode(settings.tempoMode);
+    setTempo(settings.tempoValue);
+    setMetronome(settings.metronome);
+    setCountInBars(settings.countInBars);
+    if (settings.countInBars > 0) countInLast.current = settings.countInBars;
+    setHands(settings.hands);
+    setKeyboard(settings);
+    const engine = engineRef.current;
+    if (!engine) return;
+    Object.assign(engine.settings, settings);
+    sheetRef.current?.setHands(settings.hands);
+    laneRef.current?.setRange();
+  }
+
+  /** The piece forgets every setting of its own and plays at the global defaults again. */
+  async function useGlobalDefaults(): Promise<void> {
+    await updatePieceSettings(path, INHERIT_EVERY_SETTING);
+    show(resolvePlaySettings(INHERITS_EVERYTHING, await readPieceDefaults()).settings);
+  }
+
+  function changeTempo(value: number): void {
+    setTempo(value);
+    persist({ tempo_value: value });
+  }
+
+  function changeCountIn(bars: number): void {
+    if (bars > 0) countInLast.current = bars;
+    setCountInBars(bars);
+    persist({ count_in_bars: bars });
+  }
+
+  function changeMetronome(on: boolean): void {
+    setMetronome(on);
+    persist({ metronome: on ? 1 : 0 });
+  }
+
+  function changeKeyboard(preset: KeyboardPreset, lo: number, hi: number): void {
+    setKeyboard({ keyboardPreset: preset, keyboardLo: lo, keyboardHi: hi });
+    const engine = engineRef.current;
+    if (engine) {
+      Object.assign(engine.settings, {
+        keyboardPreset: preset,
+        keyboardLo: lo,
+        keyboardHi: hi,
+      });
+      laneRef.current?.setRange();
+    }
+    persist({ keyboard_preset: String(preset), keyboard_lo: lo, keyboard_hi: hi });
+  }
+
+  /** A look knob the gear turns: the next frame reads the same object the lane holds. */
+  function changeLook(next: Partial<LaneLook>): void {
+    setLook((held) => ({ ...held, ...next }));
+    Object.assign(laneRef.current?.look ?? {}, next);
+    for (const [key, field] of Object.entries(LANE_KNOBS)) {
+      if (field in next) void setSetting(key as keyof GlobalSettings, next[field] as never);
+    }
+  }
+
+  /** A global knob the dialog writes reaches the running play through the same live objects. */
+  function applyGlobal(key: keyof GlobalSettings, value: unknown): void {
+    const engineField = ENGINE_KNOBS[key as keyof typeof ENGINE_KNOBS];
+    if (engineField && engineRef.current) {
+      Object.assign(engineRef.current.settings, { [engineField]: value });
+    }
+    const laneField = LANE_KNOBS[key as keyof typeof LANE_KNOBS];
+    if (laneField) setLook((held) => ({ ...held, [laneField]: value }));
+    if (laneField && laneRef.current) Object.assign(laneRef.current.look, { [laneField]: value });
+    if (key === 'click_volume') setClickVolume(value as number);
+    if (key === 'sheet_split') setSplit(value as number);
   }
 
   useFrameLoop((delta, now) => {
@@ -303,7 +442,7 @@ export function PlayScreen({
         if (engineRef.current?.snapshot().state === 'idle') setSection(null);
         else engineRef.current?.abort();
       } else if (event.key === 'd') {
-        flipTheme();
+        void setSetting('theme', flipTheme());
       }
     };
     window.addEventListener('keydown', onKey);
@@ -334,6 +473,7 @@ export function PlayScreen({
     engine.settings.hands = next;
     sheetRef.current?.setHands(next);
     setHands(next);
+    persist({ hands: next });
   }
 
   /** Perform arms a performance; Stop takes it off, running or not, and it leaves no row. */
@@ -348,15 +488,19 @@ export function PlayScreen({
   const running = state === 'running' || state === 'counting-in';
   const [tempoMin, tempoMax] = TEMPO_RANGE[tempoMode];
   const stepTempo = (by: number) =>
-    setTempo((value) => Math.min(tempoMax, Math.max(tempoMin, value + by)));
+    changeTempo(Math.min(tempoMax, Math.max(tempoMin, tempo + by)));
 
   /** The two modes read the same piece at the same speed, so a switch carries the value over. */
   function switchMode(next: TempoMode): void {
     if (next === tempoMode) return;
     const [min, max] = TEMPO_RANGE[next];
-    const value = next === 'bpm' ? (written.bpm * tempo) / 100 : (tempo / written.bpm) * 100;
+    const value = Math.min(
+      max,
+      Math.max(min, Math.round(next === 'bpm' ? (written.bpm * tempo) / 100 : (tempo / written.bpm) * 100)),
+    );
     setTempoMode(next);
-    setTempo(Math.min(max, Math.max(min, Math.round(value))));
+    setTempo(value);
+    persist({ tempo_mode: next, tempo_value: value });
   }
 
   return (
@@ -367,13 +511,33 @@ export function PlayScreen({
             <ArrowLeft {...ICON} />
           </BarButton>
           <b className="ml-1.5 mr-1 min-w-0 truncate text-[13px] font-medium">{title}</b>
-          <BarButton label="Piece settings" off>
-            <Settings {...ICON} />
-          </BarButton>
+          <GearPopover
+            trigger={
+              <button
+                aria-label="Piece settings"
+                className="hover:bg-ink/8 relative flex h-8 w-8 flex-none items-center justify-center transition-colors duration-150"
+              >
+                <Settings {...ICON} />
+              </button>
+            }
+            performing={performing}
+            keyboard={keyboard}
+            countInBars={countInBars}
+            look={look}
+            onKeyboard={changeKeyboard}
+            onCountInBars={changeCountIn}
+            onLook={changeLook}
+            onUseGlobalDefaults={() => void useGlobalDefaults()}
+            onAllSettings={() => setSettingsOpen(true)}
+          />
 
           {/* The play disc keeps the window's midline whatever the two sides hold. */}
           <div className="absolute left-1/2 flex -translate-x-1/2 items-center gap-0.5">
-            <BarButton label="Count-in" pressed={countIn} onClick={() => setCountIn((on) => !on)}>
+            <BarButton
+              label="Count-in"
+              pressed={countInBars > 0}
+              onClick={() => changeCountIn(countInBars > 0 ? 0 : countInLast.current)}
+            >
               <Tally4 {...ICON} />
             </BarButton>
             {!performing && (
@@ -396,7 +560,7 @@ export function PlayScreen({
             <BarButton
               label="Metronome"
               pressed={metronome}
-              onClick={() => setMetronome((on) => !on)}
+              onClick={() => changeMetronome(!metronome)}
             >
               <Metronome {...ICON} />
             </BarButton>
@@ -415,7 +579,7 @@ export function PlayScreen({
                     value={tempo}
                     constantTempo={written.constant}
                     onMode={switchMode}
-                    onValue={setTempo}
+                    onValue={changeTempo}
                   />
                   <BarButton label="Faster" onClick={() => stepTempo(TEMPO_STEP)}>
                     <Plus {...ICON} />
@@ -482,6 +646,10 @@ export function PlayScreen({
             />
           )}
         </div>
+
+        {settingsOpen && (
+          <SettingsDialog onClose={() => setSettingsOpen(false)} onGlobalChange={applyGlobal} />
+        )}
       </div>
     </TooltipProvider>
   );
@@ -569,50 +737,16 @@ async function laneLook(): Promise<{ lane: LaneLook; split: number; clickVolume:
   };
 }
 
-/** Every Grade knob, read once when the piece opens. They are global; ticket 13 draws them. */
-async function gradeKnobs(): Promise<Partial<PlaySettings>> {
-  const d = DEFAULT_PLAY_SETTINGS;
-  const [
-    timingFlatMs,
-    timingZeroMs,
-    velocityFlat,
-    velocityZero,
-    releaseFlatLo,
-    releaseFlatHi,
-    releaseZeroLo,
-    releaseZeroHi,
-    weightTiming,
-    weightVelocity,
-    weightRelease,
-    velocityOffset,
-  ] = await Promise.all([
-    getSettingOr('grade_timing_flat_ms', d.timingFlatMs),
-    getSettingOr('grade_timing_zero_ms', d.timingZeroMs),
-    getSettingOr('grade_velocity_flat', d.velocityFlat),
-    getSettingOr('grade_velocity_zero', d.velocityZero),
-    getSettingOr('grade_release_flat_lo', d.releaseFlatLo),
-    getSettingOr('grade_release_flat_hi', d.releaseFlatHi),
-    getSettingOr('grade_release_zero_lo', d.releaseZeroLo),
-    getSettingOr('grade_release_zero_hi', d.releaseZeroHi),
-    getSettingOr('grade_weight_timing', d.weightTiming),
-    getSettingOr('grade_weight_velocity', d.weightVelocity),
-    getSettingOr('grade_weight_release', d.weightRelease),
-    getSettingOr('velocity_offset', d.velocityOffset),
-  ]);
-  return {
-    timingFlatMs,
-    timingZeroMs,
-    velocityFlat,
-    velocityZero,
-    releaseFlatLo,
-    releaseFlatHi,
-    releaseZeroLo,
-    releaseZeroHi,
-    weightTiming,
-    weightVelocity,
-    weightRelease,
-    velocityOffset,
-  };
+/** Every global knob the engine reads, taken once when the piece opens. */
+async function engineKnobs(): Promise<Partial<PlaySettings>> {
+  const knobs: Record<string, number> = {};
+  await Promise.all(
+    Object.entries(ENGINE_KNOBS).map(async ([key, field]) => {
+      const fallback = DEFAULT_PLAY_SETTINGS[field] as number;
+      knobs[field] = (await getSettingOr(key as keyof GlobalSettings, fallback)) as number;
+    }),
+  );
+  return knobs as Partial<PlaySettings>;
 }
 
 /**

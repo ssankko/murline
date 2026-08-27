@@ -85,7 +85,7 @@ export class Lane {
   private jumps: LaneJump[];
   /** The walk the bars and the dividers were read from; Loop swaps it for the linear one. */
   private walk: PlayStep[];
-  private readonly range: [number, number];
+  private range: [number, number];
   private layout: KeyLayout;
   private dark: boolean;
   private effects: Effect[] = [];
@@ -114,6 +114,12 @@ export class Lane {
 
   setDark(dark: boolean): void {
     this.dark = dark;
+  }
+
+  /** Lays the keyboard out again after the keyboard range setting changed. */
+  setRange(): void {
+    this.range = keyRange(this.engine.notes, this.engine.settings);
+    this.layout = keyLayout(this.range[0], this.range[1], this.canvas.clientWidth || 1);
   }
 
   /** Feedback at the key: a ring for a hit or an extra, a red blink for a miss. */

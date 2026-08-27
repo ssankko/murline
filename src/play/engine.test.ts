@@ -1,7 +1,7 @@
 import { DEFAULT_PLAY_SETTINGS, type PlaySettings } from '@/play/settings';
 import { TICKS_PER_QUARTER, type Measure, type Note, type Onset, type Score } from '@/score/types';
 import { describe, expect, test } from 'vitest';
-import { create, type Engine } from './engine';
+import { Engine } from './engine';
 
 const BAR = 4 * TICKS_PER_QUARTER;
 
@@ -79,7 +79,7 @@ function withRepeat(): Score {
 
 /** The count-in is off unless a test asks for it, so a play starts on the first beat. */
 function engine(score: Score, settings: Partial<PlaySettings> = {}) {
-  return create(score, { ...DEFAULT_PLAY_SETTINGS, countInBars: 0, ...settings });
+  return new Engine(score, { ...DEFAULT_PLAY_SETTINGS, countInBars: 0, ...settings });
 }
 
 describe('the clock', () => {
@@ -1149,13 +1149,26 @@ describe('Section and Loop', () => {
     expect(play.walk).toBe(play.score.playOrder);
   });
 
-  test('Loop walks the bars linearly, with no repeat and no jump', () => {
+  test('a Section walks the bars linearly, with no repeat and no jump', () => {
     const score = withRepeat();
     const play = engine(score);
     play.setLoop(true);
+    play.setSection({ from: 0, to: 1 });
 
     expect(play.walk.map((step) => step.tick)).toEqual(score.onsets.map((onset) => onset.tick));
     expect(play.walk).toHaveLength(score.onsets.length);
+  });
+
+  test('Loop with no Section keeps the piece and its repeats', () => {
+    const score = withRepeat();
+    const play = engine(score);
+    play.setLoop(true);
+    play.start();
+    // Nine seconds in: the third bar of the play order, which is bar 1 coming round again.
+    play.advance(9000);
+
+    expect(play.walk).toBe(score.playOrder);
+    expect(play.snapshot().measureIndex).toBe(0);
   });
 
   test('creating a Section while Idle parks the cursor at its start', () => {
@@ -1276,6 +1289,18 @@ describe('Section and Loop', () => {
 
     expect(play.snapshot().playedTick).toBe(0);
     expect(play.snapshot().stopped).toBe(true);
+  });
+
+  test('a key held through the count-in blocks nothing', () => {
+    const play = engine(scoreOf(2), { mode: 'wait', countInBars: 1 });
+    play.start();
+    // A key goes down during the count-in and stays down into the first bar.
+    play.strike({ midi: 61, velocity: 80, time: 0, on: true });
+    play.advance(5000);
+
+    expect(play.snapshot().stopped).toBe(true);
+    play.strike({ midi: 60, velocity: 80, time: 0, on: true });
+    expect(play.snapshot().stopped).toBe(false);
   });
 
   test('a key held from the last lap blocks nothing on the next one', () => {

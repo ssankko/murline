@@ -5,6 +5,7 @@ import { playGrade, type NoteStrike, type PlayGrade } from '@/play/grade';
 import { clampSection, linearWalk, sectionTicks, type Section } from '@/play/section';
 import type { HandsSetting, PlaySettings, TempoMode } from '@/play/settings';
 import { WaitState } from '@/play/wait';
+import { barTickOf, beatOf } from '@/score/beat';
 import {
   TICKS_PER_QUARTER,
   bpmAt,
@@ -118,7 +119,7 @@ export interface Snapshot {
   stopped: boolean;
 }
 
-/** What `held` says a strike matched: nothing, so it blocks, or a note that took it in silence. */
+/** What `held` says a strike matched: nothing, so it blocks, or nothing the play holds against it. */
 const BLOCKING = -1;
 const ABSORBED = -2;
 
@@ -427,8 +428,9 @@ export class Engine {
   }
 
   /**
-   * The lap the clock is running, or null while Loop is off. With Loop on the walk is linear, so a
-   * played tick is a sheet tick and the Section's bar lines are the lap's own ticks.
+   * The lap the clock is running, or null while Loop is off. A Section walks linearly, so a played
+   * tick is a sheet tick and the Section's bar lines are the lap's own ticks; with no Section the
+   * lap is the whole piece in play order.
    */
   loopSpan(): LoopSpan | null {
     if (!this.loop || this.kind !== 'practice') return null;
@@ -443,12 +445,13 @@ export class Engine {
   }
 
   /**
-   * Swaps the walk Loop asks for and parks an idle cursor at the Section. A running cursor is never
-   * yanked: the wrap picks it up when it reaches the Section's closing bar line or the end.
+   * Swaps the walk a looping Section asks for and parks an idle cursor at it. A running cursor is
+   * never yanked: the wrap picks it up when it reaches the Section's closing bar line or the end.
    */
   private applyLoop(): void {
-    const looping = this.loop && this.kind === 'practice';
-    const walk = looping ? (this.linear ??= linearWalk(this.score)) : this.score.playOrder;
+    // Only a looping Section leaves the play order; Loop over the whole piece keeps its repeats.
+    const linear = this.loop && this.kind === 'practice' && this.sectionRange !== null;
+    const walk = linear ? (this.linear ??= linearWalk(this.score)) : this.score.playOrder;
     if (walk !== this.walk) this.setWalk(walk);
     const span = this.loopSpan();
     if (!span || (this.state !== 'idle' && this.state !== 'paused')) return;
@@ -516,7 +519,7 @@ export class Engine {
       const previous = before ? this.score.onsets[before.onsetIndex] : undefined;
       if (previous?.measureIndex === target.measure) continue;
       const measure = this.score.measures[target.measure]!;
-      ticks.push(step.tick - (onset.tick - measure.startTick));
+      ticks.push(barTickOf(step, onset, measure));
     }
     return ticks;
   }
@@ -722,8 +725,8 @@ export class Engine {
 
   /**
    * Where the played keys reach the engine. A note-on is matched against the expected notes of the
-   * active hand nearest in time inside the matching window; a note-off only releases the key.
-   * Ticket 08 clears Wait mode stops from here.
+   * active hand nearest in time inside the matching window; a note-off only releases the key. A key
+   * going either way may be the last thing a Wait mode stop is waiting for.
    */
   strike(event: StrikeEvent): void {
     if (!event.on) {
@@ -736,9 +739,10 @@ export class Engine {
       if (this.waiting) this.settleWait();
       return;
     }
-    // Outside a running play a key lights the keyboard and reaches no note.
+    // Outside a running play a key lights the keyboard and reaches no note. It was struck before
+    // the motion, so when the motion begins it blocks nothing.
     if (this.state !== 'running') {
-      this.held.set(event.midi, BLOCKING);
+      this.held.set(event.midi, ABSORBED);
       return;
     }
     if (this.waiting) {
@@ -876,7 +880,7 @@ export class Engine {
     const onset = this.score.onsets[step.onsetIndex];
     const measure = onset ? this.score.measures[onset.measureIndex] : undefined;
     if (!onset || !measure) return playedTick;
-    return step.tick - (onset.tick - measure.startTick);
+    return barTickOf(step, onset, measure);
   }
 
   /** The last step at or before a played tick. A walk's ticks never go back. */
@@ -1043,19 +1047,6 @@ function playNotesOf(score: Score, walk: PlayStep[]): PlayNote[] {
 }
 
 /**
- * The beat the metronome clicks and how many of them a full bar holds: the time signature's unit,
- * a dotted quarter in the compound meters 6/8, 9/8 and 12/8.
- */
-export function beatOf(measure: Measure): { ticks: number; perBar: number } {
-  const unit = (TICKS_PER_QUARTER * 4) / measure.beatUnit;
-  const compound =
-    measure.beatUnit === 8 && measure.beatsPerBar > 3 && measure.beatsPerBar % 3 === 0;
-  return compound
-    ? { ticks: unit * 3, perBar: measure.beatsPerBar / 3 }
-    : { ticks: unit, perBar: measure.beatsPerBar };
-}
-
-/**
  * Every beat of the play in played ticks, one pass per repeat. A pickup bar's beats are laid from
  * its bar line backwards, so its last beat lands on the next bar line.
  */
@@ -1065,7 +1056,7 @@ function beatGridOf(score: Score, walk: PlayStep[]): number[] {
     const onset = score.onsets[step.onsetIndex];
     const measure = onset ? score.measures[onset.measureIndex] : undefined;
     if (!onset || !measure) continue;
-    const barTick = step.tick - (onset.tick - measure.startTick);
+    const barTick = barTickOf(step, onset, measure);
     if (ticks.length > 0 && ticks[ticks.length - 1]! >= barTick) continue;
     const { ticks: beat } = beatOf(measure);
     const end = barTick + measure.durationTicks;
@@ -1074,10 +1065,6 @@ function beatGridOf(score: Score, walk: PlayStep[]): number[] {
     }
   }
   return ticks;
-}
-
-export function create(score: Score, settings: PlaySettings): Engine {
-  return new Engine(score, settings);
 }
 
 /** End of the last written duration over the whole walk, both hands. */

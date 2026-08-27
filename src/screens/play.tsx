@@ -51,6 +51,7 @@ import {
   type HandsSetting,
   type KeyboardPreset,
   TEMPO_RANGE,
+  tempoLabel,
   type PlayMode,
   type TempoMode,
 } from '@/play/settings';
@@ -669,7 +670,7 @@ function Summary({
   const grade = record.grade;
   const hitRate =
     grade && grade.expected > 0 ? Math.round((100 * grade.matched) / grade.expected) : null;
-  const tempo = record.tempoMode === 'bpm' ? `♩ = ${record.tempoValue}` : `${record.tempoValue} %`;
+  const tempo = tempoLabel(record.tempoMode, record.tempoValue);
   return (
     <div className="bg-paper/95 animate-in fade-in-0 absolute inset-0 flex flex-col items-center justify-center gap-6 duration-200">
       <div className="text-[64px] leading-none font-semibold tabular-nums">
@@ -762,7 +763,7 @@ function TempoPopover({
   onValue: (value: number) => void;
 }) {
   const [min, max] = TEMPO_RANGE[mode];
-  const label = mode === 'bpm' ? `♩ = ${value}` : `${value} %`;
+  const label = tempoLabel(mode, value);
   return (
     <Popover>
       <Tooltip>

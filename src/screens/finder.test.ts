@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest';
-import { metaLine, reasonOf, titleLine, type FinderRow } from './finder';
+import { reasonOf } from '@/library/notice';
+import { metaLine, titleLine, type FinderRow } from './finder';
 
 function row(fields: Partial<FinderRow>): FinderRow {
   return {

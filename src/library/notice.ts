@@ -13,6 +13,11 @@ export function setNotice(text: string | null): void {
   for (const listen of listeners) listen();
 }
 
+/** Tauri rejects with a plain string, the paths above throw an Error; a notice reads one way. */
+export function reasonOf(error: unknown): string {
+  return String(error).replace(/^Error:\s*/, '');
+}
+
 /** The notice to show and the way to dismiss it. */
 export function useNotice(): [string | null, () => void] {
   const text = useSyncExternalStore(subscribe, () => notice);

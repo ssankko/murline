@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { getSetting } from '@/db/db';
 import { importFiles } from '@/library/import';
+import { reasonOf } from '@/library/notice';
 import { invoke } from '@tauri-apps/api/core';
 import { Download, Search } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -73,11 +74,6 @@ type DownloadState =
   | { state: 'idle' }
   | { state: 'downloading' }
   | { state: 'failed'; provider: string; reason: string };
-
-/** Tauri rejects with a plain string, the import path throws an Error; the bar prints one reason. */
-export function reasonOf(error: unknown): string {
-  return String(error).replace(/^Error:\s*/, '');
-}
 
 /**
  * The finder modal. `libraryPaths` are the lower-cased, NFC folder-relative paths of every piece,
@@ -218,7 +214,7 @@ export function Finder({
                 onClick={() => setSel(i)}
                 onDoubleClick={() => void download()}
                 className={`flex items-center gap-3 px-4 py-1.5 ${
-                  row === selected ? 'bg-[color-mix(in_srgb,var(--ink)_9%,transparent)]' : ''
+                  row === selected ? 'bg-(--fill-selected)' : ''
                 }`}
               >
                 <span className="flex min-w-0 flex-col gap-px">

@@ -21,7 +21,7 @@ import {
   type ClashChoice,
   type ImportFailure,
 } from '@/library/import';
-import { setNotice, useNotice } from '@/library/notice';
+import { reasonOf, setNotice, useNotice } from '@/library/notice';
 import {
   allPiecePaths,
   deletePiece,
@@ -73,7 +73,7 @@ export function Library({
   const [notice, dismissNotice] = useNotice();
   const [dragging, setDragging] = useState(false);
   const [clash, setClash] = useState<Clash | null>(null);
-  /** The lower-cased folder-relative paths of every present piece, read when the finder opens. */
+  /** The lower-cased, NFC folder-relative paths of every present piece, read when the finder opens. */
   const [finding, setFinding] = useState<Set<string> | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [defaults, setDefaults] = useState<Partial<PieceSettings>>({});
@@ -85,8 +85,7 @@ export function Library({
     void readPieceDefaults().then(setDefaults);
   }, [settingsOpen]);
 
-  // The scan runs once per folder, so only a re-point walks the folder again. The sort the user
-  // chose is read as it stands, which a re-point must not undo.
+  // `scanLibrary` walks a folder once, so a sort change costs the re-list alone.
   useEffect(() => {
     let live = true;
     void (async () => {
@@ -100,13 +99,13 @@ export function Library({
         const rows = await listPieces(sort);
         if (live) setPieces(rows);
       } catch (error) {
-        if (live) setNotice(`Could not read the library: ${String(error)}`);
+        if (live) setNotice(`Could not read the library: ${reasonOf(error)}`);
       }
     })();
     return () => {
       live = false;
     };
-  }, [folder]);
+  }, [folder, sort]);
 
   /** The listener below outlives the render that registered it, so it drops through this. */
   const importRef = useRef(runImport);
@@ -122,11 +121,6 @@ export function Library({
       void listening.then((unlisten) => unlisten());
     };
   }, []);
-
-  function chooseSort(next: SortOrder) {
-    setSort(next);
-    void listPieces(next).then(setPieces);
-  }
 
   // Favorites filters, so a toggle can add or remove a row: re-read rather than patch one.
   async function toggleFavorite(row: PieceRow) {
@@ -188,7 +182,7 @@ export function Library({
     } catch (error) {
       // A file already gone from disk still drops its piece; any other refusal keeps the row.
       if (!isMissingFile(error)) {
-        setNotice(`Could not delete ${target.title ?? target.path}: ${String(error)}`);
+        setNotice(`Could not delete ${target.title ?? target.path}: ${reasonOf(error)}`);
         return;
       }
     }
@@ -213,7 +207,7 @@ export function Library({
             <DropdownMenuContent align="end">
               <DropdownMenuRadioGroup
                 value={sort}
-                onValueChange={(value) => chooseSort(value as SortOrder)}
+                onValueChange={(value) => setSort(value as SortOrder)}
               >
                 {SORTS.map(([key, label]) => (
                   <DropdownMenuRadioItem key={key} value={key} className="text-[13px]">
@@ -401,7 +395,7 @@ function Row({
       onClick={onSelect}
       onDoubleClick={onOpen}
       className={`relative flex w-full items-center gap-3 px-4 py-2 text-left transition-colors duration-[120ms] motion-reduce:transition-none ${
-        selected ? 'bg-[color-mix(in_srgb,var(--ink)_9%,transparent)]' : 'hover:bg-[color-mix(in_srgb,var(--ink)_4%,transparent)]'
+        selected ? 'bg-(--fill-selected)' : 'hover:bg-(--fill-hover)'
       }`}
     >
       <i

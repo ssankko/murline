@@ -11,6 +11,11 @@ export const TEMPO_RANGE: Record<TempoMode, [min: number, max: number]> = {
   bpm: [40, 240],
 };
 
+/** The tempo as a player reads it: a quarter-note BPM, or a percent of the written marks. */
+export function tempoLabel(mode: TempoMode, value: number): string {
+  return mode === 'bpm' ? `♩ = ${value}` : `${value} %`;
+}
+
 /** Flow runs the cursor at tempo whatever the player does; Wait stops it at every unsatisfied Onset. */
 export type PlayMode = 'flow' | 'wait';
 

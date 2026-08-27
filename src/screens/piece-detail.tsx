@@ -3,12 +3,13 @@
 
 import { Button } from '@/components/ui/button';
 import { pathOf } from '@/library/index-file';
-import { setNotice } from '@/library/notice';
+import { reasonOf, setNotice } from '@/library/notice';
 import { recentPlays, type PieceRow, type PlayRow } from '@/library/queries';
 import { splitError } from '@/library/scan';
 import { colorOf, noteName, pitchClass } from '@/look/color';
 import { useDark } from '@/look/use-dark';
 import { resolvePlaySettings, type Inherited, type PieceSettings } from '@/play/resolve';
+import { tempoLabel } from '@/play/settings';
 import { RangeStrip } from '@/screens/range-strip';
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
@@ -33,6 +34,7 @@ export function Detail({
   onPreview: (path: string) => void;
 }) {
   const broken = !!piece.error;
+  const tonic = tonicOf(piece);
   const fullPath = folder ? pathOf(folder, piece.path) : piece.path;
   return (
     <div className="flex-1 overflow-y-auto px-12 py-10">
@@ -57,7 +59,7 @@ export function Detail({
               <button
                 onClick={() =>
                   void invoke('reveal_in_finder', { path: fullPath }).catch((error) =>
-                    setNotice(`Could not reveal ${piece.title ?? piece.path}: ${String(error)}`),
+                    setNotice(`Could not reveal ${piece.title ?? piece.path}: ${reasonOf(error)}`),
                   )
                 }
                 className="hover:text-ink underline underline-offset-2"
@@ -98,10 +100,10 @@ export function Detail({
               <RangeStrip
                 lo={piece.midi_lo ?? 21}
                 hi={piece.midi_hi ?? 108}
-                tonic={tonicOf(piece)}
+                tonic={tonic}
               />
             </div>
-            <Facts piece={piece} />
+            <Facts piece={piece} tonic={tonic} />
           </>
         )}
 
@@ -155,7 +157,7 @@ function PlaySettingsList({
   const rows: [string, string, keyof Inherited][] = [
     [
       'Tempo',
-      settings.tempoMode === 'bpm' ? `♩ = ${settings.tempoValue}` : `${settings.tempoValue} %`,
+      tempoLabel(settings.tempoMode, settings.tempoValue),
       'tempoValue',
     ],
     ['Metronome', settings.metronome ? 'on' : 'off', 'metronome'],
@@ -253,7 +255,7 @@ function History({ piece }: { piece: PieceRow }) {
 /** The tempo and hands a performance ran at, which is what makes two grades comparable. */
 function settingsOf(play: PlayRow): string {
   const { tempo_value: value, tempo_mode: mode } = play;
-  const tempo = value === null ? '' : mode === 'bpm' ? `♩ = ${value}` : `${value} %`;
+  const tempo = value === null ? '' : tempoLabel(mode === 'bpm' ? 'bpm' : 'percent', value);
   return [tempo, play.hands === 'both' ? '' : play.hands].filter(Boolean).join(' · ');
 }
 
@@ -267,8 +269,7 @@ function day(at: number | null): string {
 }
 
 /** Muted label over value: what the piece is, before it is opened. */
-function Facts({ piece }: { piece: PieceRow }) {
-  const tonic = tonicOf(piece);
+function Facts({ piece, tonic }: { piece: PieceRow; tonic: number | null }) {
   const facts: [string, React.ReactNode][] = [
     ['Bars', piece.measure_count],
     ['Length', piece.duration_s === null ? null : duration(piece.duration_s)],
@@ -311,22 +312,19 @@ function TonicDot({ midi }: { midi: number }) {
   );
 }
 
-const MAJOR_SHARP = ['C', 'G', 'D', 'A', 'E', 'B', 'F♯', 'C♯'];
-const MAJOR_FLAT = ['C', 'F', 'B♭', 'E♭', 'A♭', 'D♭', 'G♭', 'C♭'];
-const MINOR_SHARP = ['A', 'E', 'B', 'F♯', 'C♯', 'G♯', 'D♯', 'A♯'];
-const MINOR_FLAT = ['A', 'D', 'G', 'C', 'F', 'B♭', 'E♭', 'A♭'];
+// The circle of fifths from each mode's tonic, sharps one way and flats the other.
+const KEY_NAMES = {
+  'major+': ['C', 'G', 'D', 'A', 'E', 'B', 'F♯', 'C♯'],
+  'major-': ['C', 'F', 'B♭', 'E♭', 'A♭', 'D♭', 'G♭', 'C♭'],
+  'minor+': ['A', 'E', 'B', 'F♯', 'C♯', 'G♯', 'D♯', 'A♯'],
+  'minor-': ['A', 'D', 'G', 'C', 'F', 'B♭', 'E♭', 'A♭'],
+};
 
 function keyName(piece: PieceRow): string | null {
   if (piece.key_sharps === null) return null;
-  const minor = piece.key_mode === 'minor';
-  const names = minor
-    ? piece.key_sharps >= 0
-      ? MINOR_SHARP
-      : MINOR_FLAT
-    : piece.key_sharps >= 0
-      ? MAJOR_SHARP
-      : MAJOR_FLAT;
-  return `${names[Math.abs(piece.key_sharps)]} ${minor ? 'minor' : 'major'}`;
+  const mode = piece.key_mode === 'minor' ? 'minor' : 'major';
+  const names = KEY_NAMES[`${mode}${piece.key_sharps >= 0 ? '+' : '-'}`];
+  return `${names[Math.abs(piece.key_sharps)]} ${mode}`;
 }
 
 /** Pitch class of the key's tonic: seven semitones per sharp, three more down for a minor key. */

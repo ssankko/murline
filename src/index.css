@@ -26,6 +26,9 @@
   --edge: light-dark(#c6c6c6, #3d3d3d);
   --edge-soft: light-dark(#dcdcdc, #2b2b2b);
   --amber: light-dark(#c9922e, #d9a83c);
+  /* The fills a list row takes: ink 9 % under the selected row, ink 4 % under the pointer. */
+  --fill-selected: color-mix(in srgb, var(--ink) 9%, transparent);
+  --fill-hover: color-mix(in srgb, var(--ink) 4%, transparent);
 }
 
 /* The system chooses the paper until the `d` key pins one, which puts a class on the root. */
@@ -48,14 +51,10 @@
 
   --color-background: var(--paper);
   --color-foreground: var(--ink);
-  --color-card: var(--surface);
-  --color-card-foreground: var(--ink);
   --color-popover: var(--surface);
   --color-popover-foreground: var(--ink);
   --color-primary: var(--ink);
   --color-primary-foreground: var(--paper);
-  --color-secondary: var(--surface);
-  --color-secondary-foreground: var(--ink);
   --color-muted: var(--surface);
   --color-muted-foreground: var(--muted);
   --color-accent: var(--surface);

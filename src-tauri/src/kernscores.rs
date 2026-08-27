@@ -27,18 +27,27 @@ fn fetch(url: &str) -> Result<Vec<u8>, String> {
     let client = reqwest::blocking::Client::builder()
         .timeout(TIMEOUT)
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| reason(e.to_string()))?;
     let response = client.get(url).send().map_err(|e| {
         if e.is_timeout() {
             "timed out".to_string()
         } else {
-            e.to_string()
+            reason(e.to_string())
         }
     })?;
     if !response.status().is_success() {
         return Err(format!("HTTP {}", response.status().as_u16()));
     }
-    response.bytes().map(|b| b.to_vec()).map_err(|e| e.to_string())
+    response.bytes().map(|b| b.to_vec()).map_err(|e| reason(e.to_string()))
+}
+
+/// reqwest ends every message with the whole `ksdata` query it was given. The finder's red bar
+/// shows the reason on one line, so the URL comes off.
+fn reason(message: String) -> String {
+    match message.split_once(" for url (") {
+        Some((head, _)) => head.to_string(),
+        None => message,
+    }
 }
 
 /// Every part into one, `<backup>` between them in each measure, staff on every note, voices
@@ -700,6 +709,14 @@ mod tests {
     #[test]
     fn a_file_that_is_not_musicxml_is_refused() {
         assert_eq!(merge(b"<html><body>nope</body></html>"), Err("not MusicXML".to_string()));
+    }
+
+    #[test]
+    fn a_download_failure_reads_without_the_request_url() {
+        let message = "error sending request for url \
+            (https://kern.ccarh.org/cgi-bin/ksdata?l=d&file=f.krn&f=musicxml)";
+        assert_eq!(reason(message.to_string()), "error sending request");
+        assert_eq!(reason("timed out".to_string()), "timed out");
     }
 
     #[test]

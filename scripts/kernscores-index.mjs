@@ -121,7 +121,7 @@ function barsOf(lines) {
   return max || null;
 }
 
-/** Per-collection title fixes; everything else is `OTL` as written, then the parent work, then the file name. */
+/** Per-directory title fixes; everything else is `OTL` as written, then the parent work, then the file name. */
 function titleOf(dir, r, file) {
   if (dir === 'musedata/bach/keyboard/wtc') return `${r.OPR ?? 'Well-Tempered Clavier'} ${r.OVM ?? ''}, ${r.OTL} ${r.ONM ?? ''}${r.OKY ? ` in ${r.OKY}` : ''}`.replace(/\s+/g, ' ');
   if (dir === 'users/craig/classical/bach/wtc2preludes') return `Well-Tempered Clavier Book II, ${FILE_TITLE[file]?.[0] ?? r.OTL}`;
@@ -147,7 +147,7 @@ const FILE_TITLE = {
   'wtc2p21.krn': ['Prelude No. 21 in B-flat major', null],
 };
 
-/** One spelling per composer, keyed by surname; the collections disagree on accents and order. */
+/** One spelling per composer, keyed by surname; the directories disagree on accents and order. */
 const CANON = { Chopin: 'Chopin, Frédéric', 'Müler': 'Müller, August Eberhard', Mozart: 'Mozart, Wolfgang Amadeus', Bach: 'Bach, Johann Sebastian' };
 
 /** A movement heading: the `\n` the files write for a line break becomes a comma, tempo marks in brackets go. */

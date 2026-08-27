@@ -45,7 +45,7 @@ pub struct Row {
     pub time: Option<String>,
     pub bars: Option<u32>,
     pub ratings: u32,
-    /// The uploader's own title when it differs from the site's song name.
+    /// The uploader's own title when it differs from the site's title field.
     pub alt: Option<String>,
     /// KernScores download URL, or the PDMX path under `<pdmx folder>/mxl/`.
     pub file: String,
@@ -164,6 +164,8 @@ impl Index {
 /// a digit token must match a whole
 /// number, so "op 9" skips Op. 59. Rows whose composer matches more tokens come first, so "satie"
 /// lists Erik Satie before the Goudimel harmonisations; inside a rank the rows keep list order.
+// ponytail: one scan of the whole blob per keystroke, 12 to 30 ms over the 200k shipped rows in a
+// debug build; index the tokens if a query stops keeping up with typing.
 pub fn search(ix: &Index, query: &str) -> SearchResult {
     let query = norm(query);
     let tokens: Vec<&str> = query.split_whitespace().collect();

@@ -75,13 +75,16 @@ pub fn pdmx_cancel() {
     CANCEL.store(true, Ordering::SeqCst);
 }
 
-fn fetch_into(folder: &Path, progress: Channel<Progress>) -> Result<(), String> {
-    let client = reqwest::blocking::Client::builder()
+fn client() -> Result<reqwest::blocking::Client, String> {
+    reqwest::blocking::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(READ_TIMEOUT)
         .build()
-        .map_err(|_| "download failed".to_string())?;
-    let response = client.get(ARCHIVE).send().map_err(|_| "download failed".to_string())?;
+        .map_err(|_| "download failed".to_string())
+}
+
+fn fetch_into(folder: &Path, progress: Channel<Progress>) -> Result<(), String> {
+    let response = client()?.get(ARCHIVE).send().map_err(|_| "download failed".to_string())?;
     if !response.status().is_success() {
         return Err("download failed".to_string());
     }
@@ -232,6 +235,16 @@ mod tests {
         }
         zip.finish().unwrap();
         "9/99/made.mxl".to_string()
+    }
+
+    /// Zenodo answers the client the fetch builds. One byte is asked for, so the check costs
+    /// nothing of the 1.89 GB.
+    #[test]
+    #[ignore = "reaches zenodo.org"]
+    fn zenodo_serves_the_archive_to_this_client() {
+        let response =
+            client().unwrap().get(ARCHIVE).header("Range", "bytes=0-0").send().unwrap();
+        assert!(response.status().is_success(), "{}", response.status());
     }
 
     #[test]

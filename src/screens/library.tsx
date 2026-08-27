@@ -1,4 +1,3 @@
-import { AudioDialog } from '@/audio/dialog';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -40,7 +39,7 @@ import { SettingsPanel } from '@/screens/settings';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open } from '@tauri-apps/plugin-dialog';
-import { ArrowUpDown, AudioLines, Settings } from 'lucide-react';
+import { ArrowUpDown, Settings } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 const SORTS: [SortOrder, string][] = [
@@ -77,7 +76,6 @@ export function Library({
   /** The lower-cased, NFC folder-relative paths of every present piece, read when the finder opens. */
   const [finding, setFinding] = useState<Set<string> | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [audioOpen, setAudioOpen] = useState(false);
   const [defaults, setDefaults] = useState<Partial<PieceSettings>>({});
 
   // The Play settings list holds the resolved values, so it needs the middle level of every field.
@@ -225,9 +223,6 @@ export function Library({
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button variant="ghost" size="icon" aria-label="Audio" onClick={() => setAudioOpen(true)}>
-            <AudioLines />
-          </Button>
           <Button
             variant="ghost"
             size="icon"
@@ -343,8 +338,6 @@ export function Library({
           close={() => setFinding(null)}
         />
       )}
-
-      {audioOpen && <AudioDialog onClose={() => setAudioOpen(false)} />}
 
       {/* A new library folder re-points the app. The scan runs again and no file is touched. */}
       <SettingsPanel

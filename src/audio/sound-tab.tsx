@@ -1,17 +1,10 @@
-// The Audio dialog: the one global place for the sound engine, opened from the play screen and
-// from the library. Its three sections live in files of their own; this file holds the box, the
-// status line, and the reader that fills it.
+// The settings panel's Sound tab: the one global place for the sound engine. Its three sections
+// live in files of their own; this file holds the tab, the status line, and the reader that fills
+// it.
 
 import { EffectsSection } from '@/audio/effects';
 import { InstrumentSection } from '@/audio/instrument';
 import { OutputSection } from '@/audio/output';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useEffect, useState } from 'react';
@@ -43,7 +36,7 @@ export const NO_STATUS: AudioStatus = {
   latency_ms: 0,
 };
 
-/** The one line the dialog says about the engine: why there is no sound at all, or where the sound
+/** The one line the tab says about the engine: why there is no sound at all, or where the sound
  * had to go when the chosen device was not there. Never both, because silence is the bigger thing
  * to say and a fallen-back engine is still playing. */
 function trouble(status: AudioStatus | null): string {
@@ -51,7 +44,11 @@ function trouble(status: AudioStatus | null): string {
   return status.available ? status.fallback : status.reason;
 }
 
-export function AudioDialog({ onClose }: { onClose: () => void }) {
+/**
+ * The sound engine's own settings, under the panel's Sound tab. `marked` is the row a search
+ * result jumped to, handed down so each section can mark its own.
+ */
+export function SoundTab({ marked }: { marked?: string | null }) {
   const [status, setStatus] = useState<AudioStatus | null>(null);
   // A section that changed something the status line reads asks for this to go round again.
   const [round, setRound] = useState(0);
@@ -64,7 +61,7 @@ export function AudioDialog({ onClose }: { onClose: () => void }) {
         (error: unknown) => live && setStatus({ ...NO_STATUS, reason: String(error) }),
       );
     void read();
-    // Unplugging the chosen device is the other way the line below changes while the dialog is open.
+    // Unplugging the chosen device is the other way the line below changes while the tab is open.
     const listening = listen('audio-devices-changed', () => void read());
     return () => {
       live = false;
@@ -73,22 +70,11 @@ export function AudioDialog({ onClose }: { onClose: () => void }) {
   }, [round]);
 
   return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-[560px]">
-        <DialogHeader>
-          <DialogTitle className="text-[15px]">Audio</DialogTitle>
-          <DialogDescription className="sr-only">
-            The sound engine: output, instrument and effects.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="flex min-w-0 flex-col gap-7">
-          <OutputSection />
-          <InstrumentSection onChanged={() => setRound((round) => round + 1)} />
-          <EffectsSection />
-          {trouble(status) && <p className="text-muted-ink text-[12px]">{trouble(status)}</p>}
-        </div>
-      </DialogContent>
-    </Dialog>
+    <div className="flex min-w-0 flex-col gap-7">
+      <OutputSection marked={marked} />
+      <InstrumentSection marked={marked} onChanged={() => setRound((round) => round + 1)} />
+      <EffectsSection marked={marked} />
+      {trouble(status) && <p className="text-muted-ink text-[12px]">{trouble(status)}</p>}
+    </div>
   );
 }

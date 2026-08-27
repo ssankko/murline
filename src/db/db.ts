@@ -22,6 +22,8 @@ export type Settings = {
   sheet_split: number;
   /** Measures and notes take their width from their duration, so the cursor runs at one speed. */
   sheet_proportional: boolean;
+  /** Width of the time-spaced sheet as a percent of the tightest it allows. */
+  sheet_spacing: number;
   /** Beats of lane visible above the now-line. */
   lane_lookahead: number;
   /** Width of a falling block as a percent of its key. */
@@ -141,6 +143,7 @@ export const SETTING_DEFAULTS: Settings = {
   theme: 'system',
   sheet_split: DEFAULT_SPLIT,
   sheet_proportional: false,
+  sheet_spacing: 150,
   sheet_harmony: true,
   sheet_colour: true,
   click_volume: 70,

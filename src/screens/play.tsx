@@ -142,8 +142,8 @@ export function PlayScreen({
   /** A one-staff piece is all right hand, so it has no choice of hands to offer. */
   const [oneStaff, setOneStaff] = useState(false);
 
-  // The piece settings the bar holds. They are the play's live settings: the engine reads the same
-  // object every frame, so a change reaches the clock at once.
+  // The piece settings the bar draws. Each one is written to the engine's live settings as it is
+  // changed, so it reaches the clock on the next frame.
   const [tempoMode, setTempoMode] = useState<TempoMode>(DEFAULT_PLAY_SETTINGS.tempoMode);
   const [tempo, setTempo] = useState(DEFAULT_PLAY_SETTINGS.tempoValue);
   const [metronome, setMetronome] = useState(DEFAULT_PLAY_SETTINGS.metronome);
@@ -156,18 +156,10 @@ export function PlayScreen({
     keyboardHi: DEFAULT_PLAY_SETTINGS.keyboardHi,
   });
   const [mode, setMode] = useState<PlayMode>(DEFAULT_PLAY_SETTINGS.mode);
+  /** The mode carries over from one piece to the next, so the engine opens the next one in it. */
+  const modeRef = useRef<PlayMode>(DEFAULT_PLAY_SETTINGS.mode);
   /** The score's own tempo, and whether it has only one, which is what BPM mode needs. */
   const [written, setWritten] = useState({ bpm: 120, constant: false });
-  const live = {
-    tempoMode,
-    tempoValue: tempo,
-    metronome,
-    countInBars,
-    mode,
-  };
-  const liveRef = useRef(live);
-  liveRef.current = live;
-
   const midi = useMidiStatus((event) => engineRef.current?.strike(event));
 
   // Opening a piece: bring its index up to date in case the file changed, read the bytes, render
@@ -188,7 +180,7 @@ export function PlayScreen({
         const engine = new Engine(sheet.score, {
           ...DEFAULT_PLAY_SETTINGS,
           ...knobValues(globals, ENGINE_KNOBS),
-          mode: liveRef.current.mode,
+          mode: modeRef.current,
           ...resolved.settings,
         });
         if (intent === 'performance') engine.arm();
@@ -265,13 +257,6 @@ export function PlayScreen({
     sheetRef.current?.setSection(section);
   }, [section, loop]);
 
-  // Every one of them is live: Wait mode takes hold from the Onset the cursor is at, Flow lets go,
-  // and a tempo or a metronome change reaches the clock on the next frame.
-  useEffect(() => {
-    const engine = engineRef.current;
-    if (engine) Object.assign(engine.settings, liveRef.current);
-  }, [tempoMode, tempo, metronome, countInBars, mode]);
-
   /** Nothing on screen announces the save; the library's History is where it shows. */
   async function savePractice(): Promise<void> {
     const done = engineRef.current?.takePractice();
@@ -331,18 +316,28 @@ export function PlayScreen({
 
   function changeTempo(value: number): void {
     setTempo(value);
+    if (engineRef.current) engineRef.current.settings.tempoValue = value;
     persist({ tempo_value: value });
   }
 
   function changeCountIn(bars: number): void {
     if (bars > 0) countInLast.current = bars;
     setCountInBars(bars);
+    if (engineRef.current) engineRef.current.settings.countInBars = bars;
     persist({ count_in_bars: bars });
   }
 
   function changeMetronome(on: boolean): void {
     setMetronome(on);
+    if (engineRef.current) engineRef.current.settings.metronome = on;
     persist({ metronome: on ? 1 : 0 });
+  }
+
+  /** Wait mode takes hold from the Onset the cursor stands at; Flow lets go from there. */
+  function changeMode(next: PlayMode): void {
+    modeRef.current = next;
+    setMode(next);
+    if (engineRef.current) engineRef.current.settings.mode = next;
   }
 
   function changeKeyboard(preset: KeyboardPreset, lo: number, hi: number): void {
@@ -499,6 +494,9 @@ export function PlayScreen({
     );
     setTempoMode(next);
     setTempo(value);
+    if (engineRef.current) {
+      Object.assign(engineRef.current.settings, { tempoMode: next, tempoValue: value });
+    }
     persist({ tempo_mode: next, tempo_value: value });
   }
 
@@ -594,7 +592,7 @@ export function PlayScreen({
                     label="Flow mode"
                     segment
                     pressed={mode === 'flow'}
-                    onClick={() => setMode('flow')}
+                    onClick={() => changeMode('flow')}
                   >
                     <FastForward {...ICON} />
                   </BarButton>
@@ -602,7 +600,7 @@ export function PlayScreen({
                     label="Wait mode"
                     segment
                     pressed={mode === 'wait'}
-                    onClick={() => setMode('wait')}
+                    onClick={() => changeMode('wait')}
                   >
                     <Hand {...ICON} />
                   </BarButton>

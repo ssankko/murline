@@ -80,19 +80,20 @@ export function reasonOf(error: unknown): string {
 }
 
 /**
- * The finder modal. `libraryNames` are the lower-cased file names of every piece in the library
- * folder, so a row that is there says "In library" and never downloads; the Replace prompt cannot
- * fire from here.
+ * The finder modal. `libraryPaths` are the lower-cased folder-relative paths of every piece, which
+ * a download compares its own root-level name against by the rule the import clash check uses. A
+ * row already there says "In library" and never downloads, so the Replace prompt cannot fire here.
  */
 export function Finder({
   folder,
-  libraryNames,
+  libraryPaths,
   onImported,
   close,
 }: {
   folder: string;
-  libraryNames: Set<string>;
-  onImported: (relPath: string) => void;
+  libraryPaths: Set<string>;
+  /** The library re-lists and selects the new piece; a failure there belongs in the red bar. */
+  onImported: (relPath: string) => Promise<void>;
   close: () => void;
 }) {
   const [query, setQuery] = useState('');
@@ -134,7 +135,7 @@ export function Finder({
 
   const rows = result.rows;
   const selected = rows[Math.min(sel, rows.length - 1)] ?? null;
-  const owned = (r: FinderRow) => libraryNames.has(r.fileName.toLowerCase());
+  const owned = (r: FinderRow) => libraryPaths.has(r.fileName.toLowerCase());
 
   useEffect(() => {
     list.current?.querySelector('[data-selected]')?.scrollIntoView({ block: 'nearest' });
@@ -154,7 +155,7 @@ export function Finder({
       // The name is free: an owned row never gets here. Keep both covers a file the index missed.
       const { imported, failures } = await importFiles(folder, [tempPath], async () => 'keep-both');
       if (failures.length || !imported[0]) throw new Error(failures[0]?.reason ?? 'Import failed');
-      onImported(imported[0]);
+      await onImported(imported[0]);
     } catch (error) {
       setDl({ state: 'failed', provider: row.provider, reason: reasonOf(error) });
     } finally {

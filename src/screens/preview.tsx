@@ -50,10 +50,14 @@ export function PreviewScreen({
         sheetRef.current = sheet;
         setTitle(sheet.score.title || fileName);
       } catch (error) {
+        // A Preview the user closed mid-load throws on the host the cleanup already released, so
+        // only a failure while the screen still stands is worth a notice.
+        if (!live) return;
         const reason = error instanceof ScoreError ? error.reason : String(error);
         const row = await getPiece(path).catch(() => null);
+        if (!live) return;
         setNotice(`Could not open ${row?.title ?? fileName}: ${reason}`);
-        if (live) backRef.current();
+        backRef.current();
       }
     })();
     return () => {

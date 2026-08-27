@@ -24,6 +24,12 @@ export function Onboarding({ onDone }: { onDone: (folder: string) => void }) {
   }
 
   async function proceed() {
+    // The field is free text and the folder is made exactly as typed, so a name the shell would
+    // expand, such as ~/Music/Piano, would become a folder called "~" beside the app.
+    if (!folder.startsWith('/')) {
+      setError('Type the whole path, from the first /, or use Choose….');
+      return;
+    }
     setBusy(true);
     setError(null);
     try {

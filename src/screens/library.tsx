@@ -14,7 +14,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { baseNameOf, pathOf } from '@/library/index-file';
+import { pathOf } from '@/library/index-file';
 import {
   importFiles,
   SCORE_EXTENSIONS,
@@ -40,7 +40,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open } from '@tauri-apps/plugin-dialog';
 import { Settings } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const SORTS: [SortOrder, string][] = [
   ['recent', 'Recently played'],
@@ -73,13 +73,15 @@ export function Library({
   const [notice, dismissNotice] = useNotice();
   const [dragging, setDragging] = useState(false);
   const [clash, setClash] = useState<Clash | null>(null);
-  /** The lower-cased file names of every present piece, read when the finder opens. */
+  /** The lower-cased folder-relative paths of every present piece, read when the finder opens. */
   const [finding, setFinding] = useState<Set<string> | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [defaults, setDefaults] = useState<Partial<PieceSettings>>({});
 
   // The Play settings list holds the resolved values, so it needs the middle level of every field.
+  // Only closing the dialog can have changed one.
   useEffect(() => {
+    if (settingsOpen) return;
     void readPieceDefaults().then(setDefaults);
   }, [settingsOpen]);
 
@@ -106,16 +108,20 @@ export function Library({
     };
   }, [folder]);
 
+  /** The listener below outlives the render that registered it, so it drops through this. */
+  const importRef = useRef(runImport);
+  importRef.current = runImport;
+
   // Dropped paths come from the window event: WKWebView never hands the DOM a real file path.
   useEffect(() => {
     const listening = getCurrentWebview().onDragDropEvent((event) => {
       setDragging(event.payload.type === 'enter' || event.payload.type === 'over');
-      if (event.payload.type === 'drop') void runImport(event.payload.paths);
+      if (event.payload.type === 'drop') void importRef.current(event.payload.paths);
     });
     return () => {
       void listening.then((unlisten) => unlisten());
     };
-  }, [folder]);
+  }, []);
 
   function chooseSort(next: SortOrder) {
     setSort(next);
@@ -163,7 +169,7 @@ export function Library({
   /** "In library" answers for the whole folder, not for the rows the current sort shows. */
   async function openFinder(): Promise<void> {
     const paths = await allPiecePaths();
-    setFinding(new Set(paths.map((path) => baseNameOf(path).toLowerCase())));
+    setFinding(new Set(paths.map((path) => path.toLowerCase())));
   }
 
   async function pickFiles(): Promise<void> {
@@ -316,10 +322,13 @@ export function Library({
       {finding && folder && (
         <Finder
           folder={folder}
-          libraryNames={finding}
+          libraryPaths={finding}
           onImported={async (relPath) => {
+            // The re-list runs first: a failure then throws back into the finder's red bar
+            // instead of leaving the modal closed over a library that never changed.
+            const rows = await listPieces(sort);
             setFinding(null);
-            setPieces(await listPieces(sort));
+            setPieces(rows);
             setSelected(relPath);
           }}
           close={() => setFinding(null)}

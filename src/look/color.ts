@@ -2,7 +2,7 @@
 // falling block and its key swatch are painted in. Every caller goes through it. The pitch-class
 // helpers under it are the vocabulary the rest of the app names notes with.
 
-export type Palette = 'muted';
+export type Palette = 'muted' | 'full';
 
 // Hue per pitch class, C red through B magenta. Each sharp sits on the hue midway between its
 // neighbouring naturals, then drops in saturation and lightness so it never reads as its natural.
@@ -11,7 +11,12 @@ const IS_SHARP = [false, true, false, true, false, false, true, false, true, fal
 const SHARP_S = -24;
 const SHARP_L = -16;
 
-const TONE: Record<Palette, { s: number; l: number }> = { muted: { s: 60, l: 50 } };
+// The muted tier every block and swatch wears, and the full tier a note reaching the now-line
+// takes: the same hue at nearly all its saturation, so it reads as the pitch turned up.
+const TONE: Record<Palette, { s: number; l: number }> = {
+  muted: { s: 60, l: 50 },
+  full: { s: 95, l: 46 },
+};
 
 // Dark paper swallows a mid-lightness colour, so every hue rises by this much on it.
 const DARK_LIFT = 10;
@@ -69,4 +74,16 @@ export const CURSOR = ['#c9922e', '#d9a83c'] as const;
 /** Picks the light or dark member of one of the constants above. */
 export function tone(pair: readonly [string, string], dark: boolean): string {
   return dark ? pair[1] : pair[0];
+}
+
+/** A blend of two `#rrggbb` colours, `t` of the way from the first to the second. */
+export function mix(from: string, to: string, t: number): string {
+  const channel = (i: number) => {
+    const a = parseInt(from.slice(1 + i * 2, 3 + i * 2), 16);
+    const b = parseInt(to.slice(1 + i * 2, 3 + i * 2), 16);
+    return Math.round(a + (b - a) * t)
+      .toString(16)
+      .padStart(2, '0');
+  };
+  return `#${channel(0)}${channel(1)}${channel(2)}`;
 }

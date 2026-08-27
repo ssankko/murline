@@ -1,7 +1,17 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 
-@custom-variant dark (&:where(.dark, .dark *));
+/* `dark:` follows the paper in force: the pinned class, or the system when neither class is on. */
+@custom-variant dark {
+  &:where(.dark, .dark *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(html:not(.light), html:not(.light) *) {
+      @slot;
+    }
+  }
+}
 
 /* The Keyboard look: neutral greys only, system sans, flat surfaces with no radius or shadow.
    Pitch colour is the one colour on screen and comes from src/look/color.ts, never from here.

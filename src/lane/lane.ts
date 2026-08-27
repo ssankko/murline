@@ -705,7 +705,8 @@ export class Lane {
     this.look.lookaheadBeats = zoomLookahead(this.look.lookaheadBeats, deltaY);
     clearTimeout(this.lookTimer);
     this.lookTimer = window.setTimeout(() => {
-      this.onLook?.({ lookaheadBeats: this.look.lookaheadBeats });
+      // Tenths of a beat, because the gear shows this number and takes it back.
+      this.onLook?.({ lookaheadBeats: Math.round(this.look.lookaheadBeats * 10) / 10 });
     }, LOOK_SETTLE_MS);
   }
 
@@ -1524,12 +1525,11 @@ export function beatsBefore(bars: LaneBar[], playedTick: number, chordTick: numb
 
 /**
  * The beats in view after one step of a pinch, where `deltaY` is the wheel's: negative as the
- * fingers spread, which leaves fewer beats in view and draws them bigger. Tenths of a beat, because
- * the gear shows this number and takes it back.
+ * fingers spread, which leaves fewer beats in view and draws them bigger. Unrounded, so a slow
+ * pinch near the ends of the span still moves.
  */
 export function zoomLookahead(beats: number, deltaY: number): number {
-  const zoomed = clamp(beats * Math.exp(deltaY * ZOOM_RATE), LOOK_MIN, LOOK_MAX);
-  return Math.round(zoomed * 10) / 10;
+  return clamp(beats * Math.exp(deltaY * ZOOM_RATE), LOOK_MIN, LOOK_MAX);
 }
 
 /** A list in played time cut at the wrap, with the lap's own entries again one lap later. */

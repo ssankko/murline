@@ -181,7 +181,7 @@ test('the lift keeps the highest ink of the sheet on the paper', async () => {
   sheet.dispose();
 }, 60_000);
 
-test('the first chord bubble prints clear of the tempo mark and the tempo word', async () => {
+test('the tempo word and the first chord bubble print clear of the tempo mark', async () => {
   const host = hostEl();
   const sheet = await open(BACH, host);
 
@@ -189,6 +189,7 @@ test('the first chord bubble prints clear of the tempo mark and the tempo word',
   const mark = host.querySelector('svg .vf-stavetempo')!;
   const bubble = host.querySelector('.chord-bubble')!.getBoundingClientRect();
   expect(word.getBoundingClientRect().width).toBeGreaterThan(0);
+  expect(overlap(word.getBoundingClientRect(), mark.getBoundingClientRect())).toBeLessThanOrEqual(0);
   expect(overlap(bubble, word.getBoundingClientRect())).toBeLessThanOrEqual(0);
   expect(overlap(bubble, mark.getBoundingClientRect())).toBeLessThanOrEqual(0);
 

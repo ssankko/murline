@@ -3,7 +3,12 @@
 // notehead. Nothing here knows about a cursor or a play.
 
 import { INK, PAPER, tone } from '@/look/color';
-import { OpenSheetMusicDisplay, type GraphicalNote, type Note as OsmdNote } from 'opensheetmusicdisplay';
+import {
+  OpenSheetMusicDisplay,
+  TextAlignmentEnum,
+  type GraphicalNote,
+  type Note as OsmdNote,
+} from 'opensheetmusicdisplay';
 
 // The SVG groups VexFlow emits for duration marks. Everything else it draws is scaffolding.
 const DURATION_GROUPS =
@@ -35,6 +40,9 @@ export function applyTheme(osmd: OpenSheetMusicDisplay, dark: boolean): void {
   // The credits are only printed by the Preview, and they read as ink rather than as scaffolding.
   rules.DefaultColorTitle = duration;
   rules.MetronomeMarkYShift = 2.5;
+  // A tempo word is centred on its anchor by default, which walks it left over the metronome mark
+  // VexFlow draws at the head of the stave. Aligned left, the word starts clear of the mark.
+  rules.TempoExpressionTextAlignment = TextAlignmentEnum.LeftBottom;
 }
 
 /** Lifts the duration marks out of the scaffolding tier. Runs after every render. */

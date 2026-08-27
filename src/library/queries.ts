@@ -114,18 +114,30 @@ export type PieceSettingValues = Partial<{
   keyboard_hi: number | null;
 }>;
 
-/** Stores what the play screen just changed. Column names come from the type, never from input. */
+/** The only columns the SET clause below may name. */
+const SETTING_COLUMNS: readonly (keyof PieceSettingValues)[] = [
+  'tempo_mode',
+  'tempo_value',
+  'metronome',
+  'count_in_bars',
+  'hands',
+  'keyboard_preset',
+  'keyboard_lo',
+  'keyboard_hi',
+];
+
+/** Stores what the play screen just changed. The SET clause is built from `SETTING_COLUMNS`. */
 export async function updatePieceSettings(
   path: string,
   values: PieceSettingValues,
 ): Promise<void> {
-  const entries = Object.entries(values);
-  if (entries.length === 0) return;
+  const columns = SETTING_COLUMNS.filter((column) => column in values);
+  if (columns.length === 0) return;
   const db = await getDb();
-  const set = entries.map(([column], at) => `${column} = $${at + 2}`).join(', ');
+  const set = columns.map((column, at) => `${column} = $${at + 2}`).join(', ');
   await db.execute(`UPDATE piece SET ${set} WHERE path = $1`, [
     path,
-    ...entries.map(([, value]) => value),
+    ...columns.map((column) => values[column] ?? null),
   ]);
 }
 

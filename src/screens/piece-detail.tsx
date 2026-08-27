@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { pathOf } from '@/library/index-file';
 import { recentPlays, type PieceRow, type PlayRow } from '@/library/queries';
 import { splitError } from '@/library/scan';
-import { colorOf, noteName } from '@/look/color';
+import { colorOf, noteName, pitchClass } from '@/look/color';
 import { useDark } from '@/look/use-dark';
 import { resolvePlaySettings, type Inherited, type PieceSettings } from '@/play/resolve';
 import { RangeStrip } from '@/screens/range-strip';
@@ -327,8 +327,7 @@ function keyName(piece: PieceRow): string | null {
 /** Pitch class of the key's tonic: seven semitones per sharp, three more down for a minor key. */
 function tonicOf(piece: PieceRow): number | null {
   if (piece.key_sharps === null) return null;
-  const major = (((piece.key_sharps * 7) % 12) + 12) % 12;
-  return piece.key_mode === 'minor' ? (major + 9) % 12 : major;
+  return pitchClass(piece.key_sharps * 7 + (piece.key_mode === 'minor' ? 9 : 0));
 }
 
 /** The index stores whether the piece has one tempo, not which; the number lives in the Score. */

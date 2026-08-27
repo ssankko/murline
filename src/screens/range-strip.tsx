@@ -1,4 +1,4 @@
-import { colorOf, isBlackKey } from '@/look/color';
+import { colorOf, isBlackKey, pitchClass } from '@/look/color';
 import { useDark } from '@/look/use-dark';
 
 const LOWEST = 21;
@@ -38,7 +38,7 @@ export function RangeStrip({
     const used = midi >= lo && midi <= hi;
     const black = isBlackKey(midi);
     const fill =
-      used && midi % 12 === tonic
+      used && pitchClass(midi) === tonic
         ? colorOf(midi, 'muted', dark)
         : FILL[black ? (used ? 'blackUsed' : 'black') : used ? 'whiteUsed' : 'white'];
     if (black) {

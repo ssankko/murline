@@ -9,7 +9,6 @@ import {
   LANE_KNOBS,
   readSettings,
   setSetting,
-  type Settings as GlobalSettings,
 } from '@/db/db';
 import {
   DEFAULT_LANE_LOOK,
@@ -50,6 +49,7 @@ import {
   DEFAULT_PLAY_SETTINGS,
   type HandsSetting,
   type KeyboardPreset,
+  TEMPO_RANGE,
   type PlayMode,
   type TempoMode,
 } from '@/play/settings';
@@ -87,12 +87,8 @@ const NEXT_HANDS: Record<HandsSetting, HandsSetting> = {
   right: 'both',
 };
 
-/** The stepper's step, and the span of each tempo mode's slider. */
+/** The stepper's step. */
 const TEMPO_STEP = 5;
-const TEMPO_RANGE: Record<TempoMode, [number, number]> = {
-  percent: [25, 200],
-  bpm: [40, 240],
-};
 
 export function PlayScreen({
   folder,
@@ -364,14 +360,16 @@ export function PlayScreen({
   }
 
   /** A look knob the gear turns: the next frame reads the same object the lane holds. */
-  function changeLook(next: Partial<LaneLook>): void {
-    setLook((held) => ({ ...held, ...next }));
-    Object.assign(laneRef.current?.look ?? {}, next);
-    for (const [key, field] of Object.entries(LANE_KNOBS)) {
-      if (field in next) {
-        setSetting(key as keyof GlobalSettings, next[field] as never).catch(console.error);
-      }
-    }
+  function changeLook(key: keyof typeof LANE_KNOBS, value: number | boolean): void {
+    showLook(key, value);
+    setSetting(key, value as never).catch(console.error);
+  }
+
+  /** The lane's look as the gear or the dialog just wrote it, on the screen and on the lane. */
+  function showLook(key: keyof typeof LANE_KNOBS, value: number | boolean): void {
+    const field = LANE_KNOBS[key];
+    setLook((held) => ({ ...held, [field]: value }));
+    Object.assign(laneRef.current?.look ?? {}, { [field]: value });
   }
 
   /** A global knob the dialog writes reaches the running play through the same live objects. */
@@ -380,9 +378,7 @@ export function PlayScreen({
     if (engineField && engineRef.current) {
       Object.assign(engineRef.current.settings, { [engineField]: value });
     }
-    const laneField = LANE_KNOBS[key as keyof typeof LANE_KNOBS];
-    if (laneField) setLook((held) => ({ ...held, [laneField]: value }));
-    if (laneField && laneRef.current) Object.assign(laneRef.current.look, { [laneField]: value });
+    if (key in LANE_KNOBS) showLook(key as keyof typeof LANE_KNOBS, value as number | boolean);
     if (key === 'click_volume') setClickVolume(value);
     if (key === 'sheet_split') setSplit(value);
   }

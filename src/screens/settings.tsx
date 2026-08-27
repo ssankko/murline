@@ -12,14 +12,14 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { readSettings, setSetting, SETTING_DEFAULTS, type Settings } from '@/db/db';
+import { LANE_KNOBS, readSettings, setSetting, SETTING_DEFAULTS, type Settings } from '@/db/db';
 import { detectedRange } from '@/lane/keyboard';
 import type { LaneLook } from '@/lane/lane';
 import { noteName } from '@/look/color';
 import { setTheme, useTheme, type Theme } from '@/look/use-dark';
 import { pinMidiDevice, useMidiStatus } from '@/midi/use-midi-status';
 import { validNumber, type PieceSettings } from '@/play/resolve';
-import type { HandsSetting, KeyboardPreset } from '@/play/settings';
+import { TEMPO_RANGE, type HandsSetting, type KeyboardPreset } from '@/play/settings';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useEffect, useRef, useState } from 'react';
 
@@ -46,6 +46,13 @@ const PRESETS: [KeyboardPreset, string][] = [
   [76, '76'],
   [88, '88'],
   ['custom', 'Custom'],
+];
+
+/** The lane's numbers, drawn by the dialog and by the gear popover from the one span each. */
+const LANE_FIELDS: [key: keyof typeof LANE_KNOBS, label: string, min: number, max: number][] = [
+  ['lane_lookahead', 'Lookahead (beats)', 1, 32],
+  ['lane_note_width', 'Note width (%)', 10, 100],
+  ['lane_gap', 'Gap (px)', 0, 20],
 ];
 
 /** Every Grade knob in one place: the group is uniform, so it is drawn from a list. */
@@ -156,8 +163,8 @@ export function SettingsDialog({
               <Row label="Tempo (%)">
                 <NumberField
                   value={values.default_tempo_value}
-                  min={25}
-                  max={200}
+                  min={TEMPO_RANGE.percent[0]}
+                  max={TEMPO_RANGE.percent[1]}
                   onChange={(value) => write('default_tempo_value', value)}
                 />
               </Row>
@@ -217,30 +224,16 @@ export function SettingsDialog({
                 ])
               }
             >
-              <Row label="Lookahead (beats)">
-                <NumberField
-                  value={values.lane_lookahead}
-                  min={1}
-                  max={32}
-                  onChange={(value) => write('lane_lookahead', value)}
-                />
-              </Row>
-              <Row label="Note width (%)">
-                <NumberField
-                  value={values.lane_note_width}
-                  min={10}
-                  max={100}
-                  onChange={(value) => write('lane_note_width', value)}
-                />
-              </Row>
-              <Row label="Gap (px)">
-                <NumberField
-                  value={values.lane_gap}
-                  min={0}
-                  max={20}
-                  onChange={(value) => write('lane_gap', value)}
-                />
-              </Row>
+              {LANE_FIELDS.map(([key, label, min, max]) => (
+                <Row key={key} label={label}>
+                  <NumberField
+                    value={values[key] as number}
+                    min={min}
+                    max={max}
+                    onChange={(value) => write(key, value as never)}
+                  />
+                </Row>
+              ))}
               <Row label="Sheet split">
                 <NumberField
                   value={values.sheet_split}
@@ -357,7 +350,7 @@ export function GearPopover({
   look: LaneLook;
   onKeyboard: (preset: KeyboardPreset, lo: number, hi: number) => void;
   onCountInBars: (bars: number) => void;
-  onLook: (look: Partial<LaneLook>) => void;
+  onLook: (key: keyof typeof LANE_KNOBS, value: number | boolean) => void;
   onUseGlobalDefaults: () => void;
   onAllSettings: () => void;
 }) {
@@ -406,27 +399,18 @@ export function GearPopover({
         )}
 
         <PopoverGroup title="Falling notes">
-          <Row label="Lookahead (beats)">
-            <NumberField
-              value={look.lookaheadBeats}
-              min={1}
-              max={32}
-              onChange={(value) => onLook({ lookaheadBeats: value })}
-            />
-          </Row>
-          <Row label="Note width (%)">
-            <NumberField
-              value={look.noteWidthPct}
-              min={10}
-              max={100}
-              onChange={(value) => onLook({ noteWidthPct: value })}
-            />
-          </Row>
-          <Row label="Gap (px)">
-            <NumberField value={look.gapPx} min={0} max={20} onChange={(value) => onLook({ gapPx: value })} />
-          </Row>
+          {LANE_FIELDS.map(([key, label, min, max]) => (
+            <Row key={key} label={label}>
+              <NumberField
+                value={look[LANE_KNOBS[key]] as number}
+                min={min}
+                max={max}
+                onChange={(value) => onLook(key, value)}
+              />
+            </Row>
+          ))}
           <Row label="Note names on keys">
-            <Toggle value={look.keyLabels} onChange={(value) => onLook({ keyLabels: value })} />
+            <Toggle value={look.keyLabels} onChange={(value) => onLook('keyboard_labels', value)} />
           </Row>
         </PopoverGroup>
 

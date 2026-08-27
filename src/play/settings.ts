@@ -5,6 +5,12 @@ import type { Hand } from '@/score/types';
 
 export type TempoMode = 'percent' | 'bpm';
 
+/** The span each tempo mode may be set to: percent of the written marks, or a flat quarter BPM. */
+export const TEMPO_RANGE: Record<TempoMode, [min: number, max: number]> = {
+  percent: [25, 200],
+  bpm: [40, 240],
+};
+
 /** Flow runs the cursor at tempo whatever the player does; Wait stops it at every unsatisfied Onset. */
 export type PlayMode = 'flow' | 'wait';
 
@@ -24,7 +30,7 @@ export type KeyboardPreset = 'piece' | 25 | 49 | 61 | 76 | 88 | 'custom';
 
 export interface PlaySettings {
   tempoMode: TempoMode;
-  /** Percent of every written tempo mark (25 to 200), or a flat quarter-note BPM (40 to 240). */
+  /** Percent of every written tempo mark, or a flat quarter-note BPM, inside `TEMPO_RANGE`. */
   tempoValue: number;
   hands: HandsSetting;
   mode: PlayMode;

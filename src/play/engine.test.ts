@@ -80,6 +80,14 @@ function withRepeat(): Score {
   return score;
 }
 
+/**
+ * Two 4/4 bars whose Onsets leave two moments to rests: the opening beat of bar 1 and the second
+ * beat of bar 2.
+ */
+function withRests(): Score {
+  return scoreFrom([1, 2, 3, 4, 6, 7].map((beat) => ({ tick: beat * TICKS_PER_QUARTER, notes: [{}] })));
+}
+
 /** Four bars whose play order plays bar 1 again before it goes on: bars 1, 2, 1, 3, 4. */
 function repeatOfBarOne(): Score {
   const score = scoreOf(4);
@@ -1352,6 +1360,59 @@ describe('seek', () => {
 
     expect(play.snapshot().stopped).toBe(true);
     expect(play.snapshot().playedTick).toBe(BAR);
+  });
+});
+
+describe('a seek to a moment of a bar', () => {
+  test('lands on a tick no Onset stands at', () => {
+    const play = engine(withRests());
+
+    play.seek({ measure: 0, into: 0 });
+    expect(play.snapshot().playedTick).toBe(0);
+
+    play.seek({ measure: 1, into: TICKS_PER_QUARTER });
+    expect(play.snapshot().playedTick).toBe(BAR + TICKS_PER_QUARTER);
+  });
+
+  test('counts in to it on the beat grid of its bar, and runs on to the first Onset', () => {
+    const play = engine(withRests(), { countInBars: 1 });
+    play.seek({ measure: 0, into: 0 });
+    play.start();
+
+    expect(play.countInBeats).toEqual([-4, -3, -2, -1].map((n) => n * TICKS_PER_QUARTER));
+    expect(play.snapshot()).toMatchObject({ state: 'counting-in', countInTo: 0 });
+
+    // The count-in bar, then a beat of the piece: the rest is over and the first Onset is here.
+    play.advance(4000);
+    expect(play.snapshot()).toMatchObject({ state: 'running', playedTick: 0 });
+    play.advance(1000);
+    expect(play.snapshot().playedTick).toBe(TICKS_PER_QUARTER);
+    expect(where(play).onsetIndex).toBe(0);
+  });
+
+  test('Wait mode glides off the rest and stands at the Onset after it', () => {
+    const play = engine(withRests(), { mode: 'wait' });
+    play.seek({ measure: 0, into: 0 });
+    play.start();
+    expect(play.snapshot().stopped).toBe(false);
+
+    play.advance(2000);
+    expect(play.snapshot()).toMatchObject({ playedTick: TICKS_PER_QUARTER, stopped: true });
+  });
+
+  test('a repeated bar takes the pass nearest the clock', () => {
+    const score = withRests();
+    score.playOrder.push(
+      ...score.onsets.slice(0, 3).map((onset, i) => ({ onsetIndex: i, tick: 2 * BAR + onset.tick })),
+    );
+    score.totalTicks = 3 * BAR;
+    const play = engine(score);
+    play.start();
+
+    // Nine beats in, which stands inside the second pass of bar 1.
+    play.advance(9000);
+    play.seek({ measure: 0, into: 0 });
+    expect(play.snapshot().playedTick).toBe(2 * BAR);
   });
 });
 

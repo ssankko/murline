@@ -4,7 +4,7 @@ import { INK, PAPER, colorOf, tone } from '@/look/color';
 import { Engine, type NoteState, type SeekTarget, type Snapshot } from '@/play/engine';
 import type { Section } from '@/play/section';
 import { DEFAULT_PLAY_SETTINGS } from '@/play/settings';
-import type { Note } from '@/score/types';
+import { TICKS_PER_QUARTER, type Note } from '@/score/types';
 import type { Note as OsmdNote } from 'opensheetmusicdisplay';
 import { expect, test } from 'vitest';
 import { noteheadEl } from './paint';
@@ -23,6 +23,8 @@ const BACH = 'JohannSebastianBach_PraeludiumInCDur_BWV846_1.xml';
 const VOLTA = 'test_repeat_volta_simple.musicxml';
 /** Slurs arc high over its top staff, well above every label of the first bars. */
 const MAZURKA = 'kernscores-mazurka-50.musicxml';
+/** Two bars whose rests leave the opening beat of bar 1 and the second beat of bar 2 silent. */
+const RESTS = 'rest-then-notes.musicxml';
 
 async function bytesOf(file: string): Promise<Uint8Array> {
   const url = FIXTURES[`../score/fixtures/${file}`] as string;
@@ -501,6 +503,46 @@ test('a click seeks to the nearest Onset, over a bar line and far from any noteh
   expect(sheet.score.onsets[last + 1]!.measureIndex).toBe(1);
   expect(between(last, last + 1, 0.4) - sheet.xOfOnset(last)).toBeGreaterThan(11);
   expect(click(between(last, last + 1, 0.4))).toEqual({ onset: last });
+
+  sheet.dispose();
+}, 60_000);
+
+test('a click on a rest seeks to its place in the bar, and a notehead still to its Onset', async () => {
+  const host = hostEl();
+  const sheet = await open(RESTS, host);
+  let sought: SeekTarget | null = null;
+  sheet.onSeek = (target) => {
+    sought = target;
+  };
+
+  // No frame has run, so the content is unscaled and unscrolled: a content x is a client x.
+  const left = host.getBoundingClientRect().left;
+  const click = (x: number) => {
+    sought = null;
+    const at = { clientX: left + x, bubbles: true };
+    host.dispatchEvent(new PointerEvent('pointerdown', { ...at, button: 0 }));
+    host.dispatchEvent(new PointerEvent('pointerup', at));
+    return sought;
+  };
+
+  // Bar 1 opens with a quarter rest, so the leftmost moment of the sheet is no Onset at all.
+  expect(sheet.score.onsets[0]!.tick).toBe(TICKS_PER_QUARTER);
+  expect(click(0)).toEqual({ measure: 0, into: 0 });
+
+  // The rest on the second beat of bar 2 stands between the two noteheads that surround it.
+  const before = sheet.score.onsets.findIndex((onset) => onset.tick === 4 * TICKS_PER_QUARTER);
+  const after = before + 1;
+  expect(sheet.score.onsets[after]!.tick).toBe(6 * TICKS_PER_QUARTER);
+  const middle = (sheet.xOfOnset(before) + sheet.xOfOnset(after)) / 2;
+  expect(click(middle)).toEqual({ measure: 1, into: TICKS_PER_QUARTER });
+
+  // A notehead is still the Onset it draws, however many rests the bar holds.
+  expect(click(sheet.xOfOnset(after))).toEqual({ onset: after });
+
+  // Spaced by time the rest stands at its own tick, so the midpoint names it exactly.
+  sheet.setProportional(true);
+  const timed = (sheet.xOfOnset(before) + sheet.xOfOnset(after)) / 2;
+  expect(click(timed)).toEqual({ measure: 1, into: TICKS_PER_QUARTER });
 
   sheet.dispose();
 }, 60_000);

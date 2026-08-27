@@ -65,6 +65,9 @@ const DETACH_MS = 2000;
 /** How long the cursor takes to slide when it is not being moved by the clock. */
 const GLIDE_MS = 220;
 
+/** How long the cursor band takes to grow or shrink into a new size, as the Section's tint fades. */
+const EASE_MS = 200;
+
 /** The end of a practice: the cursor band fades away over this long and comes back at the start. */
 const FINISH_MS = 400;
 
@@ -174,7 +177,7 @@ export class Sheet {
     jumpAt: -Infinity,
     jumpBar: 0,
     running: true,
-    glide: false,
+    transition: '',
     glideUntil: -Infinity,
   };
 
@@ -343,11 +346,19 @@ export class Sheet {
       this.drawn.glideUntil = now + GLIDE_MS;
     }
     this.drawn.tick = snap.playedTick;
-    // While the clock runs forward the cursor is moved every frame, so a transition would fight it.
-    const glide = (!running || now < this.drawn.glideUntil) && !reducedMotion();
-    if (glide !== this.drawn.glide) {
-      this.drawn.glide = glide;
-      this.cursor.style.transition = glide ? `left ${GLIDE_MS}ms ease` : 'none';
+    // The inline transition wins over any class, so it names every property the band eases. Its
+    // size follows the matching window, the zoom and the system, all of which step now and then;
+    // its x is written every frame while the clock runs forward, and only a jump back glides it.
+    // A band with no size yet would grow out of nothing, so it takes its first one flat.
+    const motion = !reducedMotion() && this.cursor.style.width !== '';
+    const glide = motion && (!running || now < this.drawn.glideUntil);
+    const transition = motion
+      ? `width ${EASE_MS}ms ease,height ${EASE_MS}ms ease,top ${EASE_MS}ms ease` +
+        (glide ? `,left ${GLIDE_MS}ms ease` : '')
+      : 'none';
+    if (transition !== this.drawn.transition) {
+      this.drawn.transition = transition;
+      this.cursor.style.transition = transition;
     }
     this.cursor.style.left = `${at.x - at.width / 2}px`;
     this.cursor.style.width = `${at.width}px`;

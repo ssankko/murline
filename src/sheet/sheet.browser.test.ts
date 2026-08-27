@@ -278,6 +278,22 @@ test('the Section fades in and hangs its clear button inside the tint', async ()
   sheet.dispose();
 }, 60_000);
 
+test('the cursor band eases into a new size and takes its first one flat', async () => {
+  const host = hostEl();
+  const sheet = await open(BACH, host);
+  const cursor = host.querySelector<HTMLElement>('.sheet-cursor')!;
+
+  sheet.frame(snapshot(0), 100, 0);
+  expect(getComputedStyle(cursor).transitionProperty).toBe('none');
+
+  // The clock runs forward, so the x is written every frame and only the size eases.
+  sheet.frame(snapshot(0), 100, 16);
+  expect(getComputedStyle(cursor).transitionProperty).toBe('width, height, top');
+  expect(getComputedStyle(cursor).transitionDuration).toBe('0.2s, 0.2s, 0.2s');
+
+  sheet.dispose();
+}, 60_000);
+
 /** How far two boxes print over one another: at zero or below they only share an edge. */
 function overlap(a: DOMRect, b: DOMRect): number {
   return Math.min(

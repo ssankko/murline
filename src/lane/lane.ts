@@ -6,9 +6,9 @@ import { KEYBOARD_H, drawKeyboard, keyLayout, keyRange, type KeyLayout } from '@
 import { INK, PAPER, colorOf, tone } from '@/look/color';
 import { reducedMotion } from '@/look/motion';
 import type { Engine, LoopSpan, PlayEvent, Snapshot } from '@/play/engine';
-import type { HandsSetting } from '@/play/settings';
+import { isInactiveHand, type HandsSetting } from '@/play/settings';
 import { barTickOf, beatOf } from '@/score/beat';
-import { TICKS_PER_QUARTER, type Hand, type PlayStep, type Score } from '@/score/types';
+import { TICKS_PER_QUARTER, type PlayStep, type Score } from '@/score/types';
 
 /** Look knobs, all global settings the gear writes to. */
 export interface LaneLook {
@@ -343,7 +343,8 @@ export class Lane {
     for (let i = 0; i < engine.notes.length; i++) {
       const note = engine.notes[i]!;
       if (note.tick >= top) break;
-      if (note.tick < floor) continue;
+      // The note that starts a tie carries the whole chain, so its continuations fall as nothing.
+      if (note.tick < floor || note.tiedFrom) continue;
       const bottom = this.y(note.tick, laneH, pxPerTick);
       if (bottom < -10) continue;
       const key = this.layout.byMidi.get(note.midi);
@@ -357,9 +358,9 @@ export class Lane {
       const height = Math.max(bottom - y - this.look.gapPx, 3);
       const radius = Math.min(NOTE_RADIUS, width / 3, height / 3);
       // How much of a ghost the note is now: a change of hands cross-fades it over the two looks.
-      const ghost = isGhost(this.hands, note.hand)
+      const ghost = isInactiveHand(this.hands, note.hand)
         ? fade
-        : isGhost(this.handsBefore, note.hand)
+        : isInactiveHand(this.handsBefore, note.hand)
           ? 1 - fade
           : 0;
 
@@ -483,11 +484,6 @@ export class Lane {
     ctx.fillText(this.notice!, width / 2, laneH + KEYBOARD_H / 2 + 4);
     ctx.textAlign = 'left';
   }
-}
-
-/** A note of the hand the play does not expect. */
-function isGhost(hands: HandsSetting, hand: Hand): boolean {
-  return hands !== 'both' && hands !== hand;
 }
 
 // Dash patterns as constants, because setLineDash takes a fresh array otherwise on every frame.

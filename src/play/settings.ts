@@ -1,6 +1,8 @@
 // The settings one play runs under. A piece setting falls back to the global one and a global one
 // to the defaults here; that resolution happens where a play is started, never inside the engine.
 
+import type { Hand } from '@/score/types';
+
 export type TempoMode = 'percent' | 'bpm';
 
 /** Flow runs the cursor at tempo whatever the player does; Wait stops it at every unsatisfied Onset. */
@@ -8,6 +10,14 @@ export type PlayMode = 'flow' | 'wait';
 
 /** Which hand the play expects. The other hand's notes are context only. */
 export type HandsSetting = 'both' | 'left' | 'right';
+
+/**
+ * The Inactive hand: the hand not selected while the setting names one. Its notes are context
+ * only, so nothing expects them, grades them, requires them or blocks on them.
+ */
+export function isInactiveHand(hands: HandsSetting, hand: Hand): boolean {
+  return hands !== 'both' && hands !== hand;
+}
 
 /** "piece" spans the piece's own range; a number is that many keys; "custom" uses lo and hi. */
 export type KeyboardPreset = 'piece' | 25 | 49 | 61 | 76 | 88 | 'custom';

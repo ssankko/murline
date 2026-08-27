@@ -3,7 +3,7 @@
 
 import { playGrade, type NoteStrike, type PlayGrade } from '@/play/grade';
 import { clampSection, linearWalk, sectionTicks, type Section } from '@/play/section';
-import type { HandsSetting, PlaySettings, TempoMode } from '@/play/settings';
+import { isInactiveHand, type HandsSetting, type PlaySettings, type TempoMode } from '@/play/settings';
 import { WaitState } from '@/play/wait';
 import { barTickOf, beatOf } from '@/score/beat';
 import {
@@ -66,6 +66,8 @@ export interface PlayNote {
   durationTicks: number;
   hand: Hand;
   grace: boolean;
+  /** A tie continuation: it sounds on from an earlier Onset, so the play never asks for it. */
+  tiedFrom: boolean;
   measureIndex: number;
   /** The written note, the identity the sheet marks. */
   note: Note;
@@ -824,10 +826,9 @@ export class Engine {
     return this.tick - (this.wall - wallMs) * this.ticksPerMs(this.tick);
   }
 
-  /** What the play asks the player for: the strikeable notes of the active hand, graces aside. */
+  /** What the play asks the player for: the struck notes of the active hand, graces aside. */
   private isExpected(note: PlayNote): boolean {
-    const { hands } = this.inForce;
-    return !note.grace && (hands === 'both' || hands === note.hand);
+    return !note.grace && !note.tiedFrom && !isInactiveHand(this.inForce.hands, note.hand);
   }
 
   /**
@@ -1058,20 +1059,21 @@ export class Engine {
 }
 
 /**
- * Every note of the piece in played order. A repeated bar appears once per pass; a tie
- * continuation appears not at all, because the note that starts the tie carries the whole chain.
+ * Every note of the piece in played order, a repeated bar once per pass. A tie continuation comes
+ * too, so a fresh strike on a pitch tied into an Onset is absorbed rather than blocking; the note
+ * that starts the tie carries the whole chain's duration, so the continuation has none of its own.
  */
 function playNotesOf(score: Score, walk: PlayStep[]): PlayNote[] {
   const notes: PlayNote[] = [];
   for (const step of walk) {
     for (const note of score.onsets[step.onsetIndex]?.notes ?? []) {
-      if (!note.strikeable) continue;
       notes.push({
         midi: note.midi,
         tick: step.tick,
         durationTicks: note.durationTicks,
         hand: note.hand,
         grace: note.grace,
+        tiedFrom: !note.strikeable,
         measureIndex: note.measureIndex,
         note,
       });

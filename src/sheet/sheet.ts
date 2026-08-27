@@ -6,7 +6,7 @@ import { CURSOR, INK, PAPER, colorOf, tone } from '@/look/color';
 import { reducedMotion } from '@/look/motion';
 import type { SeekTarget, Snapshot } from '@/play/engine';
 import type { Section } from '@/play/section';
-import type { HandsSetting } from '@/play/settings';
+import { isInactiveHand, type HandsSetting } from '@/play/settings';
 import { buildScore } from '@/score/build';
 import { ScoreError, type Note, type PlayStep, type Score } from '@/score/types';
 import {
@@ -624,7 +624,7 @@ export class Sheet {
   private paintNote(note: Note, head = noteheadEl(this.osmd, note.source)): void {
     if (!head) return;
     const colour =
-      this.hands !== 'both' && this.hands !== note.hand
+      isInactiveHand(this.hands, note.hand)
         ? tone(INK.scaffolding, this.dark)
         : this.misses.has(note.source)
           ? tone(INK.miss, this.dark)

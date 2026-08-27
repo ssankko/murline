@@ -10,6 +10,7 @@ function notes(...spec: [number, PlayNote['hand']][]): PlayNote[] {
     durationTicks: 960,
     hand,
     grace: false,
+    tiedFrom: false,
     measureIndex: 0,
     note: undefined as never,
   }));

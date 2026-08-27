@@ -615,7 +615,20 @@ function CustomRange({
 
   return (
     <div className="flex flex-none flex-col items-start gap-1.5">
-      <NoteRange lo={lo} hi={hi} onChange={onChange} />
+      {/* The low end never passes the high one. */}
+      <div className="flex flex-none items-center gap-1.5">
+        <NoteSelect
+          label="Lowest key"
+          value={lo}
+          onChange={(next) => onChange(next, Math.max(next, hi))}
+        />
+        <span className="text-muted-ink text-[12px]">to</span>
+        <NoteSelect
+          label="Highest key"
+          value={hi}
+          onChange={(next) => onChange(Math.min(lo, next), next)}
+        />
+      </div>
       <button
         onClick={() => setDetecting({ first: null })}
         className="text-muted-ink hover:text-ink text-[12px] underline underline-offset-2"
@@ -626,25 +639,6 @@ function CustomRange({
             : 'Now the other end…'
           : 'Detect from keyboard'}
       </button>
-    </div>
-  );
-}
-
-/** The two ends of a custom keyboard range. The low end never passes the high one. */
-function NoteRange({
-  lo,
-  hi,
-  onChange,
-}: {
-  lo: number;
-  hi: number;
-  onChange: (lo: number, hi: number) => void;
-}) {
-  return (
-    <div className="flex flex-none items-center gap-1.5">
-      <NoteSelect label="Lowest key" value={lo} onChange={(next) => onChange(next, Math.max(next, hi))} />
-      <span className="text-muted-ink text-[12px]">to</span>
-      <NoteSelect label="Highest key" value={hi} onChange={(next) => onChange(Math.min(lo, next), next)} />
     </div>
   );
 }

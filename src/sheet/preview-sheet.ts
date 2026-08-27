@@ -2,6 +2,7 @@
 // width of its host. No cursor, no clock, no input; everything here happens at open, on a resize
 // and on a theme change.
 
+import { clamp } from '@/lib/utils';
 import { colorOf } from '@/look/color';
 import { buildScore } from '@/score/build';
 import { ScoreError, type Score } from '@/score/types';
@@ -18,7 +19,7 @@ const SETTLED = 8;
 
 /** Notation size for a host of this width. */
 function zoomFor(width: number): number {
-  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, width / BASE_WIDTH));
+  return clamp(width / BASE_WIDTH, MIN_ZOOM, MAX_ZOOM);
 }
 
 /** One loaded Preview sheet: its OSMD instance, the Score behind it and the DOM it draws into. */

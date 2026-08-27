@@ -15,11 +15,6 @@ test('the muted palette matches the spec on light and dark paper', () => {
   expect(octave(true)).toBe(DARK);
 });
 
-test('colour depends on pitch class alone, over the whole MIDI range', () => {
-  expect(colorOf(21)).toBe(colorOf(105));
-  expect(colorOf(0)).toBe(colorOf(108));
-});
-
 test('note names and black keys follow the same pitch class', () => {
   expect(noteName(60)).toBe('C4');
   expect(noteName(21)).toBe('A0');

@@ -19,7 +19,7 @@ import {
   TOP_BAR,
   type LaneLook,
 } from '@/lane/lane';
-import { pathOf, readScoreFile } from '@/library/index-file';
+import { baseNameOf, pathOf, readScoreFile } from '@/library/index-file';
 import { setNotice } from '@/library/notice';
 import {
   getPiece,
@@ -29,6 +29,7 @@ import {
   type PieceSettingValues,
 } from '@/library/queries';
 import { reindexIfChanged } from '@/library/scan';
+import { clamp } from '@/lib/utils';
 import { flipTheme, useDark } from '@/look/use-dark';
 import { useMidiStatus } from '@/midi/use-midi-status';
 import { click, setClickVolume } from '@/play/click';
@@ -120,7 +121,7 @@ export function PlayScreen({
   const backRef = useRef(onBack);
   backRef.current = onBack;
 
-  const [title, setTitle] = useState(path.split('/').pop() ?? path);
+  const [title, setTitle] = useState(baseNameOf(path));
   const [state, setState] = useState<PlayState>('idle');
   const stateRef = useRef<PlayState>('idle');
   const [kind, setKind] = useState<PlayKind>('practice');
@@ -166,7 +167,7 @@ export function PlayScreen({
   // the sheet and build the Score of what was rendered. Any failure goes back to the library.
   useEffect(() => {
     mounted.current = true;
-    const fileName = path.split('/').pop() ?? path;
+    const fileName = baseNameOf(path);
     void (async () => {
       try {
         await reindexIfChanged(folder, path);
@@ -194,7 +195,7 @@ export function PlayScreen({
         setMeasures(sheet.score.measures);
         const lane = knobValues(globals, LANE_KNOBS);
         laneRef.current = new Lane(canvasRef.current!, engine, lane, darkRef.current);
-        setSplit(Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, globals.sheet_split)));
+        setSplit(clamp(globals.sheet_split, SPLIT_MIN, SPLIT_MAX));
         setLook(lane);
         setOneStaff(sheet.score.staffCount < 2);
         show(resolved.settings);
@@ -482,16 +483,14 @@ export function PlayScreen({
   const running = state === 'running' || state === 'counting-in';
   const [tempoMin, tempoMax] = TEMPO_RANGE[tempoMode];
   const stepTempo = (by: number) =>
-    changeTempo(Math.min(tempoMax, Math.max(tempoMin, tempo + by)));
+    changeTempo(clamp(tempo + by, tempoMin, tempoMax));
 
   /** The two modes read the same piece at the same speed, so a switch carries the value over. */
   function switchMode(next: TempoMode): void {
     if (next === tempoMode) return;
     const [min, max] = TEMPO_RANGE[next];
-    const value = Math.min(
-      max,
-      Math.max(min, Math.round(next === 'bpm' ? (written.bpm * tempo) / 100 : (tempo / written.bpm) * 100)),
-    );
+    const written100 = next === 'bpm' ? (written.bpm * tempo) / 100 : (tempo / written.bpm) * 100;
+    const value = clamp(Math.round(written100), min, max);
     setTempoMode(next);
     setTempo(value);
     if (engineRef.current) {
@@ -730,7 +729,7 @@ function Split({ value, onChange }: { value: number; onChange: (value: number) =
   const drag = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.buttons === 0) return;
     const share = (event.clientY - TOP_BAR) / Math.max(window.innerHeight - TOP_BAR, 1);
-    onChange(Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, share)));
+    onChange(clamp(share, SPLIT_MIN, SPLIT_MAX));
   };
   return (
     <div

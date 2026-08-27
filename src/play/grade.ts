@@ -53,18 +53,6 @@ export function releaseGrade(release: number, s: PlaySettings): number {
   return 100;
 }
 
-/**
- * The weights the three curves carry for one note. A Score with no dynamics mark says nothing about
- * loudness, and a key still held says nothing about release, so those weights go to the rest.
- */
-function weightsOf(strike: NoteStrike, s: PlaySettings, hasDynamics: boolean): number[] {
-  return [
-    Math.max(0, s.weightTiming),
-    hasDynamics ? Math.max(0, s.weightVelocity) : 0,
-    strike.release === null ? 0 : Math.max(0, s.weightRelease),
-  ];
-}
-
 /** One note's grade, 0 to 100. The weights are normalised, whatever the settings hold. */
 export function noteGrade(strike: NoteStrike, s: PlaySettings, hasDynamics: boolean): number {
   const grades = [
@@ -72,7 +60,13 @@ export function noteGrade(strike: NoteStrike, s: PlaySettings, hasDynamics: bool
     velocityGrade(strike.velocity, strike.ideal, s),
     strike.release === null ? 0 : releaseGrade(strike.release, s),
   ];
-  const weights = weightsOf(strike, s, hasDynamics);
+  // A Score with no dynamics mark says nothing about loudness, and a key still held says nothing
+  // about release, so those weights go to the rest.
+  const weights = [
+    Math.max(0, s.weightTiming),
+    hasDynamics ? Math.max(0, s.weightVelocity) : 0,
+    strike.release === null ? 0 : Math.max(0, s.weightRelease),
+  ];
   const total = weights.reduce((sum, weight) => sum + weight, 0);
   // Weights that add up to nothing leave timing, the one curve every note always has.
   if (total <= 0) return grades[0]!;

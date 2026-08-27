@@ -1,6 +1,8 @@
 // The metronome click. Web Audio only: the app makes no other sound, so one short blip is all of
 // it. The engine decides when a click is owed; this file only makes the noise.
 
+import { clamp } from '@/lib/utils';
+
 /** Length of one click, short enough to read as a tick and not as a pitch. */
 const CLICK_MS = 30;
 const CLICK_HZ = 1600;
@@ -10,7 +12,7 @@ let context: AudioContext | undefined;
 let volume = 70;
 
 export function setClickVolume(percent: number): void {
-  volume = Math.min(100, Math.max(0, percent));
+  volume = clamp(percent, 0, 100);
 }
 
 /** One click now. Silent at volume 0, and in any environment without Web Audio. */

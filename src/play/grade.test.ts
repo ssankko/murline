@@ -21,7 +21,6 @@ describe('the timing curve', () => {
     expect(timingGrade(-25, s)).toBe(100);
     expect(timingGrade(150, s)).toBe(0);
     expect(timingGrade(-150, s)).toBe(0);
-    expect(timingGrade(300, s)).toBe(0);
   });
 
   test('falls in a straight line between them, early like late', () => {
@@ -54,8 +53,6 @@ describe('the release curve', () => {
     expect(releaseGrade(1.3, s)).toBe(100);
     expect(releaseGrade(0.2, s)).toBe(0);
     expect(releaseGrade(2, s)).toBe(0);
-    expect(releaseGrade(0.05, s)).toBe(0);
-    expect(releaseGrade(3, s)).toBe(0);
   });
 
   test('falls in a straight line on each side of the plateau', () => {

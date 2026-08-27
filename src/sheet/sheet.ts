@@ -2,6 +2,7 @@
 // straight onto the SVG, and the amber cursor band that rides over it. Everything here is DOM and
 // OSMD; the clock lives in src/play/engine.ts and only arrives as a snapshot once a frame.
 
+import { clamp } from '@/lib/utils';
 import { CURSOR, INK, PAPER, colorOf, tone } from '@/look/color';
 import { reducedMotion } from '@/look/motion';
 import type { SeekTarget, Snapshot } from '@/play/engine';
@@ -47,7 +48,7 @@ const GLIDE_MS = 220;
 const FINISH_MS = 400;
 
 /** What a note carries besides its pitch colour. */
-export type MarkKind = 'none' | 'current' | 'miss';
+type MarkKind = 'none' | 'current' | 'miss';
 
 /** Where the cursor stands, in pixels of the unscaled sheet content. */
 export interface CursorAt {
@@ -80,11 +81,6 @@ interface Drag {
   hit: SheetHit;
   x: number;
   moved: boolean;
-}
-
-interface Box {
-  top: number;
-  bottom: number;
 }
 
 /** The left and right edge of one bar, in unscaled pixels. */
@@ -133,7 +129,7 @@ export class Sheet {
   private boxes: (BarBox | undefined)[] = [];
 
   private placed: Placed[] = [];
-  private system: Box = { top: 0, bottom: 200 };
+  private system = { top: 0, bottom: 200 };
   /** The top staff line of the first system: the bubble strip ends here. */
   private stafflineY = BUBBLE_STRIP;
   /** Steps whose next step goes back in the written sheet: the cursor snaps instead of sliding. */
@@ -361,7 +357,7 @@ export class Sheet {
    */
   cursorAt(playedTick: number, hint: number, windowTicks: number): CursorAt {
     const order = this.walk;
-    let i = Math.min(Math.max(hint, 0), order.length - 1);
+    let i = clamp(hint, 0, order.length - 1);
     while (i + 1 < order.length && order[i + 1]!.tick <= playedTick) i++;
     while (i > 0 && order[i]!.tick > playedTick) i--;
 
@@ -372,7 +368,7 @@ export class Sheet {
     const snap = !there || this.jumpAfter[i] || there.system !== here.system;
     const toX = snap ? Math.max(here.measureRight, here.x) : there.x;
     const span = next && step ? next.tick - step.tick : 0;
-    const done = span > 0 ? Math.min(1, Math.max(0, (playedTick - step!.tick) / span)) : 0;
+    const done = span > 0 ? clamp((playedTick - step!.tick) / span, 0, 1) : 0;
     const perTick = span > 0 ? Math.abs(toX - here.x) / span : 0;
     return {
       x: here.x + (toX - here.x) * done,
@@ -590,7 +586,7 @@ export class Sheet {
 
   /** Scales the content so the staff line fills the sheet block, and lifts the dead paper away. */
   private fit(): void {
-    const scale = Math.min(1.2, Math.max(0.42, this.host.clientHeight / this.contentHeight));
+    const scale = clamp(this.host.clientHeight / this.contentHeight, 0.42, 1.2);
     if (Math.abs(scale - this.drawn.scale) < 0.005) return;
     this.content.style.transform = `scale(${scale}) translateY(${-this.offsetY}px)`;
     this.scale.style.width = `${this.contentWidth * scale}px`;

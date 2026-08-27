@@ -71,6 +71,16 @@ const LANE_FIELDS: [key: keyof typeof LANE_KNOBS, label: string, min: number, ma
   ['lane_gap', 'Gap (px)', 0, 20],
 ];
 
+type ViewKey = 'sheet_harmony' | 'sheet_colour' | 'lane_harmony' | 'lane_colour';
+
+/** The harmony display and the pitch colouring, switchable on each of the two views. */
+const VIEW_FIELDS: [key: ViewKey, label: string][] = [
+  ['sheet_harmony', 'Harmony on sheet'],
+  ['sheet_colour', 'Pitch colours on sheet'],
+  ['lane_harmony', 'Harmony in falling notes'],
+  ['lane_colour', 'Pitch colours in falling notes'],
+];
+
 /** Every Grade knob in one place: the group is uniform, so it is drawn from a list. */
 const GRADE_KNOBS: [keyof Settings, string, number, number][] = [
   ['grade_weight_timing', 'Timing weight', 0, 1],
@@ -277,6 +287,7 @@ export function SettingsDialog({
                 ...LANE_FIELDS.map(([key]) => key),
                 'sheet_split',
                 'keyboard_labels',
+                ...VIEW_FIELDS.map(([key]) => key),
                 'click_volume',
                 'theme',
               ])
@@ -306,6 +317,11 @@ export function SettingsDialog({
                 onChange={(value) => write('keyboard_labels', value)}
               />
             </Row>
+            {VIEW_FIELDS.map(([key, label]) => (
+              <Row key={key} label={label}>
+                <Toggle value={values[key]} onChange={(value) => write(key, value)} />
+              </Row>
+            ))}
             <Row label="Click volume">
               <NumberField
                 value={values.click_volume}

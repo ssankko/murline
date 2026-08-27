@@ -117,6 +117,14 @@ interface Span {
   right: number;
 }
 
+/** What the sheet shows of a note beyond its place on the staff, both global settings. */
+export interface SheetLook {
+  /** Whether the chord bubbles are printed in the strip above the top staff. */
+  harmony: boolean;
+  /** Whether a notehead wears the pitch colour of its note, against the plain ink of the paper. */
+  colour: boolean;
+}
+
 /**
  * One loaded sheet: its OSMD instance, its Score, the DOM it draws into and the cursor.
  * `open` gives all of it; the screen then only calls `frame` once a frame and `setDark` on a
@@ -177,6 +185,7 @@ export class Sheet {
   private projected = -1;
   /** Which hand the play expects; the other hand's noteheads read as scaffolding. */
   private hands: HandsSetting = 'both';
+  private look: SheetLook = { harmony: true, colour: true };
   private outlined: readonly Note[] = [];
   private drawn = {
     scale: 0,
@@ -319,6 +328,17 @@ export class Sheet {
     this.layout();
     this.drawn.onset = -1;
     this.drawn.scale = 0;
+  }
+
+  /** Turns the chord bubbles and the pitch colouring on and off while the sheet stands open. */
+  setLook(look: Partial<SheetLook>): void {
+    const was = { ...this.look };
+    Object.assign(this.look, look);
+    if (this.look.harmony !== was.harmony) {
+      this.placeBubbles();
+      this.dimBubbles(this.drawn.onset);
+    }
+    if (this.look.colour !== was.colour) this.repaint();
   }
 
   /** Takes the pitch colour off the hand the play no longer expects, and puts it back. */
@@ -719,6 +739,8 @@ export class Sheet {
    */
   private placeBubbles(): void {
     this.bubbles.replaceChildren();
+    this.bubbleEls = [];
+    if (!this.look.harmony) return;
     this.bubbleEls = this.score.harmony.map((event) => {
       const el = child(
         this.bubbles,
@@ -829,12 +851,14 @@ export class Sheet {
   }
 
   /**
-   * What a note reads as: the miss grey once the play skipped it, its pitch colour otherwise. A
-   * note of the inactive hand is context only and drops to the scaffolding tier.
+   * What a note reads as: the miss grey once the play skipped it, then its pitch colour, or the
+   * plain ink every other glyph is engraved in while the colouring is off. A note of the inactive
+   * hand is context only and drops to the scaffolding tier.
    */
   private colourOf(note: Note, state = this.shown.get(note.source) ?? 'pending'): string {
     if (isInactiveHand(this.hands, note.hand)) return tone(INK.scaffolding, this.dark);
     if (state === 'miss') return tone(INK.miss, this.dark);
+    if (!this.look.colour) return tone(INK.duration, this.dark);
     return colorOf(note.midi, 'muted', this.dark);
   }
 }

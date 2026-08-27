@@ -194,6 +194,7 @@ export function PlayScreen({
           setSection(picked && clampSection(sheet.score.measures, picked));
         };
         setMeasures(sheet.score.measures);
+        sheet.setLook({ harmony: globals.sheet_harmony, colour: globals.sheet_colour });
         const lane = knobValues(globals, LANE_KNOBS);
         laneRef.current = new Lane(canvasRef.current!, engine, lane, darkRef.current);
         laneRef.current.onSeek = (target) => engine.seek(target);
@@ -380,6 +381,8 @@ export function PlayScreen({
       Object.assign(engineRef.current.settings, { [engineField]: value });
     }
     if (key in LANE_KNOBS) showLook(key as keyof typeof LANE_KNOBS, value as number | boolean);
+    if (key === 'sheet_harmony') sheetRef.current?.setLook({ harmony: value });
+    if (key === 'sheet_colour') sheetRef.current?.setLook({ colour: value });
     if (key === 'click_volume') setClickVolume(value);
     if (key === 'sheet_split') setSplit(value);
   }

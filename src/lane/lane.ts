@@ -1,6 +1,9 @@
 // The falling lane and the keyboard under it, on one 2D canvas so both share the x axis. Time in
 // the lane is played time, the clock the engine keeps: a repeated passage falls again as new notes
-// behind a dashed divider. Everything here is drawing; the play itself lives in src/play/engine.ts.
+// behind a dashed divider. The lane draws from `view`, the tick at the keyboard line, which rides
+// the clock until a seek or the wheel takes it off and a glide brings it back, so the notes always
+// roll to a new place instead of jumping there. Everything here is drawing; the play itself lives
+// in src/play/engine.ts.
 
 import {
   KEYBOARD_H,
@@ -47,6 +50,11 @@ const LANE_LINE = ['#e3e3e3', '#2c2c2c'] as const;
 const LANE_BAR = ['#c8c8c8', '#464646'] as const;
 const LANE_LABEL = ['#6e6e6e', '#8f8f8f'] as const;
 const NOW_LINE = ['#141414', '#ffffff'] as const;
+
+/** How long the view takes to roll back onto the clock after a seek or a scroll. */
+const GLIDE_MS = 300;
+/** While the play runs the wheel detaches the view, and it rolls back this long after the last one. */
+const DETACH_MS = 2000;
 
 /** A key held on nothing, and the ring an extra leaves. Neither is a pitch, so neither is coloured. */
 const GREY = '#8b8b93';
@@ -219,6 +227,8 @@ export class Lane {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly engine: Engine;
   private readonly resize: ResizeObserver;
+  /** Takes the wheel listener off the canvas again. */
+  private readonly listeners = new AbortController();
   private bars: LaneBar[];
   private jumps: LaneJump[];
   private chords: LaneChord[];
@@ -240,6 +250,21 @@ export class Lane {
   private readonly blinks = new Map<number, number>();
   private now = 0;
   private playedTick = 0;
+  /** The tick at the keyboard line, which every y in the lane is measured from. */
+  private view = 0;
+  /** How far the view stands off the clock: 0 while it rides it. */
+  private offset = 0;
+  /** The offset the glide runs from and the wall time it began; `-Infinity` while none runs. */
+  private glideFrom = 0;
+  private glideAt = -Infinity;
+  /** Wall time of the last wheel, which the detach window is measured from. */
+  private scrolledAt = -Infinity;
+  /** The scale of the last frame, which is what the wheel turns its pixels into ticks with. */
+  private pxPerTick = 0;
+  /** What the engine's counters and its motion read last frame, which is how a seek is spotted. */
+  private lastResets: number;
+  private lastWraps: number;
+  private lastRunning = false;
   /** The clock and the wall of the frame before this one, which is what a step is measured over. */
   private before = 0;
   private beforeTick = 0;
@@ -284,17 +309,30 @@ export class Lane {
     this.chords = chordsOf(engine.score.harmony, this.walk);
     this.hands = engine.settings.hands;
     this.handsBefore = this.hands;
+    this.lastResets = engine.resets;
+    this.lastWraps = engine.wraps;
     // The range spans both hands, so a change of hands never re-lays the keyboard out.
     this.range = keyRange(engine.notes, engine.settings);
     this.measure();
     this.layout = keyLayout(this.range[0], this.range[1], this.size.width || 1);
     this.resize = new ResizeObserver(() => this.measure());
     this.resize.observe(canvas);
+    // The canvas never scrolls itself, so the wheel is the lane's own: it moves the view in ticks.
+    canvas.addEventListener(
+      'wheel',
+      (event) => {
+        event.preventDefault();
+        // Wheel up looks ahead: the view goes later in the play, so the blocks travel down the lane.
+        if (this.pxPerTick > 0) this.moveView(-event.deltaY / this.pxPerTick);
+      },
+      { passive: false, signal: this.listeners.signal },
+    );
   }
 
   /** Stops watching the canvas, which is what a screen leaving the lane behind must call. */
   dispose(): void {
     this.resize.disconnect();
+    this.listeners.abort();
   }
 
   private measure(): void {
@@ -329,7 +367,7 @@ export class Lane {
       midi: event.midi,
       start: now,
       velocity: event.velocity,
-      dTick: note ? note.tick - this.playedTick : 0,
+      dTick: note ? note.tick - this.view : 0,
     });
   }
 
@@ -342,11 +380,13 @@ export class Lane {
     this.now = now;
     this.playedTick = snap.playedTick;
     this.reduced = reducedMotion();
-    const step = Math.min(now - this.before, MAX_STEP_MS);
+    const wallStep = now - this.before;
+    const step = Math.min(wallStep, MAX_STEP_MS);
     this.sinceWall = this.before;
     const sinceTick = this.beforeTick;
     this.before = now;
     this.beforeTick = snap.playedTick;
+    this.stepView(snap, sinceTick, wallStep, windowTicks);
     if (this.engine.settings.hands !== this.hands) {
       this.handsBefore = this.hands;
       this.hands = this.engine.settings.hands;
@@ -381,6 +421,7 @@ export class Lane {
       120,
     );
     const pxPerTick = reference / Math.max(this.look.lookaheadBeats, 1) / TICKS_PER_QUARTER;
+    this.pxPerTick = pxPerTick;
 
     this.stepParticles(step, laneH);
     this.heldKeys(laneH, sinceTick, step);
@@ -424,7 +465,7 @@ export class Lane {
     this.drawHarmony(width, loop);
     ctx.restore();
 
-    this.drawNowLine(width, laneH, windowTicks * 2 * pxPerTick);
+    this.drawNowLine(width, laneH, pxPerTick, windowTicks * 2 * pxPerTick);
     this.drawSplashes(laneH);
     this.drawRings(laneH, pxPerTick);
     drawKeyboard(
@@ -440,9 +481,58 @@ export class Lane {
     if (this.notice) this.drawNotice(width, laneH);
   }
 
-  /** Lane y of a played tick: the now-line is the foot of the lane and time falls towards it. */
+  /**
+   * Where the lane looks this frame. A jump of the clock the frame's own time cannot explain is a
+   * seek: its whole distance goes into the offset, so the lane holds still and glides to the new
+   * place instead of appearing there. A start of motion, a seek and the end of the detach window
+   * after a scroll all set the view rolling back onto the clock.
+   */
+  private stepView(snap: Snapshot, sinceTick: number, wallStep: number, windowTicks: number): void {
+    const engine = this.engine;
+    // Ticks the clock could have covered in this frame's own time, at twice the tempo it stands at
+    // so a tempo change inside the frame never reads as a seek.
+    const rate = windowTicks / Math.max(engine.settings.matchingWindowMs, 1);
+    const reach = Math.max(wallStep, 0) * rate * 2 + 1;
+    const reset = engine.resets !== this.lastResets;
+    const wrapped = engine.wraps !== this.lastWraps;
+    this.lastResets = engine.resets;
+    this.lastWraps = engine.wraps;
+    this.offset += jumpOf(sinceTick, snap.playedTick, reach, reset, wrapped);
+
+    const running = snap.state === 'running' || snap.state === 'counting-in';
+    const began = running && !this.lastRunning;
+    this.lastRunning = running;
+    const settled = this.glideAt === -Infinity;
+    const detached = settled && running && this.now - this.scrolledAt >= DETACH_MS;
+    if (this.offset !== 0 && ((reset && !wrapped) || began || detached)) {
+      this.glideFrom = this.offset;
+      this.glideAt = this.now;
+    }
+    if (this.glideAt > -Infinity) {
+      const left = glideLeft((this.now - this.glideAt) / GLIDE_MS);
+      this.offset = this.reduced ? 0 : this.glideFrom * left;
+      if (this.offset === 0) this.glideAt = -Infinity;
+    }
+    this.view = snap.playedTick + this.offset;
+  }
+
+  /**
+   * Moves the view by ticks and holds it there, which cancels the glide. It stops a bar under the
+   * first bar line of the play and at the last one, so the wheel never scrolls into nothing.
+   */
+  private moveView(by: number): void {
+    const first = this.bars[0];
+    const last = this.bars[this.bars.length - 1];
+    const floor = first ? first.tick - (first.endTick - first.tick) : 0;
+    const ceiling = Math.max(last?.tick ?? floor, floor);
+    this.offset = clamp(this.view + by, floor, ceiling) - this.playedTick;
+    this.glideAt = -Infinity;
+    this.scrolledAt = performance.timeOrigin + performance.now();
+  }
+
+  /** Lane y of a played tick: the view stands at the foot of the lane and time falls towards it. */
   private y(tick: number, laneH: number, pxPerTick: number): number {
-    return laneH - (tick - this.playedTick) * pxPerTick;
+    return laneH - (tick - this.view) * pxPerTick;
   }
 
   private drawGrid(
@@ -453,11 +543,11 @@ export class Lane {
     ceiling: number,
   ): void {
     const ctx = this.ctx;
-    const top = Math.min(this.playedTick + laneH / pxPerTick, ceiling);
+    const top = Math.min(this.view + laneH / pxPerTick, ceiling);
     ctx.font = '11px ui-monospace, monospace';
     ctx.lineWidth = 1;
     for (const bar of this.bars) {
-      if (bar.endTick < this.playedTick || bar.tick < floor) continue;
+      if (bar.endTick < this.view || bar.tick < floor) continue;
       if (bar.tick >= top) break;
       for (let tick = bar.tick; tick < bar.endTick - 1e-9; tick += bar.beatTicks) {
         const y = Math.round(this.y(tick, laneH, pxPerTick)) + 0.5;
@@ -500,11 +590,15 @@ export class Lane {
    */
   private drawNextLap(width: number, laneH: number, pxPerTick: number, loop: LoopSpan): void {
     // Drawing the lap one lap lower than the clock puts it one lap higher in the lane.
+    const lap = loop.to - loop.from;
     const played = this.playedTick;
-    this.playedTick -= loop.to - loop.from;
+    const view = this.view;
+    this.playedTick -= lap;
+    this.view -= lap;
     this.drawGrid(width, laneH, pxPerTick, loop.from, loop.to);
     this.drawNotes(laneH, pxPerTick, loop.from, loop.to, false);
     this.playedTick = played;
+    this.view = view;
   }
 
   /** The Section as a tinted band over its bars, whether or not Loop gives it force. */
@@ -536,7 +630,7 @@ export class Lane {
 
   private drawJumps(width: number, laneH: number, pxPerTick: number, loop: LoopSpan | null): void {
     const ctx = this.ctx;
-    const top = this.playedTick + laneH / pxPerTick;
+    const top = this.view + laneH / pxPerTick;
     ctx.font = '13px system-ui, sans-serif';
     // A looping Section walks its bars linearly, so the wrap is the only divider. Loop over the
     // whole piece keeps the written repeats, so their dividers fall as well as the wrap.
@@ -571,7 +665,7 @@ export class Lane {
   ): void {
     const ctx = this.ctx;
     const engine = this.engine;
-    const top = Math.min(this.playedTick + laneH / pxPerTick, ceiling);
+    const top = Math.min(this.view + laneH / pxPerTick, ceiling);
     const fade = Math.min(1, (this.now - this.handsAt) / HANDS_FADE_MS);
     // A beat of the bar the clock stands in is how far ahead a block begins to brighten.
     const beatTicks = barAt(this.bars, this.playedTick)?.beatTicks ?? TICKS_PER_QUARTER;
@@ -605,10 +699,9 @@ export class Lane {
       const played = engine.resolvedAt(i) > 0;
       const gone = missed ? (this.reduced || !played ? 1 : clamp(age / MISS_MS, 0, 1)) : 0;
       const blockY = y + full - height + MISS_SINK * gone;
-      // A missed block grinds sparks off the keys for as long as it is crossing them; a skipped
-      // one was never played at, so it only lies there.
-      const crossing =
-        note.tick <= this.playedTick && this.playedTick < note.tick + note.durationTicks;
+      // A missed block grinds sparks off the keys for as long as it is crossing them, which is
+      // where the view has it; a skipped one was never played at, so it only lies there.
+      const crossing = note.tick <= this.view && this.view < note.tick + note.durationTicks;
       if (missed && played && !this.reduced && (crossing || engine.resolvedAt(i) > this.sinceWall)) {
         this.grind(x, width, laneH);
       }
@@ -683,21 +776,25 @@ export class Lane {
 
   /**
    * The now-line, inside a band as tall in time as the matching window: early on one side of the
-   * line, late on the other. The keyboard is drawn over the late half.
+   * line, late on the other. It marks the clock, so it stands at the foot of the lane while the
+   * view rides it and travels with the notes while the view is off it; the keyboard is drawn over
+   * the late half. A clock scrolled out of the lane leaves no line at all.
    */
-  private drawNowLine(width: number, laneH: number, bandH: number): void {
+  private drawNowLine(width: number, laneH: number, pxPerTick: number, bandH: number): void {
+    const at = this.y(this.playedTick, laneH, pxPerTick);
+    if (at < 0 || at > laneH) return;
     const ctx = this.ctx;
     const pulse = this.reduced ? { level: 0, strong: false } : pulseAt(this.bars, this.playedTick);
     const lift = pulse.level * (pulse.strong ? 2 : 1);
     ctx.fillStyle = this.dark
       ? `rgba(255,255,255,${0.07 + lift * PULSE_BAND})`
       : `rgba(0,0,0,${0.05 + lift * PULSE_BAND})`;
-    ctx.fillRect(0, laneH - bandH / 2, width, bandH);
+    ctx.fillRect(0, at - bandH / 2, width, bandH);
     ctx.strokeStyle = tone(NOW_LINE, this.dark);
     ctx.lineWidth = 1.5 + lift * PULSE_WIDTH;
     ctx.beginPath();
-    ctx.moveTo(0, laneH - 0.75);
-    ctx.lineTo(width, laneH - 0.75);
+    ctx.moveTo(0, at - 0.75);
+    ctx.lineTo(width, at - 0.75);
     ctx.stroke();
   }
 
@@ -1165,6 +1262,32 @@ export function bounceAt(t: number): number {
   // Outside its own time the block is its own size, whatever number the clock hands over.
   if (!(t > 0 && t < 1)) return 1;
   return 1 + POP * Math.sin(2 * Math.PI * t) * (1 - t);
+}
+
+/**
+ * What a frame adds to the view offset so the lane holds still under a jump of the clock. A seek
+ * gives its whole distance: the engine says so by opening the notes again, or the clock moved
+ * further than `reach`, the ticks the frame's own time could carry it. A loop wrap gives nothing,
+ * because the lane already draws the next lap falling on through it.
+ */
+export function jumpOf(
+  from: number,
+  to: number,
+  reach: number,
+  reset: boolean,
+  wrapped: boolean,
+): number {
+  if (wrapped || !(reset || Math.abs(to - from) > reach)) return 0;
+  return from - to;
+}
+
+/**
+ * How much of a glide's offset is left `t` of the way through it: all of it at the start, none at
+ * the end, easing out in between.
+ */
+export function glideLeft(t: number): number {
+  if (!(t > 0)) return 1;
+  return t < 1 ? (1 - t) ** 3 : 0;
 }
 
 /** Fast out with a small overshoot, so a panel settles into its slot with a bounce. */

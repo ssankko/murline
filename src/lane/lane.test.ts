@@ -5,6 +5,8 @@ import {
   bounceAt,
   chordsAt,
   chordsOf,
+  glideLeft,
+  jumpOf,
   lerpRect,
   pulseAt,
   slotRect,
@@ -105,6 +107,41 @@ describe('the pulse at the now-line', () => {
   test('is nothing outside the bars of the play', () => {
     expect(pulseAt(BARS, -Q)).toEqual({ level: 0, strong: false });
     expect(pulseAt(BARS, 99 * Q)).toEqual({ level: 0, strong: false });
+  });
+});
+
+describe('the view under a jump of the clock', () => {
+  // A frame of motion at this tempo cannot carry the clock more than a fiftieth of a quarter.
+  const REACH = Q / 50;
+
+  test('a seek holds the lane still by taking its whole jump', () => {
+    expect(jumpOf(0, 4 * Q, REACH, true, false)).toBe(-4 * Q);
+    expect(jumpOf(4 * Q, 0, REACH, true, false)).toBe(4 * Q);
+  });
+
+  test('a jump no frame could have run is a seek even with the notes left open', () => {
+    expect(jumpOf(0, 4 * Q, REACH, false, false)).toBe(-4 * Q);
+  });
+
+  test('motion inside one frame of time moves the view with the clock', () => {
+    expect(jumpOf(0, REACH / 2, REACH, false, false)).toBe(0);
+  });
+
+  test('a loop wrap moves the view with the clock, however far it went back', () => {
+    expect(jumpOf(12 * Q, 0, REACH, true, true)).toBe(0);
+  });
+});
+
+describe('the glide back onto the clock', () => {
+  test('holds the whole offset at the start and none of it at the end', () => {
+    expect(glideLeft(0)).toBe(1);
+    expect(glideLeft(1)).toBe(0);
+    expect(glideLeft(2)).toBe(0);
+  });
+
+  test('eases out, so most of the way is gone by the middle', () => {
+    expect(glideLeft(0.5)).toBeCloseTo(0.125);
+    expect(glideLeft(0.25)).toBeGreaterThan(glideLeft(0.75));
   });
 });
 

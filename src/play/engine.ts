@@ -140,6 +140,8 @@ export class Engine {
   kind: PlayKind = 'practice';
   /** Bumped every time the notes are opened again, which is what takes the sheet's marks off. */
   resets = 0;
+  /** Bumped when a loop wrap takes the clock back to the top of the lap, which is motion, not a seek. */
+  wraps = 0;
   /** Bumped when a practice runs off the end of the piece, the one ending that is animated. */
   finishes = 0;
 
@@ -606,6 +608,7 @@ export class Engine {
         // frame. With Loop off a practice ends back where it started and a performance stays for
         // its summary card.
         if (span) {
+          this.wraps++;
           this.moveTo(span.from);
           this.absorbHeld();
           continue;

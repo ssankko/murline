@@ -471,6 +471,10 @@ export class Engine {
     this.resolved = this.notes.map(() => 0);
     this.beatGrid = beatGridOf(this.score, walk);
     this.lastSoundingTick = lastSoundingTickOf(this.score, walk);
+    // The new walk renumbers both notes and steps, so a held key names nothing and the Wait state
+    // names Onsets that are gone. A key held across the swap blocks nothing on the new walk.
+    for (const midi of this.held.keys()) this.held.set(midi, ABSORBED);
+    this.wait.reset();
     this.startTick = this.nearestTick(this.playedTicksOf(startSheetTick), this.startTick);
     this.moveTo(this.nearestTick(this.playedTicksOf(sheetTick), this.tick));
   }

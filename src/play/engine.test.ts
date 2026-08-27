@@ -418,6 +418,21 @@ describe('the colour of a held key', () => {
     expect(play.keyState(67)).toBe('grey');
   });
 
+  test('is grey once a new walk has renumbered the notes under the held key', () => {
+    const play = engine(withRepeat());
+    play.start();
+    // Nine seconds in is the third bar, bar 1 played again, whose notes stand past the end of the
+    // linear walk a looping Section builds.
+    play.advance(9000);
+    down(play, 60, 9000);
+    expect(play.keyState(60)).toBe('color');
+
+    play.setSection({ from: 0, to: 1 });
+    play.setLoop(true);
+
+    expect(play.keyState(60)).toBe('grey');
+  });
+
   test('is grey for an absorbed inactive-hand strike', () => {
     const play = onBeatTwo([{ midi: 50, hand: 'left', staff: 1 }], { hands: 'right' });
     play.advance(BEAT_MS);

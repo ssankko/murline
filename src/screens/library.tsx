@@ -176,8 +176,9 @@ export function Library({
 
   /** Trash, row, plays, then the row that took its place in the list. */
   async function remove(target: PieceRow): Promise<void> {
+    if (!folder) return;
     try {
-      await invoke('trash_file', { path: pathOf(folder!, target.path) });
+      await invoke('trash_file', { path: pathOf(folder, target.path) });
     } catch (error) {
       // A file already gone from disk still drops its piece; any other refusal keeps the row.
       if (!/no such file|not found/i.test(String(error))) {

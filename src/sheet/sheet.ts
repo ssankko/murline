@@ -4,7 +4,7 @@
 
 import { clamp } from '@/lib/utils';
 import { CURSOR, INK, PAPER, colorOf, tone } from '@/look/color';
-import { reducedMotion } from '@/look/motion';
+import { EASE, easeInOut, reducedMotion } from '@/look/motion';
 import type { SeekTarget, Snapshot } from '@/play/engine';
 import type { Section } from '@/play/section';
 import { isInactiveHand, type HandsSetting } from '@/play/settings';
@@ -230,6 +230,7 @@ export class Sheet {
       'position:absolute;display:none;padding:1px 6px;border-radius:999px;' +
         'font-size:11px;font-weight:600;white-space:nowrap',
     );
+    this.marker.className = 'sheet-marker';
     this.osmd = makeOsmd(this.paper, dark);
 
     const { signal } = this.listeners;
@@ -381,14 +382,14 @@ export class Sheet {
     const motion = !reducedMotion() && this.cursor.style.width !== '';
     const glide = motion && (!running || now < this.drawn.glideUntil);
     const transition = motion
-      ? `width ${EASE_MS}ms ease,height ${EASE_MS}ms ease,top ${EASE_MS}ms ease` +
-        (glide ? `,left ${GLIDE_MS}ms ease` : '')
+      ? `width ${EASE_MS}ms ${EASE},height ${EASE_MS}ms ${EASE},top ${EASE_MS}ms ${EASE}` +
+        (glide ? `,transform ${GLIDE_MS}ms ${EASE}` : '')
       : 'none';
     if (transition !== this.drawn.transition) {
       this.drawn.transition = transition;
       this.cursor.style.transition = transition;
     }
-    this.cursor.style.left = `${at.x - at.width / 2}px`;
+    this.cursor.style.transform = `translateX(${at.x - at.width / 2}px)`;
     this.cursor.style.width = `${at.width}px`;
     this.cursor.style.top = `${this.system.top}px`;
     this.cursor.style.height = `${this.system.bottom - this.system.top}px`;
@@ -412,7 +413,7 @@ export class Sheet {
 
     // The view is the reader's while the play stands still, and again for two seconds after a
     // scroll during one; the rest of the time it holds the cursor 30 % from the left edge. It
-    // takes that hold back by gliding from wherever the reader left it, cubed so it eases out.
+    // takes that hold back by gliding in from wherever the reader left it.
     const follow = at.x * this.drawn.scale - this.scroll.clientWidth * 0.3;
     const attached = running && now - this.scrolledAt >= DETACH_MS;
     if (attached !== this.drawn.attached) {
@@ -421,8 +422,8 @@ export class Sheet {
       this.drawn.scrollAt = now;
     }
     if (attached) {
-      const left = clamp(1 - (now - this.drawn.scrollAt) / SCROLL_GLIDE_MS, 0, 1);
-      this.scroll.scrollLeft = follow + this.drawn.scrollFrom * left ** 3;
+      const done = easeInOut(clamp((now - this.drawn.scrollAt) / SCROLL_GLIDE_MS, 0, 1));
+      this.scroll.scrollLeft = follow + this.drawn.scrollFrom * (1 - done);
     }
   }
 
@@ -437,7 +438,7 @@ export class Sheet {
     }
     this.runner.style.display = 'block';
     const x = this.runnerX(snap.playedTick, snap.stepIndex, windowTicks);
-    this.runner.style.left = `${x - RUNNER_W / 2}px`;
+    this.runner.style.transform = `translateX(${x - RUNNER_W / 2}px)`;
     this.runner.style.top = `${this.system.top}px`;
     this.runner.style.height = `${this.system.bottom - this.system.top}px`;
   }
@@ -650,8 +651,10 @@ export class Sheet {
     this.placeBubbles();
     this.drawSection();
 
+    // The band's inner edge is a border rather than an inset shadow: a border is part of the box
+    // the compositor hands the band, so nothing of it can print outside the layer that moves.
     this.cursor.style.background = `color-mix(in srgb, ${tone(CURSOR, this.dark)} 26%, transparent)`;
-    this.cursor.style.boxShadow = `inset 0 0 0 1px color-mix(in srgb, ${tone(CURSOR, this.dark)} 55%, transparent)`;
+    this.cursor.style.border = `1px solid color-mix(in srgb, ${tone(CURSOR, this.dark)} 55%, transparent)`;
     this.runner.style.background = `color-mix(in srgb, ${tone(CURSOR, this.dark)} 55%, transparent)`;
     this.marker.style.background = tone(INK.duration, this.dark);
     this.marker.style.color = tone(PAPER, this.dark);
@@ -736,7 +739,7 @@ export class Sheet {
     }
     this.marker.style.display = 'block';
     this.marker.style.opacity = String(1 - age / MARKER_MS);
-    this.marker.style.left = `${at.x - 20}px`;
+    this.marker.style.transform = `translateX(${at.x - 20}px)`;
     this.marker.style.top = `${Math.max(this.system.top - 18, 0)}px`;
     this.marker.textContent = `↺ bar ${this.drawn.jumpBar}`;
   }

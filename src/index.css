@@ -28,6 +28,9 @@
   --edge: light-dark(#c6c6c6, #3d3d3d);
   --edge-soft: light-dark(#dcdcdc, #2b2b2b);
   --amber: light-dark(#c9922e, #d9a83c);
+  /* The curve of every movement on screen: slow away, fast through the middle, slow in.
+     src/look/motion.ts holds the same curve as a number, for the movements JS drives itself. */
+  --ease: cubic-bezier(0.65, 0, 0.35, 1);
   /* The fills a list row takes: ink 9 % under the selected row, ink 4 % under the pointer. */
   --fill-selected: color-mix(in srgb, var(--ink) 9%, transparent);
   --fill-hover: color-mix(in srgb, var(--ink) 4%, transparent);
@@ -102,6 +105,18 @@
   }
 }
 
+/* The three overlays the clock moves: the cursor band, the count-in runner and the jump marker.
+   Their colours and geometry come from src/sheet/sheet.ts, which writes their x into `transform`.
+   Each holds a compositor layer of its own, so a move repaints nothing of the sheet under it:
+   moved by `left` inside the scaled content of a scrolling view, WebKit repaints a column short of
+   where they stood and leaves a trace of them at every place they have been. */
+.sheet-cursor,
+.sheet-runner,
+.sheet-marker {
+  left: 0;
+  will-change: transform;
+}
+
 /* The chord bubbles of the sheet. Their colours and places come from src/sheet/sheet.ts; only the
    fade of a chord the cursor has passed lives here, where the motion setting can switch it off. */
 .chord-bubble {
@@ -138,10 +153,10 @@
   opacity: 0;
   pointer-events: none;
   transition:
-    opacity 200ms ease,
+    opacity 200ms var(--ease),
     display 200ms allow-discrete,
-    left 200ms ease,
-    width 200ms ease;
+    left 200ms var(--ease),
+    width 200ms var(--ease);
 }
 .sheet-section.on {
   display: block;

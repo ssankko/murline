@@ -244,9 +244,14 @@ test('the cursor band stands over the first Onset', async () => {
   sheet.frame(snapshot(0), 100, 0);
   const cursor = host.querySelector<HTMLElement>('.sheet-cursor')!;
 
-  expect(cursor.offsetWidth).toBeGreaterThan(0);
-  expect(cursor.offsetHeight).toBeGreaterThan(0);
-  expect(cursor.offsetLeft + cursor.offsetWidth / 2).toBeCloseTo(sheet.xOfOnset(0), 0);
+  // Screen pixels, so the band is read where the eye finds it whatever moves it there.
+  const box = cursor.getBoundingClientRect();
+  expect(box.width).toBeGreaterThan(0);
+  expect(box.height).toBeGreaterThan(0);
+  expect(box.left + box.width / 2 - host.getBoundingClientRect().left).toBeCloseTo(
+    sheet.xOfOnset(0) * scaleOf(host),
+    0,
+  );
 
   sheet.dispose();
 }, 60_000);
@@ -291,6 +296,32 @@ test('the cursor band eases into a new size and takes its first one flat', async
   sheet.frame(snapshot(0), 100, 16);
   expect(getComputedStyle(cursor).transitionProperty).toBe('width, height, top');
   expect(getComputedStyle(cursor).transitionDuration).toBe('0.2s, 0.2s, 0.2s');
+  expect(getComputedStyle(cursor).transitionTimingFunction).toBe(
+    'cubic-bezier(0.65, 0, 0.35, 1), cubic-bezier(0.65, 0, 0.35, 1), cubic-bezier(0.65, 0, 0.35, 1)',
+  );
+
+  sheet.dispose();
+}, 60_000);
+
+test('the view glides back to the cursor slowest at both ends of the glide', async () => {
+  const host = hostEl();
+  const sheet = await open(BACH, host);
+  const scroll = host.firstElementChild as HTMLElement;
+  // One tick far enough along the line that holding the cursor 30 % from the left edge scrolls.
+  const at = (now: number) => {
+    sheet.frame(snapshot(sheet.score.playOrder[200]!.tick, { stepIndex: 200 }), 100, now);
+    return scroll.scrollLeft;
+  };
+
+  // The first running frame attaches the view and glides it in from where the reader left it.
+  const from = at(0);
+  const to = at(300);
+  expect(to).toBeGreaterThan(from);
+
+  // Symmetric: half the time covers half the travel, and the first tenth of it covers almost none.
+  // The view scrolls in whole pixels, so the midpoint reads back rounded.
+  expect(Math.abs(at(150) - (from + to) / 2)).toBeLessThanOrEqual(1);
+  expect(at(30) - from).toBeLessThan((to - from) * 0.1);
 
   sheet.dispose();
 }, 60_000);
@@ -335,14 +366,15 @@ test('the count-in runs a line towards the cursor, which stands where the count-
   const runner = host.querySelector<HTMLElement>('.sheet-runner')!;
   const countIn = (playedTick: number) =>
     snapshot(playedTick, { state: 'counting-in', countInTo: 0 });
-  // Both lines hang by their left edge, so their place is read back from their middle.
-  const middleOf = (el: HTMLElement) => parseFloat(el.style.left) + el.offsetWidth / 2;
+  // Both lines hang at the left edge of the content and travel by transform, so their place is
+  // read back from the x they were moved to and their own width.
+  const middleOf = (el: HTMLElement) => new DOMMatrix(el.style.transform).e + el.offsetWidth / 2;
 
   // A count-in into the first Onset counts at ticks before the walk, so the runner comes in from
   // the left of it rather than parking on it.
   sheet.frame(countIn(-480), 100, 0);
   const far = middleOf(runner);
-  const stood = cursor.style.left;
+  const stood = cursor.style.transform;
   expect(runner.style.display).toBe('block');
   expect(far).toBeGreaterThan(0);
   expect(far).toBeLessThan(sheet.xOfOnset(0) - 1);
@@ -352,7 +384,7 @@ test('the count-in runs a line towards the cursor, which stands where the count-
   expect(near).toBeGreaterThan(far);
   expect(near).toBeLessThan(sheet.xOfOnset(0));
   // The real cursor never moves through a count-in: it waits at the tick the count-in leads to.
-  expect(cursor.style.left).toBe(stood);
+  expect(cursor.style.transform).toBe(stood);
   expect(middleOf(cursor)).toBeCloseTo(sheet.xOfOnset(0), 0);
 
   // A count-in longer than the paper left of the first Onset holds the runner at the edge.
@@ -431,6 +463,12 @@ test('a fast resize chases the last bar line and never queues the ones before it
 
   sheet.dispose();
 }, 60_000);
+
+/** What the sheet is scaled to: the SVG's screen width over the width it was drawn at. */
+function scaleOf(host: HTMLElement): number {
+  const svg = host.querySelector('svg')!;
+  return svg.getBoundingClientRect().width / Number(svg.getAttribute('width'));
+}
 
 /** How far two boxes print over one another: at zero or below they only share an edge. */
 function overlap(a: DOMRect, b: DOMRect): number {

@@ -30,6 +30,7 @@ import {
 } from '@/library/queries';
 import { reindexIfChanged } from '@/library/scan';
 import { clamp } from '@/lib/utils';
+import { Collapse } from '@/look/collapse';
 import { flipTheme, useDark } from '@/look/use-dark';
 import { useMidiStatus } from '@/midi/use-midi-status';
 import { click, setClickVolume } from '@/play/click';
@@ -534,15 +535,15 @@ export function PlayScreen({
             >
               <Tally4 {...ICON} />
             </BarButton>
-            {!performing && (
+            <Collapse axis="x" open={!performing}>
               <BarButton label="Restart" onClick={() => engineRef.current?.restart()}>
                 <RotateCcw {...ICON} />
               </BarButton>
-            )}
+            </Collapse>
             <BarButton label={running ? 'Pause' : 'Play'} disc onClick={toggle}>
               {running ? <Pause {...ICON} /> : <Play {...ICON} />}
             </BarButton>
-            {!performing && (
+            <Collapse axis="x" open={!performing}>
               <BarButton
                 label={sectionLabel(measures, section)}
                 pressed={loop}
@@ -550,7 +551,7 @@ export function PlayScreen({
               >
                 <Repeat {...ICON} />
               </BarButton>
-            )}
+            </Collapse>
             <BarButton
               label="Metronome"
               pressed={metronome}
@@ -560,10 +561,11 @@ export function PlayScreen({
             </BarButton>
           </div>
 
-          <div className="ml-auto flex items-center gap-2.5">
-            {/* A performance runs at one tempo, one hands setting and in Flow, so they all go. */}
-            {!performing && (
-              <>
+          <div className="ml-auto flex items-center">
+            {/* A performance runs at one tempo, one hands setting and in Flow, so they all fold
+                away, their own gap with them. */}
+            <Collapse axis="x" open={!performing}>
+              <div className="flex items-center gap-2.5 pr-2.5">
                 <div className="flex items-center">
                   <BarButton label="Slower" onClick={() => stepTempo(-TEMPO_STEP)}>
                     <Minus {...ICON} />
@@ -602,8 +604,8 @@ export function PlayScreen({
                     <Hand {...ICON} />
                   </BarButton>
                 </div>
-              </>
-            )}
+              </div>
+            </Collapse>
             {/* The only worded control: outlined to arm a performance, filled to stop one. */}
             <Tooltip>
               <TooltipTrigger asChild>

@@ -3,13 +3,14 @@
 // behind a dashed divider. Everything here is drawing; the play itself lives in src/play/engine.ts.
 
 import { KEYBOARD_H, drawKeyboard, keyLayout, keyRange, type KeyLayout } from '@/lane/keyboard';
+import { clamp } from '@/lib/utils';
 import { INK, PAPER, colorOf, tone } from '@/look/color';
 import { reducedMotion } from '@/look/motion';
 import type { Engine, LoopSpan, PlayEvent, Snapshot } from '@/play/engine';
 import type { Section } from '@/play/section';
 import { isInactiveHand, type HandsSetting } from '@/play/settings';
 import { barsOfWalk, beatOf } from '@/score/beat';
-import { TICKS_PER_QUARTER, type PlayStep, type Score } from '@/score/types';
+import { TICKS_PER_QUARTER, type ChordEvent, type PlayStep, type Score } from '@/score/types';
 
 /** Look knobs, all global settings the gear writes to. */
 export interface LaneLook {
@@ -56,6 +57,22 @@ const HANDS_FADE_MS = 200;
 const SECTION_ALPHA = 0.09;
 const SECTION_FADE_MS = 200;
 
+/** The harmony panel at the lane's top right: its inset from the corner, a row's padding and fill. */
+const PANEL_INSET = 8;
+const PANEL_PAD = 6;
+const PANEL_ALPHA = 0.8;
+const PANEL_GAP = 4;
+/** Type size of the chord sounding now and of the two after it; the degree follows at 0.75 of it. */
+const CHORD_SIZE = 20;
+const NEXT_SIZE = 13;
+const DEGREE_GAP = 4;
+/** A beat glyph: its width, the step to the next one, and the gap it leaves the chord name. */
+const GLYPH_W = 4;
+const GLYPH_STEP = 6;
+const GLYPH_GAP = 8;
+/** How far the countdown counts; a chord further off than this holds a full row until it nears. */
+const LOOKAHEAD = 16;
+
 /** One ring or blink playing out at a key. */
 interface Effect {
   kind: 'hit' | 'extra' | 'miss';
@@ -78,6 +95,19 @@ interface LaneJump {
   label: string;
 }
 
+/** A chord of the harmony in played time: a repeated bar names its chords again. */
+export interface LaneChord {
+  tick: number;
+  event: ChordEvent;
+}
+
+/** One beat of a countdown: the tick it ends at, how long it lasts, and whether it opens a bar. */
+export interface BeatGlyph {
+  end: number;
+  span: number;
+  strong: boolean;
+}
+
 export class Lane {
   /** Live look knobs: the gear writes into this object and the next frame reads it. */
   readonly look: LaneLook;
@@ -90,6 +120,7 @@ export class Lane {
   private readonly resize: ResizeObserver;
   private bars: LaneBar[];
   private jumps: LaneJump[];
+  private chords: LaneChord[];
   /** The walk the bars and the dividers were read from; Loop swaps it for the linear one. */
   private walk: PlayStep[];
   private range: [number, number];
@@ -124,6 +155,7 @@ export class Lane {
     this.walk = engine.walk;
     this.bars = barsOf(engine.score, this.walk);
     this.jumps = jumpsOf(engine.score, this.walk);
+    this.chords = chordsOf(engine.score.harmony, this.walk);
     this.hands = engine.settings.hands;
     this.handsBefore = this.hands;
     // The range spans both hands, so a change of hands never re-lays the keyboard out.
@@ -209,6 +241,7 @@ export class Lane {
       this.walk = this.engine.walk;
       this.bars = barsOf(this.engine.score, this.walk);
       this.jumps = jumpsOf(this.engine.score, this.walk);
+      this.chords = chordsOf(this.engine.score.harmony, this.walk);
     }
 
     const loop = this.engine.loopSpan();
@@ -222,6 +255,7 @@ export class Lane {
     this.drawNotes(laneH, pxPerTick, -Infinity, loop?.to ?? Infinity, true);
     if (loop) this.drawNextLap(width, laneH, pxPerTick, loop);
     this.drawJumps(width, laneH, pxPerTick, loop);
+    this.drawHarmony(width, loop);
     ctx.restore();
 
     this.drawNowLine(width, laneH, windowTicks * 2 * pxPerTick);
@@ -497,6 +531,87 @@ export class Lane {
     return base;
   };
 
+  /**
+   * The chord sounding now and the two after it, each on its own panel at the top right. A next
+   * chord carries one glyph per beat left before it, a stick where a bar opens, and the leftmost
+   * glyph is the beat that ends first.
+   */
+  private drawHarmony(width: number, loop: LoopSpan | null): void {
+    if (this.chords.length === 0) return;
+    // Past the wrap the panel reads the lap again, as the lane draws it again.
+    const chords = loop
+      ? throughWrap(this.chords, loop, (chord, by) => ({ ...chord, tick: chord.tick + by }))
+      : this.chords;
+    const bars = loop
+      ? throughWrap(this.bars, loop, (bar, by) => ({
+          ...bar,
+          tick: bar.tick + by,
+          endTick: bar.endTick + by,
+        }))
+      : this.bars;
+
+    const [current, ...next] = chordsAt(chords, this.playedTick);
+    const rows: { chord: LaneChord; size: number; glyphs: BeatGlyph[] }[] = [];
+    if (current) rows.push({ chord: current, size: CHORD_SIZE, glyphs: [] });
+    for (const chord of next) {
+      if (!chord) continue;
+      const glyphs = beatsBefore(bars, this.playedTick, chord.tick);
+      rows.push({ chord, size: NEXT_SIZE, glyphs });
+    }
+
+    const ctx = this.ctx;
+    const fading = !reducedMotion();
+    let y = PANEL_INSET;
+    for (const { chord, size, glyphs } of rows) {
+      const degreeSize = size * 0.75;
+      ctx.font = `600 ${size}px system-ui, sans-serif`;
+      const nameW = ctx.measureText(chord.event.absolute).width;
+      ctx.font = `${degreeSize}px system-ui, sans-serif`;
+      const degreeW = ctx.measureText(chord.event.degree).width;
+      const countW =
+        glyphs.length === 0 ? 0 : (glyphs.length - 1) * GLYPH_STEP + GLYPH_W + GLYPH_GAP;
+      const h = size + PANEL_PAD * 2;
+      const w = PANEL_PAD * 2 + countW + nameW + DEGREE_GAP + degreeW;
+      const left = width - PANEL_INSET - w;
+
+      ctx.globalAlpha = PANEL_ALPHA;
+      ctx.fillStyle = tone(PAPER, this.dark);
+      ctx.beginPath();
+      ctx.roundRect(left, y, w, h, 4);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      // The countdown, the name and the degree read left to right, the two texts on one baseline.
+      const nameX = left + PANEL_PAD + countW;
+      const baseline = y + PANEL_PAD + size * 0.8;
+      ctx.font = `600 ${size}px system-ui, sans-serif`;
+      ctx.fillStyle = tone(INK.duration, this.dark);
+      ctx.fillText(chord.event.absolute, nameX, baseline);
+      ctx.font = `${degreeSize}px system-ui, sans-serif`;
+      ctx.fillStyle = tone(INK.scaffolding, this.dark);
+      ctx.fillText(chord.event.degree, nameX + nameW + DEGREE_GAP, baseline);
+
+      glyphs.forEach((glyph, i) => {
+        // A glyph fades over the last quarter of its beat, off the clock alone.
+        const remains = (glyph.end - this.playedTick) / (glyph.span / 4);
+        ctx.globalAlpha = fading ? clamp(remains, 0, 1) : 1;
+        ctx.beginPath();
+        ctx.ellipse(
+          left + PANEL_PAD + GLYPH_W / 2 + i * GLYPH_STEP,
+          y + h / 2,
+          GLYPH_W / 2,
+          glyph.strong ? GLYPH_W * 1.25 : GLYPH_W / 2,
+          0,
+          0,
+          Math.PI * 2,
+        );
+        ctx.fill();
+      });
+      ctx.globalAlpha = 1;
+      y += h + PANEL_GAP;
+    }
+  }
+
   private drawNotice(width: number, laneH: number): void {
     const ctx = this.ctx;
     ctx.fillStyle = this.dark ? 'rgba(22,22,22,0.82)' : 'rgba(233,233,233,0.82)';
@@ -538,4 +653,55 @@ function jumpsOf(score: Score, walk: PlayStep[]): LaneJump[] {
     jumps.push({ tick: walk[i]!.tick, label: backToBar(number) });
   }
   return jumps;
+}
+
+/** Every chord of the harmony in played time, one entry per pass of a repeated bar. */
+export function chordsOf(harmony: ChordEvent[], walk: PlayStep[]): LaneChord[] {
+  const byOnset = new Map(harmony.map((event) => [event.onsetIndex, event]));
+  const chords: LaneChord[] = [];
+  for (const step of walk) {
+    const event = byOnset.get(step.onsetIndex);
+    if (event) chords.push({ tick: step.tick, event });
+  }
+  return chords;
+}
+
+/** The chord in force at a played tick and the two after it; the first is missing before them all. */
+export function chordsAt(chords: LaneChord[], playedTick: number): (LaneChord | undefined)[] {
+  const at = chords.findLastIndex((chord) => chord.tick <= playedTick);
+  return [chords[at], chords[at + 1], chords[at + 2]];
+}
+
+/**
+ * One glyph per beat left before a chord: a stick where a bar opens, a dot inside it, the beat
+ * ending first at the head. A beat counts while it has not ended and it ends at or before the chord.
+ */
+export function beatsBefore(bars: LaneBar[], playedTick: number, chordTick: number): BeatGlyph[] {
+  const glyphs: BeatGlyph[] = [];
+  for (const bar of bars) {
+    if (bar.endTick <= playedTick) continue;
+    if (bar.tick >= chordTick) break;
+    for (let tick = bar.tick; tick < bar.endTick - 1e-9; tick += bar.beatTicks) {
+      const end = tick + bar.beatTicks;
+      if (end <= playedTick || end > chordTick) continue;
+      glyphs.push({ end, span: bar.beatTicks, strong: tick === bar.tick });
+      if (glyphs.length === LOOKAHEAD) return glyphs;
+    }
+  }
+  return glyphs;
+}
+
+/** A list in played time cut at the wrap, with the lap's own entries again one lap later. */
+export function throughWrap<T extends { tick: number }>(
+  items: T[],
+  loop: LoopSpan,
+  later: (item: T, by: number) => T,
+): T[] {
+  const lap = loop.to - loop.from;
+  return [
+    ...items.filter((item) => item.tick < loop.to),
+    ...items
+      .filter((item) => item.tick >= loop.from && item.tick < loop.to)
+      .map((item) => later(item, lap)),
+  ];
 }

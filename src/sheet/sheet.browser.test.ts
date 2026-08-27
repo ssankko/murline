@@ -181,6 +181,20 @@ test('the lift keeps the highest ink of the sheet on the paper', async () => {
   sheet.dispose();
 }, 60_000);
 
+test('the first chord bubble prints clear of the tempo mark and the tempo word', async () => {
+  const host = hostEl();
+  const sheet = await open(BACH, host);
+
+  const word = [...host.querySelectorAll('svg text')].find((el) => el.textContent === 'Andante')!;
+  const mark = host.querySelector('svg .vf-stavetempo')!;
+  const bubble = host.querySelector('.chord-bubble')!.getBoundingClientRect();
+  expect(word.getBoundingClientRect().width).toBeGreaterThan(0);
+  expect(overlap(bubble, word.getBoundingClientRect())).toBeLessThanOrEqual(0);
+  expect(overlap(bubble, mark.getBoundingClientRect())).toBeLessThanOrEqual(0);
+
+  sheet.dispose();
+}, 60_000);
+
 test('a disposed sheet leaves its host empty for the next one', async () => {
   const host = hostEl();
   const first = await open(BACH, host);
@@ -232,6 +246,14 @@ test('the cursor band stands over the first Onset', async () => {
 
   sheet.dispose();
 }, 60_000);
+
+/** How far two boxes print over one another: at zero or below they only share an edge. */
+function overlap(a: DOMRect, b: DOMRect): number {
+  return Math.min(
+    Math.min(a.right, b.right) - Math.max(a.left, b.left),
+    Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top),
+  );
+}
 
 /** A notehead of the sheet's first Onset: which host it hangs in says which render is on screen. */
 function headOf(sheet: Sheet): HTMLElement {

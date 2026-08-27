@@ -31,6 +31,9 @@ const BUBBLE_GAP = 6;
 /** Clear paper kept above the highest ink of the sheet. */
 const TOP_AIR = 4;
 
+/** How far into a bubble row a label must reach to take it; less than this is slack in its box. */
+const LABEL_REACH = 3;
+
 /**
  * The ring drawn around the noteheads of the Onset the cursor stands at. It reads as paper
  * cleared out of the amber cursor band, so it works on either paper.
@@ -91,8 +94,8 @@ interface Drag {
   moved: boolean;
 }
 
-/** The left and right edge of one bar, in unscaled pixels. */
-interface BarBox {
+/** The left and right edge of something drawn on the paper, in unscaled pixels. */
+interface Span {
   left: number;
   right: number;
 }
@@ -134,7 +137,7 @@ export class Sheet {
   /** The played timeline the cursor reads; the engine swaps it when Loop goes on. */
   private walk: PlayStep[] = [];
   /** Left and right edge of each bar in unscaled pixels, for the Section a drag picks. */
-  private boxes: (BarBox | undefined)[] = [];
+  private boxes: (Span | undefined)[] = [];
 
   private placed: Placed[] = [];
   private system = { top: 0, bottom: 200 };
@@ -545,8 +548,8 @@ export class Sheet {
   /**
    * One bubble per chord event of the Score, standing over its Onset in the strip of paper above
    * the top staff. A bubble that would print over the one before it drops to a second row rather
-   * than sliding away from its Onset. Widths are measured unscaled, as the x values are, so the
-   * rows hold at every scale.
+   * than sliding away from its Onset; one that would print over an OSMD label moves right of the
+   * label. Widths are measured unscaled, as the x values are, so the rows hold at every scale.
    */
   private placeBubbles(): void {
     this.bubbles.replaceChildren();
@@ -557,7 +560,6 @@ export class Sheet {
           `gap:4px;white-space:nowrap;font-size:11px;font-weight:600;line-height:${BUBBLE_ROW}px`,
       );
       el.className = 'chord-bubble';
-      el.style.left = `${this.xOfOnset(event.onsetIndex)}px`;
       el.style.color = tone(INK.duration, this.dark);
       const degree = document.createElement('i');
       degree.style.cssText = `font-style:normal;font-weight:400;font-size:8.5px;line-height:${BUBBLE_ROW}px`;
@@ -575,9 +577,26 @@ export class Sheet {
       x: this.xOfOnset(this.score.harmony[i]!.onsetIndex),
       width: el.offsetWidth,
     }));
-    bubbleRows(places).forEach((row, i) => {
-      this.bubbleEls[i]!.style.top = `${rows[row]!}px`;
+    const blocked = rows.map((y) => this.labelSpans(y, y + BUBBLE_ROW));
+    bubblePlaces(places, blocked).forEach((at, i) => {
+      this.bubbleEls[i]!.style.left = `${at.x}px`;
+      this.bubbleEls[i]!.style.top = `${rows[at.row]!}px`;
     });
+  }
+
+  /**
+   * Left and right edge of every label OSMD printed into one row of the strip: the tempo mark, the
+   * tempo word, a dynamic above the staff, a bar number. Labels are sorted by their left edge.
+   */
+  private labelSpans(top: number, bottom: number): Span[] {
+    const spans: Span[] = [];
+    for (const label of this.paper.querySelectorAll('svg text, svg .vf-stavetempo')) {
+      const box = (label as SVGGraphicsElement).getBBox();
+      if (Math.min(box.y + box.height, bottom) - Math.max(box.y, top) > LABEL_REACH) {
+        spans.push({ left: box.x, right: box.x + box.width });
+      }
+    }
+    return spans.sort((a, b) => a.left - b.left);
   }
 
   /** Every chord the cursor has left behind reads dimmed; the CSS says how fast. */
@@ -639,16 +658,32 @@ export class Sheet {
 }
 
 /**
- * Which row each bubble takes, reading left to right: the second row for one that would print over
- * the bubble before it. A third bubble over the same place shares the second row with the second.
+ * Where each bubble prints, reading left to right: the row it takes and the x it centres on. A
+ * bubble that would print over the bubble before it or over a label of its row takes the row that
+ * leaves it nearest its Onset; when both rows are taken it moves right of what stands there.
  */
-export function bubbleRows(bubbles: { x: number; width: number }[]): number[] {
-  let filled = -Infinity;
+export function bubblePlaces(
+  bubbles: { x: number; width: number }[],
+  blocked: Span[][],
+): { x: number; row: number }[] {
+  const filled = blocked.map(() => -Infinity);
   return bubbles.map(({ x, width }) => {
-    if (x - width / 2 < filled) return 1;
-    filled = x + width / 2 + BUBBLE_GAP;
-    return 0;
+    const xs = blocked.map((spans, row) => clearOf(x, width, filled[row]!, spans));
+    const row = xs[0]! <= xs[1]! ? 0 : 1;
+    filled[row] = xs[row]! + width / 2 + BUBBLE_GAP;
+    return { x: xs[row]!, row };
   });
+}
+
+/** The leftmost centre at or right of `x` clear of the row's last bubble and of its labels. */
+function clearOf(x: number, width: number, filled: number, spans: Span[]): number {
+  let at = Math.max(x, filled + width / 2);
+  for (const span of spans) {
+    if (at - width / 2 < span.right && at + width / 2 > span.left) {
+      at = span.right + BUBBLE_GAP + width / 2;
+    }
+  }
+  return at;
 }
 
 function child(parent: HTMLElement, style: string): HTMLElement {

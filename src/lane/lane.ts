@@ -60,6 +60,13 @@ export const GLIDE_MS = 300;
 const DETACH_MS = 2000;
 /** How long a count-in line takes to fade out once its beat is spent. */
 const COUNT_FADE_MS = 120;
+/**
+ * The breath the count-in number takes as its beat is struck: how far it swells, how long the whole
+ * breath runs, and the share of that it spends growing.
+ */
+const COUNT_POP = 0.18;
+const COUNT_POP_MS = 160;
+const COUNT_POP_RISE = 0.4;
 /** How long the notice over the keys takes to come up or go. */
 const NOTICE_FADE_MS = 150;
 
@@ -160,6 +167,13 @@ const GLYPH_STEP = 6;
 const GLYPH_GAP = 8;
 /** How far the countdown counts; a chord further off than this holds a full row until it nears. */
 const LOOKAHEAD = 16;
+/**
+ * A countdown glyph burning up on its beat: the share of the beat the whole burn takes, the share
+ * of the burn the collapse at the end takes, and how far the glyph swells before it goes.
+ */
+const BURN_SHARE = 0.25;
+const BURN_COLLAPSE = 0.18;
+const BURN_SWELL = 0.3;
 
 /** One ring or splash playing out at a key. A miss leaves no mark on the keys. */
 interface Effect {
@@ -288,8 +302,14 @@ export class Lane {
   private lineLag = 0;
   private lineFrom = 0;
   private lineAt = -Infinity;
-  /** Count-in lines as last drawn, keyed by their beat, kept past the beat while they fade out. */
-  private readonly countLines = new Map<number, { y: number; label: string; spentAt: number }>();
+  /**
+   * Count-in lines as last drawn, keyed by their beat, kept past the beat while they fade out.
+   * `firedAt` is the wall the line became the count in force, which its number pops from.
+   */
+  private readonly countLines = new Map<
+    number,
+    { y: number; label: string; spentAt: number; firedAt: number }
+  >();
   /** What the engine's counters and its motion read last frame, which is how a seek is spotted. */
   private lastResets: number;
   private lastWraps: number;
@@ -537,10 +557,16 @@ export class Lane {
     this.drawNotes(laneH, pxPerTick, -Infinity, loop?.to ?? Infinity, true);
     if (loop) this.drawNextLap(width, laneH, pxPerTick, loop);
     this.drawJumps(width, laneH, pxPerTick, loop);
-    this.drawHarmony(width, loop);
     ctx.restore();
 
     this.drawNowLine(width, laneH, pxPerTick, windowTicks * 2 * pxPerTick);
+    // The panels stand over the now-line, and the lane clips them so one leaving slides off the top.
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, width, laneH);
+    ctx.clip();
+    this.drawHarmony(width, loop);
+    ctx.restore();
     this.drawSplashes(laneH);
     this.drawRings(laneH, pxPerTick);
     drawKeyboard(
@@ -657,7 +683,8 @@ export class Lane {
 
   /**
    * The count-in: one line per beat left, falling to the now-line where the music starts. A line
-   * whose beat is spent holds the place it stood at and fades out from there.
+   * whose beat is spent holds the place it stood at and fades out from there. The lowest line still
+   * over the now-line is the count in force, and its number breathes from the frame it takes over.
    */
   private drawCountIn(width: number, laneH: number, pxPerTick: number, beats: number[]): void {
     const live = new Set<number>();
@@ -665,7 +692,14 @@ export class Lane {
       const y = Math.round(this.y(beats[i]!, laneH, pxPerTick)) + 0.5;
       if (y < -20 || y > laneH) continue;
       live.add(beats[i]!);
-      this.countLines.set(beats[i]!, { y, label: String(beats.length - i), spentAt: Infinity });
+      const fired = this.countLines.get(beats[i]!)?.firedAt ?? -Infinity;
+      const firedAt = live.size === 1 && fired === -Infinity ? this.now : fired;
+      this.countLines.set(beats[i]!, {
+        y,
+        label: String(beats.length - i),
+        spentAt: Infinity,
+        firedAt,
+      });
     }
     const ctx = this.ctx;
     ctx.font = '600 15px system-ui, sans-serif';
@@ -686,7 +720,18 @@ export class Lane {
       ctx.moveTo(0, line.y);
       ctx.lineTo(width, line.y);
       ctx.stroke();
-      ctx.fillText(line.label, 10, line.y - 6);
+      const pop = this.reduced ? 1 : popAt((this.now - line.firedAt) / COUNT_POP_MS);
+      if (pop === 1) ctx.fillText(line.label, 10, line.y - 6);
+      else {
+        // The number swells about its own middle, half the type's cap height over its baseline, so
+        // the breath reads in place instead of pushing the glyph off the line.
+        const half = ctx.measureText(line.label).width / 2;
+        ctx.save();
+        ctx.translate(10 + half, line.y - 11);
+        ctx.scale(pop, pop);
+        ctx.fillText(line.label, -half, 5);
+        ctx.restore();
+      }
     }
     ctx.globalAlpha = 1;
   }
@@ -1211,17 +1256,27 @@ export class Lane {
     // The countdown stands outside the panel, its last glyph against the panel's left edge, so
     // the beats still to come hold their place as the row shrinks toward the panel.
     const bottom = rect.y + rect.h / 2 + 2;
-    const fading = !this.reduced;
-    ctx.fillStyle = tone(INK.scaffolding, this.dark);
+    const rest = tone(INK.scaffolding, this.dark);
+    // The flare goes to the lane's strongest ink, which is white over dark paper.
+    const flare = tone(NOW_LINE, this.dark);
     glyphs.forEach((glyph, i) => {
-      // A glyph fades over the last quarter of its beat, off the clock alone.
-      const remains = (glyph.end - this.playedTick) / (glyph.span / 4);
-      ctx.globalAlpha = alpha * (fading ? clamp(remains, 0, 1) : 1);
+      // How much of the burn a glyph still has, off the clock alone; a whole one is at rest.
+      const left = clamp((glyph.end - this.playedTick) / (glyph.span * BURN_SHARE), 0, 1);
+      const burn = this.reduced ? { alpha: left, scale: 1, heat: 0 } : burnAt(left);
+      ctx.globalAlpha = alpha * burn.alpha;
+      ctx.fillStyle = burn.heat > 0 ? mix(rest, flare, burn.heat) : rest;
       const x = rect.x - GLYPH_GAP - GLYPH_W - (glyphs.length - 1 - i) * GLYPH_STEP;
+      const tall = glyph.strong ? GLYPH_TALL : GLYPH_W;
+      ctx.save();
+      // Every glyph swells and collapses about its own centre, so the row holds its places.
+      ctx.translate(x + GLYPH_W / 2, bottom - tall / 2);
+      ctx.scale(burn.scale, burn.scale);
       ctx.beginPath();
-      if (glyph.strong) ctx.roundRect(x, bottom - GLYPH_TALL, GLYPH_W, GLYPH_TALL, GLYPH_W / 2);
-      else ctx.arc(x + GLYPH_W / 2, bottom - GLYPH_W / 2, GLYPH_W / 2, 0, Math.PI * 2);
+      if (glyph.strong) {
+        ctx.roundRect(-GLYPH_W / 2, -GLYPH_TALL / 2, GLYPH_W, GLYPH_TALL, GLYPH_W / 2);
+      } else ctx.arc(0, 0, GLYPH_W / 2, 0, Math.PI * 2);
       ctx.fill();
+      ctx.restore();
     });
     ctx.globalAlpha = 1;
   }
@@ -1418,6 +1473,33 @@ export function bounceAt(t: number): number {
   // Outside its own time the block is its own size, whatever number the clock hands over.
   if (!(t > 0 && t < 1)) return 1;
   return 1 + POP * Math.sin(2 * Math.PI * t) * (1 - t);
+}
+
+/**
+ * The breath a count-in number takes as its beat is struck: up quickly and back down slowly, and
+ * its own size outside its time.
+ */
+export function popAt(t: number): number {
+  if (!(t > 0 && t < 1)) return 1;
+  const rising = t < COUNT_POP_RISE;
+  const at = rising ? t / COUNT_POP_RISE : (t - COUNT_POP_RISE) / (1 - COUNT_POP_RISE);
+  return 1 + COUNT_POP * (rising ? 1 - (1 - at) ** 3 : 1 - easeInOut(at));
+}
+
+/**
+ * A countdown glyph burning up on its beat, from `left`, the share of its burn still to come: it
+ * flares toward the strongest ink and swells as the beat runs out, then implodes to nothing.
+ */
+export function burnAt(left: number): { alpha: number; scale: number; heat: number } {
+  // A glyph with a whole burn left, or a clock handing over a wild number, rests at its own size.
+  if (!(left < 1)) return { alpha: 1, scale: 1, heat: 0 };
+  if (left <= 0) return { alpha: 0, scale: 0, heat: 1 };
+  if (left <= BURN_COLLAPSE) {
+    const held = left / BURN_COLLAPSE;
+    return { alpha: held, scale: (1 + BURN_SWELL) * held, heat: 1 };
+  }
+  const heat = (1 - left) / (1 - BURN_COLLAPSE);
+  return { alpha: 1, scale: 1 + BURN_SWELL * heat, heat };
 }
 
 /**

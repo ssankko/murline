@@ -20,6 +20,8 @@ export type Settings = {
   theme: Theme;
   /** Share of the window height the sheet takes, 0.2 to 0.6. */
   sheet_split: number;
+  /** Measures and notes take their width from their duration, so the cursor runs at one speed. */
+  sheet_proportional: boolean;
   /** Beats of lane visible above the now-line. */
   lane_lookahead: number;
   /** Width of a falling block as a percent of its key. */
@@ -127,6 +129,7 @@ export const SETTING_DEFAULTS: Settings = {
   midi_device: null,
   theme: 'system',
   sheet_split: DEFAULT_SPLIT,
+  sheet_proportional: false,
   click_volume: 70,
   ...knobDefaults(DEFAULT_LANE_LOOK, LANE_KNOBS),
   ...knobDefaults(DEFAULT_PLAY_SETTINGS, PIECE_DEFAULT_KEYS),

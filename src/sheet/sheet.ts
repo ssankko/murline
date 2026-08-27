@@ -72,6 +72,14 @@ const RUNNER_W = 2;
 /** How long the cursor takes to slide when it is not being moved by the clock. */
 const GLIDE_MS = 220;
 
+/**
+ * Slack every measure of a sheet spaced by time keeps over the tightest measure's pixels per tick.
+ * VexFlow spreads only the width a measure has over its own minimum packing, so slack is what
+ * carries the notes towards their time. A calibration knob: the whole sheet grows with it, and
+ * OSMD breaks its one line into systems past 32767 px.
+ */
+const STRETCH = 1.5;
+
 /** How long the cursor band takes to grow or shrink into a new size, as the Section's tint fades. */
 const EASE_MS = 200;
 
@@ -131,6 +139,10 @@ export class Sheet {
   onSection: ((section: Section | null) => void) | null = null;
 
   private dark: boolean;
+  /** Whether the measures take their width from their duration rather than from their engraving. */
+  private proportional = false;
+  /** OSMD's own cap on how far a chord symbol or a lyric may stretch a measure. */
+  private readonly elongation: number;
   private readonly host: HTMLElement;
   private readonly scroll: HTMLElement;
   private readonly scale: HTMLElement;
@@ -242,6 +254,7 @@ export class Sheet {
     );
     this.marker.className = 'sheet-marker';
     this.osmd = makeOsmd(this.paper, dark);
+    this.elongation = this.osmd.EngravingRules.MaximumLyricsElongationFactor;
 
     const { signal } = this.listeners;
     host.addEventListener('pointerdown', (event) => this.down(event), { signal });
@@ -266,12 +279,16 @@ export class Sheet {
     bytes: Uint8Array,
     fileName: string,
     dark: boolean,
+    proportional = false,
   ): Promise<Sheet> {
     const sheet = new Sheet(host, dark);
+    sheet.proportional = proportional;
     await loadInto(sheet.osmd, bytes, fileName);
     sheet.osmd.render();
     sheet.score = buildScore(sheet.osmd.Sheet);
     sheet.score.harmony = analyzeHarmony(sheet.score);
+    // The measure widths are read off the render above, which stands at OSMD's own spacing.
+    if (proportional) sheet.space();
     sheet.layout();
     return sheet;
   }
@@ -319,6 +336,54 @@ export class Sheet {
     this.layout();
     this.drawn.onset = -1;
     this.drawn.scale = 0;
+  }
+
+  /**
+   * Spaces the sheet by musical time, or puts OSMD's own engraved spacing back. Spaced by time
+   * the cursor crosses the paper at a constant speed, because it interpolates between onsets.
+   */
+  setProportional(on: boolean): void {
+    if (on === this.proportional) return;
+    this.proportional = on;
+    this.space();
+    this.layout();
+    this.drawn.onset = -1;
+    this.drawn.scale = 0;
+  }
+
+  /**
+   * Writes the width factor of every measure and renders. Spaced by time each measure's note area
+   * is proportional to its duration in ticks, and VexFlow spreads the width a measure gains that
+   * way over its onsets in time; OSMD's own spacing is every factor back at 1. The widths it reads
+   * come from the render standing, whose factors are all 1 either way round.
+   */
+  private space(): void {
+    const measures = this.osmd.Sheet.SourceMeasures;
+    const rules = this.osmd.EngravingRules;
+    if (!this.proportional) {
+      for (const measure of measures) measure.WidthFactor = 1;
+      rules.MaximumLyricsElongationFactor = this.elongation;
+      this.osmd.render();
+      return;
+    }
+    // An elongated measure would be wider than its duration asks for.
+    rules.MaximumLyricsElongationFactor = 1;
+    const widths = this.osmd.GraphicSheet.MeasureList.map(
+      (staves) => staves.find((measure) => measure)?.minimumStaffEntriesWidth ?? 0,
+    );
+    const ticks = this.score.measures.map((measure) => measure.durationTicks);
+    // Pixels per tick of the tightest measure: every other measure opens up to it, so none is
+    // asked for less width than its own notes pack into.
+    let perTick = 0;
+    widths.forEach((width, i) => {
+      if (width > 0 && ticks[i]) perTick = Math.max(perTick, width / ticks[i]!);
+    });
+    // Every measure carries a factor: OSMD keeps the last one it saw for a measure that has none.
+    measures.forEach((measure, i) => {
+      const width = widths[i] ?? 0;
+      measure.WidthFactor = width > 0 && ticks[i] ? (perTick * STRETCH * ticks[i]!) / width : 1;
+    });
+    this.osmd.render();
   }
 
   /** Takes the pitch colour off the hand the play no longer expects, and puts it back. */

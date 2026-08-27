@@ -22,7 +22,27 @@ fn migrations() -> Vec<Migration> {
     }]
 }
 
+/// The paper grey the window opens on, dark when macOS is in its dark appearance. The webview
+/// paints this until the page paints itself, so a launch never flashes white.
+fn paper() -> tauri::window::Color {
+    let dark = std::process::Command::new("defaults")
+        .args(["read", "-g", "AppleInterfaceStyle"])
+        .output()
+        .is_ok_and(|out| out.stdout.starts_with(b"Dark"));
+    if dark {
+        tauri::window::Color(0x20, 0x20, 0x20, 255)
+    } else {
+        tauri::window::Color(0xf4, 0xf4, 0xf4, 255)
+    }
+}
+
 pub fn run() {
+    let mut context = tauri::generate_context!();
+    // The window is built from the config, which holds one colour and cannot know the appearance.
+    for window in &mut context.config_mut().app.windows {
+        window.background_color = Some(paper());
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_midi::init())
@@ -49,7 +69,7 @@ pub fn run() {
             pdmx::pdmx_fetch,
             pdmx::pdmx_cancel
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }
 

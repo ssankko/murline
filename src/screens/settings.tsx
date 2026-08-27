@@ -151,6 +151,10 @@ export function SettingsDialog({
     if (typeof picked === 'string') write(key, picked);
   }
 
+  // The box is centred on itself, so it must mount at its full size: content that arrived later
+  // would grow the box and re-centre it under the open animation.
+  if (!values) return null;
+
   return (
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-[560px]">
@@ -159,213 +163,211 @@ export function SettingsDialog({
           <DialogDescription className="sr-only">Every setting of the app.</DialogDescription>
         </DialogHeader>
 
-        {values && (
-          <div className="flex flex-col gap-7">
-            {/* The library folder is the library, and an empty one has no undo, so Reset leaves it. */}
-            <Group
-              title="Library"
-              onReset={() => reset(['pdmx_folder'])}
-              note="A new library folder re-points the app. No file is moved."
-            >
-              <Row label="Library folder">
-                <Path
-                  value={values.library_folder}
-                  onChoose={() => chooseFolder('library_folder').catch(console.error)}
-                />
-              </Row>
-              <Row label="PDMX folder">
-                <Path
-                  value={values.pdmx_folder}
-                  onChoose={() => chooseFolder('pdmx_folder').catch(console.error)}
-                />
-              </Row>
-              <Row label="PDMX scores">
-                <span className="flex flex-none flex-col items-end gap-0.5">
-                  <span className="flex items-center gap-3">
-                    <span className="text-muted-ink text-[12px] tabular-nums">{pdmxStatus}</span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7 flex-none"
-                      onClick={() => {
-                        if (downloading) cancelPdmx();
-                        else void downloadPdmx();
-                      }}
-                    >
-                      {downloading ? 'Cancel' : 'Download PDMX (1.9 GB)'}
-                    </Button>
-                  </span>
-                  {pdmx.error && (
-                    <span className="text-[11px] text-red-600 dark:text-red-400">{pdmx.error}</span>
-                  )}
-                </span>
-              </Row>
-            </Group>
-
-            <Group
-              title="Playing defaults"
-              note="A piece that holds a setting of its own keeps it."
-              onReset={() => reset(Object.keys(PIECE_DEFAULT_KEYS) as (keyof Settings)[])}
-            >
-              <Row label="Tempo (%)">
-                <NumberField
-                  value={values.default_tempo_value}
-                  min={TEMPO_RANGE.percent[0]}
-                  max={TEMPO_RANGE.percent[1]}
-                  onChange={(value) => write('default_tempo_value', value)}
-                />
-              </Row>
-              <Row label="Metronome">
-                <Toggle
-                  value={values.default_metronome}
-                  onChange={(value) => write('default_metronome', value)}
-                />
-              </Row>
-              <Row label="Count-in bars">
-                <NumberField
-                  value={values.default_count_in_bars}
-                  min={0}
-                  max={8}
-                  onChange={(value) => write('default_count_in_bars', value)}
-                />
-              </Row>
-              <Row label="Hands">
-                <Segmented
-                  options={HANDS}
-                  value={values.default_hands}
-                  onChange={(value) => write('default_hands', value)}
-                />
-              </Row>
-              <Row label="Keyboard">
-                <Segmented
-                  options={PRESETS}
-                  value={values.default_keyboard_preset}
-                  onChange={(value) => write('default_keyboard_preset', value)}
-                />
-              </Row>
-              {values.default_keyboard_preset === 'custom' && (
-                <Row label="Custom range">
-                  <CustomRange
-                    lo={values.default_keyboard_lo}
-                    hi={values.default_keyboard_hi}
-                    onChange={(lo, hi) => {
-                      write('default_keyboard_lo', lo);
-                      write('default_keyboard_hi', hi);
+        <div className="flex flex-col gap-7">
+          {/* The library folder is the library, and an empty one has no undo, so Reset leaves it. */}
+          <Group
+            title="Library"
+            onReset={() => reset(['pdmx_folder'])}
+            note="A new library folder re-points the app. No file is moved."
+          >
+            <Row label="Library folder">
+              <Path
+                value={values.library_folder}
+                onChoose={() => chooseFolder('library_folder').catch(console.error)}
+              />
+            </Row>
+            <Row label="PDMX folder">
+              <Path
+                value={values.pdmx_folder}
+                onChoose={() => chooseFolder('pdmx_folder').catch(console.error)}
+              />
+            </Row>
+            <Row label="PDMX scores">
+              <span className="flex flex-none flex-col items-end gap-0.5">
+                <span className="flex items-center gap-3">
+                  <span className="text-muted-ink text-[12px] tabular-nums">{pdmxStatus}</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 flex-none"
+                    onClick={() => {
+                      if (downloading) cancelPdmx();
+                      else void downloadPdmx();
                     }}
-                  />
-                </Row>
-              )}
-            </Group>
+                  >
+                    {downloading ? 'Cancel' : 'Download PDMX (1.9 GB)'}
+                  </Button>
+                </span>
+                {pdmx.error && (
+                  <span className="text-[11px] text-red-600 dark:text-red-400">{pdmx.error}</span>
+                )}
+              </span>
+            </Row>
+          </Group>
 
-            <Group
-              title="Play screen"
-              onReset={() =>
-                reset([
-                  ...LANE_FIELDS.map(([key]) => key),
-                  'sheet_split',
-                  'keyboard_labels',
-                  'click_volume',
-                  'theme',
-                ])
-              }
-            >
-              {LANE_FIELDS.map(([key, label, min, max]) => (
-                <Row key={key} label={label}>
-                  <NumberField
-                    value={values[key] as number}
-                    min={min}
-                    max={max}
-                    onChange={(value) => write(key, value as never)}
-                  />
-                </Row>
-              ))}
-              <Row label="Sheet split">
+          <Group
+            title="Playing defaults"
+            note="A piece that holds a setting of its own keeps it."
+            onReset={() => reset(Object.keys(PIECE_DEFAULT_KEYS) as (keyof Settings)[])}
+          >
+            <Row label="Tempo (%)">
+              <NumberField
+                value={values.default_tempo_value}
+                min={TEMPO_RANGE.percent[0]}
+                max={TEMPO_RANGE.percent[1]}
+                onChange={(value) => write('default_tempo_value', value)}
+              />
+            </Row>
+            <Row label="Metronome">
+              <Toggle
+                value={values.default_metronome}
+                onChange={(value) => write('default_metronome', value)}
+              />
+            </Row>
+            <Row label="Count-in bars">
+              <NumberField
+                value={values.default_count_in_bars}
+                min={0}
+                max={8}
+                onChange={(value) => write('default_count_in_bars', value)}
+              />
+            </Row>
+            <Row label="Hands">
+              <Segmented
+                options={HANDS}
+                value={values.default_hands}
+                onChange={(value) => write('default_hands', value)}
+              />
+            </Row>
+            <Row label="Keyboard">
+              <Segmented
+                options={PRESETS}
+                value={values.default_keyboard_preset}
+                onChange={(value) => write('default_keyboard_preset', value)}
+              />
+            </Row>
+            {values.default_keyboard_preset === 'custom' && (
+              <Row label="Custom range">
+                <CustomRange
+                  lo={values.default_keyboard_lo}
+                  hi={values.default_keyboard_hi}
+                  onChange={(lo, hi) => {
+                    write('default_keyboard_lo', lo);
+                    write('default_keyboard_hi', hi);
+                  }}
+                />
+              </Row>
+            )}
+          </Group>
+
+          <Group
+            title="Play screen"
+            onReset={() =>
+              reset([
+                ...LANE_FIELDS.map(([key]) => key),
+                'sheet_split',
+                'keyboard_labels',
+                'click_volume',
+                'theme',
+              ])
+            }
+          >
+            {LANE_FIELDS.map(([key, label, min, max]) => (
+              <Row key={key} label={label}>
                 <NumberField
-                  value={values.sheet_split}
-                  min={0.2}
-                  max={0.6}
-                  onChange={(value) => write('sheet_split', value)}
+                  value={values[key] as number}
+                  min={min}
+                  max={max}
+                  onChange={(value) => write(key, value as never)}
                 />
               </Row>
-              <Row label="Note names on keys">
-                <Toggle
-                  value={values.keyboard_labels}
-                  onChange={(value) => write('keyboard_labels', value)}
-                />
-              </Row>
-              <Row label="Click volume">
+            ))}
+            <Row label="Sheet split">
+              <NumberField
+                value={values.sheet_split}
+                min={0.2}
+                max={0.6}
+                onChange={(value) => write('sheet_split', value)}
+              />
+            </Row>
+            <Row label="Note names on keys">
+              <Toggle
+                value={values.keyboard_labels}
+                onChange={(value) => write('keyboard_labels', value)}
+              />
+            </Row>
+            <Row label="Click volume">
+              <NumberField
+                value={values.click_volume}
+                min={0}
+                max={100}
+                onChange={(value) => write('click_volume', value)}
+              />
+            </Row>
+            <Row label="Theme">
+              <Segmented
+                options={THEMES}
+                value={theme}
+                onChange={(value) => write('theme', value)}
+              />
+            </Row>
+          </Group>
+
+          <Group title="MIDI" onReset={() => reset(['midi_device', 'velocity_offset'])}>
+            <Row label="Input device">
+              <select
+                aria-label="MIDI input device"
+                value={values.midi_device ?? ''}
+                onChange={(event) => write('midi_device', event.target.value || null)}
+                className="border-edge h-7 border bg-transparent px-2 text-[12px]"
+              >
+                <option value="">Any device</option>
+                {midi.ports.map((port) => (
+                  <option key={port.id} value={port.id}>
+                    {port.name}
+                  </option>
+                ))}
+              </select>
+            </Row>
+            <Row label="Velocity offset">
+              <div className="flex items-center gap-3">
                 <NumberField
-                  value={values.click_volume}
-                  min={0}
-                  max={100}
-                  onChange={(value) => write('click_volume', value)}
+                  value={values.velocity_offset}
+                  min={-64}
+                  max={64}
+                  onChange={(value) => write('velocity_offset', value)}
                 />
-              </Row>
-              <Row label="Theme">
-                <Segmented
-                  options={THEMES}
-                  value={theme}
-                  onChange={(value) => write('theme', value)}
-                />
-              </Row>
-            </Group>
-
-            <Group title="MIDI" onReset={() => reset(['midi_device', 'velocity_offset'])}>
-              <Row label="Input device">
-                <select
-                  aria-label="MIDI input device"
-                  value={values.midi_device ?? ''}
-                  onChange={(event) => write('midi_device', event.target.value || null)}
-                  className="border-edge h-7 border bg-transparent px-2 text-[12px]"
-                >
-                  <option value="">Any device</option>
-                  {midi.ports.map((port) => (
-                    <option key={port.id} value={port.id}>
-                      {port.name}
-                    </option>
-                  ))}
-                </select>
-              </Row>
-              <Row label="Velocity offset">
-                <div className="flex items-center gap-3">
-                  <NumberField
-                    value={values.velocity_offset}
-                    min={-64}
-                    max={64}
-                    onChange={(value) => write('velocity_offset', value)}
-                  />
-                  <span className="text-muted-ink text-[12px] tabular-nums">
-                    last strike {velocity ?? '—'}
-                  </span>
-                </div>
-              </Row>
-            </Group>
-
-            <details className="flex flex-col gap-2">
-              <summary className="cursor-pointer text-[13px] font-semibold select-none">
-                Grade tuning
-              </summary>
-              <div className="mt-3">
-                <Group
-                  title=""
-                  note="Grade normalises the three weights whatever they hold."
-                  onReset={() => reset(GRADE_KNOBS.map(([key]) => key))}
-                >
-                  {GRADE_KNOBS.map(([key, label, min, max]) => (
-                    <Row key={key} label={label}>
-                      <NumberField
-                        value={values[key] as number}
-                        min={min}
-                        max={max}
-                        onChange={(value) => write(key, value as never)}
-                      />
-                    </Row>
-                  ))}
-                </Group>
+                <span className="text-muted-ink text-[12px] tabular-nums">
+                  last strike {velocity ?? '—'}
+                </span>
               </div>
-            </details>
-          </div>
-        )}
+            </Row>
+          </Group>
+
+          <details className="flex flex-col gap-2">
+            <summary className="cursor-pointer text-[13px] font-semibold select-none">
+              Grade tuning
+            </summary>
+            <div className="mt-3">
+              <Group
+                title=""
+                note="Grade normalises the three weights whatever they hold."
+                onReset={() => reset(GRADE_KNOBS.map(([key]) => key))}
+              >
+                {GRADE_KNOBS.map(([key, label, min, max]) => (
+                  <Row key={key} label={label}>
+                    <NumberField
+                      value={values[key] as number}
+                      min={min}
+                      max={max}
+                      onChange={(value) => write(key, value as never)}
+                    />
+                  </Row>
+                ))}
+              </Group>
+            </div>
+          </details>
+        </div>
       </DialogContent>
     </Dialog>
   );

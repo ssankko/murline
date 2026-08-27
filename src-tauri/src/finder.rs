@@ -147,10 +147,11 @@ impl Index {
 }
 
 /// Every token must start a word of the row's haystack and an all-digit token must match a whole
-/// number, so "op 9" skips Op. 59; rows whose composer matches more tokens come first.
+/// number, so "op 9" skips Op. 59; rows whose composer matches more tokens come first. With `pdmx`
+/// off the PDMX rows are not there at all, neither in `rows` nor in `more`.
 // ponytail: one scan of every row's haystack per keystroke, 12 to 30 ms over the 200k shipped rows
 // in a debug build; index the tokens if a query stops keeping up with typing.
-pub fn search(ix: &Index, query: &str) -> SearchResult {
+pub fn search(ix: &Index, query: &str, pdmx: bool) -> SearchResult {
     let query = norm(query);
     let tokens: Vec<(&str, bool)> = query
         .split_whitespace()
@@ -162,6 +163,9 @@ pub fn search(ix: &Index, query: &str) -> SearchResult {
     let mut buckets: Vec<Vec<usize>> = vec![Vec::new(); tokens.len() + 1];
 
     for (i, (who, hay)) in ix.hays.iter().enumerate() {
+        if !pdmx && matches!(ix.entries[i], Entry::Pdmx(_)) {
+            continue;
+        }
         if !tokens.iter().all(|&(t, w)| has_word(hay, t, w)) {
             continue;
         }
@@ -364,8 +368,8 @@ fn has_word(s: &str, t: &str, whole: bool) -> bool {
 /// The scan is one blocking pass over the whole index, and the first call waits for `warm()` to
 /// finish building it, so it runs on a blocking thread and leaves the runtime to the file commands.
 #[tauri::command]
-pub async fn finder_search(query: String) -> Result<SearchResult, String> {
-    tauri::async_runtime::spawn_blocking(move || search(&INDEX, &query))
+pub async fn finder_search(query: String, pdmx: bool) -> Result<SearchResult, String> {
+    tauri::async_runtime::spawn_blocking(move || search(&INDEX, &query, pdmx))
         .await
         .map_err(|e| e.to_string())
 }
@@ -450,34 +454,37 @@ Chopin\tFrederic Chopin\tMazurka Op. 50 No. 1\tChopin Mazurka 50/1\t\t103\t9\t3/
         let ix = index();
         // "Harmonisatie: Goudimel" holds "satie" inside a word, so it never answers "satie".
         assert_eq!(
-            titles(&search(&ix, "satie")),
+            titles(&search(&ix, "satie", true)),
             ["Gymnopédie No. 1", "Gnossienne No. 3", "Psalm 42"]
         );
-        assert_eq!(titles(&search(&ix, "gymnopedie")), ["Gymnopédie No. 1"]);
-        assert_eq!(titles(&search(&ix, "frederic")).len(), 3);
-        assert!(search(&ix, "opedie").rows.is_empty());
-        assert!(search(&ix, "   ").rows.is_empty());
+        assert_eq!(titles(&search(&ix, "gymnopedie", true)), ["Gymnopédie No. 1"]);
+        assert_eq!(titles(&search(&ix, "frederic", true)).len(), 3);
+        assert!(search(&ix, "opedie", true).rows.is_empty());
+        assert!(search(&ix, "   ", true).rows.is_empty());
     }
 
     #[test]
     fn a_digit_token_matches_a_whole_number() {
         let ix = index();
         // "Op. 9" is a whole number, so it answers "9" and not "50".
-        assert_eq!(titles(&search(&ix, "chopin op 9")), ["Nocturne in B-flat minor, Op. 9, No. 1"]);
         assert_eq!(
-            titles(&search(&ix, "chopin 50")),
+            titles(&search(&ix, "chopin op 9", true)),
+            ["Nocturne in B-flat minor, Op. 9, No. 1"]
+        );
+        assert_eq!(
+            titles(&search(&ix, "chopin 50", true)),
             ["Mazurka in G Major, Op. 50, No. 1", "Mazurka Op. 50 No. 1"]
         );
-        assert!(search(&ix, "5").rows.is_empty());
+        assert!(search(&ix, "5", true).rows.is_empty());
         // A movement number is a whole number too.
-        assert_eq!(search(&ix, "waldstein 4").rows.len(), 1);
-        assert!(search(&ix, "waldstein 3").rows.is_empty());
+        assert_eq!(search(&ix, "waldstein 4", true).rows.len(), 1);
+        assert!(search(&ix, "waldstein 3", true).rows.is_empty());
     }
 
     #[test]
     fn rows_whose_composer_matches_come_first() {
         let ix = index();
-        let hits = search(&ix, "satie");
+        let hits = search(&ix, "satie", true);
         assert_eq!(hits.rows[0].heading, "Erik Satie");
         assert_eq!(hits.rows[1].heading, "Erik Satie");
         assert_eq!(hits.rows[2].heading, "Claude Goudimel");
@@ -488,7 +495,7 @@ Chopin\tFrederic Chopin\tMazurka Op. 50 No. 1\tChopin Mazurka 50/1\t\t103\t9\t3/
     #[test]
     fn both_providers_share_one_composer_heading() {
         let ix = index();
-        let hits = search(&ix, "chopin");
+        let hits = search(&ix, "chopin", true);
         let headings: Vec<&str> = hits.rows.iter().map(|r| r.heading.as_str()).collect();
         assert_eq!(headings, ["Frédéric Chopin"; 3]);
         let providers: Vec<Provider> = hits.rows.iter().map(|r| r.provider).collect();
@@ -508,7 +515,7 @@ Chopin\tFrederic Chopin\tMazurka Op. 50 No. 1\tChopin Mazurka 50/1\t\t103\t9\t3/
         let pdmx = "Bach\tJ. S. Bach\tInvention 1\tInvention 1\t\t22\t3\t1/1/QmA.mxl\n\
 Bach\tJohann Sebastian Bach\tMinuet in G\tMinuet in G\t\t32\t7\t1/2/QmB.mxl\n";
         let ix = Index::build(ks, pdmx);
-        let hits = search(&ix, "bach");
+        let hits = search(&ix, "bach", true);
         assert_eq!(
             hits.rows.iter().map(|r| r.heading.as_str()).collect::<Vec<_>>(),
             ["Johann Sebastian Bach", "Johann Sebastian Bach", "J. S. Bach"]
@@ -527,7 +534,7 @@ Bach\tJohann Sebastian Bach\tMinuet in G\tMinuet in G\t\t32\t7\t1/2/QmB.mxl\n";
 Morris\tLelia Morris\tNearer Still Nearer\tNearer Still Nearer\t\t18\t1\t1/2/QmB.mxl\n\
 Morris\tLelia N. Morris\tThe Fight Is On\tThe Fight Is On\t\t24\t0\t1/3/QmC.mxl\n";
         let ix = Index::build("[]", pdmx);
-        let hits = search(&ix, "lelia morris");
+        let hits = search(&ix, "lelia morris", true);
         assert_eq!(
             hits.rows.iter().map(|r| r.heading.as_str()).collect::<Vec<_>>(),
             ["Lelia N. Morris.", "Lelia N. Morris.", "Lelia Morris"]
@@ -541,16 +548,16 @@ Morris\tLelia N. Morris\tThe Fight Is On\tThe Fight Is On\t\t24\t0\t1/3/QmC.mxl\
             tsv.push_str(&format!("Erik Satie\tErik Satie\tPiece {i}\tPiece {i}\t\t10\t0\t1/1/Qm{i}.mxl\n"));
         }
         let ix = Index::build("[]", Box::leak(tsv.into_boxed_str()));
-        let hits = search(&ix, "satie");
+        let hits = search(&ix, "satie", true);
         assert_eq!(hits.rows.len(), 30);
         assert_eq!(hits.more, 10);
-        assert_eq!(search(&ix, "piece 7").more, 0);
+        assert_eq!(search(&ix, "piece 7", true).more, 0);
     }
 
     #[test]
     fn the_file_name_is_the_one_the_library_folder_gets() {
         let ix = index();
-        let hits = search(&ix, "beethoven");
+        let hits = search(&ix, "beethoven", true);
         let names: Vec<&str> = hits.rows.iter().map(|r| r.file_name.as_str()).collect();
         assert_eq!(
             names,
@@ -561,11 +568,11 @@ Morris\tLelia N. Morris\tThe Fight Is On\tThe Fight Is On\t\t24\t0\t1/3/QmC.mxl\
             ]
         );
         assert_eq!(
-            search(&ix, "gymnopedie").rows[0].file_name,
+            search(&ix, "gymnopedie", true).rows[0].file_name,
             "Satie - Gymnopédie No. 1.musicxml"
         );
         assert_eq!(
-            search(&ix, "chopin 50").rows[0].file_name,
+            search(&ix, "chopin 50", true).rows[0].file_name,
             "Chopin - Mazurka in G Major, Op. 50, No. 1.musicxml"
         );
     }
@@ -581,7 +588,7 @@ Morris\tLelia N. Morris\tThe Fight Is On\tThe Fight Is On\t\t24\t0\t1/3/QmC.mxl\
              c\tAnon Composer\t{wide}\t{wide}\t\t10\t0\t1/2/QmB.mxl\n"
         );
         let ix = Index::build("[]", Box::leak(pdmx.into_boxed_str()));
-        for name in search(&ix, "anon").rows.iter().map(|r| &r.file_name) {
+        for name in search(&ix, "anon", true).rows.iter().map(|r| &r.file_name) {
             assert!(name.len() <= 255, "{} bytes", name.len());
             assert!(name.ends_with(".musicxml") && !name.contains(" .musicxml"), "{name}");
         }
@@ -590,7 +597,7 @@ Morris\tLelia N. Morris\tThe Fight Is On\tThe Fight Is On\t\t24\t0\t1/3/QmC.mxl\
     #[test]
     fn a_row_carries_what_the_two_lines_show() {
         let ix = index();
-        let row = &search(&ix, "gymnopedie").rows[0];
+        let row = &search(&ix, "gymnopedie", true).rows[0];
         assert_eq!(row.provider, Provider::Pdmx);
         assert_eq!(row.alt.as_deref(), Some("Satie Gymnopedie 1 (easy)"));
         assert_eq!(row.movement_name.as_deref(), Some("Lent et douloureux"));
@@ -598,7 +605,7 @@ Morris\tLelia N. Morris\tThe Fight Is On\tThe Fight Is On\t\t24\t0\t1/3/QmC.mxl\
         assert_eq!(row.key, None);
         assert_eq!(row.file, "1/23/QmSatieOne.mxl");
 
-        let row = &search(&ix, "nocturne").rows[0];
+        let row = &search(&ix, "nocturne", true).rows[0];
         assert_eq!(row.provider, Provider::KernScores);
         assert_eq!((row.opus.as_deref(), row.number.as_deref()), (Some("9"), Some("1")));
         assert_eq!((row.key.as_deref(), row.time.as_deref()), (Some("Bb minor"), Some("6/4")));
@@ -606,10 +613,27 @@ Morris\tLelia N. Morris\tThe Fight Is On\tThe Fight Is On\t\t24\t0\t1/3/QmC.mxl\
         assert!(row.file.starts_with("https://kern.ccarh.org/cgi-bin/ksdata?l="));
     }
 
+    /// The finder hides PDMX until its tarball is on disk, and a hidden row is not a row: it is
+    /// missing from the count as well as from the list.
+    #[test]
+    fn without_pdmx_only_kernscores_answers() {
+        let ix = index();
+        let hidden = search(&ix, "gymnopedie", false);
+        assert!(hidden.rows.is_empty());
+        assert_eq!(hidden.more, 0);
+        assert_eq!(titles(&search(&ix, "gymnopedie", true)), ["Gymnopédie No. 1"]);
+
+        let providers = |pdmx| {
+            search(&ix, "chopin", pdmx).rows.iter().map(|r| r.provider).collect::<Vec<_>>()
+        };
+        assert_eq!(providers(false), [Provider::KernScores; 2]);
+        assert_eq!(providers(true).len(), 3);
+    }
+
     #[test]
     fn an_artist_less_row_reads_unknown() {
         let ix = Index::build("[]", "Satie\t\tGymnopédie 1\tGymnopédie 1\t\t78\t0\t1/45/QmX.mxl\n");
-        assert_eq!(search(&ix, "gymnopedie").rows[0].heading, "Unknown");
+        assert_eq!(search(&ix, "gymnopedie", true).rows[0].heading, "Unknown");
     }
 
     fn pdmx_row() -> Row {
@@ -661,13 +685,13 @@ Morris\tLelia N. Morris\tThe Fight Is On\tThe Fight Is On\t\t24\t0\t1/3/QmC.mxl\
         assert!(rows > 199_000, "{rows} rows");
 
         for query in ["satie", "chopin", "minecraft", "debussy", "chopin op 9", "zzzz"] {
-            let hits = search(&INDEX, query);
+            let hits = search(&INDEX, query, true);
             let answered = !hits.rows.is_empty();
             assert_eq!(answered, query != "zzzz", "{query:?} answered {} rows", hits.rows.len());
         }
-        assert!(search(&INDEX, "satie").rows.iter().any(|r| r.heading == "Erik Satie"));
+        assert!(search(&INDEX, "satie", true).rows.iter().any(|r| r.heading == "Erik Satie"));
 
-        let hits = search(&INDEX, "s");
+        let hits = search(&INDEX, "s", true);
         assert_eq!(hits.rows.len(), MAX_ROWS);
         assert!(hits.more > 0, "one letter left nothing over");
 

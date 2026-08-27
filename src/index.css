@@ -153,9 +153,6 @@
     opacity: 0;
   }
 }
-.sheet-section-clear {
-  transition: transform 150ms ease;
-}
 /* The cross: two bars in the button's text colour, centred by their margins. */
 .sheet-section-clear::before,
 .sheet-section-clear::after {
@@ -172,12 +169,8 @@
 .sheet-section-clear::after {
   transform: rotate(-45deg);
 }
-.sheet-section-clear:hover {
-  transform: scale(1.15);
-}
 @media (prefers-reduced-motion: reduce) {
-  .sheet-section,
-  .sheet-section-clear {
+  .sheet-section {
     transition: none;
   }
 }

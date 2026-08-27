@@ -32,11 +32,8 @@ const BUBBLE_GAP = 6;
 const HANDLE_W = 5;
 const HANDLE_PAST = 3;
 
-/** Diameter of the × that clears the Section, and its whole hit area. */
+/** Side of the square × that clears the Section, and its whole hit area. */
 const CLEAR_SIZE = 18;
-
-/** Paper between the top of the Section and the × hanging inside it. */
-const CLEAR_INSET = 4;
 
 /** Clear paper kept above the highest ink of the sheet. */
 const TOP_AIR = 4;
@@ -205,8 +202,7 @@ export class Sheet {
     for (const el of this.band) el.className = 'sheet-section';
     this.clear = child(
       this.handles[1],
-      `position:absolute;top:${CLEAR_INSET}px;width:${CLEAR_SIZE}px;height:${CLEAR_SIZE}px;` +
-        'border-radius:999px;cursor:pointer',
+      `position:absolute;top:0;width:${CLEAR_SIZE}px;height:${CLEAR_SIZE}px;cursor:pointer`,
     );
     // The cross itself is drawn by the class: two bars centred by CSS, not a glyph on a baseline.
     this.clear.className = 'sheet-section-clear';
@@ -502,8 +498,8 @@ export class Sheet {
       handle.style.height = `${height}px`;
       handle.style.background = ink;
     }
-    // The × hangs from the end handle, its right edge on the Section's own end. A bar too narrow
-    // to hold the button pulls it back only as far as the Section's start.
+    // The × is a square tab in the Section's top-right corner, joined to the end handle in the same
+    // ink. A bar too narrow to hold it pulls it back only as far as the Section's start.
     const room = to.right - from.left - CLEAR_SIZE + HANDLE_PAST;
     this.clear.style.right = `${Math.min(HANDLE_PAST, room)}px`;
     this.clear.style.background = ink;

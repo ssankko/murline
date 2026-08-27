@@ -174,7 +174,13 @@ export function PlayScreen({
         const bytes = await readScoreFile(pathOf(folder, path));
         const [globals, row] = await Promise.all([readSettings(), getPiece(path).catch(() => null)]);
         const resolved = resolvePlaySettings(row ?? INHERITS_EVERYTHING, pieceDefaultsOf(globals));
-        const sheet = await Sheet.open(hostRef.current!, bytes, fileName, darkRef.current);
+        const sheet = await Sheet.open(
+          hostRef.current!,
+          bytes,
+          fileName,
+          darkRef.current,
+          globals.sheet_proportional,
+        );
         if (!live) return sheet.dispose();
         sheetRef.current = sheet;
         // The piece opens as it was left: its own settings over the global defaults over these.
@@ -381,6 +387,7 @@ export function PlayScreen({
     if (key in LANE_KNOBS) showLook(key as keyof typeof LANE_KNOBS, value as number | boolean);
     if (key === 'click_volume') setClickVolume(value);
     if (key === 'sheet_split') setSplit(value);
+    if (key === 'sheet_proportional') sheetRef.current?.setProportional(value);
   }
 
   useFrameLoop((delta, now) => {

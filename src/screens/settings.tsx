@@ -276,6 +276,7 @@ export function SettingsDialog({
               reset([
                 ...LANE_FIELDS.map(([key]) => key),
                 'sheet_split',
+                'sheet_proportional',
                 'keyboard_labels',
                 'click_volume',
                 'theme',
@@ -298,6 +299,15 @@ export function SettingsDialog({
                 min={0.2}
                 max={0.6}
                 onChange={(value) => write('sheet_split', value)}
+              />
+            </Row>
+            <Row
+              label="Space notes by time"
+              hint="Measures and notes take width in proportion to their duration, so the cursor moves at a constant speed."
+            >
+              <Toggle
+                value={values.sheet_proportional}
+                onChange={(value) => write('sheet_proportional', value)}
               />
             </Row>
             <Row label="Note names on keys">
@@ -560,10 +570,21 @@ function PopoverGroup({ title, children }: { title: string; children: React.Reac
   );
 }
 
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
+function Row({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex min-h-8 items-center justify-between gap-3 py-1 text-[12px]">
-      <span className="flex-none">{label}</span>
+      <span className={hint ? 'flex flex-col gap-0.5' : 'flex-none'}>
+        {label}
+        {hint && <span className="text-muted-ink text-[11px] leading-snug">{hint}</span>}
+      </span>
       {children}
     </div>
   );

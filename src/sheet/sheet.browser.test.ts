@@ -728,3 +728,73 @@ for (const file of [BACH, VOLTA]) {
     sheet.dispose();
   }, 60_000);
 }
+
+/** Pixels per tick over each step of one bar, against that bar's own average. */
+function speeds(sheet: Sheet, measure: number): number[] {
+  const placed = sheet.score.onsets.map((onset, index) => ({
+    tick: onset.tick,
+    measure: onset.measureIndex,
+    x: sheet.xOfOnset(index),
+  }));
+  // The bar's own Onsets, and the first of the next bar, which closes its last step.
+  const from = placed.findIndex((onset) => onset.measure === measure);
+  const walk = placed.slice(from, placed.findIndex((onset) => onset.measure > measure) + 1);
+  const last = walk[walk.length - 1]!;
+  const mean = (last.x - walk[0]!.x) / (last.tick - walk[0]!.tick);
+  return walk.slice(1).map((onset, i) => (onset.x - walk[i]!.x) / (onset.tick - walk[i]!.tick) / mean);
+}
+
+/** x of the first Onset of every bar. */
+function bars(sheet: Sheet): number[] {
+  return sheet.score.measures.map((measure) =>
+    sheet.xOfOnset(sheet.score.onsets.findIndex((onset) => onset.measureIndex === measure.index)),
+  );
+}
+
+test('spacing by time gives every bar the width of its duration, and gives it back', async () => {
+  const sheet = await open();
+  const spreadOf = (bar: number) => Math.max(...speeds(sheet, bar).map((rate) => Math.abs(rate - 1)));
+  const engraved = bars(sheet);
+  const wasSpread = sheet.score.measures.slice(0, -1).map((measure) => spreadOf(measure.index));
+
+  sheet.setProportional(true);
+  const spaced = bars(sheet);
+  // The sheet opens up: no bar is asked for less width than its own notes pack into.
+  expect(spaced[spaced.length - 1]).toBeGreaterThan(engraved[engraved.length - 1]! * 1.4);
+
+  // Every bar of the prelude is a full 4/4 bar, so they all take the same width.
+  expect(new Set(sheet.score.measures.map((measure) => measure.durationTicks)).size).toBe(1);
+  const steps = spaced.slice(1).map((x, i) => x - spaced[i]!);
+  const mean = steps.reduce((a, b) => a + b, 0) / steps.length;
+  for (const step of steps) expect(Math.abs(step / mean - 1)).toBeLessThan(0.04);
+
+  // Inside a bar VexFlow keeps a minimum packing around every notehead and spreads only the width
+  // over that in time, so the packing is the whole of the spread left. It falls as STRETCH rises,
+  // which the sheet's 32767 px ceiling holds down.
+  const now = sheet.score.measures.slice(0, -1).map((measure) => spreadOf(measure.index));
+  now.forEach((spread, bar) => expect(spread).toBeLessThan(wasSpread[bar]! * 0.8));
+  expect(Math.max(...now)).toBeLessThan(0.55);
+
+  sheet.setProportional(false);
+  expect(bars(sheet)).toEqual(engraved);
+
+  sheet.dispose();
+}, 60_000);
+
+test('a bar of long notes is spaced as wide as a bar of short ones', async () => {
+  const sheet = await open('MuzioClementi_SonatinaOpus36No1_Part1.xml');
+  // The Sonatina writes bars of very different note counts, all of one duration.
+  expect(new Set(sheet.score.measures.map((measure) => measure.durationTicks)).size).toBe(1);
+  const spreadOf = () => {
+    const steps = bars(sheet).slice(1).map((x, i) => x - bars(sheet)[i]!);
+    const mean = steps.reduce((a, b) => a + b, 0) / steps.length;
+    return Math.max(...steps.map((step) => Math.abs(step / mean - 1)));
+  };
+
+  // Engraved, a bar takes the width its notes need; spaced by time, the width its duration asks.
+  expect(spreadOf()).toBeGreaterThan(0.2);
+  sheet.setProportional(true);
+  expect(spreadOf()).toBeLessThan(0.08);
+
+  sheet.dispose();
+}, 60_000);

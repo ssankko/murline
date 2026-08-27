@@ -447,10 +447,19 @@ export class Sheet {
     if (!hit) return;
     const end =
       event.target === this.handles[0] ? 'from' : event.target === this.handles[1] ? 'to' : 'pick';
-    const anchor =
-      end === 'from' ? (this.section?.to ?? hit.measure) : (this.section?.from ?? hit.measure);
+    const section = this.section;
+    const inside = !!section && hit.measure >= section.from && hit.measure <= section.to;
+    // A press outside the Section's bars starts a fresh one there. On a handle, or inside the
+    // Section, the far end stays put and the drag moves the near one.
+    const held = section && (end !== 'pick' || inside);
+    const anchor = held ? (end === 'from' ? section.to : section.from) : hit.measure;
     this.drag = { end, anchor, hit, x: event.clientX, moved: end !== 'pick' };
-    (event.target as Element).setPointerCapture?.(event.pointerId);
+    try {
+      (event.target as Element).setPointerCapture?.(event.pointerId);
+    } catch {
+      // A pointer already gone by the time this runs cannot be captured, and without the capture
+      // the drag only stops at the host's edge instead of following the pointer past it.
+    }
     event.preventDefault();
   }
 

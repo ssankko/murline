@@ -2,6 +2,7 @@
 import '@/index.css';
 import { INK, PAPER, colorOf, tone } from '@/look/color';
 import type { Snapshot } from '@/play/engine';
+import type { Section } from '@/play/section';
 import { expect, test } from 'vitest';
 import { noteheadEl } from './paint';
 import { Sheet } from './sheet';
@@ -290,6 +291,29 @@ test('the cursor band eases into a new size and takes its first one flat', async
   sheet.frame(snapshot(0), 100, 16);
   expect(getComputedStyle(cursor).transitionProperty).toBe('width, height, top');
   expect(getComputedStyle(cursor).transitionDuration).toBe('0.2s, 0.2s, 0.2s');
+
+  sheet.dispose();
+}, 60_000);
+
+test('a drag that starts outside the Section picks a fresh one there', async () => {
+  const host = hostEl();
+  const sheet = await open(BACH, host);
+  let picked: Section | null = null;
+  sheet.onSection = (section) => {
+    picked = section;
+    sheet.setSection(section);
+  };
+  sheet.setSection({ from: 2, to: 3 });
+
+  // No frame has run, so the content is unscaled and unscrolled: a content x is a client x.
+  const left = host.getBoundingClientRect().left;
+  const barSix = sheet.score.onsets.findIndex((onset) => onset.measureIndex === 6);
+  const x = left + sheet.xOfOnset(barSix);
+  host.dispatchEvent(new PointerEvent('pointerdown', { clientX: x, button: 0, bubbles: true }));
+  host.dispatchEvent(new PointerEvent('pointermove', { clientX: x + 30, buttons: 1, bubbles: true }));
+  host.dispatchEvent(new PointerEvent('pointerup', { clientX: x + 30, bubbles: true }));
+
+  expect(picked).toEqual({ from: 6, to: 6 });
 
   sheet.dispose();
 }, 60_000);

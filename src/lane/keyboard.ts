@@ -15,12 +15,12 @@ const KEY_BLACK = ['#c3c3c3', '#4c4c4c'] as const;
 const LABEL_MIN_W = 11;
 
 /**
- * How far a pressed key sinks, how far its whole face darkens, and how dark the strip it sinks
- * under is. The face darkens as well as sinking, so a press reads on a coloured key too.
+ * How far a pressed key sinks, how far its whole face shades, and how much deeper the strip it
+ * sinks under is shaded. The face shades as well as sinking, so a press reads on a coloured key.
  */
 const PRESS_DROP = 4;
-const PRESS_DARKEN = 0.12;
-const PRESS_SHADE = 0.35;
+const PRESS_FACE = 0.06;
+const PRESS_STRIP = 0.18;
 
 export interface Key {
   midi: number;
@@ -83,8 +83,9 @@ export function keyRange(notes: readonly PlayNote[], settings: PlaySettings): [n
 /**
  * Draws the keys as flat rects, blacks over whites. `fill` gives each key its face: the base grey,
  * or whatever the play says it is right now. `depth` gives each key how far down it stands, 0 up
- * and 1 held: its face darkens, and a white one drops under a shadow strip while a black one
- * shortens. The ease that feeds it overshoots, so a depth past 1 or under 0 is a key in motion.
+ * and 1 held: its face shades, and it drops under a strip of that face shaded deeper, which
+ * sinks with it. The ease that feeds it overshoots, so a depth past 1 or under 0 is a key in
+ * motion.
  */
 export function drawKeyboard(
   ctx: CanvasRenderingContext2D,
@@ -101,12 +102,11 @@ export function drawKeyboard(
 
   for (const key of layout.keys) {
     if (key.black) continue;
-    const sunk = depth(key.midi);
-    const drop = PRESS_DROP * sunk;
-    const face = darken(fill(key.midi, white), sunk);
+    const drop = PRESS_DROP * depth(key.midi);
+    const face = shade(fill(key.midi, white), PRESS_FACE * span(drop), dark);
     if (drop > 0) {
       // The strip takes whole pixels, so its edge stays crisp while the face slides over it.
-      ctx.fillStyle = mix(face, '#000000', PRESS_SHADE);
+      ctx.fillStyle = shade(face, PRESS_STRIP, dark);
       ctx.fillRect(key.x, top, key.w - 1, Math.ceil(drop));
     }
     ctx.fillStyle = face;
@@ -115,19 +115,27 @@ export function drawKeyboard(
   }
   for (const key of layout.keys) {
     if (!key.black) continue;
-    const sunk = depth(key.midi);
-    ctx.fillStyle = darken(fill(key.midi, black), sunk);
+    // A black key sinks the way a white one does, whole, not by giving up its length.
+    const drop = PRESS_DROP * depth(key.midi);
+    const face = shade(fill(key.midi, black), PRESS_FACE * span(drop), dark);
+    if (drop > 0) {
+      ctx.fillStyle = shade(face, PRESS_STRIP, dark);
+      ctx.fillRect(key.x, top - 1, key.w, Math.ceil(drop));
+    }
+    ctx.fillStyle = face;
     ctx.beginPath();
-    const height = blackH - PRESS_DROP * sunk;
-    ctx.roundRect(key.x, top - 1, key.w, height, [0, 0, 2, 2]);
+    ctx.roundRect(key.x, top - 1 + drop, key.w, blackH, [0, 0, 2, 2]);
     ctx.fill();
   }
   if (labels) drawLabels(ctx, layout, top, blackH, dark);
 }
 
-/** A pressed face is its own colour a little way toward black, whatever the play makes it. */
-const darken = (face: string, sunk: number) =>
-  sunk > 0 ? mix(face, '#000000', PRESS_DARKEN * Math.min(sunk, 1)) : face;
+/** How much of the full shade a key this far down takes; past its stop it takes no more. */
+const span = (drop: number) => Math.min(drop / PRESS_DROP, 1);
+
+/** A pressed face is its own colour a little way toward the paper's far end, black or white. */
+const shade = (face: string, amount: number, dark: boolean) =>
+  amount > 0 ? mix(face, dark ? '#ffffff' : '#000000', amount) : face;
 
 /** The legend lives on the keys: a swatch in the pitch colour over the note name. */
 function drawLabels(

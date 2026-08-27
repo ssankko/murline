@@ -4,20 +4,24 @@ import { expect, test } from 'vitest';
 
 const WIDTH = 700;
 
-/** One octave of keys on light paper, painted by `fill`, ready to read pixels from. */
+/** One octave of keys on its paper, painted by `fill`, ready to read pixels from. */
 function draw(
   fill: (midi: number, base: string) => string,
   depth?: (midi: number) => number,
+  dark = false,
 ): CanvasRenderingContext2D {
   const canvas = document.createElement('canvas');
   canvas.width = WIDTH;
   canvas.height = KEYBOARD_H;
   const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = tone(PAPER, false);
+  ctx.fillStyle = tone(PAPER, dark);
   ctx.fillRect(0, 0, WIDTH, KEYBOARD_H);
-  drawKeyboard(ctx, keyLayout(60, 71, WIDTH), 0, false, false, fill, depth);
+  drawKeyboard(ctx, keyLayout(60, 71, WIDTH), 0, dark, false, fill, depth);
   return ctx;
 }
+
+/** Presses one key all the way down and leaves the rest up. */
+const only = (pressed: number) => (midi: number) => (midi === pressed ? 1 : 0);
 
 /** The hex at a point of the canvas. */
 function pixel(ctx: CanvasRenderingContext2D, x: number, y: number): string {
@@ -43,26 +47,30 @@ test('a missed key blinks in a grey, never in a pitch colour', () => {
   expect([g, b]).toEqual([r, r]);
 });
 
-test('a pressed key sinks under a shadow strip, its whole face darker', () => {
-  const ctx = draw(
-    (_midi, base) => base,
-    (midi) => (midi === 60 ? 1 : 0),
-  );
-  // C4 sinks four pixels under a strip a third of the way to black, and the face it sank to is its
-  // own a little darker. The key beside it keeps the flat face.
-  expect(pixel(ctx, 50, 1)).toBe('#7f7f7f');
-  expect(pixel(ctx, 50, 5)).toBe('#c3c3c3');
+test('a pressed key sinks under a strip of its own face, shaded deeper', () => {
+  const ctx = draw((_midi, base) => base, only(60));
+  // C4 sinks four pixels under its strip; the key beside it keeps the flat face.
+  expect(pixel(ctx, 50, 1)).toBe('#ababab');
+  expect(pixel(ctx, 50, 5)).toBe('#d1d1d1');
   expect(pixel(ctx, 150, 1)).toBe('#dedede');
 });
 
-test('a pressed black key shortens and darkens', () => {
-  const ctx = draw(
-    (_midi, base) => base,
-    (midi) => (midi === 61 ? 1 : 0),
-  );
-  // C#4 wears its face darker down to y 47, four pixels short of the 51 it reaches unpressed.
-  expect(pixel(ctx, 110, 40)).toBe('#acacac');
-  expect(pixel(ctx, 110, 50)).toBe('#dedede');
+test('the press shades toward the paper: black on light, white on dark', () => {
+  const ctx = draw((_midi, base) => base, only(60), true);
+  // On dark paper a sunk face lightens instead, so the press reads the same way round.
+  expect(pixel(ctx, 50, 1)).toBe('#626262');
+  expect(pixel(ctx, 50, 5)).toBe('#404040');
+  expect(pixel(ctx, 150, 1)).toBe('#343434');
+});
+
+test('a pressed black key sinks whole, keeping its length', () => {
+  const ctx = draw((_midi, base) => base, only(61));
+  // C#4 wears its strip at the top, its face under it, and reaches four pixels past the 51 it
+  // stops at unpressed.
+  expect(pixel(ctx, 110, 1)).toBe('#969696');
+  expect(pixel(ctx, 110, 10)).toBe('#b7b7b7');
+  expect(pixel(ctx, 110, 53)).toBe('#b7b7b7');
+  expect(pixel(draw((_midi, base) => base), 110, 53)).toBe('#dedede');
 });
 
 test('a key half way down sinks half as far', () => {
@@ -70,7 +78,7 @@ test('a key half way down sinks half as far', () => {
     (_midi, base) => base,
     (midi) => (midi === 60 ? 0.5 : 0),
   );
-  // Two pixels of strip over a face darkened half as much as a key all the way down.
-  expect(pixel(ctx, 50, 1)).toBe('#888888');
-  expect(pixel(ctx, 50, 3)).toBe('#d1d1d1');
+  // Two pixels of strip over a face shaded half as much as a key all the way down.
+  expect(pixel(ctx, 50, 1)).toBe('#b0b0b0');
+  expect(pixel(ctx, 50, 3)).toBe('#d7d7d7');
 });

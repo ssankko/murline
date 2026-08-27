@@ -180,6 +180,8 @@ export class Sheet {
   private outlined: readonly Note[] = [];
   private drawn = {
     scale: 0,
+    /** Cursor x in unscaled content pixels as the last frame wrote it; a rescale anchors on it. */
+    cursorX: 0,
     onset: -1,
     step: -1,
     jumpAt: -Infinity,
@@ -384,6 +386,7 @@ export class Sheet {
       windowTicks,
     );
     this.drawRunner(counting ? snap : null, windowTicks);
+    this.drawn.cursorX = at.x;
 
     const running = snap.state === 'running' || snap.state === 'counting-in';
     if (running !== this.drawn.running) {
@@ -769,14 +772,21 @@ export class Sheet {
     });
   }
 
-  /** Scales the content so the staff line fills the sheet block, and lifts the dead paper away. */
+  /**
+   * Scales the content so the staff line fills the sheet block, and lifts the dead paper away.
+   * The paper grows from its left edge, so the view moves with it and the cursor keeps its screen
+   * x: dragging the split resizes the sheet around the place the reader is looking at.
+   */
   private fit(): void {
     const scale = clamp(this.host.clientHeight / this.contentHeight, 0.42, 1.2);
-    if (Math.abs(scale - this.drawn.scale) < 0.005) return;
+    const was = this.drawn.scale;
+    if (Math.abs(scale - was) < 0.005) return;
     this.content.style.transform = `scale(${scale}) translateY(${-this.offsetY}px)`;
     this.scale.style.width = `${this.contentWidth * scale}px`;
     this.scale.style.height = `${this.contentHeight * scale}px`;
     this.drawn.scale = scale;
+    // The width above is written first, so the scrollable range this lands in is the new one.
+    if (was > 0) this.scroll.scrollLeft += this.drawn.cursorX * (scale - was);
   }
 
   private drawMarker(at: CursorAt, now: number): void {

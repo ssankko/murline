@@ -14,6 +14,7 @@ mod instruments;
 pub mod mac;
 #[cfg(target_os = "macos")]
 mod window;
+pub mod preview;
 // On macOS the stub is only there for the tests that check what a platform without an engine
 // answers; off macOS it is the engine.
 #[cfg(any(not(target_os = "macos"), test))]
@@ -24,11 +25,13 @@ use mac as engine;
 #[cfg(not(target_os = "macos"))]
 use stub as engine;
 
+use preview::PreviewNote;
+
 /// The event the webview listens for to know its device list is stale. Sent when CoreAudio reports
 /// a device plugged in or unplugged, so the picker follows the hardware without a restart.
 pub const DEVICES_CHANGED: &str = "audio-devices-changed";
 
-/// The running app, so the engine can send an event from a CoreAudio thread. Set once at start-up.
+/// The running app, so the engine can send events from its own threads. Set once at start-up.
 static APP: OnceLock<AppHandle> = OnceLock::new();
 
 pub fn remember(app: AppHandle) {
@@ -38,6 +41,21 @@ pub fn remember(app: AppHandle) {
 pub(crate) fn tell_devices_changed() {
     if let Some(app) = APP.get() {
         let _ = app.emit(DEVICES_CHANGED, ());
+    }
+}
+
+/// Where Preview playback stands, emitted as `preview-progress` about thirty times a second and
+/// once more when the piece ends, with `playing` false and the time back at zero.
+#[derive(Clone, Serialize)]
+pub struct Progress {
+    pub seconds: f64,
+    pub playing: bool,
+}
+
+/// Called from the engine's pump. Before the app has a handle, and in the tests, it does nothing.
+pub fn progress(seconds: f64, playing: bool) {
+    if let Some(app) = APP.get() {
+        let _ = app.emit("preview-progress", Progress { seconds, playing });
     }
 }
 
@@ -199,6 +217,40 @@ pub async fn audio_show_instrument(app: tauri::AppHandle) -> Result<Option<Strin
     engine::show_instrument(app).await
 }
 
+/// The Preview's note list, in seconds at the score's own tempo. Replaces whatever was loaded.
+#[tauri::command]
+pub fn preview_load(notes: Vec<PreviewNote>) {
+    engine::preview_load(notes);
+}
+
+#[tauri::command]
+pub fn preview_play() {
+    engine::preview_play();
+}
+
+#[tauri::command]
+pub fn preview_pause() {
+    engine::preview_pause();
+}
+
+/// Jumps to a time in the piece's own seconds, tempo percent aside.
+#[tauri::command]
+pub fn preview_seek(seconds: f64) {
+    engine::preview_seek(seconds);
+}
+
+/// The tempo as a percent of the score's own: 50 makes the piece take twice as long.
+#[tauri::command]
+pub fn preview_rate(percent: u32) {
+    engine::preview_rate(percent);
+}
+
+/// Stops, forgets the note list and returns to the start. What leaving the Preview sends.
+#[tauri::command]
+pub fn preview_stop() {
+    engine::preview_stop();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,5 +292,15 @@ mod tests {
         assert_eq!(status.buffer_frames, 0);
         assert_eq!(status.latency_ms, 0.0);
         assert_eq!(status.fallback, "");
+    }
+
+    #[test]
+    fn preview_commands_answer_without_an_engine() {
+        stub::preview_load(vec![]);
+        stub::preview_play();
+        stub::preview_pause();
+        stub::preview_seek(4.0);
+        stub::preview_rate(50);
+        stub::preview_stop();
     }
 }

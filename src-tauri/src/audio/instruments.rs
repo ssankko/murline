@@ -56,7 +56,7 @@ pub fn load(id: &str, state: Option<&str>) -> Result<(), String> {
 
     let (name, outcome) = match path_of(id) {
         Some(path) => (stem(&path), graph.load_file(&path)),
-        None => match plugin_desc(id).and_then(|desc| component(desc)) {
+        None => match plugin_desc(id).and_then(component) {
             None => (id.to_string(), Err("That instrument is not installed".into())),
             Some((desc, name)) => (
                 name,

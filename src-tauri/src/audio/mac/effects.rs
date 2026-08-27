@@ -545,7 +545,7 @@ mod tests {
 
     /// Plays a note, lets it go, and answers with the loudest sample left once the sampler's own
     /// release has run out: silence with a dry graph, a tail with a reverb in the chain.
-    fn tail(graph: &Graph) -> f32 {
+    fn tail(graph: &mut Graph) -> f32 {
         graph.note_on(60, 100);
         graph.render_peak(LOOK).unwrap();
         graph.note_off(60);
@@ -565,14 +565,14 @@ mod tests {
     #[test]
     fn an_effect_changes_the_sound_and_bypass_gives_the_dry_one_back() {
         let mut graph = offline();
-        assert_eq!(tail(&graph), 0.0, "a dry graph goes quiet");
+        assert_eq!(tail(&mut graph), 0.0, "a dry graph goes quiet");
 
         apply(&mut graph, vec![slot(REVERB)]);
         mix(&graph, 0, 100.0);
-        assert!(tail(&graph) > 0.0, "the reverb rings on");
+        assert!(tail(&mut graph) > 0.0, "the reverb rings on");
 
         apply(&mut graph, vec![Slot { bypass: true, ..slot(REVERB) }]);
-        assert_eq!(tail(&graph), 0.0, "bypass is the dry graph again");
+        assert_eq!(tail(&mut graph), 0.0, "bypass is the dry graph again");
     }
 
     #[test]
@@ -611,7 +611,7 @@ mod tests {
         assert_eq!(chain[0].name, "Pro-R 2", "and is known by the name it had");
         assert!(!chain[1].missing);
         mix(&graph, 1, 100.0);
-        assert!(tail(&graph) > 0.0, "the reverb after it still plays");
+        assert!(tail(&mut graph) > 0.0, "the reverb after it still plays");
     }
 
     #[test]

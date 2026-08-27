@@ -53,7 +53,8 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
-            // The engine sends its device-list event from a CoreAudio thread, so it needs a handle.
+            // The engine sends its device-list and Preview-progress events from its own threads,
+            // so it needs a handle.
             audio::remember(app.handle().clone());
             finder::warm();
             // The MIDI ports open before the webview asks: a key pressed on the boot screen
@@ -76,6 +77,12 @@ pub fn run() {
             audio::audio_instruments,
             audio::audio_load_instrument,
             audio::audio_show_instrument,
+            audio::preview_load,
+            audio::preview_play,
+            audio::preview_pause,
+            audio::preview_seek,
+            audio::preview_rate,
+            audio::preview_stop,
             midi::midi_status,
             midi::midi_pin,
             library::copy_file,

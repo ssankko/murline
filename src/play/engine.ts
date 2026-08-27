@@ -22,15 +22,11 @@ export type PlayState = 'idle' | 'counting-in' | 'running' | 'paused' | 'ended';
 /** What a click on the sheet asks for: a bar's opening line, or one Onset. */
 export type SeekTarget = { measure: number } | { onset: number };
 
-/** The stretch of played time one lap of the loop runs over, and where the next lap starts. */
+/** The stretch of played time one lap of the loop runs over. One lap is `to - from` ticks. */
 export interface LoopSpan {
   from: number;
   /** The bar line the lap wraps at: the Section's closing one, or the end of the piece. */
   to: number;
-  /** Played ticks from one lap's start to the next, the count-in between them included. */
-  lap: number;
-  /** The count-in beat at the lap's start, 0 while the count-in is off. */
-  beat: number;
 }
 
 /** A practice may pause, seek and change settings; a performance may not and is graded. */
@@ -420,14 +416,9 @@ export class Engine {
     // A Section's lap runs from its opening bar line to the closing line of its last bar.
     const first = this.sectionRange && this.score.measures[this.sectionRange.from];
     const last = this.sectionRange && this.score.measures[this.sectionRange.to];
-    const range = this.sectionRange
+    return this.sectionRange
       ? { from: first?.startTick ?? 0, to: (last?.startTick ?? 0) + (last?.durationTicks ?? 0) }
       : { from: 0, to: this.endTick };
-    const bars = Math.floor(this.settings.countInBars);
-    const measure = this.barAt(range.from)?.measure;
-    const beat = bars >= 1 && measure ? beatOf(measure) : null;
-    const countIn = beat ? bars * beat.perBar * beat.ticks : 0;
-    return { ...range, lap: range.to - range.from + countIn, beat: beat?.ticks ?? 0 };
   }
 
   /**
@@ -510,14 +501,6 @@ export class Engine {
     for (const midi of this.held.keys()) this.held.set(midi, ABSORBED);
   }
 
-  /** A new lap: back to the Section start, or to bar one when Loop runs with no Section. */
-  private wrap(): void {
-    const span = this.loopSpan();
-    this.moveTo(span ? span.from : 0);
-    this.absorbHeld();
-    this.beginMotion(this.tick);
-  }
-
   /** Every played tick a seek target stands at: once per pass through it. */
   private playedTicksOf(target: SeekTarget): number[] {
     const ticks: number[] = [];
@@ -597,12 +580,12 @@ export class Engine {
       this.crossGrid();
       this.closeWindows();
       if (this.tick >= end) {
-        // Loop takes the next lap from here, which carries the rest of the frame when no count-in
-        // stands between the laps. Otherwise a practice ends back where it started and a
-        // performance stays for its summary card.
+        // A new lap starts on this beat, with no count-in of its own, and carries the rest of the
+        // frame. With Loop off a practice ends back where it started and a performance stays for
+        // its summary card.
         if (span) {
-          this.wrap();
-          if (this.state !== 'running') return;
+          this.moveTo(span.from);
+          this.absorbHeld();
           continue;
         }
         if (this.kind === 'practice') {
@@ -622,8 +605,8 @@ export class Engine {
   }
 
   /**
-   * Starts motion at a played tick, through the count-in when it is on. Everything that starts the
-   * clock goes through here, so the count-in runs before each of them.
+   * Starts motion at a played tick, through the count-in when it is on. Every start of motion the
+   * player asks for goes through here; a loop wrap keeps a clock that never stopped and does not.
    */
   private beginMotion(to: number): void {
     const bars = Math.floor(this.settings.countInBars);

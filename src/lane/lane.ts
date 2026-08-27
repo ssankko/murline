@@ -267,21 +267,16 @@ export class Lane {
   }
 
   /**
-   * The lap above the divider: the same bars again, one lap higher, with the count-in beats that
-   * stand between them. Nothing of it carries feedback, because none of it has been played yet.
+   * The lap above the divider: the same bars again, one lap higher. Nothing of it carries feedback,
+   * because none of it has been played yet.
    */
   private drawNextLap(width: number, laneH: number, pxPerTick: number, loop: LoopSpan): void {
-    const beats: number[] = [];
-    for (let tick = loop.to; loop.beat > 0 && tick < loop.from + loop.lap - 1e-9; tick += loop.beat) {
-      beats.push(tick);
-    }
     // Drawing the lap one lap lower than the clock puts it one lap higher in the lane.
     const played = this.playedTick;
-    this.playedTick -= loop.lap;
+    this.playedTick -= loop.to - loop.from;
     this.drawGrid(width, laneH, pxPerTick, loop.from, loop.to);
     this.drawNotes(laneH, pxPerTick, loop.from, loop.to, false);
     this.playedTick = played;
-    this.drawCountIn(width, laneH, pxPerTick, beats);
   }
 
   /** The Section as a tinted band over its bars, whether or not Loop gives it force. */

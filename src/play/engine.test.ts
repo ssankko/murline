@@ -1289,32 +1289,36 @@ describe('Section and Loop', () => {
     expect(play.snapshot().playedTick).toBeCloseTo(TICKS_PER_QUARTER / 2, 6);
   });
 
-  test('the wrap runs the count-in when it is on', () => {
+  test('the tick jumps on the beat, with no count-in of its own', () => {
     const play = engine(scoreOf(3), { countInBars: 1 });
     play.setLoop(true);
     play.setSection({ from: 1, to: 1 });
     play.start();
+    // The count-in of the start, then the one bar of the Section.
     play.advance(4000);
     expect(play.snapshot().playedTick).toBe(BAR);
-
-    play.advance(4000);
-    expect(play.snapshot().state).toBe('counting-in');
-    expect(play.snapshot().playedTick).toBe(0);
 
     play.advance(4000);
     expect(play.snapshot().state).toBe('running');
     expect(play.snapshot().playedTick).toBe(BAR);
+    expect(play.countInBeats).toEqual([]);
   });
 
-  test('the tick jumps on the beat when the count-in is off', () => {
-    const play = engine(scoreOf(3));
+  test('the first Onset of a new lap misses when nothing is struck', () => {
+    const play = engine(scoreOf(3), { countInBars: 1 });
     play.setLoop(true);
     play.setSection({ from: 1, to: 1 });
     play.start();
-    play.advance(4000);
+    // The count-in, the lap that misses its four Onsets, then the wrap.
+    play.advance(8000);
+    play.events();
+    // A quarter of the new lap: long enough for the window of its first Onset to close.
+    play.advance(1000);
 
-    expect(play.snapshot().state).toBe('running');
-    expect(play.snapshot().playedTick).toBe(BAR);
+    expect(play.events().filter((event) => event.verdict === 'miss')).toMatchObject([
+      { noteIndex: 4 },
+    ]);
+    expect(play.noteState(4)).toBe('miss');
   });
 
   test('a Section skips the repeat its bars carry', () => {

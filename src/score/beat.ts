@@ -1,7 +1,7 @@
 // How a bar of the Score is counted: the beat the metronome, the harmony grid and the lane share,
 // and the bar line a step of a walk stands after.
 
-import { TICKS_PER_QUARTER, type Measure, type Onset, type PlayStep } from '@/score/types';
+import { TICKS_PER_QUARTER, type Measure, type Onset, type PlayStep, type Score } from '@/score/types';
 
 /**
  * The beat a bar is counted in and how many of them it holds: the time signature's unit, a dotted
@@ -19,4 +19,18 @@ export function beatOf(measure: Measure): { ticks: number; perBar: number } {
 /** Played tick of the bar line that opens the bar a walk step stands in. */
 export function barTickOf(step: PlayStep, onset: Onset, measure: Measure): number {
   return step.tick - (onset.tick - measure.startTick);
+}
+
+/** Every bar the walk passes through, in played ticks: a repeated bar comes once per pass. */
+export function barsOfWalk(score: Score, walk: PlayStep[]): { measure: Measure; tick: number }[] {
+  const bars: { measure: Measure; tick: number }[] = [];
+  for (const step of walk) {
+    const onset = score.onsets[step.onsetIndex];
+    const measure = onset ? score.measures[onset.measureIndex] : undefined;
+    if (!onset || !measure) continue;
+    const tick = barTickOf(step, onset, measure);
+    if (bars.at(-1)?.tick === tick) continue;
+    bars.push({ measure, tick });
+  }
+  return bars;
 }

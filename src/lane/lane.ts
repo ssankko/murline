@@ -7,7 +7,7 @@ import { INK, PAPER, colorOf, tone } from '@/look/color';
 import { reducedMotion } from '@/look/motion';
 import type { Engine, LoopSpan, PlayEvent, Snapshot } from '@/play/engine';
 import { isInactiveHand, type HandsSetting } from '@/play/settings';
-import { barTickOf, beatOf } from '@/score/beat';
+import { barsOfWalk, beatOf } from '@/score/beat';
 import { TICKS_PER_QUARTER, type PlayStep, type Score } from '@/score/types';
 
 /** Look knobs, all global settings the gear writes to. */
@@ -305,7 +305,7 @@ export class Lane {
   /** The wrap divider: the lap goes back to the bar the Section opens at. */
   private wrapDivider(loop: LoopSpan): LaneJump {
     const bar = this.bars.find((each) => each.tick <= loop.from && loop.from < each.endTick);
-    return { tick: loop.to, label: `↺ back to bar ${bar?.number ?? 1}` };
+    return { tick: loop.to, label: backToBar(bar?.number ?? 1) };
   }
 
   private drawJumps(width: number, laneH: number, pxPerTick: number, loop: LoopSpan | null): void {
@@ -493,28 +493,22 @@ export class Lane {
   }
 }
 
+/** What every divider says, wrap and written repeat alike. */
+const backToBar = (number: number) => `↺ back to bar ${number}`;
+
 // Dash patterns as constants, because setLineDash takes a fresh array otherwise on every frame.
 const DASH = [7, 5];
 const SOLID: number[] = [];
 
 /** Every bar of the play in played time, one entry per pass of a repeated bar. */
 function barsOf(score: Score, walk: PlayStep[]): LaneBar[] {
-  const bars: LaneBar[] = [];
-  for (const step of walk) {
-    const onset = score.onsets[step.onsetIndex];
-    const measure = onset ? score.measures[onset.measureIndex] : undefined;
-    if (!onset || !measure) continue;
-    const tick = barTickOf(step, onset, measure);
-    if (bars.length > 0 && bars[bars.length - 1]!.tick === tick) continue;
-    bars.push({
-      tick,
-      number: measure.number,
-      measure: measure.index,
-      beatTicks: beatOf(measure).ticks,
-      endTick: tick + measure.durationTicks,
-    });
-  }
-  return bars;
+  return barsOfWalk(score, walk).map(({ measure, tick }) => ({
+    tick,
+    number: measure.number,
+    measure: measure.index,
+    beatTicks: beatOf(measure).ticks,
+    endTick: tick + measure.durationTicks,
+  }));
 }
 
 /** Where the walk goes back in the sheet, which is where a divider falls. */
@@ -525,7 +519,7 @@ function jumpsOf(score: Score, walk: PlayStep[]): LaneJump[] {
     const to = score.onsets[walk[i]!.onsetIndex];
     if (!from || !to || to.tick >= from.tick) continue;
     const number = score.measures[to.measureIndex]?.number ?? to.measureIndex + 1;
-    jumps.push({ tick: walk[i]!.tick, label: `↺ back to bar ${number}` });
+    jumps.push({ tick: walk[i]!.tick, label: backToBar(number) });
   }
   return jumps;
 }

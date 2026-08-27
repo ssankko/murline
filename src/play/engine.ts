@@ -5,7 +5,7 @@ import { playGrade, type NoteStrike, type PlayGrade } from '@/play/grade';
 import { clampSection, type Section } from '@/play/section';
 import { isInactiveHand, type HandsSetting, type PlaySettings, type TempoMode } from '@/play/settings';
 import { WaitState } from '@/play/wait';
-import { barTickOf, beatOf } from '@/score/beat';
+import { barsOfWalk, barTickOf, beatOf } from '@/score/beat';
 import {
   TICKS_PER_QUARTER,
   bpmAt,
@@ -1060,12 +1060,7 @@ function playNotesOf(score: Score, walk: PlayStep[]): PlayNote[] {
  */
 function beatGridOf(score: Score, walk: PlayStep[]): number[] {
   const ticks: number[] = [];
-  for (const step of walk) {
-    const onset = score.onsets[step.onsetIndex];
-    const measure = onset ? score.measures[onset.measureIndex] : undefined;
-    if (!onset || !measure) continue;
-    const barTick = barTickOf(step, onset, measure);
-    if (ticks.length > 0 && ticks[ticks.length - 1]! >= barTick) continue;
+  for (const { measure, tick: barTick } of barsOfWalk(score, walk)) {
     const { ticks: beat } = beatOf(measure);
     const end = barTick + measure.durationTicks;
     for (let tick = barTick + (measure.durationTicks % beat); tick < end - 1e-9; tick += beat) {

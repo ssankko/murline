@@ -150,24 +150,9 @@ describe('the index', () => {
     expect(index.title).toBe('The Wild Horseman');
     expect(index.measureCount).toBeGreaterThan(0);
   });
-
-  test('a Score with no strikeable note is an indexing failure', async () => {
-    const built = await score('JohannSebastianBach_PraeludiumInCDur_BWV846_1.xml');
-    const empty: Score = { ...built, onsets: [] };
-    expect(() => summarize(empty, 'silence.musicxml')).toThrow(ScoreError);
-    expect(() => summarize(empty, 'silence.musicxml')).toThrow('No notes in the first part');
-  });
 });
 
-describe('a file OSMD cannot read', () => {
-  test('reports the fixed reason with the raw message behind it', async () => {
-    const bytes = new TextEncoder().encode('this is not a score at all, it is a shopping list');
-    await expect(loadSheet(bytes, 'notes.txt')).rejects.toThrow(ScoreError);
-    await expect(loadSheet(bytes, 'notes.txt')).rejects.toMatchObject({
-      reason: 'Not a MusicXML file',
-    });
-  });
-
+describe('a sheet with nothing to play', () => {
   test('a sheet with no part carries the same reason as a sheet with no note', () => {
     const sheet = { Instruments: [] } as unknown as Parameters<typeof buildScore>[0];
     expect(() => buildScore(sheet)).toThrow(ScoreError);

@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { metaLine, titleLine, type FinderRow } from './finder';
+import { metaLine, reasonOf, titleLine, type FinderRow } from './finder';
 
 function row(fields: Partial<FinderRow>): FinderRow {
   return {
@@ -49,4 +49,9 @@ test('a PDMX row shows the uploader title, and only when it differs from the son
   expect(metaLine(row({ ...pdmx, alt: 'Gymnopédie no. 1 - Erik Satie' })))
     .toBe('Gymnopédie no. 1 - Erik Satie · 26 bars · 3 ratings · PDMX');
   expect(metaLine(row(pdmx))).toBe('26 bars · 3 ratings · PDMX');
+});
+
+test('the failure reason drops the prefix a thrown Error carries', () => {
+  expect(reasonOf(new Error('HTTP 404 from KernScores'))).toBe('HTTP 404 from KernScores');
+  expect(reasonOf('timed out after 15 s')).toBe('timed out after 15 s');
 });

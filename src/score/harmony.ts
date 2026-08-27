@@ -3,6 +3,7 @@
 // against the key in force ("5⁷/7"). A file that writes its own `<harmony>` symbols is not analysed
 // at all; the symbols are the harmony.
 
+import { NOTE_NAMES, pitchClass } from '@/look/color';
 import { AccidentalEnum, ChordSymbolEnum } from 'opensheetmusicdisplay';
 import { beatOf } from './beat';
 import {
@@ -22,7 +23,6 @@ export interface KeyAt {
   mode: number;
 }
 
-const SHARP_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const FLAT_NAMES = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
 
 interface Shape {
@@ -91,9 +91,7 @@ const C_MAJOR: KeyAt = { tick: 0, sharps: 0, mode: 0 };
 
 const WHOLE_NOTE = 4 * TICKS_PER_QUARTER;
 
-const pc = (midi: number) => ((midi % 12) + 12) % 12;
-
-const pitchClasses = (notes: Note[]) => new Set(notes.map((n) => pc(n.midi)));
+const pitchClasses = (notes: Note[]) => new Set(notes.map((n) => pitchClass(n.midi)));
 
 /**
  * The chord events of a piece, one per Onset where the harmony changes. Empty for a piece with no
@@ -105,13 +103,13 @@ export function analyzeHarmony(score: Score): ChordEvent[] {
 
 /** Tonic pitch class of a key: the key signature's major tonic moved by the mode. */
 function tonicOf(key: KeyAt): number {
-  return pc(key.sharps * 7 + (MODE_OFFSET[key.mode] ?? 0));
+  return pitchClass(key.sharps * 7 + (MODE_OFFSET[key.mode] ?? 0));
 }
 
 /** Major, or harmonic minor for every mode that is not a major one. */
 const scaleOf = (key: KeyAt) => (MAJOR_MODES.has(key.mode) ? MAJOR_SCALE : HARMONIC_MINOR);
 
-const inScale = (p: number, key: KeyAt) => scaleOf(key).includes(pc(p - tonicOf(key)));
+const inScale = (p: number, key: KeyAt) => scaleOf(key).includes(pitchClass(p - tonicOf(key)));
 
 /**
  * Scale degree of a pitch class in the key: "5", "♭7", "♯4". `written` is the note's own accidental,
@@ -119,11 +117,11 @@ const inScale = (p: number, key: KeyAt) => scaleOf(key).includes(pc(p - tonicOf(
  */
 export function degreeOf(p: number, key: KeyAt, written: number): string {
   const scale = scaleOf(key);
-  const step = pc(p - tonicOf(key));
+  const step = pitchClass(p - tonicOf(key));
   const own = scale.indexOf(step);
   if (own >= 0) return String(own + 1);
-  const below = scale.indexOf(pc(step - 1));
-  const above = scale.indexOf(pc(step + 1));
+  const below = scale.indexOf(pitchClass(step - 1));
+  const above = scale.indexOf(pitchClass(step + 1));
   // Both neighbours a semitone away: a written sharp raises the lower degree, a written flat lowers
   // the upper one, and a natural undoes the key signature's own accidental.
   const sharp = below >= 0 && (above < 0 || (written === 0 ? key.sharps < 0 : written > 0));
@@ -133,7 +131,7 @@ export function degreeOf(p: number, key: KeyAt, written: number): string {
 /** Note name of a pitch class: flats when the note or the key is written with them. */
 function spell(p: number, key: KeyAt, written: number): string {
   const flat = written < 0 || (written === 0 && key.sharps < 0);
-  return (flat ? FLAT_NAMES : SHARP_NAMES)[p]!;
+  return (flat ? FLAT_NAMES : NOTE_NAMES)[p]!;
 }
 
 /** Sharps and flats of any depth fold to one sign; naturals and none are 0. */
@@ -171,7 +169,7 @@ function scoreSegment(weight: number[], off: number[], total: number): Candidate
       let missing = 0;
       let onTemplate = 0;
       for (const step of shape.steps) {
-        const tone = pc(root + step);
+        const tone = pitchClass(root + step);
         if (weight[tone]) {
           present += weight[tone]! * ROLE[step]!;
           onTemplate += off[tone]!;
@@ -297,8 +295,8 @@ function segment(score: Score): ChordEvent[] {
     for (let i = j - 1; i >= 0 && (i === j - 1 || endOf(j - 1) - ticks[i]! <= capAt[i]!); i--) {
       for (const note of sounding[i]!) {
         const cost = ornamental.has(note) ? ORNAMENT : UNANCHORED;
-        weight[pc(note.midi)]!++;
-        off[pc(note.midi)]! += cost;
+        weight[pitchClass(note.midi)]!++;
+        off[pitchClass(note.midi)]! += cost;
         total += cost;
       }
       const candidate = scoreSegment(weight, off, total);
@@ -350,23 +348,23 @@ function nameSegment(
   let { root, shape } = label;
   if (
     (shape === DIMINISHED || (shape === HALF_DIMINISHED_7 && !inScale(root, key))) &&
-    inScale(pc(root - 4), key)
+    inScale(pitchClass(root - 4), key)
   ) {
-    root = pc(root - 4);
+    root = pitchClass(root - 4);
     shape = DOMINANT_7;
   }
   // The bass is held when every unit has the same lowest pitch class, restruck or not.
-  const lowestOf = (unit: Note[]) => pc(Math.min(...unit.map((x) => x.midi)));
+  const lowestOf = (unit: Note[]) => pitchClass(Math.min(...unit.map((x) => x.midi)));
   const bass = lowestOf(units[0]!);
   const held = units.every((u) => lowestOf(u) === bass);
-  if (shape === DIMINISHED_7 && held && shape.steps.some((st) => pc(root + st) === bass)) {
+  if (shape === DIMINISHED_7 && held && shape.steps.some((st) => pitchClass(root + st) === bass)) {
     root = bass;
   }
 
-  const tones = shape.steps.map((st) => pc(root + st));
+  const tones = shape.steps.map((st) => pitchClass(root + st));
   const slash = bass !== root && tones.includes(bass) && held;
   const written = (p: number) => {
-    const note = notes.find((x) => pc(x.midi) === p);
+    const note = notes.find((x) => pitchClass(x.midi) === p);
     return note ? accidentalOf(note) : 0;
   };
   return {

@@ -9,6 +9,7 @@ import {
   type Note as OsmdNote,
   type Staff as OsmdStaff,
 } from 'opensheetmusicdisplay';
+import { pitchClass } from '@/look/color';
 import { analyzeHarmony } from './harmony';
 import {
   ticksOf,
@@ -246,8 +247,4 @@ function chordsOf(sheet: MusicSheet, staves: OsmdStaff[]): ChordSymbol[] {
     }
   });
   return chords.sort((a, b) => a.tick - b.tick);
-}
-
-function pitchClass(halfTone: number): number {
-  return ((halfTone % 12) + 12) % 12;
 }

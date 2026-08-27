@@ -74,6 +74,11 @@ type Download =
   | { state: 'downloading' }
   | { state: 'failed'; provider: string; reason: string };
 
+/** Tauri rejects with a plain string, the import path throws an Error; the bar prints one reason. */
+export function reasonOf(error: unknown): string {
+  return String(error).replace(/^Error:\s*/, '');
+}
+
 /**
  * The finder modal. `libraryNames` are the file names already in the library folder, so a row that
  * is there says "In library" and never downloads; the Replace prompt cannot fire from here.
@@ -139,7 +144,7 @@ export function Finder({
       if (failures.length || !imported[0]) throw new Error(failures[0]?.reason ?? 'Import failed');
       onImported(imported[0]);
     } catch (error) {
-      setDl({ state: 'failed', provider: row.provider, reason: String(error) });
+      setDl({ state: 'failed', provider: row.provider, reason: reasonOf(error) });
     } finally {
       if (tempPath) await invoke('remove_temp_file', { path: tempPath }).catch(() => {});
     }

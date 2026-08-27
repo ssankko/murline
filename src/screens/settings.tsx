@@ -116,6 +116,7 @@ export function SettingsDialog({
           <div className="flex flex-col gap-7">
             <Group
               title="Library"
+              // The library folder is the library, and an empty one has no undo, so Reset leaves it.
               onReset={() => reset(['pdmx_folder'])}
               note="A new library folder re-points the app. No file is moved."
             >
@@ -180,7 +181,7 @@ export function SettingsDialog({
               </Row>
               {values.default_keyboard_preset === 'custom' && (
                 <Row label="Custom range">
-                  <NoteRange
+                  <CustomRange
                     lo={values.default_keyboard_lo}
                     hi={values.default_keyboard_hi}
                     onChange={(lo, hi) => {
@@ -351,22 +352,12 @@ export function GearPopover({
   onAllSettings: () => void;
 }) {
   const theme = useTheme();
-  /** The first of the two strikes "Detect from keyboard" is waiting for, if it has come. */
-  const [detecting, setDetecting] = useState<{ first: number | null } | null>(null);
-
-  useMidiStatus((event) => {
-    if (!detecting || !event.on) return;
-    if (detecting.first === null) return setDetecting({ first: event.midi });
-    const [lo, hi] = detectedRange(detecting.first, event.midi);
-    setDetecting(null);
-    onKeyboard('custom', lo, hi);
-  });
 
   return (
     <Popover>
       <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       <PopoverContent side="bottom" align="start" className="flex w-72 flex-col gap-4 p-3">
-        <Section title="Look">
+        <PopoverGroup title="Look">
           <Row label="Theme">
             <Segmented
               options={THEMES}
@@ -377,46 +368,34 @@ export function GearPopover({
               }}
             />
           </Row>
-        </Section>
+        </PopoverGroup>
 
         {!performing && (
-          <Section title="Keyboard">
+          <PopoverGroup title="Keyboard">
             <Segmented
               options={PRESETS}
               value={keyboard.keyboardPreset}
               onChange={(preset) => onKeyboard(preset, keyboard.keyboardLo, keyboard.keyboardHi)}
             />
             {keyboard.keyboardPreset === 'custom' && (
-              <>
-                <NoteRange
-                  lo={keyboard.keyboardLo}
-                  hi={keyboard.keyboardHi}
-                  onChange={(lo, hi) => onKeyboard('custom', lo, hi)}
-                />
-                <button
-                  onClick={() => setDetecting({ first: null })}
-                  className="text-muted-ink hover:text-ink self-start text-[12px] underline underline-offset-2"
-                >
-                  {detecting
-                    ? detecting.first === null
-                      ? 'Strike the lowest and the highest key…'
-                      : 'Now the other end…'
-                    : 'Detect from keyboard'}
-                </button>
-              </>
+              <CustomRange
+                lo={keyboard.keyboardLo}
+                hi={keyboard.keyboardHi}
+                onChange={(lo, hi) => onKeyboard('custom', lo, hi)}
+              />
             )}
-          </Section>
+          </PopoverGroup>
         )}
 
         {!performing && (
-          <Section title="Playing">
+          <PopoverGroup title="Playing">
             <Row label="Count-in bars">
               <NumberField value={countInBars} min={0} max={8} onChange={onCountInBars} />
             </Row>
-          </Section>
+          </PopoverGroup>
         )}
 
-        <Section title="Falling notes">
+        <PopoverGroup title="Falling notes">
           <Row label="Lookahead (beats)">
             <NumberField
               value={look.lookaheadBeats}
@@ -439,7 +418,7 @@ export function GearPopover({
           <Row label="Note names on keys">
             <Toggle value={look.keyLabels} onChange={(value) => onLook({ keyLabels: value })} />
           </Row>
-        </Section>
+        </PopoverGroup>
 
         {!performing && (
           <div className="border-edge-soft flex flex-col items-start gap-1.5 border-t pt-3">
@@ -497,8 +476,8 @@ function Group({
   );
 }
 
-/** A heading inside the gear popover, which is too narrow for the dialog's group furniture. */
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+/** A group inside the gear popover, which is too narrow for the dialog's group furniture. */
+function PopoverGroup({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="flex flex-col gap-1.5">
       <h3 className="text-muted-ink text-[11px] tracking-wide uppercase">{title}</h3>
@@ -613,6 +592,46 @@ function Segmented<T extends string | number | boolean>({
           {label}
         </button>
       ))}
+    </div>
+  );
+}
+
+/**
+ * A custom keyboard range: the two ends, and the two strikes that read them off the keyboard. The
+ * next strike is the low end, the one after it the high end, in whichever order they come.
+ */
+function CustomRange({
+  lo,
+  hi,
+  onChange,
+}: {
+  lo: number;
+  hi: number;
+  onChange: (lo: number, hi: number) => void;
+}) {
+  /** The first of the two strikes "Detect from keyboard" is waiting for, if it has come. */
+  const [detecting, setDetecting] = useState<{ first: number | null } | null>(null);
+
+  useMidiStatus((event) => {
+    if (!detecting || !event.on) return;
+    if (detecting.first === null) return setDetecting({ first: event.midi });
+    setDetecting(null);
+    onChange(...detectedRange(detecting.first, event.midi));
+  });
+
+  return (
+    <div className="flex flex-none flex-col items-start gap-1.5">
+      <NoteRange lo={lo} hi={hi} onChange={onChange} />
+      <button
+        onClick={() => setDetecting({ first: null })}
+        className="text-muted-ink hover:text-ink text-[12px] underline underline-offset-2"
+      >
+        {detecting
+          ? detecting.first === null
+            ? 'Strike the lowest and the highest key…'
+            : 'Now the other end…'
+          : 'Detect from keyboard'}
+      </button>
     </div>
   );
 }

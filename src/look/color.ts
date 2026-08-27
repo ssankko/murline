@@ -1,5 +1,6 @@
-// The one colour rule of the app. Everything that paints a note asks colorOf; other palettes may
-// be added here later without any caller changing.
+// The one colour rule of the app: `colorOf` turns a MIDI number into the hex its notehead, its
+// falling block and its key swatch are painted in. Every caller goes through it. The pitch-class
+// helpers under it are the vocabulary the rest of the app names notes with.
 
 export type Palette = 'muted';
 
@@ -38,8 +39,9 @@ export function colorOf(midi: number, palette: Palette = 'muted', dark = false):
   );
 }
 
-export function pitchClass(midi: number): number {
-  return ((midi % 12) + 12) % 12;
+/** Pitch class 0 to 11 of any semitone number, MIDI or OSMD half tone alike. */
+export function pitchClass(semitones: number): number {
+  return ((semitones % 12) + 12) % 12;
 }
 
 export const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];

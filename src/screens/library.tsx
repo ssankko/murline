@@ -124,7 +124,7 @@ export function Library({
     void listPieces(next).then(setPieces);
   }
 
-  // Favorites is a sort, so a toggle can add or remove a row: re-read rather than patch one.
+  // Favorites filters, so a toggle can add or remove a row: re-read rather than patch one.
   async function toggleFavorite(row: PieceRow) {
     await setFavorite(row.path, !row.favorite);
     setPieces(await listPieces(sort));
@@ -213,7 +213,8 @@ export function Library({
           </Button>
         </div>
 
-        {folderGone && (
+        {/* No folder at all reads the same as one that has gone: there is nothing to list. */}
+        {(!folder || folderGone) && (
           <div className="border-edge-soft flex items-center gap-2 border-y px-4 py-2 text-[12px]">
             <p className="min-w-0">
               Library folder not found

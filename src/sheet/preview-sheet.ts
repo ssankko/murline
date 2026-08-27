@@ -5,7 +5,8 @@
 import { clamp } from '@/lib/utils';
 import { colorOf } from '@/look/color';
 import { buildScore } from '@/score/build';
-import { ScoreError, type Score } from '@/score/types';
+import { loadInto } from '@/score/load';
+import type { Score } from '@/score/types';
 import { OpenSheetMusicDisplay } from 'opensheetmusicdisplay';
 import { applyTheme, applyTiers, noteheadEl, paintHead } from './paint';
 
@@ -52,12 +53,7 @@ export class PreviewSheet {
     dark: boolean,
   ): Promise<PreviewSheet> {
     const sheet = new PreviewSheet(host, dark);
-    try {
-      await sheet.osmd.load(new Blob([bytes as BlobPart]), fileName);
-    } catch (error) {
-      throw new ScoreError('Not a MusicXML file', String(error));
-    }
-    if (!sheet.osmd.Sheet) throw new ScoreError('Not a MusicXML file', 'the file holds no score');
+    await loadInto(sheet.osmd, bytes, fileName);
     sheet.draw();
     sheet.score = buildScore(sheet.osmd.Sheet);
     sheet.paint();

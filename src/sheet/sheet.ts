@@ -9,8 +9,9 @@ import type { SeekTarget, Snapshot } from '@/play/engine';
 import type { Section } from '@/play/section';
 import { isInactiveHand, type HandsSetting } from '@/play/settings';
 import { buildScore } from '@/score/build';
+import { loadInto } from '@/score/load';
 import { analyzeHarmony } from '@/score/harmony';
-import { ScoreError, type Note, type PlayStep, type Score } from '@/score/types';
+import type { Note, PlayStep, Score } from '@/score/types';
 import {
   OpenSheetMusicDisplay,
   type MusicSystem,
@@ -214,12 +215,7 @@ export class Sheet {
     dark: boolean,
   ): Promise<Sheet> {
     const sheet = new Sheet(host, dark);
-    try {
-      await sheet.osmd.load(new Blob([bytes as BlobPart]), fileName);
-    } catch (error) {
-      throw new ScoreError('Not a MusicXML file', String(error));
-    }
-    if (!sheet.osmd.Sheet) throw new ScoreError('Not a MusicXML file', 'the file holds no score');
+    await loadInto(sheet.osmd, bytes, fileName);
     sheet.osmd.render();
     sheet.score = buildScore(sheet.osmd.Sheet);
     sheet.score.harmony = analyzeHarmony(sheet.score);

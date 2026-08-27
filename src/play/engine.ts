@@ -461,8 +461,8 @@ export class Engine {
 
   /** Puts the clock on another walk at the written moment it stands at now. */
   private setWalk(walk: PlayStep[]): void {
-    const sheetTick = this.sheetTickOf(this.tick);
-    const startSheetTick = this.sheetTickOf(this.startTick);
+    const at = this.writtenAt(this.tick);
+    const startAt = this.writtenAt(this.startTick);
     this.walk = walk;
     this.notes = playNotesOf(this.score, walk);
     this.states = this.notes.map(() => 'pending');
@@ -473,8 +473,24 @@ export class Engine {
     // names Onsets that are gone. A key held across the swap blocks nothing on the new walk.
     for (const midi of this.held.keys()) this.held.set(midi, ABSORBED);
     this.wait.reset();
-    this.startTick = this.nearestTick(this.playedTicksOf(startSheetTick), this.startTick);
-    this.moveTo(this.nearestTick(this.playedTicksOf(sheetTick), this.tick));
+    this.startTick = this.replay(startAt, this.startTick);
+    this.moveTo(this.replay(at, this.tick));
+  }
+
+  /** Where a played tick stands in the written score: its Onset, and the ticks it stands past it. */
+  private writtenAt(playedTick: number): { onsetTick: number; past: number } {
+    const step = this.walk[this.stepAt(playedTick)];
+    if (!step) return { onsetTick: playedTick, past: 0 };
+    const onsetTick = this.score.onsets[step.onsetIndex]?.tick ?? 0;
+    return { onsetTick, past: playedTick - step.tick };
+  }
+
+  /**
+   * The played tick of a written moment on the walk in force, the pass nearest the tick it had.
+   * A moment between two Onsets keeps its distance from the Onset before it.
+   */
+  private replay(at: { onsetTick: number; past: number }, was: number): number {
+    return this.nearestTick(this.playedTicksOf(at.onsetTick), was - at.past) + at.past;
   }
 
   /** Takes the clock to a played tick: nothing behind it closes, everything from it is open again. */

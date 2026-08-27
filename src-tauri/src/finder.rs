@@ -159,11 +159,8 @@ impl Index {
     }
 }
 
-/// Every token of the query must start a word in the row's haystack (composer, title, opus,
-/// number, movement number and name, the uploader's composer and title lines, and the file URL);
-/// a digit token must match a whole
-/// number, so "op 9" skips Op. 59. Rows whose composer matches more tokens come first, so "satie"
-/// lists Erik Satie before the Goudimel harmonisations; inside a rank the rows keep list order.
+/// Every token must start a word of the row's haystack and an all-digit token must match a whole
+/// number, so "op 9" skips Op. 59; rows whose composer matches more tokens come first.
 // ponytail: one scan of the whole blob per keystroke, 12 to 30 ms over the 200k shipped rows in a
 // debug build; index the tokens if a query stops keeping up with typing.
 pub fn search(ix: &Index, query: &str) -> SearchResult {
@@ -400,11 +397,13 @@ fn row_at(starts: &[u32], p: u32) -> usize {
     starts.partition_point(|&s| s <= p) - 1
 }
 
-/// Async so the search runs off the main thread. The first call waits for `warm()` to finish
-/// building the index.
+/// The scan is one blocking pass over the whole index, and the first call waits for `warm()` to
+/// finish building it, so it runs on a blocking thread and leaves the runtime to the file commands.
 #[tauri::command]
-pub async fn finder_search(query: String) -> SearchResult {
-    search(&INDEX, &query)
+pub async fn finder_search(query: String) -> Result<SearchResult, String> {
+    tauri::async_runtime::spawn_blocking(move || search(&INDEX, &query))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Where the download landed, for the import path to pick up.
@@ -738,12 +737,18 @@ Morris\tLelia N. Morris\tThe Fight Is On\tThe Fight Is On\t\t24\t0\t1/3/QmC.mxl\
             let took = start.elapsed();
             println!("{query:?}: {} + {} more in {took:?}", hits.rows.len(), hits.more);
             assert!(took.as_millis() < 500, "{query:?} took {took:?}");
+            let answered = !hits.rows.is_empty();
+            assert_eq!(answered, query != "zzzz", "{query:?} answered {} rows", hits.rows.len());
         }
+        assert!(search(&INDEX, "satie").rows.iter().any(|r| r.heading == "Erik Satie"));
+
         let start = std::time::Instant::now();
         let hits = search(&INDEX, "s");
         let took = start.elapsed();
         println!("\"s\": {} + {} more in {took:?}", hits.rows.len(), hits.more);
         assert!(took.as_millis() < 2000, "one letter took {took:?}");
+        assert_eq!(hits.rows.len(), MAX_ROWS);
+        assert!(hits.more > 0, "one letter left nothing over");
     }
 }
 

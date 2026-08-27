@@ -17,6 +17,8 @@ let sent: { command: string; args: Record<string, unknown> }[] = [];
 let progress: ((event: { payload: { seconds: number; playing: boolean } }) => void) | null = null;
 
 vi.mock('@tauri-apps/api/core', () => ({
+  // The settings panel's PDMX row reaches for a Channel at import time, never at mount.
+  Channel: class {},
   invoke: async (command: string, args: Record<string, unknown> = {}) => {
     sent.push({ command, args });
     if (command === 'audio_status') return status;
@@ -37,7 +39,11 @@ vi.mock('@tauri-apps/api/event', () => ({
 }));
 
 vi.mock('@/library/scan', () => ({ reindexIfChanged: async () => {} }));
-vi.mock('@/library/queries', () => ({ getPiece: async () => null }));
+// Only the one call is stubbed: the settings panel pulls the module's constants in behind it.
+vi.mock('@/library/queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/library/queries')>()),
+  getPiece: async () => null,
+}));
 
 let root: Root | null = null;
 let host: HTMLElement | null = null;

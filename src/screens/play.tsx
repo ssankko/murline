@@ -64,7 +64,7 @@ import { bpmAt, ScoreError, type Measure } from '@/score/types';
 import { Button } from '@/components/ui/button';
 import {
   GearPopover,
-  SettingsDialog,
+  SettingsPanel,
   SpacingPopup,
   ViewPopover,
   type SettingChange,
@@ -83,6 +83,7 @@ import {
   Repeat,
   RotateCcw,
   Settings,
+  SlidersHorizontal,
   Square,
   Tally4,
 } from 'lucide-react';
@@ -561,6 +562,9 @@ export function PlayScreen({
             <AudioLines {...ICON} />
           </BarButton>
           <ViewPopover onChange={applyGlobal} />
+          <BarButton label="Settings" onClick={() => setSettingsOpen(true)}>
+            <SlidersHorizontal {...ICON} />
+          </BarButton>
 
           {/* The play disc keeps the window's midline whatever the two sides hold. */}
           <div className="absolute left-1/2 flex -translate-x-1/2 items-center gap-0.5">
@@ -681,11 +685,13 @@ export function PlayScreen({
 
         <SpacingPopup pinch={pinch} />
 
-        {settingsOpen && (
-          <SettingsDialog onClose={() => setSettingsOpen(false)} onGlobalChange={applyGlobal} />
-        )}
+        <SettingsPanel
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          onGlobalChange={applyGlobal}
+        />
 
-        {/* The dialog is global, so it changes nothing the frame loop reads: the clock runs on. */}
+        {/* Both are global, so they change nothing the frame loop reads and the clock runs on. */}
         {audioOpen && <AudioDialog onClose={() => setAudioOpen(false)} />}
       </div>
     </TooltipProvider>

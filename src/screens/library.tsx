@@ -32,12 +32,11 @@ import {
   type SortOrder,
 } from '@/library/queries';
 import { scanLibrary, splitError } from '@/library/scan';
-import { setSetting } from '@/db/db';
 import { Collapse } from '@/look/collapse';
 import { readPieceDefaults, type PieceSettings } from '@/play/resolve';
 import { Finder } from '@/screens/finder';
 import { Detail } from '@/screens/piece-detail';
-import { SettingsDialog } from '@/screens/settings';
+import { SettingsPanel } from '@/screens/settings';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -168,14 +167,6 @@ export function Library({
     if (failures.length) setNotice(failureNotice(failures));
   }
 
-  /** A new library folder: the setting moves, the launch scan runs again, no file is touched. */
-  async function chooseFolder(): Promise<void> {
-    const picked = await open({ directory: true, defaultPath: folder ?? undefined });
-    if (typeof picked !== 'string') return;
-    await setSetting('library_folder', picked);
-    onFolder(picked);
-  }
-
   /** "In library" answers for the whole folder, not for the rows the current sort shows. */
   async function openFinder(): Promise<void> {
     const paths = await allPiecePaths();
@@ -254,13 +245,14 @@ export function Library({
               Library folder not found
               <span className="text-muted-ink"> {folder}</span>
             </p>
+            {/* The folder has one home now: the panel's Library tab. */}
             <Button
               variant="outline"
               size="sm"
               className="ml-auto h-7 flex-none"
-              onClick={() => void chooseFolder()}
+              onClick={() => setSettingsOpen(true)}
             >
-              Choose…
+              Settings…
             </Button>
           </div>
         )}
@@ -354,14 +346,14 @@ export function Library({
 
       {audioOpen && <AudioDialog onClose={() => setAudioOpen(false)} />}
 
-      {settingsOpen && (
-        <SettingsDialog
-          onClose={() => setSettingsOpen(false)}
-          onGlobalChange={(key, value) => {
-            if (key === 'library_folder') onFolder(value as string);
-          }}
-        />
-      )}
+      {/* A new library folder re-points the app. The scan runs again and no file is touched. */}
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onGlobalChange={(key, value) => {
+          if (key === 'library_folder') onFolder(value as string);
+        }}
+      />
 
       {clash && (
         <Dialog open onOpenChange={() => clash.decide('cancel')}>

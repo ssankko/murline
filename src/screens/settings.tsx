@@ -1,15 +1,8 @@
-// The two settings surfaces: the global dialog, opened from the library gear and from the play
-// screen's gear popover, and the gear popover itself, which edits the open piece. Every control
-// writes on change; there is no Save.
+// The settings surfaces: the panel, a right-hand slide-over opened from every screen, and the two
+// popovers on the play screen that tickets 02 and 03 fold into it. Every control writes on change;
+// there is no Save.
 
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,14 +13,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import {
-  LANE_KNOBS,
-  PIECE_DEFAULT_KEYS,
-  readSettings,
-  setSetting,
-  SETTING_DEFAULTS,
-  type Settings,
-} from '@/db/db';
+import { LANE_KNOBS, readSettings, setSetting, type Settings } from '@/db/db';
 import type { LaneLook } from '@/lane/lane';
 import { cancelPdmx, downloadPdmx, progressLabel, usePdmxDownload } from '@/library/pdmx';
 import { clamp } from '@/lib/utils';
@@ -35,11 +21,12 @@ import { noteName } from '@/look/color';
 import { setTheme, useTheme, type Theme } from '@/look/use-dark';
 import { pinMidiDevice, useMidiStatus } from '@/midi/use-midi-status';
 import { validNumber, type PieceSettings } from '@/play/resolve';
-import { TEMPO_RANGE, type HandsSetting, type KeyboardPreset } from '@/play/settings';
+import { type KeyboardPreset } from '@/play/settings';
 import { SPACING_MAX, SPACING_MIN, type Pinch } from '@/sheet/sheet';
 import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
-import { ChevronDown, Eye } from 'lucide-react';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import { ChevronDown, Eye, X } from 'lucide-react';
+import { Tabs } from 'radix-ui';
 import { useEffect, useRef, useState } from 'react';
 
 /** The whole keyboard, the span both note dropdowns offer. */
@@ -49,12 +36,6 @@ const THEMES: [Theme, string][] = [
   ['system', 'System'],
   ['light', 'Light'],
   ['dark', 'Dark'],
-];
-
-const HANDS: [HandsSetting, string][] = [
-  ['both', 'Both'],
-  ['left', 'Left'],
-  ['right', 'Right'],
 ];
 
 const PRESETS: [KeyboardPreset, string][] = [
@@ -74,7 +55,7 @@ const LANE_FIELDS: [key: keyof typeof LANE_KNOBS, label: string, min: number, ma
   ['lane_gap', 'Gap (px)', 0, 20],
 ];
 
-/** Every Grade knob in one place: the group is uniform, so it is drawn from a list. */
+/** The eleven knobs that shape a Grade. Uncalibrated, so they ship only in a dev build. */
 const GRADE_KNOBS: [keyof Settings, string, number, number][] = [
   ['grade_weight_timing', 'Timing weight', 0, 1],
   ['grade_weight_velocity', 'Velocity weight', 0, 1],
@@ -87,39 +68,144 @@ const GRADE_KNOBS: [keyof Settings, string, number, number][] = [
   ['grade_release_flat_hi', 'Release full marks to', 0, 10],
   ['grade_release_zero_lo', 'Release zero below', 0, 10],
   ['grade_release_zero_hi', 'Release zero above', 0, 10],
-  ['matching_window_ms', 'Matching window (ms)', 1, 1000],
-  ['togetherness_ms', 'Togetherness window (ms)', 1, 1000],
 ];
 
 /** One global setting as it was just written: a key, with a value of that key's own type. */
 export type SettingChange = { [K in keyof Settings]: [key: K, value: Settings[K]] }[keyof Settings];
 
+type SettingsTab = 'sound' | 'look' | 'playing' | 'library';
+
+const TAB_LABELS: Record<SettingsTab, string> = {
+  sound: 'Sound',
+  look: 'Look',
+  playing: 'Playing',
+  library: 'Library',
+};
+
+const TABS = Object.entries(TAB_LABELS) as [SettingsTab, string][];
+
 /**
- * Every global setting, in the five groups. A knob the running play reads is handed to
- * `onGlobalChange` as it is written, so a change mid-practice applies at once.
+ * Every row the search box can reach, declared here rather than read off the page, so a row on a
+ * tab that is not open is still findable. `words` holds what a player types instead of the label,
+ * seeded from the _Avoid_ lines of `CONTEXT.md`.
+ *
+ * A row belongs here only once the panel renders it. An entry for a row that is not on screen
+ * sends the search to a tab with nothing on it, which is worse than finding nothing at all.
  */
-export function SettingsDialog({
+const SEARCH_ROWS: { id: string; tab: SettingsTab; label: string; words: string[] }[] = [
+  {
+    id: 'click_volume',
+    tab: 'sound',
+    label: 'Click volume',
+    words: ['metronome', 'loudness', 'beat', 'tick'],
+  },
+  {
+    id: 'midi_device',
+    tab: 'playing',
+    label: 'Input device',
+    words: ['midi', 'keyboard', 'piano', 'port'],
+  },
+  {
+    id: 'velocity_offset',
+    tab: 'playing',
+    label: 'Velocity offset',
+    words: ['touch', 'strike', 'force', 'loudness'],
+  },
+  {
+    id: 'matching_window_ms',
+    tab: 'playing',
+    label: 'Matching window (ms)',
+    words: ['hit window', 'tolerance', 'timing'],
+  },
+  {
+    id: 'togetherness_ms',
+    tab: 'playing',
+    label: 'Togetherness window (ms)',
+    words: ['chord', 'spread', 'together'],
+  },
+  ...(import.meta.env.DEV
+    ? [
+        {
+          id: 'grade_tuning',
+          tab: 'playing' as const,
+          label: 'Grade tuning',
+          words: ['score', 'rating', 'karaoke', 'weight', 'release'],
+        },
+      ]
+    : []),
+  {
+    id: 'library_folder',
+    tab: 'library',
+    label: 'Library folder',
+    words: ['storage', 'data directory', 'scores', 'files'],
+  },
+  {
+    id: 'pdmx_folder',
+    tab: 'library',
+    label: 'PDMX folder',
+    words: ['storage', 'data directory'],
+  },
+  {
+    id: 'pdmx_scores',
+    tab: 'library',
+    label: 'PDMX scores',
+    words: ['download', 'catalogue', 'source', 'provider'],
+  },
+];
+
+/** The rows whose label, tab name or one of their words holds what was typed. */
+function searchRows(query: string): typeof SEARCH_ROWS {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [];
+  return SEARCH_ROWS.filter((row) =>
+    [row.label, TAB_LABELS[row.tab], ...row.words].some((word) =>
+      word.toLowerCase().includes(needle),
+    ),
+  );
+}
+
+/** The `id` a search result scrolls to, kept off the setting keys so it collides with nothing. */
+function rowId(id: string): string {
+  return `setting-row-${id}`;
+}
+
+/**
+ * Every app-wide setting, in four tabs, over whatever screen is behind it. The panel is not modal:
+ * the sheet and the lane stay visible and keep animating while a control is moved, so a change can
+ * be judged by eye and ear. It reads nothing the play clock owns and writes nothing to it.
+ *
+ * A knob the running play reads is handed to `onGlobalChange` as it is written, so a change
+ * mid-practice applies at once.
+ */
+export function SettingsPanel({
+  open,
   onClose,
   onGlobalChange,
 }: {
+  open: boolean;
   onClose: () => void;
   onGlobalChange?: (...change: SettingChange) => void;
 }) {
   const [values, setValues] = useState<Settings | null>(null);
+  const [tab, setTab] = useState<SettingsTab>('sound');
+  const [query, setQuery] = useState('');
+  /** The row a search result jumped to, held until the next jump or the next open. */
+  const [marked, setMarked] = useState<string | null>(null);
   const [velocity, setVelocity] = useState<number | null>(null);
   const [pdmxReady, setPdmxReady] = useState<boolean | null>(null);
+  // The panel stays mounted for its slide, so a shut panel must not re-render on every strike.
   const midi = useMidiStatus((event) => {
-    if (event.on) setVelocity(event.velocity);
+    if (open && event.on) setVelocity(event.velocity);
   });
-  const theme = useTheme();
   const pdmx = usePdmxDownload();
   const downloading = pdmx.progress !== null;
 
-  // A finished PDMX download writes the folder itself, so the settings are read again when one
-  // stops: the dialog is not always open to hear about it.
+  // Read again at every open, so the panel is in step with the popovers and with a finished PDMX
+  // download, which writes the folder itself while nothing is listening.
   useEffect(() => {
-    readSettings().then(setValues, console.error);
-  }, [downloading]);
+    if (open) readSettings().then(setValues, console.error);
+    else setMarked(null);
+  }, [open, downloading]);
 
   // Whether the folder in force holds unpacked scores. Rust answers off the disk, not the setting.
   useEffect(() => {
@@ -135,17 +221,18 @@ export function SettingsDialog({
     };
   }, [values?.pdmx_folder]);
 
+  // The tab switch and the mark land in one render, so the row is on the page by the time this
+  // runs. A row on a tab nobody has built yet is not in `SEARCH_ROWS`, so there is nothing to miss.
+  useEffect(() => {
+    if (marked) document.getElementById(rowId(marked))?.scrollIntoView({ block: 'center' });
+  }, [marked]);
+
   function write<K extends keyof Settings>(key: K, value: Settings[K]): void {
     setValues((held) => held && { ...held, [key]: value });
     setSetting(key, value).catch(console.error);
-    if (key === 'theme') setTheme(value as Theme);
     if (key === 'midi_device') pinMidiDevice(value as string | null);
     // The pair comes straight out of this function's own key type, so it is one of the union.
     onGlobalChange?.(...([key, value] as SettingChange));
-  }
-
-  function reset(keys: (keyof Settings)[]): void {
-    for (const key of keys) write(key, SETTING_DEFAULTS[key] as never);
   }
 
   /** One line for the PDMX row: how far the download has got, or what is on disk. */
@@ -158,244 +245,269 @@ export function SettingsDialog({
         : 'Not downloaded';
 
   async function chooseFolder(key: 'library_folder' | 'pdmx_folder'): Promise<void> {
-    const picked = await open({ directory: true, defaultPath: values?.[key] || undefined });
+    const picked = await openDialog({ directory: true, defaultPath: values?.[key] || undefined });
     if (typeof picked === 'string') write(key, picked);
   }
 
-  // The box is centred on itself, so it must mount at its full size: content that arrived later
-  // would grow the box and re-centre it under the open animation.
-  if (!values) return null;
+  const results = searchRows(query);
 
   return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-[560px]">
-        <DialogHeader>
-          <DialogTitle className="text-[15px]">Settings</DialogTitle>
-          <DialogDescription className="sr-only">Every setting of the app.</DialogDescription>
-        </DialogHeader>
+    // `role="dialog"` with a state is what the play screen's keys watch for: while the panel is
+    // open, Space and Escape are the panel's and never reach the clock.
+    <aside
+      role="dialog"
+      aria-label="Settings"
+      data-state={open ? 'open' : 'closed'}
+      inert={!open}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') onClose();
+      }}
+      className={`bg-chrome border-edge-soft fixed inset-y-0 right-0 z-40 flex w-[380px] max-w-full flex-col border-l shadow-xl transition-transform duration-200 ease-[var(--ease)] motion-reduce:transition-none ${
+        open ? 'translate-x-0' : 'translate-x-full'
+      }`}
+    >
+      <div className="border-edge-soft flex h-12 flex-none items-center gap-2 border-b px-3">
+        <h2 className="text-[13px] font-semibold">Settings</h2>
+        <button
+          onClick={onClose}
+          aria-label="Close settings"
+          className="hover:bg-ink/8 ml-auto flex size-8 flex-none items-center justify-center rounded-md transition-colors duration-150"
+        >
+          <X size={16} strokeWidth={1.75} />
+        </button>
+      </div>
 
-        {/* The dialog box is a grid, whose track is as wide as its widest content unless the
-            column is let go under it: without min-w-0 a long path widens the whole box. */}
-        <div className="flex min-w-0 flex-col gap-7">
-          {/* The library folder is the library, and an empty one has no undo, so Reset leaves it. */}
-          <Group
-            title="Library"
-            onReset={() => reset(['pdmx_folder'])}
-            note="A new library folder re-points the app. No file is moved."
-          >
-            <Row label="Library folder">
-              <Path
-                value={values.library_folder}
-                onChoose={() => chooseFolder('library_folder').catch(console.error)}
-              />
-            </Row>
-            <Row label="PDMX folder">
-              <Path
-                value={values.pdmx_folder}
-                onChoose={() => chooseFolder('pdmx_folder').catch(console.error)}
-              />
-            </Row>
-            <Row label="PDMX scores">
-              <span className="flex flex-none flex-col items-end gap-0.5">
-                <span className="flex items-center gap-3">
-                  <span className="text-muted-ink text-[12px] tabular-nums">{pdmxStatus}</span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 flex-none"
-                    onClick={() => {
-                      if (downloading) cancelPdmx();
-                      else void downloadPdmx();
-                    }}
-                  >
-                    {downloading ? 'Cancel' : 'Download PDMX (1.9 GB)'}
-                  </Button>
-                </span>
-                {pdmx.error && (
-                  <span className="text-[11px] text-red-600 dark:text-red-400">{pdmx.error}</span>
-                )}
-              </span>
-            </Row>
-          </Group>
-
-          <Group
-            title="Playing defaults"
-            note="A piece that holds a setting of its own keeps it."
-            onReset={() => reset(Object.keys(PIECE_DEFAULT_KEYS) as (keyof Settings)[])}
-          >
-            <Row label="Tempo (%)">
-              <NumberField
-                value={values.default_tempo_value}
-                min={TEMPO_RANGE.percent[0]}
-                max={TEMPO_RANGE.percent[1]}
-                onChange={(value) => write('default_tempo_value', value)}
-              />
-            </Row>
-            <Row label="Metronome">
-              <Toggle
-                value={values.default_metronome}
-                onChange={(value) => write('default_metronome', value)}
-              />
-            </Row>
-            <Row label="Count-in bars">
-              <NumberField
-                value={values.default_count_in_bars}
-                min={0}
-                max={8}
-                onChange={(value) => write('default_count_in_bars', value)}
-              />
-            </Row>
-            <Row label="Hands">
-              <Segmented
-                options={HANDS}
-                value={values.default_hands}
-                onChange={(value) => write('default_hands', value)}
-              />
-            </Row>
-            <Row label="Keyboard">
-              <Segmented
-                options={PRESETS}
-                value={values.default_keyboard_preset}
-                onChange={(value) => write('default_keyboard_preset', value)}
-              />
-            </Row>
-            {values.default_keyboard_preset === 'custom' && (
-              <Row label="Custom range">
-                <CustomRange
-                  lo={values.default_keyboard_lo}
-                  hi={values.default_keyboard_hi}
-                  onChange={(lo, hi) => {
-                    write('default_keyboard_lo', lo);
-                    write('default_keyboard_hi', hi);
+      <div className="relative flex-none px-3 pt-3">
+        <Input
+          type="search"
+          value={query}
+          aria-label="Search settings"
+          placeholder="Search settings"
+          onChange={(event) => setQuery(event.target.value)}
+          className="h-8 text-[12px]"
+        />
+        {results.length > 0 && (
+          <ul className="bg-chrome border-edge-soft absolute inset-x-3 top-full z-10 mt-1 max-h-64 overflow-y-auto border shadow-md">
+            {results.map((row) => (
+              <li key={row.id}>
+                <button
+                  onClick={() => {
+                    setTab(row.tab);
+                    setMarked(row.id);
+                    setQuery('');
                   }}
-                />
-              </Row>
-            )}
-          </Group>
-
-          <Group
-            title="Play screen"
-            onReset={() =>
-              reset([
-                ...LANE_FIELDS.map(([key]) => key),
-                'keyboard_labels',
-                'click_volume',
-                'theme',
-              ])
-            }
-          >
-            {LANE_FIELDS.map(([key, label, min, max]) => (
-              <Row key={key} label={label}>
-                <NumberField
-                  value={values[key] as number}
-                  min={min}
-                  max={max}
-                  onChange={(value) => write(key, value as never)}
-                />
-              </Row>
+                  className="hover:bg-ink/8 flex w-full items-baseline gap-3 px-2.5 py-1.5 text-left text-[12px]"
+                >
+                  <span className="min-w-0 truncate">{row.label}</span>
+                  <span className="text-muted-ink ml-auto flex-none text-[11px]">
+                    {TAB_LABELS[row.tab]}
+                  </span>
+                </button>
+              </li>
             ))}
-            <Row label="Note names on keys">
-              <Toggle
-                value={values.keyboard_labels}
-                onChange={(value) => write('keyboard_labels', value)}
-              />
-            </Row>
-            <Row label="Click volume">
-              <NumberField
-                value={values.click_volume}
-                min={0}
-                max={100}
-                onChange={(value) => write('click_volume', value)}
-              />
-            </Row>
-            <Row label="Theme">
-              <Segmented
-                options={THEMES}
-                value={theme}
-                onChange={(value) => write('theme', value)}
-              />
-            </Row>
-          </Group>
+          </ul>
+        )}
+      </div>
 
-          <Group title="MIDI" onReset={() => reset(['midi_device', 'velocity_offset'])}>
-            <Row label="Input device">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    aria-label="MIDI input device"
-                    className="h-7 max-w-[190px] justify-between px-2 text-[12px] font-normal"
-                  >
-                    <span className="truncate">
-                      {midi.ports.find((port) => port.id === values.midi_device)?.name ??
-                        'Any device'}
-                    </span>
-                    <ChevronDown className="size-3.5 opacity-60" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="max-w-[260px]">
-                  <DropdownMenuRadioGroup
-                    value={values.midi_device ?? ''}
-                    onValueChange={(id) => write('midi_device', id || null)}
-                  >
-                    <DropdownMenuRadioItem value="" className="text-[13px]">
-                      Any device
-                    </DropdownMenuRadioItem>
-                    {midi.ports.map((port) => (
-                      <DropdownMenuRadioItem
-                        key={port.id}
-                        value={port.id}
-                        className="text-[13px]"
-                      >
-                        <span className="truncate">{port.name}</span>
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </Row>
-            <Row label="Velocity offset">
-              <div className="flex items-center gap-3">
-                <NumberField
-                  value={values.velocity_offset}
-                  min={-64}
-                  max={64}
-                  onChange={(value) => write('velocity_offset', value)}
-                />
-                <span className="text-muted-ink text-[12px] tabular-nums">
-                  last strike {velocity ?? '—'}
-                </span>
-              </div>
-            </Row>
-          </Group>
+      <Tabs.Root
+        value={tab}
+        onValueChange={(next) => {
+          setTab(next as SettingsTab);
+          setMarked(null);
+        }}
+        className="flex min-h-0 flex-1 flex-col"
+      >
+        <Tabs.List className="border-edge-soft flex flex-none gap-0.5 border-b px-3 pt-3">
+          {TABS.map(([each, label]) => (
+            <Tabs.Trigger
+              key={each}
+              value={each}
+              className="text-muted-ink data-[state=active]:border-ink data-[state=active]:text-ink hover:text-ink -mb-px border-b-2 border-transparent px-2 pb-1.5 text-[12px] font-medium transition-colors duration-150"
+            >
+              {label}
+            </Tabs.Trigger>
+          ))}
+        </Tabs.List>
 
-          <details className="flex flex-col gap-2">
-            <summary className="cursor-pointer text-[13px] font-semibold">
-              Grade tuning
-            </summary>
-            <div className="mt-3">
-              <Group
-                title=""
-                note="Grade normalises the three weights whatever they hold."
-                onReset={() => reset(GRADE_KNOBS.map(([key]) => key))}
-              >
-                {GRADE_KNOBS.map(([key, label, min, max]) => (
-                  <Row key={key} label={label}>
+        {/* The box is a grid whose track is as wide as its widest content unless the column is let
+            go under it: without min-w-0 a long path widens the whole panel. */}
+        <div className="flex min-w-0 flex-1 flex-col overflow-y-auto px-3 py-4">
+          {values && (
+            <>
+              <Tabs.Content value="sound">
+                <Rows>
+                  {/* ponytail: click volume lives here until ticket 06 moves it to the mixer's
+                      metronome fader, which is the only place the spec gives it. */}
+                  <Row id="click_volume" marked={marked === 'click_volume'} label="Click volume">
                     <NumberField
-                      value={values[key] as number}
-                      min={min}
-                      max={max}
-                      onChange={(value) => write(key, value as never)}
+                      value={values.click_volume}
+                      min={0}
+                      max={100}
+                      onChange={(value) => write('click_volume', value)}
                     />
                   </Row>
-                ))}
-              </Group>
-            </div>
-          </details>
+                </Rows>
+              </Tabs.Content>
+
+              <Tabs.Content value="look">
+                <p className="text-muted-ink text-[12px]">Theme, sheet and falling notes move here.</p>
+              </Tabs.Content>
+
+              <Tabs.Content value="playing" className="flex flex-col gap-7">
+                <Rows>
+                  <Row id="midi_device" marked={marked === 'midi_device'} label="Input device">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          aria-label="MIDI input device"
+                          className="h-7 max-w-[190px] justify-between px-2 text-[12px] font-normal"
+                        >
+                          <span className="truncate">
+                            {midi.ports.find((port) => port.id === values.midi_device)?.name ??
+                              'Any device'}
+                          </span>
+                          <ChevronDown className="size-3.5 opacity-60" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="max-w-[260px]">
+                        <DropdownMenuRadioGroup
+                          value={values.midi_device ?? ''}
+                          onValueChange={(id) => write('midi_device', id || null)}
+                        >
+                          <DropdownMenuRadioItem value="" className="text-[13px]">
+                            Any device
+                          </DropdownMenuRadioItem>
+                          {midi.ports.map((port) => (
+                            <DropdownMenuRadioItem
+                              key={port.id}
+                              value={port.id}
+                              className="text-[13px]"
+                            >
+                              <span className="truncate">{port.name}</span>
+                            </DropdownMenuRadioItem>
+                          ))}
+                        </DropdownMenuRadioGroup>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </Row>
+                  <Row
+                    id="velocity_offset"
+                    marked={marked === 'velocity_offset'}
+                    label="Velocity offset"
+                  >
+                    <div className="flex items-center gap-3">
+                      <NumberField
+                        value={values.velocity_offset}
+                        min={-64}
+                        max={64}
+                        onChange={(value) => write('velocity_offset', value)}
+                      />
+                      <span className="text-muted-ink text-[12px] tabular-nums">
+                        last strike {velocity ?? '—'}
+                      </span>
+                    </div>
+                  </Row>
+                  <Row
+                    id="matching_window_ms"
+                    marked={marked === 'matching_window_ms'}
+                    label="Matching window (ms)"
+                  >
+                    <NumberField
+                      value={values.matching_window_ms}
+                      min={1}
+                      max={1000}
+                      onChange={(value) => write('matching_window_ms', value)}
+                    />
+                  </Row>
+                  <Row
+                    id="togetherness_ms"
+                    marked={marked === 'togetherness_ms'}
+                    label="Togetherness window (ms)"
+                  >
+                    <NumberField
+                      value={values.togetherness_ms}
+                      min={1}
+                      max={1000}
+                      onChange={(value) => write('togetherness_ms', value)}
+                    />
+                  </Row>
+                </Rows>
+
+                {import.meta.env.DEV && (
+                  <details id={rowId('grade_tuning')} open={marked === 'grade_tuning'}>
+                    <summary className="cursor-pointer text-[13px] font-semibold">
+                      Grade tuning
+                    </summary>
+                    <p className="text-muted-ink mt-1 text-[11.5px]">
+                      Grade normalises the three weights whatever they hold.
+                    </p>
+                    <div className="mt-3">
+                      <Rows>
+                        {GRADE_KNOBS.map(([key, label, min, max]) => (
+                          <Row key={key} label={label}>
+                            <NumberField
+                              value={values[key] as number}
+                              min={min}
+                              max={max}
+                              onChange={(value) => write(key, value as never)}
+                            />
+                          </Row>
+                        ))}
+                      </Rows>
+                    </div>
+                  </details>
+                )}
+              </Tabs.Content>
+
+              <Tabs.Content value="library" className="flex flex-col gap-2">
+                <p className="text-muted-ink text-[11.5px]">
+                  A new library folder re-points the app. No file is moved.
+                </p>
+                <Rows>
+                  <Row id="library_folder" marked={marked === 'library_folder'} label="Library folder">
+                    <Path
+                      value={values.library_folder}
+                      onChoose={() => chooseFolder('library_folder').catch(console.error)}
+                    />
+                  </Row>
+                  <Row id="pdmx_folder" marked={marked === 'pdmx_folder'} label="PDMX folder">
+                    <Path
+                      value={values.pdmx_folder}
+                      onChoose={() => chooseFolder('pdmx_folder').catch(console.error)}
+                    />
+                  </Row>
+                  <Row id="pdmx_scores" marked={marked === 'pdmx_scores'} label="PDMX scores">
+                    <span className="flex flex-none flex-col items-end gap-0.5">
+                      <span className="flex items-center gap-3">
+                        <span className="text-muted-ink text-[12px] tabular-nums">{pdmxStatus}</span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 flex-none"
+                          onClick={() => {
+                            if (downloading) cancelPdmx();
+                            else void downloadPdmx();
+                          }}
+                        >
+                          {downloading ? 'Cancel' : 'Download (1.9 GB)'}
+                        </Button>
+                      </span>
+                      {pdmx.error && (
+                        <span className="text-[11px] text-red-600 dark:text-red-400">
+                          {pdmx.error}
+                        </span>
+                      )}
+                    </span>
+                  </Row>
+                </Rows>
+              </Tabs.Content>
+            </>
+          )}
         </div>
-      </DialogContent>
-    </Dialog>
+      </Tabs.Root>
+    </aside>
   );
 }
 
@@ -664,40 +776,9 @@ export function SpacingPopup({ pinch }: { pinch: Pinch | null }) {
   );
 }
 
-function Group({
-  title,
-  note,
-  onReset,
-  children,
-}: {
-  title: string;
-  note?: string;
-  onReset: () => void;
-  children: React.ReactNode;
-}) {
-  // A reset to a default equal to the value in force changes no prop, so the fields are rebuilt
-  // by their key: text a field refused, and the message under it, start over from the setting.
-  const [round, setRound] = useState(0);
-  return (
-    <section className="flex flex-col gap-2">
-      <div className="flex items-baseline gap-3">
-        {title && <h3 className="text-[13px] font-semibold">{title}</h3>}
-        {note && <p className="text-muted-ink text-[11.5px]">{note}</p>}
-        <button
-          onClick={() => {
-            onReset();
-            setRound((n) => n + 1);
-          }}
-          className="text-muted-ink hover:text-ink ml-auto text-[11.5px] underline underline-offset-2"
-        >
-          Reset group
-        </button>
-      </div>
-      <div key={round} className="divide-edge-soft border-edge-soft divide-y border-y">
-        {children}
-      </div>
-    </section>
-  );
+/** The divided list the panel's rows sit in. */
+function Rows({ children }: { children: React.ReactNode }) {
+  return <div className="divide-edge-soft border-edge-soft divide-y border-y">{children}</div>;
 }
 
 /** A group inside the gear popover, which is too narrow for the dialog's group furniture. */
@@ -711,16 +792,25 @@ function PopoverGroup({ title, children }: { title: string; children: React.Reac
 }
 
 function Row({
+  id,
   label,
   hint,
+  marked,
   children,
 }: {
+  /** Set on a panel row, so a search result can scroll to it and mark it. */
+  id?: string;
   label: string;
   hint?: string;
+  marked?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex min-h-8 items-center justify-between gap-3 py-1 text-[12px]">
+    <div
+      id={id && rowId(id)}
+      data-marked={marked || undefined}
+      className={`flex min-h-8 items-center justify-between gap-3 py-1 text-[12px] ${marked ? 'bg-ink/8' : ''}`}
+    >
       <span className={hint ? 'flex flex-col gap-0.5' : 'flex-none'}>
         {label}
         {hint && <span className="text-muted-ink text-[11px] leading-snug">{hint}</span>}

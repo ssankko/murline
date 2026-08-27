@@ -10,7 +10,6 @@ import {
   type Staff as OsmdStaff,
 } from 'opensheetmusicdisplay';
 import { pitchClass } from '@/look/color';
-import { analyzeHarmony } from './harmony';
 import {
   ticksOf,
   type ChordSymbol,
@@ -121,9 +120,9 @@ export function buildScore(sheet: MusicSheet): Score {
     measures,
     keys: keysOf(sheet),
     chords: chordsOf(sheet, instrument.Staves),
+    // The analysis is run by the play screen, the one place that draws it.
     harmony: [],
   };
-  score.harmony = analyzeHarmony(score);
   return score;
 }
 

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { buildScore } from './build';
+import { analyzeHarmony } from './harmony';
 import { loadSheet } from './load';
 import type { Score } from './types';
 
@@ -8,7 +9,9 @@ const FIXTURES = import.meta.glob('./fixtures/*', { query: '?url', import: 'defa
 async function score(fileName: string): Promise<Score> {
   const url = FIXTURES[`./fixtures/${fileName}`] as string;
   const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer());
-  return buildScore((await loadSheet(bytes, fileName)).Sheet);
+  const built = buildScore((await loadSheet(bytes, fileName)).Sheet);
+  built.harmony = analyzeHarmony(built);
+  return built;
 }
 
 // The prelude is one chord per bar with a textbook analysis, so its readout is the gate on the

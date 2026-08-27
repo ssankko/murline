@@ -9,6 +9,7 @@ import type { SeekTarget, Snapshot } from '@/play/engine';
 import type { Section } from '@/play/section';
 import { isInactiveHand, type HandsSetting } from '@/play/settings';
 import { buildScore } from '@/score/build';
+import { analyzeHarmony } from '@/score/harmony';
 import { ScoreError, type Note, type PlayStep, type Score } from '@/score/types';
 import {
   OpenSheetMusicDisplay,
@@ -221,6 +222,7 @@ export class Sheet {
     if (!sheet.osmd.Sheet) throw new ScoreError('Not a MusicXML file', 'the file holds no score');
     sheet.osmd.render();
     sheet.score = buildScore(sheet.osmd.Sheet);
+    sheet.score.harmony = analyzeHarmony(sheet.score);
     sheet.layout();
     return sheet;
   }

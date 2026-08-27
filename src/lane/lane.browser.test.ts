@@ -1,10 +1,10 @@
-import { DEFAULT_LANE_LOOK, GLIDE_MS, Lane, type LaneLook } from '@/lane/lane';
+import { DEFAULT_LANE_LOOK, GLIDE_MS, Lane, popAt, type LaneLook } from '@/lane/lane';
 import { KEYBOARD_H, keyLayout, type KeyLayout } from '@/lane/keyboard';
 import { PAPER, colorOf, tone } from '@/look/color';
 import { Engine } from '@/play/engine';
 import { DEFAULT_PLAY_SETTINGS } from '@/play/settings';
 import { TICKS_PER_QUARTER, type Note, type Score } from '@/score/types';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 
 const BAR = 4 * TICKS_PER_QUARTER;
 const WIDTH = 400;
@@ -252,6 +252,31 @@ test('a spent count-in line fades out where it stood', () => {
   expect(going).toBeLessThan(paper);
   frame(122);
   expect(level(ctx, WIDTH / 2, row)).toBe(paper);
+  lane.dispose();
+});
+
+test('the count-in number pops on the beat the clock crosses', () => {
+  const { engine, lane } = mount();
+  const wall = performance.timeOrigin + performance.now();
+  const frame = (at: number) => lane.frame(engine.snapshot(), engine.windowTicks, wall + at);
+  // Every scale the frame asks of the canvas; with no harmony and no hit, only a pop makes one.
+  const scale = vi.spyOn(CanvasRenderingContext2D.prototype, 'scale');
+
+  // The first count-in beat stands on the now-line the clock is already at, so it is spent at once.
+  engine.countInBeats = [0];
+  frame(0);
+  scale.mockClear();
+
+  // Just after the beat the number is drawn larger than itself.
+  frame(40);
+  expect(scale.mock.calls.map((call) => call[0])).toEqual([expect.closeTo(popAt(40 / 260), 5)]);
+  expect(popAt(40 / 260)).toBeGreaterThan(1);
+
+  // Well past the pop it is drawn at its own size, which asks for no scale at all.
+  scale.mockClear();
+  frame(300);
+  expect(scale).not.toHaveBeenCalled();
+  scale.mockRestore();
   lane.dispose();
 });
 

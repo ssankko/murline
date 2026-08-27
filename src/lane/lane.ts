@@ -70,9 +70,9 @@ const COUNT_FADE_MS = 120;
  * The breath the count-in number takes as its beat is struck: how far it swells, how long the whole
  * breath runs, and the share of that it spends growing.
  */
-const COUNT_POP = 0.18;
-const COUNT_POP_MS = 160;
-const COUNT_POP_RISE = 0.4;
+const COUNT_POP = 0.45;
+const COUNT_POP_MS = 260;
+const COUNT_POP_RISE = 0.3;
 /** How long the notice over the keys takes to come up or go. */
 const NOTICE_FADE_MS = 150;
 
@@ -310,12 +310,9 @@ export class Lane {
   private lineAt = -Infinity;
   /**
    * Count-in lines as last drawn, keyed by their beat, kept past the beat while they fade out.
-   * `firedAt` is the wall the line became the count in force, which its number pops from.
+   * `spentAt` is the wall the clock crossed the beat, which its number pops from.
    */
-  private readonly countLines = new Map<
-    number,
-    { y: number; label: string; spentAt: number; firedAt: number }
-  >();
+  private readonly countLines = new Map<number, { y: number; label: string; spentAt: number }>();
   /** What the engine's counters and its motion read last frame, which is how a seek is spotted. */
   private lastResets: number;
   private lastWraps: number;
@@ -688,23 +685,22 @@ export class Lane {
   }
 
   /**
-   * The count-in: one line per beat left, falling to the now-line where the music starts. A line
-   * whose beat is spent holds the place it stood at and fades out from there. The lowest line still
-   * over the now-line is the count in force, and its number breathes from the frame it takes over.
+   * The count-in: one line per beat left, falling to the now-line where the music starts. A beat is
+   * spent once the clock crosses its tick, which is the moment the engine clicks it: from there the
+   * line holds the place it stood at and fades out, while its number pops and outlives it.
    */
   private drawCountIn(width: number, laneH: number, pxPerTick: number, beats: number[]): void {
     const live = new Set<number>();
     for (let i = 0; i < beats.length; i++) {
       const y = Math.round(this.y(beats[i]!, laneH, pxPerTick)) + 0.5;
-      if (y < -20 || y > laneH) continue;
+      // The window takes in the now-line itself, so the first beat, which opens the count-in
+      // standing on it, gets a line and a number to pop.
+      if (y < -20 || y > laneH + 1) continue;
       live.add(beats[i]!);
-      const fired = this.countLines.get(beats[i]!)?.firedAt ?? -Infinity;
-      const firedAt = live.size === 1 && fired === -Infinity ? this.now : fired;
       this.countLines.set(beats[i]!, {
         y,
         label: String(beats.length - i),
-        spentAt: Infinity,
-        firedAt,
+        spentAt: this.countLines.get(beats[i]!)?.spentAt ?? Infinity,
       });
     }
     const ctx = this.ctx;
@@ -713,20 +709,27 @@ export class Lane {
     ctx.fillStyle = ctx.strokeStyle;
     ctx.lineWidth = 1;
     for (const [tick, line] of this.countLines) {
-      if (!live.has(tick)) {
+      // The clock past the tick spends the beat; a line the engine drops has been spent as well.
+      if (tick <= this.playedTick || !live.has(tick)) {
         line.spentAt = Math.min(line.spentAt, this.reduced ? -Infinity : this.now);
       }
-      const gone = (this.now - line.spentAt) / COUNT_FADE_MS;
-      if (gone >= 1) {
+      const since = this.now - line.spentAt;
+      const gone = since / COUNT_FADE_MS;
+      // The number keeps its ink through the whole pop and gives it up over the fade after it.
+      const faded = (since - COUNT_POP_MS) / COUNT_FADE_MS;
+      if (faded >= 1) {
         this.countLines.delete(tick);
         continue;
       }
-      ctx.globalAlpha = gone > 0 ? 1 - easeInOut(gone) : 1;
-      ctx.beginPath();
-      ctx.moveTo(0, line.y);
-      ctx.lineTo(width, line.y);
-      ctx.stroke();
-      const pop = this.reduced ? 1 : popAt((this.now - line.firedAt) / COUNT_POP_MS);
+      if (gone < 1) {
+        ctx.globalAlpha = gone > 0 ? 1 - easeInOut(gone) : 1;
+        ctx.beginPath();
+        ctx.moveTo(0, line.y);
+        ctx.lineTo(width, line.y);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = faded > 0 ? 1 - easeInOut(faded) : 1;
+      const pop = this.reduced ? 1 : popAt(since / COUNT_POP_MS);
       if (pop === 1) ctx.fillText(line.label, 10, line.y - 6);
       else {
         // The number swells about its own middle, half the type's cap height over its baseline, so

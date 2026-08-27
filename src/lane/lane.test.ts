@@ -163,13 +163,13 @@ describe('the swing of a struck block', () => {
 });
 
 /** The share of the pop the number spends growing, and the share of a burn its collapse takes. */
-const RISE = 0.4;
+const RISE = 0.3;
 const COLLAPSE = 0.18;
 
 describe('the count-in number as its beat is struck', () => {
   test('breathes out and settles back to its own size', () => {
     expect(popAt(0)).toBe(1);
-    expect(popAt(RISE)).toBeCloseTo(1.18);
+    expect(popAt(RISE)).toBeCloseTo(1.45);
     expect(popAt(0.99)).toBeCloseTo(1);
     expect(popAt(RISE / 2)).toBeGreaterThan(1);
     expect(popAt(RISE / 2)).toBeLessThan(popAt(RISE));

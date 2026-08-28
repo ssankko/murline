@@ -1,5 +1,5 @@
 import { BEAT_MS, ENTRANCE_MS, LogLine, usePacedLines } from '@/boot-pacing';
-import { createElement, StrictMode } from 'react';
+import { createElement, StrictMode, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -14,6 +14,31 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+test('a ref guard holds a mount effect to one run under StrictMode', async () => {
+  // The guard App.tsx starts the boot behind: StrictMode mounts the effect twice, the ref lives
+  // through it, so the work runs once.
+  let runs = 0;
+  function Once() {
+    const started = useRef(false);
+    useEffect(() => {
+      if (started.current) return;
+      started.current = true;
+      runs += 1;
+    }, []);
+    return null;
+  }
+  host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  close = () => {
+    root.unmount();
+    host?.remove();
+  };
+  flushSync(() => root.render(createElement(StrictMode, null, createElement(Once))));
+  await vi.waitFor(() => expect(runs).toBeGreaterThan(0));
+  expect(runs).toBe(1);
+});
+
 /** The paced log, fed its lines from outside as boot's prints arrive. */
 function Paced({ lines, beatMs }: { lines: string[]; beatMs: number }) {
   const { shown, drained } = usePacedLines(lines, beatMs);
@@ -21,17 +46,14 @@ function Paced({ lines, beatMs }: { lines: string[]; beatMs: number }) {
 }
 
 /** Mounts the log on its lines and hands back a function to feed it later prints. */
-function mount(lines: string[], beatMs = 20, strict = false): (next: string[]) => void {
+function mount(lines: string[], beatMs = 20): (next: string[]) => void {
   host = document.createElement('div');
   document.body.append(host);
   const root = createRoot(host);
   const draw = (next: string[]) => {
-    const paced = createElement(Paced, { lines: next, beatMs });
     // The first render flushes synchronously, so the log stands on the page the moment mount
     // returns, as the real boot screen does in its first paint.
-    flushSync(() =>
-      root.render(strict ? createElement(StrictMode, null, paced) : paced),
-    );
+    flushSync(() => root.render(createElement(Paced, { lines: next, beatMs })));
   };
   draw(lines);
   close = () => {
@@ -54,7 +76,8 @@ test('the first line is on screen at once and the rest follow a beat apart', asy
   observer.observe(host!, { childList: true, subtree: true, characterData: true });
   await vi.waitFor(() => expect(host!.textContent).toBe('a|b|c!done'), { timeout: 500 });
   observer.disconnect();
-  expect(seen).toEqual(['a', 'a|b', 'a|b|c!done']);
+  // The last line holds the screen for its own beat, so the log calls itself done a state later.
+  expect(seen).toEqual(['a', 'a|b', 'a|b|c', 'a|b|c!done']);
 });
 
 test('a line that changes while shown updates with no new beat', async () => {
@@ -62,13 +85,6 @@ test('a line that changes while shown updates with no new beat', async () => {
   await vi.waitFor(() => expect(host!.textContent).toBe('a|b!done'), { timeout: 500 });
   draw(['a2', 'b']);
   await vi.waitFor(() => expect(host!.textContent).toBe('a2|b!done'), { timeout: BEAT_MS });
-});
-
-test('two boot runs interleaved leave one paced log', async () => {
-  const draw = mount(['a'], 20, true);
-  draw(['a', 'b']);
-  draw(['a', 'b', 'c']);
-  await vi.waitFor(() => expect(host!.textContent).toBe('a|b|c!done'), { timeout: 1000 });
 });
 
 test('a line that was not on screen before rises in; the first line does not', async () => {

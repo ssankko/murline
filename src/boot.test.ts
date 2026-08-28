@@ -56,12 +56,11 @@ const landedLog: BootLine[] = [
   { label: 'scanning /scores', state: 'ok' },
 ];
 
-test('the first line is the one index.html paints, and boot lands it as its first step', async () => {
+test('the first line is the one index.html paints, and boot lands it at once', async () => {
   const printed: BootLine[][] = [];
   await boot((lines) => printed.push(lines));
   expect(lineText(START_LINE)).toBe('> starting …');
-  expect(printed[0]).toEqual([START_LINE]);
-  expect(printed[1]).toEqual([{ label: 'starting', state: 'ok' }]);
+  expect(printed[0]).toEqual([{ label: START_LINE.label, state: 'ok' }]);
 });
 
 test('every step names itself while it runs, in the order the steps run', async () => {
@@ -70,7 +69,7 @@ test('every step names itself while it runs, in the order the steps run', async 
   await boot((lines) => printed.push(lines));
   expect(printed[printed.length - 1]).toEqual(landedLog);
   // A step's line appears alone and lands in place: the two prints for one step hold the same count.
-  expect(printed.map((lines) => lines.length)).toEqual([1, 1, 2, 2, 3, 4, 5, 5, 6, 6, 7, 7]);
+  expect(printed.map((lines) => lines.length)).toEqual([1, 2, 2, 3, 4, 5, 5, 6, 6, 7, 7]);
   listed = [];
 });
 
@@ -157,17 +156,5 @@ test('a first boot names the instrument the restore falls back to', async () => 
   await boot((lines) => printed.push(lines));
   expect(printed[printed.length - 1]![5]!.label).toBe('restoring Concert Grand Piano');
   settings = { ...settings, instrument_id: 'grand' };
-  listed = [];
-});
-
-test('two boot runs interleave and the last write wins', async () => {
-  listed = [{ id: 'grand', name: 'Concert Grand Piano' }];
-  const printed: BootLine[][] = [];
-  await Promise.all([boot((lines) => printed.push(lines)), boot((lines) => printed.push(lines))]);
-  // The array that lands last is one run's whole log, and no print ever mixes the two runs.
-  expect(printed[printed.length - 1]).toEqual(landedLog);
-  for (const lines of printed) {
-    expect(new Set(lines.map((line) => line.label)).size).toBe(lines.length);
-  }
   listed = [];
 });

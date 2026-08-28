@@ -2,11 +2,7 @@
 // screen the moment it begins and lands with its tail; the boot screen in src/App.tsx shows the
 // lines as they stand.
 
-import {
-  DEFAULT_NAME,
-  restoreInstrument,
-  type Instrument,
-} from '@/audio/instrument';
+import { restoreInstrument } from '@/audio/instrument';
 import { restoreRoles } from '@/audio/roles';
 import { getDb, readSettings, type Settings } from '@/db/db';
 import { reasonOf } from '@/library/notice';
@@ -61,12 +57,14 @@ export async function boot(print: (lines: BootLine[]) => void): Promise<Settings
     lines[lines.indexOf(from)] = to;
     print([...lines]);
   };
+  // A run that answers with a string renames the line it lands under; a line that fails keeps the
+  // name it ran under, which is the one that does not need the work to have finished.
   const step = async (label: string, run: () => Promise<unknown>): Promise<boolean> => {
     const running: BootLine = { label, state: 'running' };
     say(running);
     try {
-      await run();
-      land(running, { label, state: 'ok' });
+      const landed = await run();
+      land(running, { label: typeof landed === 'string' ? landed : label, state: 'ok' });
       return true;
     } catch (error) {
       land(running, { label, state: 'failed', reason: reasonOf(error) });
@@ -75,8 +73,8 @@ export async function boot(print: (lines: BootLine[]) => void): Promise<Settings
   };
 
   // index.html paints the starting line while the bundle loads and App begins with it; the bundle
-  // is up by the time boot runs, so the first step only has to land.
-  await step(START_LINE.label, async () => {});
+  // is up by the time boot runs, so the line only has to land.
+  say({ label: START_LINE.label, state: 'ok' });
   const opened = await step('opening database', getDb);
   const settings = await readSettings();
   if (opened) say({ label: 'reading settings', state: 'ok' });
@@ -109,25 +107,18 @@ export async function boot(print: (lines: BootLine[]) => void): Promise<Settings
     if (first) throw new Error(first);
   });
 
-  // The line names the instrument the restore brings back, when the engine's list can say which one
-  // the settings chose — the same choice restoreInstrument makes: the settings' instrument, or
-  // DEFAULT_NAME the first time. An instrument the list no longer knows still goes in, with its
-  // line plain.
-  const listed: Instrument[] = await invoke<Instrument[]>('audio_instruments', {
-    folder: settings.instruments_folder,
-  }).catch(() => []);
-  const chosen = settings.instrument_id
-    ? listed.find((one) => one.id === settings.instrument_id)
-    : listed.find((one) => one.name === DEFAULT_NAME);
-  await step(chosen ? `restoring ${chosen.name}` : 'restoring instrument', async () => {
+  await step('restoring instrument', async () => {
     // Both go in whatever the other did, as in the engine step; the roles ride on the loaded
-    // instrument, so the restore goes first.
-    const reasons = [
-      await failure(() => restoreInstrument(settings)),
-      await failure(() => restoreRoles(settings.instrument_id)),
-    ];
-    const first = reasons.find(Boolean);
+    // instrument, so the restore goes first. The landed line names the instrument that went in,
+    // when the engine's list knew it.
+    const [name, reason] = await restoreInstrument(settings).then(
+      (restored) => [restored, ''] as const,
+      (error: unknown) => [null, reasonOf(error)] as const,
+    );
+    const roles = await failure(() => restoreRoles(settings.instrument_id));
+    const first = reason || roles;
     if (first) throw new Error(first);
+    return name ? `restoring ${name}` : undefined;
   });
 
   // The library screen walks the same folder on mount, and `scanLibrary` walks a folder once, so

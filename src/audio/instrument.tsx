@@ -32,7 +32,7 @@ export interface Instrument {
 }
 
 /** Logic's piano, which the app plays until the user picks something else. */
-export const DEFAULT_NAME = 'Concert Grand Piano';
+const DEFAULT_NAME = 'Concert Grand Piano';
 
 function listInstruments(folder: string): Promise<Instrument[]> {
   return invoke<Instrument[]>('audio_instruments', { folder });
@@ -40,19 +40,21 @@ function listInstruments(folder: string): Promise<Instrument[]> {
 
 /**
  * Puts the chosen instrument back into the engine at boot, choosing Logic's Concert Grand the
- * first time. A choice the engine can no longer find still goes in, so its reason reaches the
- * status line instead of silence with no explanation.
+ * first time, and answers with its name, or null when there was none to put back. A choice the
+ * engine can no longer find still goes in, so its reason reaches the status line instead of
+ * silence with no explanation.
  */
-export async function restoreInstrument(settings: Settings): Promise<void> {
+export async function restoreInstrument(settings: Settings): Promise<string | null> {
   const all = await listInstruments(settings.instruments_folder);
   const chosen =
     settings.instrument_id ?? all.find((one) => one.name === DEFAULT_NAME)?.id ?? null;
-  if (!chosen) return;
+  if (!chosen) return null;
   if (chosen !== settings.instrument_id) await setSetting('instrument_id', chosen);
   // The stored state belongs to the stored instrument, so a fresh default starts at its own.
   const state = chosen === settings.instrument_id ? settings.instrument_state : null;
   await invoke('audio_load_instrument', { id: chosen, state });
   await restoreEnvelope(chosen);
+  return all.find((one) => one.id === chosen)?.name ?? null;
 }
 
 export function InstrumentSection({

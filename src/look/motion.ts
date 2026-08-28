@@ -6,6 +6,9 @@ export function reducedMotion(): boolean {
 /** The timing function of every movement, held in src/index.css so CSS and JS ease alike. */
 export const EASE = 'var(--ease)';
 
+/** The same curve written out, because a Web Animations easing cannot resolve a var(). */
+export const EASE_CURVE = 'cubic-bezier(0.65, 0, 0.35, 1)';
+
 /**
  * How far through its travel a movement is `t` of the way through its time: slow away, fast
  * through the middle, slow in. The cubic `--ease` draws.

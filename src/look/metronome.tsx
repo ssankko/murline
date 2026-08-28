@@ -2,7 +2,7 @@
 // renders: the frame loop drives the swing and the pulse through the handle, so a beat costs no
 // render.
 
-import { EASE, reducedMotion } from '@/look/motion';
+import { EASE, EASE_CURVE, reducedMotion } from '@/look/motion';
 import { useEffect, useImperativeHandle, useRef, type Ref } from 'react';
 
 /** How far the arm leans to either side of upright on a beat, in degrees. */
@@ -16,8 +16,6 @@ const REST_AFTER = 1.5;
 const PULSE_MS = 200;
 /** How much the icon swells at the top of a pulse, on the beat a bar opens with and on the rest. */
 const PEAK = { strong: 1.56, weak: 1.24 };
-/** The value of `--ease`, written out because an animation cannot read a variable. */
-const CURVE = 'cubic-bezier(0.65, 0, 0.35, 1)';
 /** A pendulum's two halves: it slows into the end of its swing and gathers speed back to centre. */
 const OUT = 'cubic-bezier(0.33, 1, 0.68, 1)';
 const BACK = 'cubic-bezier(0.32, 0, 0.67, 0)';
@@ -112,7 +110,7 @@ export function Metronome({
       body.animate(
         [
           { transform: 'scale(1)', easing: SWELL },
-          { transform: `scale(${strong ? PEAK.strong : PEAK.weak})`, offset: 0.3, easing: CURVE },
+          { transform: `scale(${strong ? PEAK.strong : PEAK.weak})`, offset: 0.3, easing: EASE_CURVE },
           { transform: 'scale(1)' },
         ],
         { duration: PULSE_MS },

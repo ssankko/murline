@@ -1,8 +1,8 @@
-import { BEAT_MS, EASE_CURVE, LogLine, usePacedLines } from '@/boot-pacing';
+import { BEAT_MS, LogLine, usePacedLines } from '@/boot-pacing';
 import { boot, lineText, START_LINE, type BootLine } from '@/boot';
 import { getSettingOr, type Settings } from '@/db/db';
 import { Loading } from '@/look/loading';
-import { reducedMotion } from '@/look/motion';
+import { EASE_CURVE, reducedMotion } from '@/look/motion';
 import type { PlayKind } from '@/play/engine';
 import { Library } from '@/screens/library';
 import { Onboarding } from '@/screens/onboarding';
@@ -26,33 +26,30 @@ export function App() {
   const [lines, setLines] = useState<BootLine[]>([START_LINE]);
   const [booted, setBooted] = useState<Settings | null>(null);
   const [fading, setFading] = useState(false);
-  const [finalLines, setFinalLines] = useState<BootLine[]>([START_LINE]);
   const { shown, drained } = usePacedLines(lines, BEAT_MS);
   const layer = useRef<HTMLDivElement>(null);
-  const flipped = useRef(false);
+  const started = useRef(false);
 
+  // The boot runs once: StrictMode mounts the effect twice in dev, and the ref outlives that.
   // A database that will not open reads as unfinished onboarding, which reports the failure when
-  // Continue retries it. Two boot runs print the same lines, so the last array to land is right.
+  // Continue retries it.
   useEffect(() => {
+    if (started.current) return;
+    started.current = true;
     void boot(setLines).then(setBooted);
   }, []);
 
-  // The route flips once: StrictMode runs boot twice in dev, and a second resolve must not re-arm
-  // the handover, or the boot layer rises over the library again after it has gone. The flip waits
-  // for the last shown line and freezes the log it fades with, so a late print from the second run
-  // cannot change what the layer holds. The handover fades, unless motion is turned down, in which
-  // case the screens swap in place.
+  // The handover waits for the log to be whole and for its last line to have held the screen. It
+  // fades, unless motion is turned down, in which case the screens swap in place.
   useEffect(() => {
-    if (!booted || !drained || flipped.current) return;
-    flipped.current = true;
-    setFinalLines(shown);
+    if (!booted || !drained) return;
     setRoute(
       booted.onboarding_done
         ? { at: 'library', folder: booted.library_folder || null }
         : { at: 'onboarding' },
     );
     if (!reducedMotion()) setFading(true);
-  }, [booted, drained, shown]);
+  }, [booted, drained]);
 
   // The boot layer holds one React identity from the first line to the end of the fade, so the
   // log never remounts and its entrances never replay. At the flip the layer gains a paper
@@ -74,7 +71,7 @@ export function App() {
 
   return (
     <>
-      {route.at !== 'loading' && screenOf(route, setRoute)}
+      {screenOf(route, setRoute)}
       {(route.at === 'loading' || fading) && (
         <div
           ref={layer}
@@ -90,7 +87,7 @@ export function App() {
                 }
           }
         >
-          <BootScreen lines={fading ? finalLines : shown} />
+          <BootScreen lines={shown} />
         </div>
       )}
     </>

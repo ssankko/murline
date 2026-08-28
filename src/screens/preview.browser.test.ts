@@ -2,6 +2,7 @@ import { PreviewScreen } from '@/screens/preview';
 import { createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { userEvent } from 'vitest/browser';
 
 // The fixture is served as a URL, the closest a browser test gets to the bytes Rust would read.
 const FIXTURES = import.meta.glob('../score/fixtures/*', {
@@ -27,6 +28,10 @@ vi.mock('@tauri-apps/api/core', () => ({
       return await (await fetch(url)).arrayBuffer();
     }
     if (command.startsWith('preview_')) return undefined;
+    // What the settings panel asks the engine the moment it is on the page.
+    if (command === 'pdmx_status') return false;
+    if (command === 'audio_envelope') return null;
+    if (command.startsWith('audio_')) return [];
     throw new Error(`unexpected command ${command}`);
   },
 }));
@@ -35,6 +40,18 @@ vi.mock('@tauri-apps/api/event', () => ({
   listen: async (name: string, handler: (event: { payload: unknown }) => void) => {
     if (name === 'preview-progress') progress = handler as typeof progress;
     return () => {};
+  },
+}));
+
+/** Every row the screen writes: the piece's tempo, and the settings the panel changes. */
+let written: { sql: string; values: unknown[] }[] = [];
+
+vi.mock('@tauri-apps/plugin-sql', () => ({
+  default: {
+    load: async () => ({
+      select: async () => [],
+      execute: async (sql: string, values: unknown[]) => void written.push({ sql, values }),
+    }),
   },
 }));
 
@@ -51,6 +68,7 @@ let host: HTMLElement | null = null;
 beforeEach(() => {
   status = { available: true, reason: '' };
   sent = [];
+  written = [];
   progress = null;
 });
 
@@ -62,7 +80,7 @@ afterEach(() => {
 });
 
 /** Mounts the Preview and waits for the sheet to be on the paper. */
-async function open(): Promise<void> {
+async function open(onBack: () => void = () => {}): Promise<void> {
   host = document.createElement('div');
   host.style.cssText = 'width:800px;height:600px';
   document.body.append(host);
@@ -71,7 +89,7 @@ async function open(): Promise<void> {
     createElement(PreviewScreen, {
       folder: '/scores',
       path: FILE,
-      onBack: () => {},
+      onBack,
       onPlay: () => {},
     }),
   );
@@ -87,6 +105,22 @@ function commands(): string[] {
 
 function button(label: string): HTMLButtonElement {
   return host!.querySelector(`button[aria-label="${label}"]`)!;
+}
+
+/** A key the screen's own handler reads: nothing on the page has the focus in a test. */
+function press(key: string): void {
+  window.dispatchEvent(new KeyboardEvent('keydown', { key }));
+}
+
+/** The panel is a portal, so its own controls are found by their text on the whole page. */
+async function waitForEl(selector: string, text: string): Promise<HTMLElement> {
+  return vi.waitFor(() => {
+    const el = [...document.querySelectorAll<HTMLElement>(selector)].find(
+      (each) => each.textContent === text,
+    );
+    expect(el).toBeTruthy();
+    return el!;
+  });
 }
 
 /** Where the cursor band stands on the page: its x along the system, and the system's top. */
@@ -143,12 +177,12 @@ test('a click seeks to the Onset the progress event then puts the band back on',
   const clicked = band();
 
   // The engine reports the start of the piece, then the time the click sought to: the band leaves
-  // the clicked Onset and comes back to it.
-  progress!({ payload: { seconds: 0, playing: true } });
-  expect(band()).not.toEqual(clicked);
+  // the clicked Onset on the next frame and comes back to it on the frame after.
+  progress!({ payload: { seconds: 0, playing: false } });
+  await vi.waitFor(() => expect(band().x).not.toBeCloseTo(clicked.x, 0));
 
-  progress!({ payload: { seconds, playing: true } });
-  expect(band().x).toBeCloseTo(clicked.x, 0);
+  progress!({ payload: { seconds, playing: false } });
+  await vi.waitFor(() => expect(band().x).toBeCloseTo(clicked.x, 0));
   expect(band().top).toBe(clicked.top);
 }, 60_000);
 
@@ -167,11 +201,60 @@ test('with no engine the transport is dead and says why', async () => {
   status = { available: false, reason: 'No instrument chosen' };
   await open();
 
-  await vi.waitFor(() => expect(button('Play').disabled).toBe(true));
-  expect(button('Slower').disabled).toBe(true);
-  expect(button('Faster').disabled).toBe(true);
+  await vi.waitFor(() => expect(button('Play').getAttribute('aria-disabled')).toBe('true'));
+  expect(button('Slower').getAttribute('aria-disabled')).toBe('true');
+  expect(button('Faster').getAttribute('aria-disabled')).toBe('true');
   expect(button('Play').closest('[title]')?.getAttribute('title')).toBe('No instrument chosen');
 
   button('Play').click();
   expect(commands()).toEqual([]);
+}, 60_000);
+
+test('Space plays and pauses', async () => {
+  await open();
+
+  press(' ');
+  await vi.waitFor(() => expect(commands()).toContain('preview_play'));
+
+  press(' ');
+  await vi.waitFor(() => expect(commands()).toContain('preview_pause'));
+}, 60_000);
+
+test('Escape rewinds off the start of the piece and leaves from it', async () => {
+  let backs = 0;
+  await open(() => backs++);
+
+  button('Play').click();
+  await vi.waitFor(() => expect(button('Pause')).toBeTruthy());
+
+  press('Escape');
+  await vi.waitFor(() => expect(commands()).toContain('preview_stop'));
+  expect(backs).toBe(0);
+
+  // Back at the start, the same key is the way out.
+  await vi.waitFor(() => expect(button('Play')).toBeTruthy());
+  press('Escape');
+  expect(backs).toBe(1);
+}, 60_000);
+
+test('the tempo stepper writes the piece row and reads back on the bar', async () => {
+  await open();
+
+  button('Faster').click();
+  await vi.waitFor(() => expect(written.some((row) => row.sql.includes('tempo_value'))).toBe(true));
+
+  expect(written.find((row) => row.sql.includes('tempo_value'))!.values).toEqual([FILE, 105]);
+  expect(button('Tempo').textContent).toBe('105 %');
+}, 60_000);
+
+test('a Look change in the panel reaches the page without reopening it', async () => {
+  await open();
+  const bubbles = () => host!.querySelectorAll('.chord-bubble').length;
+  expect(bubbles()).toBeGreaterThan(0);
+
+  button('Settings').click();
+  await userEvent.click(await waitForEl('[role="tab"][data-state]', 'Look'));
+  await userEvent.click(await waitForEl('#setting-row-sheet_harmony button', 'Off'));
+
+  await vi.waitFor(() => expect(bubbles()).toBe(0));
 }, 60_000);

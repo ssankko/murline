@@ -8,7 +8,7 @@ import {
   type Score,
 } from '@/score/types';
 import { expect, test } from 'vitest';
-import { barAt, barSeconds, previewBars, previewNotes, secondsOf, tickAt } from './preview';
+import { previewNotes, secondsOf, tickAt } from './preview';
 
 const BAR = 4 * TICKS_PER_QUARTER;
 
@@ -110,22 +110,6 @@ test('the note list follows the repeat, drops graces and ties, and reads the tem
 
 test('the piece is as long as its last note off, by the one walk both readings take', () => {
   expect(playedSeconds(scoreWithRepeat())).toBe(10);
-});
-
-test('a bar opens once for every pass of the repeat, and a click seeks to its first', () => {
-  const bars = previewBars(scoreWithRepeat());
-  expect(bars).toEqual([
-    { measureIndex: 0, seconds: 0 },
-    { measureIndex: 1, seconds: 4 },
-    { measureIndex: 0, seconds: 6 },
-  ]);
-
-  expect(barAt(bars, 0)).toBe(0);
-  expect(barAt(bars, 3.9)).toBe(0);
-  expect(barAt(bars, 4)).toBe(1);
-  expect(barAt(bars, 7)).toBe(0);
-  expect(barSeconds(bars, 1)).toBe(4);
-  expect(barSeconds(bars, 0)).toBe(0);
 });
 
 test('a second reads back as the played tick it falls on, and the tick as its second', () => {

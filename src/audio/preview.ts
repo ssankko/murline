@@ -13,12 +13,6 @@ export interface PreviewNote {
   off: number;
 }
 
-/** Where a bar opens along the played timeline. A repeated bar appears once for every pass. */
-export interface PreviewBar {
-  measureIndex: number;
-  seconds: number;
-}
-
 /** The second a played tick falls on, read on from the step at `from`. */
 function secondsAt(score: Score, starts: number[], playedTick: number, from: number): number {
   let i = from;
@@ -47,33 +41,6 @@ export function previewNotes(score: Score): PreviewNote[] {
     }
   });
   return notes;
-}
-
-/** The bars in played order with the second each opens at, which is what a click seeks to. */
-export function previewBars(score: Score): PreviewBar[] {
-  const starts = stepSeconds(score);
-  const bars: PreviewBar[] = [];
-  score.playOrder.forEach((step, i) => {
-    const measureIndex = score.onsets[step.onsetIndex]!.measureIndex;
-    if (bars[bars.length - 1]?.measureIndex === measureIndex) return;
-    bars.push({ measureIndex, seconds: starts[i]! });
-  });
-  return bars;
-}
-
-/** The bar sounding at a time, or -1 before the first one. */
-export function barAt(bars: PreviewBar[], seconds: number): number {
-  let index = -1;
-  for (const bar of bars) {
-    if (bar.seconds > seconds + 1e-6) break;
-    index = bar.measureIndex;
-  }
-  return index;
-}
-
-/** The second a bar opens at, taking the first pass when a repeat plays it twice. */
-export function barSeconds(bars: PreviewBar[], measureIndex: number): number {
-  return bars.find((bar) => bar.measureIndex === measureIndex)?.seconds ?? 0;
 }
 
 /** The played tick the engine's clock stands at, read back from the seconds it reports. */

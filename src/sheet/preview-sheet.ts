@@ -558,10 +558,14 @@ export class PreviewSheet {
   }
 }
 
-/** The global matching window in played ticks at the tempo the piece is written at. */
-function windowTicksOf(score: Score): number {
+/**
+ * The global matching window in played ticks, at the piece's written tempo taken `percent` fast.
+ * A faster clock covers more ticks in the same milliseconds, so the band grows with the tempo.
+ */
+export function windowTicksOf(score: Score, percent = 100): number {
   const bpm = score.hasTempo ? bpmAt(score, 0) : 120;
-  return (DEFAULT_PLAY_SETTINGS.matchingWindowMs * bpm * TICKS_PER_QUARTER) / 60_000;
+  const ticksPerMs = (bpm * (percent / 100) * TICKS_PER_QUARTER) / 60_000;
+  return DEFAULT_PLAY_SETTINGS.matchingWindowMs * ticksPerMs;
 }
 
 /** The nearest ancestor that scrolls, which is the page the Preview screen puts the host in. */

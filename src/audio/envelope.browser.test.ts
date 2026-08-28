@@ -9,14 +9,12 @@ const OWN: Envelope = { attack: 0.01, decay: 0.5, sustain: 0.8, release: 0.2 };
 
 let answer: Envelope | null = OWN;
 let sent: [string, unknown][] = [];
-/** How long the engine takes over an envelope, which a test that watches it waiting holds open. */
-let taking = Promise.resolve();
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: async (command: string, args: Record<string, unknown>) => {
     sent.push([command, args]);
     if (command === 'audio_envelope') return answer;
-    if (command === 'audio_set_envelope') return taking.then(() => null);
+    if (command === 'audio_set_envelope') return null;
     throw new Error(`unexpected command ${command}`);
   },
 }));
@@ -39,7 +37,6 @@ beforeEach(() => {
   sent = [];
   written = [];
   kept = {};
-  taking = Promise.resolve();
 });
 
 afterEach(() => {
@@ -107,38 +104,23 @@ test('an instrument with no envelope of its own is not offered one', async () =>
   expect(host!.textContent).toBe('');
 });
 
-test('the plot follows the slider at once and the engine hears it once the hand rests', async () => {
+test('the plot and the engine both follow the slider as it moves', async () => {
   await open();
   const before = line();
 
   await move('Release', '2000');
   expect(line()).not.toBe(before);
-  expect(sent.some(([command]) => command === 'audio_set_envelope')).toBe(false);
-
-  // Only the envelope the hand came to rest on is sent, not every step it passed through.
-  await move('Release', '3000');
-  await vi.waitFor(
-    () =>
-      expect(sent).toContainEqual([
-        'audio_set_envelope',
-        { envelope: { ...OWN, release: 3 } },
-      ]),
-    { timeout: 2000 },
+  await vi.waitFor(() =>
+    expect(sent).toContainEqual(['audio_set_envelope', { envelope: { ...OWN, release: 2 } }]),
   );
-  expect(sent.filter(([command]) => command === 'audio_set_envelope')).toHaveLength(1);
-});
 
-test('the section says while the engine is taking the envelope in', async () => {
-  let done!: () => void;
-  taking = new Promise<void>((resolve) => (done = resolve));
-  await open();
+  // Still moving, and still heard: nothing waits for the hand to come off the slider, and nothing
+  // warns of a silence.
+  await move('Release', '3000');
+  await vi.waitFor(() =>
+    expect(sent).toContainEqual(['audio_set_envelope', { envelope: { ...OWN, release: 3 } }]),
+  );
   expect(host!.textContent).not.toContain('going in');
-
-  await move('Release', '2000');
-  await vi.waitFor(() => expect(host!.textContent).toContain('going in'), { timeout: 2000 });
-
-  done();
-  await vi.waitFor(() => expect(host!.textContent).not.toContain('going in'));
 });
 
 test('the envelope is kept under the instrument it was shaped for', async () => {

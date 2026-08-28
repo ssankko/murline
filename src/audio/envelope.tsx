@@ -4,11 +4,8 @@
 // Only the sampler has one to offer. A hosted Audio Unit shapes its own notes behind its own
 // window, and the engine answers null for it, which is what hides this section.
 //
-// The engine takes about a second to accept an envelope, however small the change, and goes quiet
-// for it, so a moving slider is not sent straight through the way the velocity remap is. The plot
-// follows the slider at once and the engine is told once the hand comes to rest. That second of
-// silence is long enough to be alarming unasked for, so the section says so from the moment a
-// slider moves, through the wait and the second itself, rather than only while the engine has it.
+// The engine takes an envelope at once, so a moving slider is heard as it moves, at one send per
+// frame drawn.
 
 import { Knob } from '@/audio/knob';
 import type { Sounding } from '@/audio/sounding';
@@ -25,9 +22,6 @@ export interface Envelope {
   sustain: number;
   release: number;
 }
-
-/** How long the engine is left alone for after a slider stops moving, in milliseconds. */
-const REST = 250;
 
 /**
  * Puts the envelope kept for an instrument back on the engine. Called after every load, because a
@@ -59,10 +53,9 @@ export function EnvelopeSection({
   round?: number;
 }) {
   const [values, setValues] = useState<Envelope | null>(null);
-  const resting = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  // Counted, not a flag: a second change can go in while the first is still being taken, and the
-  // first one finishing must not clear the line the second one is still waiting behind.
-  const [taking, setTaking] = useState(0);
+  // The envelope waiting for the next frame, and the frame it is waiting on.
+  const next = useRef<Envelope | null>(null);
+  const frame = useRef(0);
 
   // Null is the answer for a plugin and for no instrument at all, and it is what hides the section.
   useEffect(() => {
@@ -76,40 +69,31 @@ export function EnvelopeSection({
     };
   }, [round]);
 
-  useEffect(() => () => clearTimeout(resting.current), []);
+  useEffect(() => () => cancelAnimationFrame(frame.current), []);
 
   const release = values?.release;
   useEffect(() => {
     if (release !== undefined) onRelease?.(release);
   }, [release, onRelease]);
 
-  function write(next: Envelope): void {
-    setValues(next);
-    // The count goes up here rather than when the engine is called, so the warning is up from the
-    // first touch of a slider. A change made while one is already waiting joins that one.
-    if (resting.current === undefined) setTaking((many) => many + 1);
-    else clearTimeout(resting.current);
-    resting.current = setTimeout(() => {
-      resting.current = undefined;
-      invoke('audio_set_envelope', { envelope: next })
-        .catch(console.error)
-        .finally(() => setTaking((many) => many - 1));
-      if (instrument) void keep(instrument, next).catch(console.error);
-    }, REST);
+  /** A slider moving faster than the screen draws sends only the value each frame ends on. */
+  function write(wanted: Envelope): void {
+    setValues(wanted);
+    next.current = wanted;
+    if (frame.current) return;
+    frame.current = requestAnimationFrame(() => {
+      frame.current = 0;
+      const envelope = next.current!;
+      void invoke('audio_set_envelope', { envelope }).catch(console.error);
+      if (instrument) void keep(instrument, envelope).catch(console.error);
+    });
   }
 
   if (!values) return null;
 
   return (
-    <section className="flex flex-col gap-2" aria-busy={taking > 0}>
-      <h3 className="text-[13px] font-semibold">
-        Envelope
-        {taking > 0 && (
-          <span className="text-muted-ink ml-2 text-[11px] font-normal">
-            going in, with about a second of silence
-          </span>
-        )}
-      </h3>
+    <section className="flex flex-col gap-2">
+      <h3 className="text-[13px] font-semibold">Envelope</h3>
 
       <div className="flex items-center gap-3">
         <div className="flex min-w-0 flex-1 flex-col">

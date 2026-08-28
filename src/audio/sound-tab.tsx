@@ -6,6 +6,7 @@ import { EffectsSection } from '@/audio/effects';
 import { EnvelopeSection } from '@/audio/envelope';
 import { InstrumentSection } from '@/audio/instrument';
 import { OutputSection } from '@/audio/output';
+import { RolesSection, type Role } from '@/audio/roles';
 import { sounded, type Sounding } from '@/audio/sounding';
 import { VelocitySection } from '@/audio/velocity';
 import { getSettingOr } from '@/db/db';
@@ -29,6 +30,8 @@ export interface AudioStatus {
   sample_rate: number;
   /** What the device reports the buffer costs, in milliseconds. */
   latency_ms: number;
+  /** The roles beyond the tone the loaded instrument offers; empty for a plugin or a plain file. */
+  roles: Role[];
 }
 
 /** A status with nothing in it, which is what an engine that cannot even be asked answers. */
@@ -42,6 +45,7 @@ export const NO_STATUS: AudioStatus = {
   buffer_frames: 0,
   sample_rate: 0,
   latency_ms: 0,
+  roles: [],
 };
 
 /** The one line the tab says about the engine: why there is no sound at all, or where the sound
@@ -90,7 +94,8 @@ export function SoundTab({ marked }: { marked?: string | null }) {
   const [instrument, setInstrument] = useState<string | null>(null);
   const sounding = useSounding();
 
-  // The envelope is kept under the instrument's id, so the tab has to know which one is playing.
+  // The envelope and the roles are kept under the instrument's id, so the tab has to know which
+  // one is playing.
   useEffect(() => {
     let live = true;
     getSettingOr('instrument_id').then((id) => live && setInstrument(id), console.error);
@@ -103,6 +108,7 @@ export function SoundTab({ marked }: { marked?: string | null }) {
     <div className="flex min-w-0 flex-col gap-7">
       <OutputSection marked={marked} />
       <InstrumentSection marked={marked} onChanged={() => setRound((round) => round + 1)} />
+      <RolesSection roles={status?.roles} instrument={instrument} round={round} />
       <VelocitySection marked={marked} sounding={sounding.keys} />
       <EnvelopeSection
         marked={marked}

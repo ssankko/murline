@@ -2,6 +2,7 @@
 // prints when it lands. The boot screen in src/App.tsx shows the lines as they arrive.
 
 import { restoreInstrument } from '@/audio/instrument';
+import { restoreRoles } from '@/audio/roles';
 import { getDb, readSettings, type Settings } from '@/db/db';
 import { reasonOf } from '@/library/notice';
 import { scanLibrary } from '@/library/scan';
@@ -60,6 +61,8 @@ export async function boot(print: (lines: string[]) => void): Promise<Settings> 
         invoke('audio_set_buffer_frames', { frames: settings.audio_buffer_frames }),
       ),
       await failure(() => restoreInstrument(settings)),
+      // After the load, which is what leaves every role of the instrument on.
+      await failure(() => restoreRoles(settings.instrument_id)),
       await failure(() => invoke('audio_set_chain', { chain: settings.effect_chain })),
       await failure(() =>
         invoke('audio_set_keyboard_volume', { percent: settings.keyboard_volume }),

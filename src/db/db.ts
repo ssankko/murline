@@ -1,5 +1,6 @@
 import type { EffectSlot } from '@/audio/effects';
 import type { Envelope } from '@/audio/envelope';
+import type { Role } from '@/audio/roles';
 import { DEFAULT_LANE_LOOK, DEFAULT_SPLIT, type LaneLook } from '@/lane/lane';
 import type { Theme } from '@/look/use-dark';
 import { DEFAULT_PLAY_SETTINGS, type KeyboardPreset, type PlaySettings } from '@/play/settings';
@@ -82,6 +83,10 @@ export type Settings = {
    * the instruments the user has actually shaped. Plugins never appear: they have their own
    * window for it. */
   instrument_envelopes: Record<string, Envelope>;
+  /** The roles each instrument has switched off, under the instrument's own opaque id. One missing
+   * from here plays every role its file holds, which is why this holds only what the user has
+   * turned down. */
+  instrument_roles: Record<string, Role[]>;
   /** Folder of `.sf2` and `.exs` files the picker lists; empty lists none of its own. */
   instruments_folder: string;
 
@@ -186,6 +191,7 @@ export const SETTING_DEFAULTS: Settings = {
   instrument_id: null,
   instrument_state: null,
   instrument_envelopes: {},
+  instrument_roles: {},
   instruments_folder: '',
   ...knobDefaults(DEFAULT_LANE_LOOK, LANE_KNOBS),
   ...knobDefaults(DEFAULT_PLAY_SETTINGS, ENGINE_KNOBS),

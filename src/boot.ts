@@ -64,6 +64,12 @@ export async function boot(print: (lines: string[]) => void): Promise<Settings> 
       await failure(() =>
         invoke('audio_set_keyboard_volume', { percent: settings.keyboard_volume }),
       ),
+      await failure(() =>
+        invoke('audio_set_velocity_curve', {
+          floor: settings.velocity_floor,
+          curve: settings.velocity_curve,
+        }),
+      ),
     ];
     const first = reasons.find(Boolean);
     if (first) throw new Error(first);

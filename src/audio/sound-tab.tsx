@@ -5,6 +5,7 @@
 import { EffectsSection } from '@/audio/effects';
 import { InstrumentSection } from '@/audio/instrument';
 import { OutputSection } from '@/audio/output';
+import { VelocitySection } from '@/audio/velocity';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useEffect, useState } from 'react';
@@ -76,9 +77,16 @@ export function useAudioStatus(round = 0): AudioStatus | null {
 
 /**
  * The sound engine's own settings, under the panel's Sound tab. `marked` is the row a search
- * result jumped to, handed down so each section can mark its own.
+ * result jumped to, handed down so each section can mark its own. `velocity` is the last strike
+ * the panel heard, which the velocity curve's plot marks.
  */
-export function SoundTab({ marked }: { marked?: string | null }) {
+export function SoundTab({
+  marked,
+  velocity,
+}: {
+  marked?: string | null;
+  velocity?: number | null;
+}) {
   // A section that changed something the status line reads asks for this to go round again.
   const [round, setRound] = useState(0);
   const status = useAudioStatus(round);
@@ -87,6 +95,7 @@ export function SoundTab({ marked }: { marked?: string | null }) {
     <div className="flex min-w-0 flex-col gap-7">
       <OutputSection marked={marked} />
       <InstrumentSection marked={marked} onChanged={() => setRound((round) => round + 1)} />
+      <VelocitySection marked={marked} velocity={velocity} />
       <EffectsSection marked={marked} />
       {trouble(status) && <p className="text-muted-ink text-[12px]">{trouble(status)}</p>}
     </div>

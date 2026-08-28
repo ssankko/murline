@@ -163,6 +163,15 @@ pub fn audio_set_keyboard_volume(percent: u32) {
     engine::set_keyboard_volume(percent);
 }
 
+/// How hard a key was struck against how loud the instrument plays it: `floor` is the softest
+/// note's volume as a percent of full, `curve` the exponent of the path from there to full. It is
+/// applied before the instrument, so the effects and the keyboard fader are untouched by it, and
+/// the Preview goes through it too. A no-op where there is no engine.
+#[tauri::command]
+pub fn audio_set_velocity_curve(floor: u32, curve: f64) {
+    engine::set_velocity_curve(floor, curve);
+}
+
 /// Every Audio Unit effect installed on the machine, Apple's own included.
 #[tauri::command]
 pub fn audio_effects() -> Vec<Effect> {
@@ -279,6 +288,7 @@ mod tests {
         stub::click(false, 0);
         stub::set_keyboard_volume(100);
         stub::set_keyboard_volume(0);
+        stub::set_velocity_curve(0, 1.6);
 
         assert!(stub::effects().is_empty());
         assert!(stub::chain().is_empty());

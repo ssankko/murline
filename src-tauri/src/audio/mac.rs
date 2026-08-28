@@ -62,6 +62,10 @@ const MELODIC_BANK_MSB: u8 = 0x79;
 /// The buffer sizes the dialog offers, and the one the app starts at.
 pub const FRAME_CHOICES: [u32; 4] = [32, 64, 128, 256];
 pub const DEFAULT_FRAMES: u32 = 64;
+/// The velocity mapping the engine starts with: no lift under the softest strike, and the concave
+/// exponent the app shipped with before the curve was made adjustable.
+const DEFAULT_FLOOR: u8 = 1;
+const DEFAULT_CURVE: f64 = 1.6;
 /// The status line when the device the user picked is not plugged in.
 const GONE: &str = "Your chosen output device is not connected; playing through the system default";
 
@@ -125,6 +129,10 @@ pub struct Graph {
     fell_back: bool,
     /// The buffer the user picked. What the device runs may differ, and the status reports that.
     wanted_frames: u32,
+    /// The two ends of the velocity mapping: the velocity the softest playable strike is lifted to,
+    /// and the exponent of the path from there up to full.
+    velocity_floor: u8,
+    velocity_curve: f64,
     /// Preview playback's note list and clock, pumped once per rendered buffer.
     preview: Scheduler,
 }
@@ -171,6 +179,8 @@ impl Graph {
                 device: 0,
                 fell_back: false,
                 wanted_frames: DEFAULT_FRAMES,
+                velocity_floor: DEFAULT_FLOOR,
+                velocity_curve: DEFAULT_CURVE,
                 preview: Scheduler::default(),
             })
         }
@@ -420,8 +430,16 @@ impl Graph {
     }
 
     pub fn note_on(&self, note: u8, velocity: u8) {
-        let velocity = curved(velocity);
+        let velocity = curved(velocity, self.velocity_floor, self.velocity_curve);
         unsafe { self.target().startNote_withVelocity_onChannel(note, velocity, CHANNEL) };
+    }
+
+    /// The velocity mapping: `floor` is the softest note's volume as a percent of full, `curve` the
+    /// exponent of the path from it to full. Nothing is reconnected and no voice is flushed, so the
+    /// user can move either while playing and hear the next strike answer.
+    pub fn set_velocity_curve(&mut self, floor: u32, curve: f64) {
+        self.velocity_floor = floor_velocity(floor);
+        self.velocity_curve = if curve > 0.0 { curve } else { DEFAULT_CURVE };
     }
 
     pub fn note_off(&self, note: u8) {
@@ -508,17 +526,26 @@ impl Graph {
     }
 }
 
-/// The velocity the instrument hears, bent away from the keyboard's straight line so that a soft
-/// strike is soft and the loud end still reaches full. Only the sound is bent: the strike the
-/// webview grades carries the velocity the keyboard sent.
-// ponytail: the exponent is the whole feel knob. Higher makes soft playing softer and the
-// keyboard harder to fill out; 1.0 hands the keyboard's own response back.
-fn curved(velocity: u8) -> u8 {
-    const GAMMA: f64 = 1.6;
-    let bent = (127.0 * (f64::from(velocity) / 127.0).powf(GAMMA)).round() as u8;
-    // A note on at zero velocity is a note off to every instrument, so the softest strikes keep
-    // the quietest velocity there is rather than falling through the floor into silence.
-    if velocity > 0 { bent.max(1) } else { 0 }
+/// The softest note's volume, given as a percent of full, as the velocity the lightest playable
+/// strike is lifted to. Zero percent is velocity 1, the quietest a note can be and still be a note:
+/// a note on at zero velocity is a note off to every instrument.
+fn floor_velocity(percent: u32) -> u8 {
+    1 + ((126 * percent.min(100) + 50) / 100) as u8
+}
+
+/// The velocity the instrument hears: the keyboard's straight line bent so that the softest strike
+/// lands on the floor, the hardest still reaches full, and the path between follows the exponent.
+/// Only the sound is bent; the strike the webview grades carries the velocity the keyboard sent.
+///
+/// An exponent above 1 makes soft playing softer and the keyboard harder to fill out, below 1 the
+/// other way, and exactly 1 hands the keyboard's own response back over the floor.
+fn curved(velocity: u8, floor: u8, exponent: f64) -> u8 {
+    if velocity == 0 {
+        return 0;
+    }
+    let floor = f64::from(floor.max(1));
+    let along = f64::from(velocity - 1) / 126.0;
+    (floor + (127.0 - floor) * along.powf(exponent)).round() as u8
 }
 
 /// Hands the last reference to a hosted plugin to the main thread, which is the one thread a
@@ -777,6 +804,10 @@ pub fn set_keyboard_volume(percent: u32) {
     with(|graph| graph.set_keyboard_volume(percent));
 }
 
+pub fn set_velocity_curve(floor: u32, curve: f64) {
+    with(|graph| graph.set_velocity_curve(floor, curve));
+}
+
 /// One key of the MIDI keyboard, down or up.
 pub fn note(midi: u8, velocity: u8, on: bool) {
     with(|graph| {
@@ -860,7 +891,13 @@ mod tests {
     /// Plays a note and lets it go again, answering how loud it was. Two instruments differ in
     /// that number, which is all a test needs to tell one from the other.
     fn note_peak(graph: &mut Graph) -> f32 {
-        graph.note_on(60, 100);
+        struck(graph, 100)
+    }
+
+    /// The same, at a velocity of the test's choosing: what one strike comes out at once the
+    /// velocity curve has had it.
+    fn struck(graph: &mut Graph, velocity: u8) -> f32 {
+        graph.note_on(60, velocity);
         let peak = graph.render_peak(LOOK).unwrap();
         graph.release_all();
         graph.render_peak(LOOK).unwrap();
@@ -1060,16 +1097,58 @@ mod tests {
     }
 
     #[test]
-    fn the_velocity_curve_keeps_both_ends_and_pulls_the_middle_down() {
-        assert_eq!(curved(0), 0, "a note off stays a note off");
-        assert_eq!(curved(127), 127, "the hardest strike still reaches full");
-        assert!(curved(64) < 64, "a middling strike is quieter than the keyboard meant it");
+    fn the_velocity_curve_runs_from_the_softest_note_to_full() {
+        assert_eq!(curved(0, 1, 1.6), 0, "a note off stays a note off");
 
-        assert!((1..=127).all(|velocity| curved(velocity) > 0), "no strike is bent into silence");
-        assert!(
-            (1..=127).all(|velocity| curved(velocity) >= curved(velocity - 1)),
-            "harder is never quieter"
-        );
+        // The two ends are fixed wherever the floor is put: the lightest playable strike is the
+        // softest note the user asked for, and the hardest still reaches full.
+        for percent in [0, 25, 60, 100] {
+            let floor = floor_velocity(percent);
+            assert_eq!(curved(1, floor, 1.6), floor, "the lightest strike is the softest note");
+            assert_eq!(curved(127, floor, 1.6), 127, "the hardest strike reaches full");
+        }
+
+        // The middle of the slider is the straight line, and either side bends off it.
+        assert_eq!(curved(64, 1, 1.0), 64, "an exponent of one is the keyboard's own reading");
+        assert!(curved(64, 1, 2.0) < 64, "a soft curve puts the middle under the straight line");
+        assert!(curved(64, 1, 0.5) > 64, "a hard curve puts it over");
+
+        // Raising the softest note lifts the light end and leaves the hard end where it was.
+        assert!(curved(1, floor_velocity(50), 1.6) > curved(1, floor_velocity(0), 1.6));
+        assert_eq!(curved(127, floor_velocity(50), 1.6), curved(127, floor_velocity(0), 1.6));
+
+        for curve in [0.5, 1.0, 1.6, 2.5] {
+            assert!((1..=127).all(|each| curved(each, 1, curve) > 0), "no strike is silenced");
+            assert!(
+                (1..=127).all(|each| curved(each, 1, curve) >= curved(each - 1, 1, curve)),
+                "harder is never quieter"
+            );
+        }
+    }
+
+    /// The mapping is between the keyboard and the instrument, so it is the note that changes, not
+    /// the finished sound: what this hears is the sampler answering a different velocity.
+    #[test]
+    fn the_softest_note_volume_lifts_a_light_strike_and_leaves_a_hard_one() {
+        let mut graph = offline();
+
+        graph.set_velocity_curve(0, 1.6);
+        let (light, hard) = (struck(&mut graph, 1), struck(&mut graph, 127));
+
+        graph.set_velocity_curve(60, 1.6);
+        assert!(struck(&mut graph, 1) > light, "the softest note came up");
+        assert_eq!(struck(&mut graph, 127), hard, "a hard strike is where it was");
+    }
+
+    #[test]
+    fn a_soft_curve_makes_a_middling_strike_quieter_than_a_hard_one() {
+        let mut graph = offline();
+
+        graph.set_velocity_curve(0, 2.5);
+        let soft = struck(&mut graph, 64);
+
+        graph.set_velocity_curve(0, 0.5);
+        assert!(struck(&mut graph, 64) > soft, "the same strike is louder under a hard curve");
     }
 
     #[test]

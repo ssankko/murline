@@ -50,6 +50,16 @@ export type Settings = {
   /** The effects the sound engine plays the instrument through, in the order they play. */
   effect_chain: EffectSlot[];
 
+  // The velocity curve: how hard a key is struck against how loud the instrument plays it. Both
+  // reach the engine before the instrument, so the effects and the keyboard fader never see them,
+  // and neither one touches `velocity_offset`, which is a grading calibration alone.
+
+  /** What the lightest playable strike sounds at, 0 to 100 as a percent of full. */
+  velocity_floor: number;
+  /** The exponent of the path from the softest note to full. Above 1 makes soft playing softer,
+   * below 1 fills out sooner, and exactly 1 is the keyboard's own reading. */
+  velocity_curve: number;
+
   /** Opaque id of the device the sound engine plays through; NULL is the system default. */
   audio_output_device: string | null;
   /** Frames the output device runs per buffer: 32, 64, 128 or 256. Smaller is lower latency. */
@@ -160,6 +170,8 @@ export const SETTING_DEFAULTS: Settings = {
   click_volume: 70,
   keyboard_volume: 100,
   effect_chain: [],
+  velocity_floor: 0,
+  velocity_curve: 1.6,
   audio_output_device: null,
   audio_buffer_frames: 64,
   instrument_id: null,

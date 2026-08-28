@@ -36,11 +36,11 @@ afterEach(() => {
 });
 
 /** Mounts an open panel and waits for the settings read to land its rows on the page. */
-async function open(): Promise<void> {
+async function open(props: Record<string, unknown> = {}): Promise<void> {
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
-  root.render(createElement(SettingsPanel, { open: true, onClose: () => {} }));
+  root.render(createElement(SettingsPanel, { open: true, onClose: () => {}, ...props }));
   await vi.waitFor(() => expect(host!.querySelector('#setting-row-instrument_id')).toBeTruthy());
 }
 
@@ -53,6 +53,11 @@ async function search(text: string): Promise<HTMLButtonElement[]> {
 
 function labels(results: HTMLButtonElement[]): string[] {
   return results.map((result) => result.querySelector('span')!.textContent!);
+}
+
+/** Where each result says its row lives: a tab's name, or the mixer's. */
+function wheres(results: HTMLButtonElement[]): string[] {
+  return results.map((result) => result.querySelectorAll('span')[1]!.textContent!);
 }
 
 /** The tab whose trigger is active, by its label. */
@@ -86,12 +91,30 @@ test('a word from a row label finds it and jumps to its tab', async () => {
   expect(marked('audio_buffer_frames')).toBe(true);
 });
 
-// The mixer's two faders are the only volumes left, and neither is a row here, so the index says
-// nothing about them: a result for a row the panel does not render is the search box lying.
-test('the two volumes left the panel with the mixer', async () => {
+// The two faders are the mixer's, so the index names them and sends the player to the mixer. The
+// rule is that a result never names something the player cannot reach; it does not say that
+// everything reachable has to be a row in the panel.
+test('a volume is found whether it is a row here or a fader in the mixer', async () => {
   await open();
-  expect(labels(await search('volume'))).toEqual([]);
-  expect(labels(await search('metronome'))).toEqual([]);
+  const results = await search('volume');
+  expect(labels(results)).toEqual(['Keyboard', 'Metronome', 'Softest note volume']);
+  expect(wheres(results)).toEqual(['Volume', 'Volume', 'Sound']);
+
+  expect(labels(await search('metronome'))).toEqual(['Metronome']);
+});
+
+test('a result naming a fader shuts the panel and opens the mixer', async () => {
+  let mixer = 0;
+  let closed = 0;
+  await open({ onOpenMixer: () => mixer++, onClose: () => closed++ });
+
+  const results = await search('metronome');
+  await userEvent.click(results[0]!);
+
+  expect(mixer).toBe(1);
+  expect(closed).toBe(1);
+  // The panel stayed where it was rather than switching to a tab that does not hold the fader.
+  expect(activeTab()).toBe('Sound');
 });
 
 test('a panel opened at a row lands on that row s tab with it marked', async () => {
@@ -229,10 +252,15 @@ test('the search names no row the panel does not render', async () => {
     'labels',
     'keys',
     '88',
+    'touch',
+    'dynamics',
   ]) {
-    const found = labels(await search(query));
+    const found = await search(query);
     expect(found.length, query).toBeGreaterThan(0);
-    for (const label of found) {
+    // A fader is the mixer's and opens it instead, which the test above covers; every other result
+    // has to be on the page once it is clicked.
+    const rows = labels(found).filter((_, at) => wheres(found)[at] !== 'Volume');
+    for (const label of rows) {
       const results = await search(query);
       await userEvent.click(results.find((each) => each.textContent!.startsWith(label))!);
       expect(host!.textContent, `${query} → ${label}`).toContain(label);

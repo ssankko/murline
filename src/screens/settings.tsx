@@ -76,6 +76,12 @@ const TAB_LABELS: Record<SettingsTab, string> = {
 
 const TABS = Object.entries(TAB_LABELS) as [SettingsTab, string][];
 
+/** Where a search result lives. The mixer is not a tab: it is the popover behind the volume
+ * button, and a result naming one of its faders opens it instead of switching tab. */
+type SearchWhere = SettingsTab | 'mixer';
+
+const WHERE_LABELS: Record<SearchWhere, string> = { ...TAB_LABELS, mixer: 'Volume' };
+
 /**
  * Every row the search box can reach, declared here rather than read off the page, so a row on a
  * tab that is not open is still findable. `words` holds what a player types instead of the label,
@@ -89,11 +95,23 @@ const TABS = Object.entries(TAB_LABELS) as [SettingsTab, string][];
  */
 const SEARCH_ROWS: {
   id: string;
-  tab: SettingsTab;
+  tab: SearchWhere;
   label: string;
   group?: string;
   words: string[];
 }[] = [
+  {
+    id: 'keyboard_volume',
+    tab: 'mixer',
+    label: 'Keyboard',
+    words: ['volume', 'loudness', 'gain', 'level', 'quiet', 'night', 'master'],
+  },
+  {
+    id: 'click_volume',
+    tab: 'mixer',
+    label: 'Metronome',
+    words: ['volume', 'loudness', 'click', 'beat', 'level'],
+  },
   {
     id: 'audio_output_device',
     tab: 'sound',
@@ -117,6 +135,18 @@ const SEARCH_ROWS: {
     tab: 'sound',
     label: 'Instruments folder',
     words: ['sf2', 'exs', 'sound fonts', 'samples'],
+  },
+  {
+    id: 'velocity_floor',
+    tab: 'sound',
+    label: 'Softest note volume',
+    words: ['quiet', 'floor', 'minimum', 'soft', 'dynamics', 'touch'],
+  },
+  {
+    id: 'velocity_curve',
+    tab: 'sound',
+    label: 'Velocity curve',
+    words: ['touch', 'response', 'sensitivity', 'dynamics', 'strike', 'force', 'exponent'],
   },
   {
     id: 'effect_chain',
@@ -272,7 +302,7 @@ function searchRows(query: string): typeof SEARCH_ROWS {
   const needle = query.trim().toLowerCase();
   if (!needle) return [];
   return SEARCH_ROWS.filter((row) =>
-    [row.label, TAB_LABELS[row.tab], row.group ?? '', ...row.words].some((word) =>
+    [row.label, WHERE_LABELS[row.tab], row.group ?? '', ...row.words].some((word) =>
       word.toLowerCase().includes(needle),
     ),
   );
@@ -293,11 +323,15 @@ export function SettingsPanel({
   onGlobalChange,
   live,
   jumpTo,
+  onOpenMixer,
 }: {
   open: boolean;
   onClose: () => void;
   onGlobalChange?: (...change: SettingChange) => void;
   live?: SettingChange | null;
+  /** The way to the two faders, which are the mixer's and not the panel's. A search result naming
+   * one closes the panel and opens the mixer over the button it belongs to. */
+  onOpenMixer?: () => void;
   /** A row to open on, named by its id: the same jump a search result makes, for the callers that
    * open the panel at one row rather than at the top. */
   jumpTo?: string | null;
@@ -327,7 +361,7 @@ export function SettingsPanel({
   // below finds the row on the page.
   useEffect(() => {
     const row = jumpTo && SEARCH_ROWS.find((each) => each.id === jumpTo);
-    if (!open || !row) return;
+    if (!open || !row || row.tab === 'mixer') return;
     setTab(row.tab);
     setMarked(row.id);
   }, [open, jumpTo]);
@@ -426,15 +460,22 @@ export function SettingsPanel({
               <li key={row.id}>
                 <button
                   onClick={() => {
+                    setQuery('');
+                    // A fader is not a row here, so the result hands the player to the mixer
+                    // rather than to a tab that does not hold it.
+                    if (row.tab === 'mixer') {
+                      onClose();
+                      onOpenMixer?.();
+                      return;
+                    }
                     setTab(row.tab);
                     setMarked(row.id);
-                    setQuery('');
                   }}
                   className="hover:bg-ink/8 flex w-full items-baseline gap-3 px-2.5 py-1.5 text-left text-[12px]"
                 >
                   <span className="min-w-0 truncate">{row.label}</span>
                   <span className="text-muted-ink ml-auto flex-none text-[11px]">
-                    {row.group ? `${TAB_LABELS[row.tab]} · ${row.group}` : TAB_LABELS[row.tab]}
+                    {row.group ? `${WHERE_LABELS[row.tab]} · ${row.group}` : WHERE_LABELS[row.tab]}
                   </span>
                 </button>
               </li>
@@ -472,7 +513,7 @@ export function SettingsPanel({
                 {/* The sound engine's own settings write straight to it, not through `write`:
                     each one has to reach the running engine as well as the database. The two
                     volumes are not here at all; they are the mixer's two faders. */}
-                <SoundTab marked={marked} />
+                <SoundTab marked={marked} velocity={velocity} />
               </Tabs.Content>
 
               <Tabs.Content value="look" className="flex flex-col gap-6">

@@ -1,5 +1,6 @@
 import { noteGrade, playGrade, releaseGrade, timingGrade, velocityGrade } from '@/play/grade';
 import type { NoteStrike } from '@/play/grade';
+import { curved } from '@/audio/curve';
 import { DEFAULT_PLAY_SETTINGS, type PlaySettings } from '@/play/settings';
 import { describe, expect, test } from 'vitest';
 
@@ -43,6 +44,26 @@ describe('the velocity curve', () => {
   test('the global offset moves the strike before it meets the ideal', () => {
     expect(velocityGrade(70, 80, settings({ velocityOffset: 10 }))).toBe(100);
     expect(velocityGrade(80, 80, settings({ velocityOffset: -20 }))).toBe(0);
+  });
+
+  // The velocity curve is the sound's, and the offset is grading's. The two must never meet: what
+  // is graded is the velocity the keyboard sent, whatever the instrument was asked to play.
+  test('the velocity curve never reaches a grade', () => {
+    const struck = 80;
+    expect(velocityGrade(struck, 80, s)).toBe(100);
+
+    for (const [floor, curve] of [
+      [0, 1.6],
+      [80, 0.5],
+      [100, 2.5],
+    ]) {
+      // What the instrument is asked to play instead, under one setting of the curve.
+      const heard = curved(struck, floor!, curve!);
+      expect(heard).not.toBe(struck);
+      // It would cost the strike its full marks if it ever reached the grade, and it does not.
+      expect(velocityGrade(heard, 80, s)).toBeLessThan(100);
+      expect(velocityGrade(struck, 80, s)).toBe(100);
+    }
   });
 });
 

@@ -15,6 +15,7 @@ pub mod mac;
 #[cfg(target_os = "macos")]
 mod window;
 pub mod preview;
+pub mod sampler;
 // On macOS the stub is only there for the tests that check what a platform without an engine
 // answers; off macOS it is the engine.
 #[cfg(any(not(target_os = "macos"), test))]

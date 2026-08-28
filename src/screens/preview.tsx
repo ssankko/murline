@@ -59,6 +59,7 @@ export function PreviewScreen({
   const [reason, setReason] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsJump, setSettingsJump] = useState<string | null>(null);
+  const [mixerOpen, setMixerOpen] = useState(false);
 
   // The note list is the engine's business and never redraws anything, so it stays out of state.
   const notesRef = useRef<ReturnType<typeof previewNotes>>([]);
@@ -240,6 +241,8 @@ export function PreviewScreen({
             Perform
           </Button>
           <Mixer
+            open={mixerOpen}
+            onOpenChange={setMixerOpen}
             onSoundSettings={() => {
               setSettingsJump('instrument_id');
               setSettingsOpen(true);
@@ -262,6 +265,7 @@ export function PreviewScreen({
           setSettingsOpen(false);
           setSettingsJump(null);
         }}
+        onOpenMixer={() => setMixerOpen(true)}
       />
 
       {/* The systems flow down and the paper never scrolls sideways: it is fitted to the width. */}

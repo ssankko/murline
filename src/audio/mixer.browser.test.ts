@@ -1,5 +1,5 @@
 import { Mixer } from '@/audio/mixer';
-import { createElement } from 'react';
+import { createElement, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { userEvent } from 'vitest/browser';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -58,17 +58,24 @@ afterEach(() => {
   host = null;
 });
 
+/** The mixer's open state belongs to the screen around it, because a search result in the settings
+ * panel opens it too. This is that screen. */
+function Screen({ onSoundSettings }: { onSoundSettings: () => void }) {
+  const [open, setOpen] = useState(false);
+  return createElement(Mixer, {
+    open,
+    onOpenChange: setOpen,
+    onSoundSettings,
+    onGlobalChange: (...change: [string, unknown]) => changed.push(change),
+  });
+}
+
 /** Mounts the volume button, and hands back the way to open it. */
 async function mount(onSoundSettings = () => {}): Promise<HTMLButtonElement> {
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
-  root.render(
-    createElement(Mixer, {
-      onSoundSettings,
-      onGlobalChange: (...change: [string, unknown]) => changed.push(change),
-    }),
-  );
+  root.render(createElement(Screen, { onSoundSettings }));
   await vi.waitFor(() =>
     expect(host!.querySelector('button[aria-label="Volume"]')).toBeTruthy(),
   );

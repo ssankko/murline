@@ -79,6 +79,7 @@ export function Library({
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** The row the panel opens on, which only the mixer's way into the Sound tab sets. */
   const [settingsJump, setSettingsJump] = useState<string | null>(null);
+  const [mixerOpen, setMixerOpen] = useState(false);
   const [defaults, setDefaults] = useState<Partial<PieceSettings>>({});
 
   // The Play settings list holds the resolved values, so it needs the middle level of every field.
@@ -227,6 +228,8 @@ export function Library({
             </DropdownMenuContent>
           </DropdownMenu>
           <Mixer
+            open={mixerOpen}
+            onOpenChange={setMixerOpen}
             onSoundSettings={() => {
               setSettingsJump('instrument_id');
               setSettingsOpen(true);
@@ -359,6 +362,7 @@ export function Library({
         onGlobalChange={(key, value) => {
           if (key === 'library_folder') onFolder(value as string);
         }}
+        onOpenMixer={() => setMixerOpen(true)}
       />
 
       {clash && (

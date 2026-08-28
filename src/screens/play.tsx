@@ -135,6 +135,7 @@ export function PlayScreen({
   const [split, setSplit] = useState(DEFAULT_SPLIT);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsJump, setSettingsJump] = useState<string | null>(null);
+  const [mixerOpen, setMixerOpen] = useState(false);
   const [hands, setHands] = useState(DEFAULT_PLAY_SETTINGS.hands);
   /** A one-staff piece is all right hand, so it has no choice of hands to offer. */
   const [oneStaff, setOneStaff] = useState(false);
@@ -540,6 +541,8 @@ export function PlayScreen({
             onAllSettings={() => setSettingsOpen(true)}
           />
           <Mixer
+            open={mixerOpen}
+            onOpenChange={setMixerOpen}
             onSoundSettings={() => {
               setSettingsJump('instrument_id');
               setSettingsOpen(true);
@@ -677,6 +680,7 @@ export function PlayScreen({
             setSettingsJump(null);
           }}
           onGlobalChange={applyGlobal}
+          onOpenMixer={() => setMixerOpen(true)}
           live={live}
         />
       </div>

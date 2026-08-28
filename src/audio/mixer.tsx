@@ -26,14 +26,18 @@ function output(status: AudioStatus | null): string {
  * the header bar without being opened.
  */
 export function Mixer({
+  open,
+  onOpenChange,
   onSoundSettings,
   onGlobalChange,
 }: {
+  /** Held by the screen, because a search result in the settings panel opens the mixer too. */
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   /** The way into the Sound tab, which is where the device and the instrument are chosen. */
   onSoundSettings: () => void;
   onGlobalChange?: (...change: SettingChange) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const [values, setValues] = useState<{ keyboard: number; click: number } | null>(null);
   const status = useAudioStatus();
   const down = status !== null && !status.available;
@@ -65,7 +69,7 @@ export function Mixer({
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>
         <button
           aria-label="Volume"
@@ -101,7 +105,7 @@ export function Mixer({
           )}
           <button
             onClick={() => {
-              setOpen(false);
+              onOpenChange(false);
               onSoundSettings();
             }}
             className="hover:text-ink text-muted-ink text-[12px] underline underline-offset-2"

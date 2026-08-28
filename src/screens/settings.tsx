@@ -1,9 +1,10 @@
-// The settings panel: a right-hand slide-over opened from every screen, holding everything the app
-// does in general. What the open piece does right now is the play toolbar's. Every control writes
-// on change; there is no Save.
+// The settings panel: a centred modal opened from every screen, holding everything the app does in
+// general. What the open piece does right now is the play toolbar's. Every control writes on
+// change; there is no Save.
 
 import { SoundTab } from '@/audio/sound-tab';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,7 +25,7 @@ import { type KeyboardPreset } from '@/play/settings';
 import { SPACING_MAX, SPACING_MIN, type Pinch } from '@/sheet/sheet';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
-import { ChevronDown, X } from 'lucide-react';
+import { ChevronDown, Search } from 'lucide-react';
 import { Tabs } from 'radix-ui';
 import { useEffect, useRef, useState } from 'react';
 
@@ -309,9 +310,10 @@ function searchRows(query: string): typeof SEARCH_ROWS {
 }
 
 /**
- * Every app-wide setting, in four tabs, over whatever screen is behind it. The panel is not modal:
- * the sheet and the lane stay visible and keep animating while a control is moved, so a change can
- * be judged by eye and ear. It reads nothing the play clock owns and writes nothing to it.
+ * Every app-wide setting, in four tabs, in a centred modal shaped like the score finder. The
+ * overlay dims lighter than the finder's so the sheet and the lane behind stay legible and keep
+ * animating while a control is moved. It reads nothing the play clock owns and writes nothing to
+ * it.
  *
  * A knob the running play reads is handed to `onGlobalChange` as it is written, so a change
  * mid-practice applies at once. `live` is the way back: a setting the screen behind the panel has
@@ -339,11 +341,15 @@ export function SettingsPanel({
   const [values, setValues] = useState<Settings | null>(null);
   const [tab, setTab] = useState<SettingsTab>('sound');
   const [query, setQuery] = useState('');
+  /** Which search result the arrow keys are on. */
+  const [sel, setSel] = useState(0);
   /** The row a search result jumped to, held until the next jump or the next open. */
   const [marked, setMarked] = useState<string | null>(null);
   const [velocity, setVelocity] = useState<number | null>(null);
   const [pdmxReady, setPdmxReady] = useState<boolean | null>(null);
-  // The panel stays mounted for its slide, so a shut panel must not re-render on every strike.
+  const list = useRef<HTMLUListElement>(null);
+  // The three screens hold the component whether it is open or not, so a shut panel must not
+  // re-render on every strike.
   const midi = useMidiStatus((event) => {
     if (open && event.on) setVelocity(event.velocity);
   });
@@ -386,6 +392,10 @@ export function SettingsPanel({
     if (marked) document.getElementById(rowId(marked))?.scrollIntoView({ block: 'center' });
   }, [marked]);
 
+  useEffect(() => {
+    list.current?.querySelector('[data-selected]')?.scrollIntoView({ block: 'nearest' });
+  }, [sel, query]);
+
   // A pinch writes the setting itself, so the panel only has to follow the value. The two halves
   // are the dependencies, so a pinch step moves the row and a render on its own does not.
   const [liveKey, liveValue] = live ?? [];
@@ -418,414 +428,455 @@ export function SettingsPanel({
   }
 
   const results = searchRows(query);
+  const selected = results[Math.min(sel, results.length - 1)] ?? null;
+
+  function pick(row: (typeof SEARCH_ROWS)[number]): void {
+    setQuery('');
+    setSel(0);
+    // A fader is not a row here, so the result hands the player to the mixer rather than to a tab
+    // that does not hold it.
+    if (row.tab === 'mixer') {
+      onClose();
+      onOpenMixer?.();
+      return;
+    }
+    setTab(row.tab);
+    setMarked(row.id);
+  }
+
+  // The arrows belong to the search box alone: every slider, select and toggle on the tabs below
+  // reads its own arrow keys, so the list must not take them from the whole modal.
+  function onSearchKey(event: React.KeyboardEvent): void {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setSel((at) => Math.min(at + 1, results.length - 1));
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setSel((at) => Math.max(at - 1, 0));
+    } else if (event.key === 'Enter' && selected) {
+      event.preventDefault();
+      pick(selected);
+    }
+  }
 
   return (
-    // `role="dialog"` with a state is what the play screen's keys watch for: while the panel is
-    // open, Space and Escape are the panel's and never reach the clock.
-    <aside
-      role="dialog"
-      aria-label="Settings"
-      data-state={open ? 'open' : 'closed'}
-      inert={!open}
-      onKeyDown={(event) => {
-        if (event.key === 'Escape') onClose();
-      }}
-      className={`bg-chrome border-edge-soft fixed inset-y-0 right-0 z-40 flex w-[380px] max-w-full flex-col border-l shadow-xl transition-transform duration-200 ease-[var(--ease)] motion-reduce:transition-none ${
-        open ? 'translate-x-0' : 'translate-x-full'
-      }`}
-    >
-      <div className="border-edge-soft flex h-12 flex-none items-center gap-2 border-b px-3">
-        <h2 className="text-[13px] font-semibold">Settings</h2>
-        <button
-          onClick={onClose}
-          aria-label="Close settings"
-          className="hover:bg-ink/8 ml-auto flex size-8 flex-none items-center justify-center rounded-md transition-colors duration-150"
-        >
-          <X size={16} strokeWidth={1.75} />
-        </button>
-      </div>
-
-      <div className="relative flex-none px-3 pt-3">
-        <Input
-          type="search"
-          value={query}
-          aria-label="Search settings"
-          placeholder="Search settings"
-          onChange={(event) => setQuery(event.target.value)}
-          className="h-8 text-[12px]"
-        />
-        {results.length > 0 && (
-          <ul className="bg-chrome border-edge-soft absolute inset-x-3 top-full z-10 mt-1 max-h-64 overflow-y-auto border shadow-md">
-            {results.map((row) => (
-              <li key={row.id}>
-                <button
-                  onClick={() => {
-                    setQuery('');
-                    // A fader is not a row here, so the result hands the player to the mixer
-                    // rather than to a tab that does not hold it.
-                    if (row.tab === 'mixer') {
-                      onClose();
-                      onOpenMixer?.();
-                      return;
-                    }
-                    setTab(row.tab);
-                    setMarked(row.id);
-                  }}
-                  className="hover:bg-ink/8 flex w-full items-baseline gap-3 px-2.5 py-1.5 text-left text-[12px]"
-                >
-                  <span className="min-w-0 truncate">{row.label}</span>
-                  <span className="text-muted-ink ml-auto flex-none text-[11px]">
-                    {row.group ? `${WHERE_LABELS[row.tab]} · ${row.group}` : WHERE_LABELS[row.tab]}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
-      <Tabs.Root
-        value={tab}
-        onValueChange={(next) => {
-          setTab(next as SettingsTab);
-          setMarked(null);
-        }}
-        className="flex min-h-0 flex-1 flex-col"
+    // Radix owns the overlay, the focus trap, Escape and the click outside. Its content carries
+    // `role="dialog"` with `data-state="open"`, which is what the play screen's keys watch for:
+    // while the panel is open, Space and Escape are the panel's and never reach the clock.
+    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+      <DialogContent
+        showCloseButton={false}
+        // Lighter than the finder's `bg-black/50`: the sheet and the lane behind have to stay
+        // readable while a look setting is moved.
+        overlayClassName="bg-black/20"
+        className="top-[12%] flex max-h-[70vh] w-[640px] translate-y-0 flex-col gap-0 p-0 sm:max-w-[640px]"
       >
-        <Tabs.List className="border-edge-soft flex flex-none gap-0.5 border-b px-3 pt-3">
-          {TABS.map(([each, label]) => (
-            <Tabs.Trigger
-              key={each}
-              value={each}
-              className="text-muted-ink data-[state=active]:border-ink data-[state=active]:text-ink hover:text-ink -mb-px border-b-2 border-transparent px-2 pb-1.5 text-[12px] font-medium transition-colors duration-150"
+        <DialogTitle className="sr-only">Settings</DialogTitle>
+
+        <div className="border-edge-soft relative flex flex-none items-center gap-2.5 border-b px-4">
+          <Search className="text-muted-ink size-4" />
+          <input
+            autoFocus
+            value={query}
+            aria-label="Search settings"
+            placeholder="Search settings"
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setSel(0);
+            }}
+            onKeyDown={onSearchKey}
+            className="placeholder:text-muted-ink flex-1 bg-transparent py-3 text-[15px] outline-none"
+          />
+          {query.trim() !== '' && (
+            <ul
+              ref={list}
+              className="bg-chrome border-edge-soft absolute inset-x-0 top-full z-10 max-h-64 overflow-y-auto border shadow-md"
             >
-              {label}
-            </Tabs.Trigger>
-          ))}
-        </Tabs.List>
-
-        {/* The box is a grid whose track is as wide as its widest content unless the column is let
-            go under it: without min-w-0 a long path widens the whole panel. */}
-        <div className="flex min-w-0 flex-1 flex-col overflow-y-auto px-3 py-4">
-          {values && (
-            <>
-              <Tabs.Content value="sound" className="flex flex-col gap-7">
-                {/* The sound engine's own settings write straight to it, not through `write`:
-                    each one has to reach the running engine as well as the database. The two
-                    volumes are not here at all; they are the mixer's two faders. */}
-                <SoundTab marked={marked} velocity={velocity} />
-              </Tabs.Content>
-
-              <Tabs.Content value="look" className="flex flex-col gap-6">
-                <Rows>
-                  <Row id="theme" marked={marked === 'theme'} label="Theme">
-                    <Segmented
-                      options={THEMES}
-                      value={values.theme}
-                      onChange={(value) => write('theme', value)}
-                    />
-                  </Row>
-                </Rows>
-
-                {/* Sheet and falling notes each carry their own harmony and their own colours, so
-                    each heading names the view its rows move and nothing else. */}
-                <section className="flex flex-col gap-1.5">
-                  <h3 className="text-muted-ink text-[11px] tracking-wide uppercase">Sheet</h3>
-                  <Rows>
-                    <Row
-                      id="sheet_proportional"
-                      marked={marked === 'sheet_proportional'}
-                      label="Space notes by time"
-                    >
-                      <Toggle
-                        value={values.sheet_proportional}
-                        onChange={(value) => write('sheet_proportional', value)}
-                      />
-                    </Row>
-                    <Row id="sheet_spacing" marked={marked === 'sheet_spacing'} label="Spacing">
-                      <Slider
-                        label="Sheet spacing in percent"
-                        value={values.sheet_spacing}
-                        min={SPACING_MIN}
-                        max={SPACING_MAX}
-                        step={5}
-                        disabled={!values.sheet_proportional}
-                        onChange={(value) => write('sheet_spacing', value)}
-                      />
-                    </Row>
-                    <Row id="sheet_harmony" marked={marked === 'sheet_harmony'} label="Harmony">
-                      <Toggle
-                        value={values.sheet_harmony}
-                        onChange={(value) => write('sheet_harmony', value)}
-                      />
-                    </Row>
-                    <Row
-                      id="sheet_colour"
-                      marked={marked === 'sheet_colour'}
-                      label="Pitch colours"
-                    >
-                      <Toggle
-                        value={values.sheet_colour}
-                        onChange={(value) => write('sheet_colour', value)}
-                      />
-                    </Row>
-                  </Rows>
-                </section>
-
-                <section className="flex flex-col gap-1.5">
-                  <h3 className="text-muted-ink text-[11px] tracking-wide uppercase">
-                    Falling notes
-                  </h3>
-                  <Rows>
-                    <Row
-                      id="lane_lookahead"
-                      marked={marked === 'lane_lookahead'}
-                      label="Lookahead (beats)"
-                    >
-                      <Slider
-                        label="Lane lookahead in beats"
-                        value={values.lane_lookahead}
-                        min={LOOKAHEAD_MIN}
-                        max={LOOKAHEAD_MAX}
-                        step={0.1}
-                        onChange={(value) => write('lane_lookahead', value)}
-                      />
-                    </Row>
-                    <Row
-                      id="lane_note_width"
-                      marked={marked === 'lane_note_width'}
-                      label="Note width (%)"
-                    >
-                      <NumberField
-                        value={values.lane_note_width}
-                        min={10}
-                        max={100}
-                        onChange={(value) => write('lane_note_width', value)}
-                      />
-                    </Row>
-                    <Row id="lane_gap" marked={marked === 'lane_gap'} label="Gap (px)">
-                      <NumberField
-                        value={values.lane_gap}
-                        min={0}
-                        max={20}
-                        onChange={(value) => write('lane_gap', value)}
-                      />
-                    </Row>
-                    <Row
-                      id="lane_names"
-                      marked={marked === 'lane_names'}
-                      label="Note names on blocks"
-                    >
-                      <Toggle
-                        value={values.lane_names}
-                        onChange={(value) => write('lane_names', value)}
-                      />
-                    </Row>
-                    <Row id="lane_harmony" marked={marked === 'lane_harmony'} label="Harmony">
-                      <Toggle
-                        value={values.lane_harmony}
-                        onChange={(value) => write('lane_harmony', value)}
-                      />
-                    </Row>
-                    <Row id="lane_colour" marked={marked === 'lane_colour'} label="Pitch colours">
-                      <Toggle
-                        value={values.lane_colour}
-                        onChange={(value) => write('lane_colour', value)}
-                      />
-                    </Row>
-                    <Row
-                      id="keyboard_labels"
-                      marked={marked === 'keyboard_labels'}
-                      label="Note names on keys"
-                    >
-                      <Toggle
-                        value={values.keyboard_labels}
-                        onChange={(value) => write('keyboard_labels', value)}
-                      />
-                    </Row>
-                  </Rows>
-                </section>
-
-                {/* Keyboard size lays the keys out under the falling notes and changes nothing on
-                    the sheet, so it sits outside that heading rather than under it. */}
-                <Rows>
-                  <Row id="keyboard_size" marked={marked === 'keyboard_size'} label="Keyboard size">
-                    <Segmented
-                      options={PRESETS}
-                      value={values.keyboard_preset}
-                      onChange={(value) => write('keyboard_preset', value)}
-                    />
-                  </Row>
-                  {values.keyboard_preset === 'custom' && (
-                    <Row label="Custom range">
-                      <CustomRange
-                        lo={values.keyboard_lo}
-                        hi={values.keyboard_hi}
-                        onChange={(lo, hi) => {
-                          write('keyboard_lo', lo);
-                          write('keyboard_hi', hi);
-                        }}
-                      />
-                    </Row>
-                  )}
-                </Rows>
-              </Tabs.Content>
-
-              <Tabs.Content value="playing" className="flex flex-col gap-7">
-                <Rows>
-                  <Row id="midi_device" marked={marked === 'midi_device'} label="Input device">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          aria-label="MIDI input device"
-                          className="h-7 max-w-[190px] justify-between px-2 text-[12px] font-normal"
-                        >
-                          <span className="truncate">
-                            {midi.ports.find((port) => port.id === values.midi_device)?.name ??
-                              'Any device'}
-                          </span>
-                          <ChevronDown className="size-3.5 opacity-60" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="max-w-[260px]">
-                        <DropdownMenuRadioGroup
-                          value={values.midi_device ?? ''}
-                          onValueChange={(id) => write('midi_device', id || null)}
-                        >
-                          <DropdownMenuRadioItem value="" className="text-[13px]">
-                            Any device
-                          </DropdownMenuRadioItem>
-                          {midi.ports.map((port) => (
-                            <DropdownMenuRadioItem
-                              key={port.id}
-                              value={port.id}
-                              className="text-[13px]"
-                            >
-                              <span className="truncate">{port.name}</span>
-                            </DropdownMenuRadioItem>
-                          ))}
-                        </DropdownMenuRadioGroup>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </Row>
-                  <Row
-                    id="velocity_offset"
-                    marked={marked === 'velocity_offset'}
-                    label="Velocity offset"
+              {results.length === 0 && (
+                <li className="text-muted-ink px-4 py-3 text-[12px]">Nothing matches “{query}”.</li>
+              )}
+              {results.map((row, at) => (
+                <li key={row.id}>
+                  <button
+                    data-selected={row === selected || undefined}
+                    onMouseMove={() => sel !== at && setSel(at)}
+                    onClick={() => pick(row)}
+                    className={`flex w-full items-baseline gap-3 px-4 py-1.5 text-left text-[12px] ${
+                      row === selected ? 'bg-(--fill-selected)' : ''
+                    }`}
                   >
-                    <div className="flex items-center gap-3">
-                      <NumberField
-                        value={values.velocity_offset}
-                        min={-64}
-                        max={64}
-                        onChange={(value) => write('velocity_offset', value)}
-                      />
-                      <span className="text-muted-ink text-[12px] tabular-nums">
-                        last strike {velocity ?? '—'}
-                      </span>
-                    </div>
-                  </Row>
-                  <Row
-                    id="matching_window_ms"
-                    marked={marked === 'matching_window_ms'}
-                    label="Matching window (ms)"
-                  >
-                    <NumberField
-                      value={values.matching_window_ms}
-                      min={1}
-                      max={1000}
-                      onChange={(value) => write('matching_window_ms', value)}
-                    />
-                  </Row>
-                  <Row
-                    id="togetherness_ms"
-                    marked={marked === 'togetherness_ms'}
-                    label="Togetherness window (ms)"
-                  >
-                    <NumberField
-                      value={values.togetherness_ms}
-                      min={1}
-                      max={1000}
-                      onChange={(value) => write('togetherness_ms', value)}
-                    />
-                  </Row>
-                </Rows>
-
-                {import.meta.env.DEV && (
-                  <details id={rowId('grade_tuning')} open={marked === 'grade_tuning'}>
-                    <summary className="cursor-pointer text-[13px] font-semibold">
-                      Grade tuning
-                    </summary>
-                    <p className="text-muted-ink mt-1 text-[11.5px]">
-                      Grade normalises the three weights whatever they hold.
-                    </p>
-                    <div className="mt-3">
-                      <Rows>
-                        {GRADE_KNOBS.map(([key, label, min, max]) => (
-                          <Row key={key} label={label}>
-                            <NumberField
-                              value={values[key] as number}
-                              min={min}
-                              max={max}
-                              onChange={(value) => write(key, value as never)}
-                            />
-                          </Row>
-                        ))}
-                      </Rows>
-                    </div>
-                  </details>
-                )}
-              </Tabs.Content>
-
-              <Tabs.Content value="library" className="flex flex-col gap-2">
-                <p className="text-muted-ink text-[11.5px]">
-                  A new library folder re-points the app. No file is moved.
-                </p>
-                <Rows>
-                  <Row id="library_folder" marked={marked === 'library_folder'} label="Library folder">
-                    <Path
-                      value={values.library_folder}
-                      onChoose={() => chooseFolder('library_folder').catch(console.error)}
-                    />
-                  </Row>
-                  <Row id="pdmx_folder" marked={marked === 'pdmx_folder'} label="PDMX folder">
-                    <Path
-                      value={values.pdmx_folder}
-                      onChoose={() => chooseFolder('pdmx_folder').catch(console.error)}
-                    />
-                  </Row>
-                  <Row id="pdmx_scores" marked={marked === 'pdmx_scores'} label="PDMX scores">
-                    <span className="flex flex-none flex-col items-end gap-0.5">
-                      <span className="flex items-center gap-3">
-                        <span className="text-muted-ink text-[12px] tabular-nums">{pdmxStatus}</span>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-7 flex-none"
-                          onClick={() => {
-                            if (downloading) cancelPdmx();
-                            else void downloadPdmx();
-                          }}
-                        >
-                          {downloading ? 'Cancel' : 'Download (1.9 GB)'}
-                        </Button>
-                      </span>
-                      {pdmx.error && (
-                        <span className="text-[11px] text-red-600 dark:text-red-400">
-                          {pdmx.error}
-                        </span>
-                      )}
+                    <span className="min-w-0 truncate">{row.label}</span>
+                    <span className="text-muted-ink ml-auto flex-none text-[11px]">
+                      {row.group
+                        ? `${WHERE_LABELS[row.tab]} · ${row.group}`
+                        : WHERE_LABELS[row.tab]}
                     </span>
-                  </Row>
-                </Rows>
-              </Tabs.Content>
-            </>
+                  </button>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
-      </Tabs.Root>
-    </aside>
+
+        <Tabs.Root
+          value={tab}
+          onValueChange={(next) => {
+            setTab(next as SettingsTab);
+            setMarked(null);
+          }}
+          className="flex min-h-0 flex-1 flex-col"
+        >
+          <Tabs.List className="border-edge-soft flex flex-none gap-0.5 border-b px-4 pt-3">
+            {TABS.map(([each, label]) => (
+              <Tabs.Trigger
+                key={each}
+                value={each}
+                className="text-muted-ink data-[state=active]:border-ink data-[state=active]:text-ink hover:text-ink -mb-px border-b-2 border-transparent px-2 pb-1.5 text-[12px] font-medium transition-colors duration-150"
+              >
+                {label}
+              </Tabs.Trigger>
+            ))}
+          </Tabs.List>
+
+          {/* The box is a grid whose track is as wide as its widest content unless the column is let
+            go under it: without min-w-0 a long path widens the whole panel. */}
+          <div className="flex min-w-0 flex-1 flex-col overflow-y-auto px-4 py-4">
+            {values && (
+              <>
+                <Tabs.Content value="sound" className="flex flex-col gap-7">
+                  {/* The sound engine's own settings write straight to it, not through `write`:
+                    each one has to reach the running engine as well as the database. The two
+                    volumes are not here at all; they are the mixer's two faders. */}
+                  <SoundTab marked={marked} velocity={velocity} />
+                </Tabs.Content>
+
+                <Tabs.Content value="look" className="flex flex-col gap-6">
+                  <Rows>
+                    <Row id="theme" marked={marked === 'theme'} label="Theme">
+                      <Segmented
+                        options={THEMES}
+                        value={values.theme}
+                        onChange={(value) => write('theme', value)}
+                      />
+                    </Row>
+                  </Rows>
+
+                  {/* Sheet and falling notes each carry their own harmony and their own colours, so
+                    each heading names the view its rows move and nothing else. */}
+                  <section className="flex flex-col gap-1.5">
+                    <h3 className="text-muted-ink text-[11px] tracking-wide uppercase">Sheet</h3>
+                    <Rows>
+                      <Row
+                        id="sheet_proportional"
+                        marked={marked === 'sheet_proportional'}
+                        label="Space notes by time"
+                      >
+                        <Toggle
+                          value={values.sheet_proportional}
+                          onChange={(value) => write('sheet_proportional', value)}
+                        />
+                      </Row>
+                      <Row id="sheet_spacing" marked={marked === 'sheet_spacing'} label="Spacing">
+                        <Slider
+                          label="Sheet spacing in percent"
+                          value={values.sheet_spacing}
+                          min={SPACING_MIN}
+                          max={SPACING_MAX}
+                          step={5}
+                          disabled={!values.sheet_proportional}
+                          onChange={(value) => write('sheet_spacing', value)}
+                        />
+                      </Row>
+                      <Row id="sheet_harmony" marked={marked === 'sheet_harmony'} label="Harmony">
+                        <Toggle
+                          value={values.sheet_harmony}
+                          onChange={(value) => write('sheet_harmony', value)}
+                        />
+                      </Row>
+                      <Row
+                        id="sheet_colour"
+                        marked={marked === 'sheet_colour'}
+                        label="Pitch colours"
+                      >
+                        <Toggle
+                          value={values.sheet_colour}
+                          onChange={(value) => write('sheet_colour', value)}
+                        />
+                      </Row>
+                    </Rows>
+                  </section>
+
+                  <section className="flex flex-col gap-1.5">
+                    <h3 className="text-muted-ink text-[11px] tracking-wide uppercase">
+                      Falling notes
+                    </h3>
+                    <Rows>
+                      <Row
+                        id="lane_lookahead"
+                        marked={marked === 'lane_lookahead'}
+                        label="Lookahead (beats)"
+                      >
+                        <Slider
+                          label="Lane lookahead in beats"
+                          value={values.lane_lookahead}
+                          min={LOOKAHEAD_MIN}
+                          max={LOOKAHEAD_MAX}
+                          step={0.1}
+                          onChange={(value) => write('lane_lookahead', value)}
+                        />
+                      </Row>
+                      <Row
+                        id="lane_note_width"
+                        marked={marked === 'lane_note_width'}
+                        label="Note width (%)"
+                      >
+                        <NumberField
+                          value={values.lane_note_width}
+                          min={10}
+                          max={100}
+                          onChange={(value) => write('lane_note_width', value)}
+                        />
+                      </Row>
+                      <Row id="lane_gap" marked={marked === 'lane_gap'} label="Gap (px)">
+                        <NumberField
+                          value={values.lane_gap}
+                          min={0}
+                          max={20}
+                          onChange={(value) => write('lane_gap', value)}
+                        />
+                      </Row>
+                      <Row
+                        id="lane_names"
+                        marked={marked === 'lane_names'}
+                        label="Note names on blocks"
+                      >
+                        <Toggle
+                          value={values.lane_names}
+                          onChange={(value) => write('lane_names', value)}
+                        />
+                      </Row>
+                      <Row id="lane_harmony" marked={marked === 'lane_harmony'} label="Harmony">
+                        <Toggle
+                          value={values.lane_harmony}
+                          onChange={(value) => write('lane_harmony', value)}
+                        />
+                      </Row>
+                      <Row id="lane_colour" marked={marked === 'lane_colour'} label="Pitch colours">
+                        <Toggle
+                          value={values.lane_colour}
+                          onChange={(value) => write('lane_colour', value)}
+                        />
+                      </Row>
+                      <Row
+                        id="keyboard_labels"
+                        marked={marked === 'keyboard_labels'}
+                        label="Note names on keys"
+                      >
+                        <Toggle
+                          value={values.keyboard_labels}
+                          onChange={(value) => write('keyboard_labels', value)}
+                        />
+                      </Row>
+                    </Rows>
+                  </section>
+
+                  {/* Keyboard size lays the keys out under the falling notes and changes nothing on
+                    the sheet, so it sits outside that heading rather than under it. */}
+                  <Rows>
+                    <Row
+                      id="keyboard_size"
+                      marked={marked === 'keyboard_size'}
+                      label="Keyboard size"
+                    >
+                      <Segmented
+                        options={PRESETS}
+                        value={values.keyboard_preset}
+                        onChange={(value) => write('keyboard_preset', value)}
+                      />
+                    </Row>
+                    {values.keyboard_preset === 'custom' && (
+                      <Row label="Custom range">
+                        <CustomRange
+                          lo={values.keyboard_lo}
+                          hi={values.keyboard_hi}
+                          onChange={(lo, hi) => {
+                            write('keyboard_lo', lo);
+                            write('keyboard_hi', hi);
+                          }}
+                        />
+                      </Row>
+                    )}
+                  </Rows>
+                </Tabs.Content>
+
+                <Tabs.Content value="playing" className="flex flex-col gap-7">
+                  <Rows>
+                    <Row id="midi_device" marked={marked === 'midi_device'} label="Input device">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            aria-label="MIDI input device"
+                            className="h-7 max-w-[190px] justify-between px-2 text-[12px] font-normal"
+                          >
+                            <span className="truncate">
+                              {midi.ports.find((port) => port.id === values.midi_device)?.name ??
+                                'Any device'}
+                            </span>
+                            <ChevronDown className="size-3.5 opacity-60" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="max-w-[260px]">
+                          <DropdownMenuRadioGroup
+                            value={values.midi_device ?? ''}
+                            onValueChange={(id) => write('midi_device', id || null)}
+                          >
+                            <DropdownMenuRadioItem value="" className="text-[13px]">
+                              Any device
+                            </DropdownMenuRadioItem>
+                            {midi.ports.map((port) => (
+                              <DropdownMenuRadioItem
+                                key={port.id}
+                                value={port.id}
+                                className="text-[13px]"
+                              >
+                                <span className="truncate">{port.name}</span>
+                              </DropdownMenuRadioItem>
+                            ))}
+                          </DropdownMenuRadioGroup>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </Row>
+                    <Row
+                      id="velocity_offset"
+                      marked={marked === 'velocity_offset'}
+                      label="Velocity offset"
+                    >
+                      <div className="flex items-center gap-3">
+                        <NumberField
+                          value={values.velocity_offset}
+                          min={-64}
+                          max={64}
+                          onChange={(value) => write('velocity_offset', value)}
+                        />
+                        <span className="text-muted-ink text-[12px] tabular-nums">
+                          last strike {velocity ?? '—'}
+                        </span>
+                      </div>
+                    </Row>
+                    <Row
+                      id="matching_window_ms"
+                      marked={marked === 'matching_window_ms'}
+                      label="Matching window (ms)"
+                    >
+                      <NumberField
+                        value={values.matching_window_ms}
+                        min={1}
+                        max={1000}
+                        onChange={(value) => write('matching_window_ms', value)}
+                      />
+                    </Row>
+                    <Row
+                      id="togetherness_ms"
+                      marked={marked === 'togetherness_ms'}
+                      label="Togetherness window (ms)"
+                    >
+                      <NumberField
+                        value={values.togetherness_ms}
+                        min={1}
+                        max={1000}
+                        onChange={(value) => write('togetherness_ms', value)}
+                      />
+                    </Row>
+                  </Rows>
+
+                  {import.meta.env.DEV && (
+                    <details id={rowId('grade_tuning')} open={marked === 'grade_tuning'}>
+                      <summary className="cursor-pointer text-[13px] font-semibold">
+                        Grade tuning
+                      </summary>
+                      <p className="text-muted-ink mt-1 text-[11.5px]">
+                        Grade normalises the three weights whatever they hold.
+                      </p>
+                      <div className="mt-3">
+                        <Rows>
+                          {GRADE_KNOBS.map(([key, label, min, max]) => (
+                            <Row key={key} label={label}>
+                              <NumberField
+                                value={values[key] as number}
+                                min={min}
+                                max={max}
+                                onChange={(value) => write(key, value as never)}
+                              />
+                            </Row>
+                          ))}
+                        </Rows>
+                      </div>
+                    </details>
+                  )}
+                </Tabs.Content>
+
+                <Tabs.Content value="library" className="flex flex-col gap-2">
+                  <p className="text-muted-ink text-[11.5px]">
+                    A new library folder re-points the app. No file is moved.
+                  </p>
+                  <Rows>
+                    <Row
+                      id="library_folder"
+                      marked={marked === 'library_folder'}
+                      label="Library folder"
+                    >
+                      <Path
+                        value={values.library_folder}
+                        onChoose={() => chooseFolder('library_folder').catch(console.error)}
+                      />
+                    </Row>
+                    <Row id="pdmx_folder" marked={marked === 'pdmx_folder'} label="PDMX folder">
+                      <Path
+                        value={values.pdmx_folder}
+                        onChoose={() => chooseFolder('pdmx_folder').catch(console.error)}
+                      />
+                    </Row>
+                    <Row id="pdmx_scores" marked={marked === 'pdmx_scores'} label="PDMX scores">
+                      <span className="flex flex-none flex-col items-end gap-0.5">
+                        <span className="flex items-center gap-3">
+                          <span className="text-muted-ink text-[12px] tabular-nums">
+                            {pdmxStatus}
+                          </span>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 flex-none"
+                            onClick={() => {
+                              if (downloading) cancelPdmx();
+                              else void downloadPdmx();
+                            }}
+                          >
+                            {downloading ? 'Cancel' : 'Download (1.9 GB)'}
+                          </Button>
+                        </span>
+                        {pdmx.error && (
+                          <span className="text-[11px] text-red-600 dark:text-red-400">
+                            {pdmx.error}
+                          </span>
+                        )}
+                      </span>
+                    </Row>
+                  </Rows>
+                </Tabs.Content>
+              </>
+            )}
+          </div>
+        </Tabs.Root>
+
+        <footer className="border-edge-soft text-muted-ink flex flex-none justify-end gap-3 border-t px-4 py-2 text-[12px]">
+          <span>↑↓ select</span>
+          <span>↩ open</span>
+          <span>esc close</span>
+        </footer>
+      </DialogContent>
+    </Dialog>
   );
 }
 

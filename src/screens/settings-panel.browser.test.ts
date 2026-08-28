@@ -41,14 +41,14 @@ async function open(props: Record<string, unknown> = {}): Promise<void> {
   document.body.append(host);
   root = createRoot(host);
   root.render(createElement(SettingsPanel, { open: true, onClose: () => {}, ...props }));
-  await vi.waitFor(() => expect(host!.querySelector('#setting-row-instrument_id')).toBeTruthy());
+  await vi.waitFor(() => expect(document.querySelector('#setting-row-instrument_id')).toBeTruthy());
 }
 
 /** Types into the search box and returns the results, each a button naming one row. */
 async function search(text: string): Promise<HTMLButtonElement[]> {
-  const box = host!.querySelector<HTMLInputElement>('input[aria-label="Search settings"]')!;
+  const box = document.querySelector<HTMLInputElement>('input[aria-label="Search settings"]')!;
   await userEvent.fill(box, text);
-  return [...host!.querySelectorAll<HTMLButtonElement>('ul button')];
+  return [...document.querySelectorAll<HTMLButtonElement>('ul button')];
 }
 
 function labels(results: HTMLButtonElement[]): string[] {
@@ -62,18 +62,18 @@ function wheres(results: HTMLButtonElement[]): string[] {
 
 /** The tab whose trigger is active, by its label. */
 function activeTab(): string {
-  return host!.querySelector('[role="tab"][data-state="active"]')!.textContent!;
+  return document.querySelector('[role="tab"][data-state="active"]')!.textContent!;
 }
 
 async function openTab(label: string): Promise<void> {
-  const trigger = [...host!.querySelectorAll<HTMLElement>('[role="tab"]')].find(
+  const trigger = [...document.querySelectorAll<HTMLElement>('[role="tab"]')].find(
     (each) => each.textContent === label,
   )!;
   await userEvent.click(trigger);
 }
 
 function marked(id: string): boolean {
-  return host!.querySelector(`#setting-row-${id}`)?.getAttribute('data-marked') === 'true';
+  return document.querySelector(`#setting-row-${id}`)?.getAttribute('data-marked') === 'true';
 }
 
 test('a word from a row label finds it and jumps to its tab', async () => {
@@ -191,16 +191,18 @@ test('keyboard size is one row on Look, and the custom range appears only when i
   expect(marked('keyboard_size')).toBe(true);
 
   const preset = (label: string) =>
-    [...host!.querySelectorAll<HTMLButtonElement>('button')].find(
+    [...document.querySelectorAll<HTMLButtonElement>('button')].find(
       (each) => each.textContent === label,
     )!;
-  expect(host!.querySelector('select[aria-label="Lowest key"]')).toBe(null);
+  expect(document.querySelector('select[aria-label="Lowest key"]')).toBe(null);
   await userEvent.click(preset('Custom'));
   await vi.waitFor(() =>
-    expect(host!.querySelector('select[aria-label="Lowest key"]')).toBeTruthy(),
+    expect(document.querySelector('select[aria-label="Lowest key"]')).toBeTruthy(),
   );
   await userEvent.click(preset('88'));
-  await vi.waitFor(() => expect(host!.querySelector('select[aria-label="Lowest key"]')).toBe(null));
+  await vi.waitFor(() =>
+    expect(document.querySelector('select[aria-label="Lowest key"]')).toBe(null),
+  );
 });
 
 test('a pinch behind the panel moves the row it belongs to', async () => {
@@ -210,11 +212,11 @@ test('a pinch behind the panel moves the row it belongs to', async () => {
   const show = (live?: SettingChange) =>
     root!.render(createElement(SettingsPanel, { open: true, onClose: () => {}, live }));
   show();
-  await vi.waitFor(() => expect(host!.querySelector('#setting-row-instrument_id')).toBeTruthy());
+  await vi.waitFor(() => expect(document.querySelector('#setting-row-instrument_id')).toBeTruthy());
   await openTab('Look');
 
   const slider = (label: string) =>
-    host!.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
+    document.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
   const spacing = () => slider('Sheet spacing in percent').value;
   const lookahead = () => slider('Lane lookahead in beats').value;
   expect(spacing()).not.toBe('200');
@@ -263,20 +265,74 @@ test('the search names no row the panel does not render', async () => {
     for (const label of rows) {
       const results = await search(query);
       await userEvent.click(results.find((each) => each.textContent!.startsWith(label))!);
-      expect(host!.textContent, `${query} → ${label}`).toContain(label);
+      expect(document.body.textContent, `${query} → ${label}`).toContain(label);
     }
   }
 });
 
+// The three screens hold the component whether it is open or not, so a shut panel is a mounted
+// component with nothing on the page. Radix portals the modal, so ask the whole page, not the host.
 test('a shut panel is off the page and out of reach', async () => {
-  host = document.createElement('div');
-  document.body.append(host);
-  root = createRoot(host);
-  root.render(createElement(SettingsPanel, { open: false, onClose: () => {} }));
-  await vi.waitFor(() => expect(host!.querySelector('[role="dialog"]')).toBeTruthy());
+  await open();
+  expect(document.querySelector('[role="dialog"]')).toBeTruthy();
 
-  const panel = host.querySelector<HTMLElement>('[role="dialog"]')!;
-  expect(panel.dataset.state).toBe('closed');
-  expect(panel.inert).toBe(true);
-  expect(panel.className).toContain('translate-x-full');
+  root!.render(createElement(SettingsPanel, { open: false, onClose: () => {} }));
+  await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBe(null));
+  expect(document.querySelector('input[aria-label="Search settings"]')).toBe(null);
+  expect(document.querySelector('[data-slot="dialog-overlay"]')).toBe(null);
+});
+
+test('an open panel is a modal the play screen s keys stand back for', async () => {
+  await open();
+  // What `play.tsx` and `preview.tsx` look for before letting Space or Escape reach the clock.
+  const panel = document.querySelector<HTMLElement>('[role="dialog"][data-state="open"]')!;
+  expect(panel).toBeTruthy();
+  expect(panel.className).toContain('top-[12%]');
+  expect(panel.className).toContain('w-[640px]');
+  // Lighter than the finder's overlay, so the sheet behind stays readable.
+  expect(document.querySelector('[data-slot="dialog-overlay"]')!.className).toContain(
+    'bg-black/20',
+  );
+});
+
+test('escape closes the modal', async () => {
+  let closed = 0;
+  await open({ onClose: () => closed++ });
+  await userEvent.keyboard('{Escape}');
+  await vi.waitFor(() => expect(closed).toBe(1));
+});
+
+test('the arrows move the search selection and enter picks it', async () => {
+  await open();
+  await openTab('Library');
+
+  const results = await search('chords');
+  expect(labels(results)).toEqual(['Harmony', 'Harmony']);
+  expect(results[0]!.dataset.selected).toBe('true');
+
+  await userEvent.keyboard('{ArrowDown}');
+  await vi.waitFor(() => {
+    const now = [...document.querySelectorAll<HTMLButtonElement>('ul button')];
+    expect(now[1]!.dataset.selected).toBe('true');
+    expect(now[0]!.dataset.selected).toBe(undefined);
+  });
+
+  // Up never runs off the top, so a second press holds the first row.
+  await userEvent.keyboard('{ArrowUp}{ArrowUp}');
+  await vi.waitFor(() =>
+    expect(document.querySelectorAll<HTMLButtonElement>('ul button')[0]!.dataset.selected).toBe(
+      'true',
+    ),
+  );
+
+  await userEvent.keyboard('{ArrowDown}{Enter}');
+  await vi.waitFor(() => expect(activeTab()).toBe('Look'));
+  expect(marked('lane_harmony')).toBe(true);
+  expect(marked('sheet_harmony')).toBe(false);
+});
+
+test('a query nothing matches says so', async () => {
+  await open();
+  expect(await search('bassoon')).toEqual([]);
+  expect(document.querySelector('ul')!.textContent).toContain('Nothing matches');
 });

@@ -1,9 +1,9 @@
 // The Preview: a piece's whole sheet as paper, read-only for input and grading, with a transport
 // that plays it through the sound engine. The notes are scheduled in Rust; this screen only builds
-// the note list, sends the transport commands and moves the bar highlight the engine reports.
+// the note list, sends the transport commands and moves the band to the time the engine reports.
 
 import type { AudioStatus } from '@/audio/sound-tab';
-import { barAt, barSeconds, previewBars, previewNotes, type PreviewBar } from '@/audio/preview';
+import { previewNotes, secondsOf, tickAt } from '@/audio/preview';
 import { Button } from '@/components/ui/button';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { clamp } from '@/lib/utils';
@@ -13,8 +13,10 @@ import { getPiece } from '@/library/queries';
 import { reindexIfChanged } from '@/library/scan';
 import { useDark } from '@/look/use-dark';
 import { MidiLight } from '@/midi/midi-light';
+import type { SeekTarget } from '@/play/engine';
 import { TEMPO_RANGE } from '@/play/settings';
-import { ScoreError } from '@/score/types';
+import { barTickOf } from '@/score/beat';
+import { ScoreError, stepSeconds, type Score } from '@/score/types';
 import { Mixer } from '@/audio/mixer';
 import { SettingsPanel } from '@/screens/settings';
 import { PreviewSheet } from '@/sheet/preview-sheet';
@@ -34,6 +36,21 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 /** The three transport buttons look alike and dim together when there is no engine. */
 const TRANSPORT =
   'hover:bg-ink/8 flex size-8 items-center justify-center transition-colors duration-150 disabled:opacity-40';
+
+/** The played tick a seek target names, on the first pass through its bar. */
+function tickOfTarget(score: Score, target: SeekTarget): number {
+  if ('tick' in target) return target.tick;
+  for (const step of score.playOrder) {
+    const onset = score.onsets[step.onsetIndex]!;
+    if ('onset' in target) {
+      if (step.onsetIndex === target.onset) return step.tick;
+      continue;
+    }
+    if (onset.measureIndex !== target.measure) continue;
+    return barTickOf(step, onset, score.measures[target.measure]!) + (target.into ?? 0);
+  }
+  return 0;
+}
 
 export function PreviewScreen({
   folder,
@@ -65,11 +82,12 @@ export function PreviewScreen({
 
   // The note list is the engine's business and never redraws anything, so it stays out of state.
   const notesRef = useRef<ReturnType<typeof previewNotes>>([]);
-  const barsRef = useRef<PreviewBar[]>([]);
+  /** The second each step of the play order opens at, which the engine's seconds are read against. */
+  const startsRef = useRef<number[]>([]);
   /** Whether Rust holds this piece's note list, which is what makes resume a resume. */
   const loadedRef = useRef(false);
   /** The sheet keeps one click handler from the open; this is how it reaches the newest one. */
-  const seekBarRef = useRef((_measureIndex: number) => {});
+  const seekRef = useRef((_target: SeekTarget) => {});
 
   const off = reason !== '';
 
@@ -92,13 +110,15 @@ export function PreviewScreen({
     await invoke('preview_play');
   };
 
-  const seekBar = async (measureIndex: number): Promise<void> => {
-    if (off) return;
-    sheetRef.current?.setBar(measureIndex);
+  const seek = async (target: SeekTarget): Promise<void> => {
+    const sheet = sheetRef.current;
+    if (off || !sheet) return;
+    const tick = tickOfTarget(sheet.score, target);
+    sheet.frame(tick, playing, performance.now());
     await load();
-    await invoke('preview_seek', { seconds: barSeconds(barsRef.current, measureIndex) });
+    await invoke('preview_seek', { seconds: secondsOf(sheet.score, startsRef.current, tick) });
   };
-  seekBarRef.current = (measureIndex) => void seekBar(measureIndex);
+  seekRef.current = (target) => void seek(target);
 
   const stepTempo = (by: number): void => {
     const next = clamp(percent + by, ...TEMPO_RANGE.percent);
@@ -118,7 +138,11 @@ export function PreviewScreen({
     const listening = listen<{ seconds: number; playing: boolean }>(
       'preview-progress',
       ({ payload }) => {
-        sheetRef.current?.setBar(barAt(barsRef.current, payload.seconds));
+        const sheet = sheetRef.current;
+        if (sheet) {
+          const tick = tickAt(sheet.score, startsRef.current, payload.seconds);
+          sheet.frame(tick, payload.playing, performance.now());
+        }
         if (!payload.playing) setPlaying(false);
       },
     );
@@ -146,9 +170,9 @@ export function PreviewScreen({
         const sheet = await PreviewSheet.open(hostRef.current!, bytes, fileName, darkRef.current);
         if (!live) return sheet.dispose();
         sheetRef.current = sheet;
-        sheet.onBar = (measureIndex) => seekBarRef.current(measureIndex);
+        sheet.onSeek = (target) => seekRef.current(target);
         notesRef.current = previewNotes(sheet.score);
-        barsRef.current = previewBars(sheet.score);
+        startsRef.current = stepSeconds(sheet.score);
         setTitle(sheet.score.title || fileName);
       } catch (error) {
         // A Preview the user closed mid-load throws on the host the cleanup already released, so

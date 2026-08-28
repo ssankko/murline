@@ -89,11 +89,13 @@ function button(label: string): HTMLButtonElement {
   return host!.querySelector(`button[aria-label="${label}"]`)!;
 }
 
-/** Where the bar highlight stands, or null while nothing is highlighted. */
-function tint(): string | null {
-  const el = host!.querySelector<HTMLElement>('.preview-bar');
-  if (!el || el.style.display === 'none') return null;
-  return `${el.style.left} ${el.style.top} ${el.style.width}`;
+/** Where the cursor band stands on the page: its x along the system, and the system's top. */
+function band(): { x: number; top: number } {
+  const el = host!.querySelector<HTMLElement>('.sheet-cursor')!;
+  return {
+    x: parseFloat(el.style.transform.slice('translateX('.length)),
+    top: parseFloat(el.style.top),
+  };
 }
 
 test('play hands the engine the note list and starts it', async () => {
@@ -121,7 +123,7 @@ test('play hands the engine the note list and starts it', async () => {
   expect(commands().filter((c) => c === 'preview_load').length).toBe(1);
 }, 60_000);
 
-test('a click seeks to the bar the progress event then puts the highlight back on', async () => {
+test('a click seeks to the Onset the progress event then puts the band back on', async () => {
   await open();
 
   const heads = [...host!.querySelectorAll('#osmdCanvasPage1 .vf-stavenote')];
@@ -138,16 +140,16 @@ test('a click seeks to the bar the progress event then puts the highlight back o
   await vi.waitFor(() => expect(commands()).toContain('preview_seek'));
   const seconds = sent.find((call) => call.command === 'preview_seek')!.args.seconds as number;
   expect(seconds).toBeGreaterThan(0);
-  const clicked = tint();
-  expect(clicked).not.toBeNull();
+  const clicked = band();
 
-  // The engine reports the start of the piece, then the time the click sought to: the highlight
-  // leaves the clicked bar and comes back to it.
+  // The engine reports the start of the piece, then the time the click sought to: the band leaves
+  // the clicked Onset and comes back to it.
   progress!({ payload: { seconds: 0, playing: true } });
-  expect(tint()).not.toBe(clicked);
+  expect(band()).not.toEqual(clicked);
 
   progress!({ payload: { seconds, playing: true } });
-  expect(tint()).toBe(clicked);
+  expect(band().x).toBeCloseTo(clicked.x, 0);
+  expect(band().top).toBe(clicked.top);
 }, 60_000);
 
 test('leaving the screen stops the engine', async () => {

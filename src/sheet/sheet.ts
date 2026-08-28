@@ -11,7 +11,7 @@ import { isInactiveHand, type HandsSetting } from '@/play/settings';
 import { buildScore } from '@/score/build';
 import { loadInto } from '@/score/load';
 import { analyzeHarmony } from '@/score/harmony';
-import type { Note, PlayStep, Score } from '@/score/types';
+import type { ChordEvent, Note, PlayStep, Score } from '@/score/types';
 import { OpenSheetMusicDisplay, type Note as OsmdNote } from 'opensheetmusicdisplay';
 import { applyTheme, applyTiers, noteheadEl, paintHead } from './paint';
 import { SpacingPinch, type Pinch } from './pinch';
@@ -30,10 +30,10 @@ import { setTimed } from './spacing';
 export { SPACING_MAX, SPACING_MIN, type Pinch } from './pinch';
 
 /** Paper kept above the top staff line, the strip the chord bubbles sit in. */
-const BUBBLE_STRIP = 28;
+export const BUBBLE_STRIP = 28;
 
 /** Height of one row of bubbles, half the strip. */
-const BUBBLE_ROW = 13;
+export const BUBBLE_ROW = 13;
 
 /** Clear paper kept between two bubbles of one row. */
 const BUBBLE_GAP = 6;
@@ -55,7 +55,7 @@ const LABEL_REACH = 3;
  * The ring drawn around the noteheads of the Onset the cursor stands at. It reads as paper
  * cleared out of the amber cursor band, so it works on either paper.
  */
-const OUTLINE = '#ffffff';
+export const OUTLINE = '#ffffff';
 
 /** A backward jump names its bar over the sheet for this long. */
 const MARKER_MS = 800;
@@ -67,10 +67,10 @@ const MARKER_IN_MS = 120;
 const DRAG_SLOP = 4;
 
 /** While Running a scroll detaches the view, and it snaps back this long after the last input. */
-const DETACH_MS = 2000;
+export const DETACH_MS = 2000;
 
 /** How long the view takes to glide back to the cursor once it attaches to it again. */
-const SCROLL_GLIDE_MS = 300;
+export const SCROLL_GLIDE_MS = 300;
 
 /** Part of the view at each edge that counts as off it: a seek landing there still moves the view. */
 const EDGE = 0.1;
@@ -79,7 +79,7 @@ const EDGE = 0.1;
 const RUNNER_W = 2;
 
 /** How long the cursor takes to slide when it is not being moved by the clock. */
-const GLIDE_MS = 220;
+export const GLIDE_MS = 220;
 
 /**
  * Paper a sheet spaced by time takes over the tightest measure's pixels per tick, as a percent. The
@@ -93,7 +93,7 @@ export const DEFAULT_SPACING = 150;
 const EASE_MS = 200;
 
 /** The end of a practice: the cursor band fades away over this long and comes back at the start. */
-const FINISH_MS = 400;
+export const FINISH_MS = 400;
 
 /** Where the cursor stands, in pixels of the unscaled sheet content. */
 interface CursorAt {
@@ -831,21 +831,7 @@ export class Sheet {
     this.bubbles.replaceChildren();
     this.bubbleEls = [];
     if (!this.look.harmony) return;
-    this.bubbleEls = this.score.harmony.map((event) => {
-      const el = child(
-        this.bubbles,
-        'position:absolute;transform:translateX(-50%);display:flex;align-items:baseline;' +
-          `gap:4px;white-space:nowrap;font-size:11px;font-weight:600;line-height:${BUBBLE_ROW}px`,
-      );
-      el.className = 'chord-bubble';
-      el.style.color = tone(INK.duration, this.dark);
-      const degree = document.createElement('i');
-      degree.style.cssText = `font-style:normal;font-weight:400;font-size:8.5px;line-height:${BUBBLE_ROW}px`;
-      degree.style.color = tone(INK.scaffolding, this.dark);
-      degree.textContent = event.degree;
-      el.append(event.absolute, degree);
-      return el;
-    });
+    this.bubbleEls = this.score.harmony.map((event) => makeBubble(this.bubbles, event, this.dark));
 
     // Two rows fill the strip, the lower one stopping just short of the top staff line. A piece
     // whose paper above the staff is thinner than the strip keeps both rows on the paper it has.
@@ -855,26 +841,12 @@ export class Sheet {
       x: this.xOfOnset(this.score.harmony[i]!.onsetIndex),
       width: el.offsetWidth,
     }));
-    const blocked = rows.map((y) => this.labelSpans(y, y + BUBBLE_ROW));
+    const labels = labelBoxes(this.paper);
+    const blocked = rows.map((y) => labelSpans(labels, y, y + BUBBLE_ROW));
     bubblePlaces(places, blocked).forEach((at, i) => {
       this.bubbleEls[i]!.style.left = `${at.x}px`;
       this.bubbleEls[i]!.style.top = `${rows[at.row]!}px`;
     });
-  }
-
-  /**
-   * Left and right edge of every label OSMD printed into one row of the strip: the tempo mark, the
-   * tempo word, a dynamic above the staff, a bar number. Labels are sorted by their left edge.
-   */
-  private labelSpans(top: number, bottom: number): Span[] {
-    const spans: Span[] = [];
-    for (const label of this.paper.querySelectorAll('svg text, svg .vf-stavetempo')) {
-      const box = (label as SVGGraphicsElement).getBBox();
-      if (Math.min(box.y + box.height, bottom) - Math.max(box.y, top) > LABEL_REACH) {
-        spans.push({ left: box.x, right: box.x + box.width });
-      }
-    }
-    return spans.sort((a, b) => a.left - b.left);
   }
 
   /** Every chord the cursor has left behind reads dimmed; the CSS says how fast. */
@@ -980,6 +952,47 @@ function clearOf(x: number, width: number, filled: number, spans: Span[]): numbe
     }
   }
   return at;
+}
+
+/**
+ * One chord bubble, hung in the overlay it is given: the chord's absolute name with its degree in
+ * the key beside it, centred on the x it is later placed at.
+ */
+export function makeBubble(parent: HTMLElement, event: ChordEvent, dark: boolean): HTMLElement {
+  const el = child(
+    parent,
+    'position:absolute;transform:translateX(-50%);display:flex;align-items:baseline;' +
+      `gap:4px;white-space:nowrap;font-size:11px;font-weight:600;line-height:${BUBBLE_ROW}px`,
+  );
+  el.className = 'chord-bubble';
+  el.style.color = tone(INK.duration, dark);
+  const degree = document.createElement('i');
+  degree.style.cssText = `font-style:normal;font-weight:400;font-size:8.5px;line-height:${BUBBLE_ROW}px`;
+  degree.style.color = tone(INK.scaffolding, dark);
+  degree.textContent = event.degree;
+  el.append(event.absolute, degree);
+  return el;
+}
+
+/**
+ * The box of every label OSMD printed on the paper: the tempo mark, the tempo word, a dynamic above
+ * the staff, a bar number. Read once per render; a bubble row is then measured against them.
+ */
+export function labelBoxes(paper: HTMLElement): DOMRect[] {
+  return [...paper.querySelectorAll('svg text, svg .vf-stavetempo')].map((label) =>
+    (label as SVGGraphicsElement).getBBox(),
+  );
+}
+
+/** Left and right edge of every label reaching into one row of the strip, sorted by left edge. */
+export function labelSpans(labels: DOMRect[], top: number, bottom: number): Span[] {
+  const spans: Span[] = [];
+  for (const box of labels) {
+    if (Math.min(box.y + box.height, bottom) - Math.max(box.y, top) > LABEL_REACH) {
+      spans.push({ left: box.x, right: box.x + box.width });
+    }
+  }
+  return spans.sort((a, b) => a.left - b.left);
 }
 
 function child(parent: HTMLElement, style: string): HTMLElement {

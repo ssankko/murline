@@ -28,6 +28,10 @@ export interface PieceRow {
   metronome: number | null;
   count_in_bars: number | null;
   hands: string | null;
+  mode: string | null;
+  loop: number | null;
+  section_from: number | null;
+  section_to: number | null;
   best_grade: number | null;
   last_played: number | null;
   practised_s: number | null;
@@ -100,6 +104,10 @@ export const PIECE_SETTING_COLUMNS = {
   metronome: 'metronome',
   countInBars: 'count_in_bars',
   hands: 'hands',
+  mode: 'mode',
+  loop: 'loop',
+  sectionFrom: 'section_from',
+  sectionTo: 'section_to',
 } as const satisfies Record<string, keyof PieceRow>;
 
 /** The piece-setting columns of a `piece` row, the only part of it resolution reads. */

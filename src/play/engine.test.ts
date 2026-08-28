@@ -1259,6 +1259,105 @@ describe('a performance', () => {
   });
 });
 
+describe('a performance over a saved practice setup', () => {
+  /** The practice setup of a player grinding bar one in Wait mode: the state Perform overrides. */
+  const GRINDING: Partial<PlaySettings> = {
+    mode: 'wait',
+    loop: true,
+    sectionFrom: 0,
+    sectionTo: 0,
+  };
+
+  /** Two bars, the first played again after them, so the play order has a repeat to keep. */
+  function grinding() {
+    return engine(withRepeat(), GRINDING);
+  }
+
+  test('the piece opens in the Section and Loop it was saved with', () => {
+    const play = grinding();
+
+    expect(play.section).toEqual({ from: 0, to: 0 });
+    expect(play.loopSpan()).toEqual({ from: 0, to: BAR });
+    // A looping Section leaves the play order, so the repeat is not part of the lap.
+    expect(play.walk).not.toBe(withRepeat().playOrder);
+  });
+
+  test('runs the whole piece in Flow from bar one with its repeats, and no Loop', () => {
+    const play = grinding();
+    const score = play.score;
+    play.arm();
+
+    expect(play.walk).toBe(score.playOrder);
+    expect(play.loopSpan()).toBe(null);
+    expect(play.snapshot()).toMatchObject({ state: 'idle', playedTick: 0 });
+
+    // Opening the screen straight into a performance still puts the saved setup on the engine,
+    // the way the play screen does once the piece has loaded. It must not reach this run.
+    play.setSection({ from: 0, to: 0 });
+    play.setLoop(true);
+    expect(play.walk).toBe(score.playOrder);
+    expect(play.loopSpan()).toBe(null);
+
+    play.start();
+    play.advance(5000);
+    // Wait mode would be standing at the second Onset a second in; the Section would have wrapped
+    // twice by now. Five beats at 60 BPM is the second bar, which the Section does not hold.
+    expect(play.snapshot().stopped).toBe(false);
+    expect(play.snapshot().playedTick).toBeCloseTo(5 * TICKS_PER_QUARTER, 6);
+    expect(where(play).measureIndex).toBe(1);
+  });
+
+  test('hands the practice setup back when it is abandoned part-way', () => {
+    const play = grinding();
+    play.arm();
+    play.start();
+    play.advance(3000);
+    expect(play.snapshot().state).toBe('running');
+
+    play.abort();
+
+    expect(play.settings.mode).toBe('wait');
+    expect(play.section).toEqual({ from: 0, to: 0 });
+    expect(play.loopSpan()).toEqual({ from: 0, to: BAR });
+    // The cursor is back in the Section, not left wherever the abandoned run had reached.
+    expect(play.snapshot()).toMatchObject({ kind: 'practice', playedTick: 0 });
+    // And Wait mode holds the play again, which Flow was ignoring a moment ago.
+    play.start();
+    play.advance(3000);
+    expect(play.snapshot().stopped).toBe(true);
+  });
+
+  test('hands the practice setup back when it ran to the end', () => {
+    const play = grinding();
+    play.arm();
+    play.start();
+    // Three bars of play order, then the matching window past the last note.
+    play.advance(20_000);
+    expect(play.snapshot().state).toBe('ended');
+    expect(play.takePerformance()).not.toBeNull();
+
+    play.abort();
+
+    expect(play.settings.mode).toBe('wait');
+    expect(play.section).toEqual({ from: 0, to: 0 });
+    expect(play.loopSpan()).toEqual({ from: 0, to: BAR });
+  });
+
+  test('never writes the practice setup over, however it ends', () => {
+    // The settings object is what the play screen stores from, so a performance touching it would
+    // be the loop the player dialled in last night gone by the morning.
+    for (const end of [(play: Engine) => play.abort(), (play: Engine) => play.advance(20_000)]) {
+      const play = grinding();
+      play.arm();
+      play.start();
+      play.advance(2000);
+      end(play);
+
+      expect(play.settings).toMatchObject(GRINDING);
+    }
+  });
+});
+
 describe('seek', () => {
   test('a bar click while Idle moves the start point', () => {
     const play = engine(scoreOf(3));

@@ -42,7 +42,7 @@ import {
   type PlayMode,
   type TempoMode,
 } from '@/play/settings';
-import { clampSection, sectionLabel, type Section } from '@/play/section';
+import { clampSection, savedSection, sectionLabel, type Section } from '@/play/section';
 import { useFrameLoop } from '@/play/use-frame-loop';
 import { bpmAt, ScoreError, type Measure } from '@/score/types';
 import { Button } from '@/components/ui/button';
@@ -115,7 +115,7 @@ export function PlayScreen({
     null,
   );
 
-  /** The Section and the toggle that gives it force. Both die with the screen. */
+  /** The Section and the toggle that gives it force. Both are kept with the piece. */
   const [section, setSection] = useState<Section | null>(null);
   const [loop, setLoop] = useState(false);
   const [measures, setMeasures] = useState<Measure[]>([]);
@@ -139,8 +139,6 @@ export function PlayScreen({
   /** The bar's count-in is a toggle: one bar or none. The engine counts whatever number it holds. */
   const [countInBars, setCountInBars] = useState(DEFAULT_PLAY_SETTINGS.countInBars);
   const [mode, setMode] = useState<PlayMode>(DEFAULT_PLAY_SETTINGS.mode);
-  /** A mode clicked before the sheet loads has no engine to reach, so the new one opens in it. */
-  const modeRef = useRef<PlayMode>(DEFAULT_PLAY_SETTINGS.mode);
   /** The score's own tempo, and whether it has only one, which is what BPM mode needs. */
   const [written, setWritten] = useState({ bpm: 120, constant: false });
   const midi = useMidiStatus((event) => engineRef.current?.strike(event));
@@ -169,13 +167,20 @@ export function PlayScreen({
         );
         if (!live) return sheet.dispose();
         sheetRef.current = sheet;
+        // The file may have changed since the Section was saved, so the engine is never given one
+        // naming a bar this piece no longer has.
+        const kept = savedSection(sheet.score.measures, resolved.sectionFrom, resolved.sectionTo);
+        const opening: PieceSettings = {
+          ...resolved,
+          sectionFrom: kept?.from ?? null,
+          sectionTo: kept?.to ?? null,
+        };
         // The piece opens as it was left: its own settings over the built-in defaults, with the
         // global knobs (the grade windows, the keyboard size) between the two.
         const engine = new Engine(sheet.score, {
           ...DEFAULT_PLAY_SETTINGS,
           ...knobValues(globals, ENGINE_KNOBS),
-          mode: modeRef.current,
-          ...resolved,
+          ...opening,
         });
         if (intent === 'performance') engine.arm();
         engineRef.current = engine;
@@ -191,7 +196,7 @@ export function PlayScreen({
         };
         sheet.onSection = (picked) => {
           if (engine.kind !== 'practice') return;
-          setSection(picked && clampSection(sheet.score.measures, picked));
+          changeSection(picked && clampSection(sheet.score.measures, picked));
         };
         setMeasures(sheet.score.measures);
         sheet.setLook({ harmony: globals.sheet_harmony, colour: globals.sheet_colour });
@@ -205,7 +210,7 @@ export function PlayScreen({
         laneRef.current.onPinch = (lookaheadBeats) => setLive(['lane_lookahead', lookaheadBeats]);
         setSplit(clamp(globals.sheet_split, SPLIT_MIN, SPLIT_MAX));
         setOneStaff(sheet.score.staffCount < 2);
-        show(resolved);
+        show(opening, kept);
         setClickVolume(globals.click_volume);
         setWritten({
           bpm: sheet.score.hasTempo ? Math.round(bpmAt(sheet.score, 0)) : 120,
@@ -300,12 +305,15 @@ export function PlayScreen({
   }
 
   /** Puts a resolved set of piece settings on the bar, the engine, the sheet and the keyboard. */
-  function show(settings: PieceSettings): void {
+  function show(settings: PieceSettings, kept: Section | null): void {
     setTempoMode(settings.tempoMode);
     setTempo(settings.tempoValue);
     setMetronome(settings.metronome);
     setCountInBars(settings.countInBars);
     setHands(settings.hands);
+    setMode(settings.mode);
+    setLoop(settings.loop);
+    setSection(kept);
     const engine = engineRef.current;
     if (!engine) return;
     Object.assign(engine.settings, settings);
@@ -333,9 +341,22 @@ export function PlayScreen({
 
   /** Wait mode takes hold from the Onset the cursor stands at; Flow lets go from there. */
   function changeMode(next: PlayMode): void {
-    modeRef.current = next;
     setMode(next);
     if (engineRef.current) engineRef.current.settings.mode = next;
+    persist({ mode: next });
+  }
+
+  // The Section and Loop reach the engine through the effect that watches them, so these two only
+  // move the screen's own state and write it down.
+
+  function changeLoop(on: boolean): void {
+    setLoop(on);
+    persist({ loop: on ? 1 : 0 });
+  }
+
+  function changeSection(next: Section | null): void {
+    setSection(next);
+    persist({ section_from: next?.from ?? null, section_to: next?.to ?? null });
   }
 
   /** A look knob a pinch turned: the next frame reads the same object the lane holds. */
@@ -417,13 +438,14 @@ export function PlayScreen({
         // Escape clears the Section only in a practice that is already still; every other play,
         // an armed performance included, it aborts.
         const engine = engineRef.current;
-        if (engine?.kind === 'practice' && engine.snapshot().state === 'idle') setSection(null);
+        if (engine?.kind === 'practice' && engine.snapshot().state === 'idle') changeSection(null);
         else engine?.abort();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+    // Escape writes the cleared Section down, so the handler must hold the piece on screen now.
+  }, [path]);
 
   /** Play and pause are the same key and the same disc, whatever the play is doing. */
   function toggle(): void {
@@ -516,7 +538,7 @@ export function PlayScreen({
               <BarButton
                 label={sectionLabel(measures, section)}
                 pressed={loop}
-                onClick={() => setLoop((on) => !on)}
+                onClick={() => changeLoop(!loop)}
               >
                 <Repeat {...ICON} />
               </BarButton>

@@ -99,8 +99,8 @@ describe('the key in force in played time', () => {
     ]);
   });
 
-  test('a piece with no key signatures marks none', () => {
-    expect(laneKeysOf(scoreOf([]), BARS)).toEqual([]);
+  test('a piece with no key signatures stands in C major', () => {
+    expect(laneKeysOf(scoreOf([]), BARS)).toEqual([{ tick: 0, sharps: 0, mode: 0 }]);
   });
 });
 

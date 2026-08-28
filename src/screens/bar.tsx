@@ -2,7 +2,18 @@
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { colorOf } from '@/look/color';
+import { useDark } from '@/look/use-dark';
 import { TEMPO_RANGE, tempoLabel, type TempoMode } from '@/play/settings';
+import {
+  keyName,
+  keyTable,
+  parallelOf,
+  relativeOf,
+  signatureOf,
+  type KeyAt,
+} from '@/score/harmony';
+import { Music2 } from 'lucide-react';
 
 /** One size and one stroke for every icon in the bar. */
 export const ICON = { size: 18, strokeWidth: 1.75 } as const;
@@ -81,6 +92,80 @@ export function TempoPopover({
   );
 }
 
+/** The three primary degrees, drawn in full ink while the rest of the table stays muted. */
+const PRIMARY = new Set([1, 4, 5]);
+
+/**
+ * The key readout and its popover: one column per scale degree, holding the degree's number, note
+ * and function over its triad, the triad's notes and its seventh chord, under the key's signature,
+ * relative and parallel. Nothing is drawn until a score names a key.
+ */
+export function KeyPopover({ at }: { at: KeyAt | null }) {
+  const dark = useDark();
+  if (!at) return null;
+  const name = keyName(at);
+  const { count, notes } = signatureOf(at);
+  const signature =
+    count === 0
+      ? 'no sharps or flats'
+      : `${count} ${notes[0]!.endsWith('♯') ? 'sharp' : 'flat'}${count > 1 ? 's' : ''}: ${notes.join(' ')}`;
+  const minor = name.endsWith('minor');
+  const footer = `${signature} · relative ${keyName(relativeOf(at))} · parallel ${keyName(
+    parallelOf(at),
+  )}${minor ? ' · harmonic minor' : ''}`;
+  const table = keyTable(at);
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <BarButton label={`Key: ${name}`} wide>
+          <Music2 {...ICON} />
+          <span className="ml-1.5 text-[13px] font-medium">{name}</span>
+        </BarButton>
+      </PopoverTrigger>
+      <PopoverContent side="bottom" align="start" className="w-auto p-3">
+        <div className="text-[13px] font-medium">{name}</div>
+        <table className="mt-2 border-separate border-spacing-x-2 border-spacing-y-1 text-center text-[12px]">
+          <thead>
+            <tr>
+              {table.map((each) => (
+                <th
+                  key={each.degree}
+                  scope="col"
+                  className={`font-normal ${PRIMARY.has(each.degree) ? '' : 'text-muted-ink'}`}
+                >
+                  <div className="text-[11px]">{each.degree}</div>
+                  <div
+                    className={`text-[13px] font-medium ${PRIMARY.has(each.degree) ? '' : 'opacity-50'}`}
+                    style={{ color: colorOf(each.pitch, 'muted', dark) }}
+                  >
+                    {each.note}
+                  </div>
+                  <div className="text-[10px]">{each.role}</div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {(['triad', 'notes', 'seventh'] as const).map((row) => (
+              <tr key={row}>
+                {table.map((each) => (
+                  <td
+                    key={each.degree}
+                    className={`${row === 'triad' ? 'pt-2' : ''} ${PRIMARY.has(each.degree) ? '' : 'text-muted-ink'}`}
+                  >
+                    {each[row]}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="text-muted-ink mt-2 text-[11px]">{footer}</div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 /**
  * One 32 px shape for every control of the bar. An action is plain ink; a control that is only
  * placed here is `off`, dimmed and inert; a light with nothing to report is `dim`, dimmed but still
@@ -133,7 +218,9 @@ export function BarButton({
           className={`relative flex flex-none items-center justify-center transition-colors duration-150 ${shape}`}
         >
           {children}
-          {pressed && !segment && <i className="bg-current absolute right-2 bottom-0.5 left-2 h-0.5" />}
+          {pressed && !segment && (
+            <i className="bg-current absolute right-2 bottom-0.5 left-2 h-0.5" />
+          )}
         </button>
       </TooltipTrigger>
       <TooltipContent side="bottom">{label}</TooltipContent>

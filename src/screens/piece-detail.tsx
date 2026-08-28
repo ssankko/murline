@@ -6,9 +6,10 @@ import { pathOf } from '@/library/index-file';
 import { reasonOf, setNotice } from '@/library/notice';
 import { recentPlays, type PieceRow, type PlayRow } from '@/library/queries';
 import { splitError } from '@/library/scan';
-import { colorOf, noteName, pitchClass } from '@/look/color';
+import { colorOf, noteName } from '@/look/color';
 import { useDark } from '@/look/use-dark';
 import { tempoLabel } from '@/play/settings';
+import { keyName, tonicOf, type KeyAt } from '@/score/harmony';
 import { RangeStrip } from '@/screens/range-strip';
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
@@ -30,7 +31,8 @@ export function Detail({
   onPreview: (path: string) => void;
 }) {
   const broken = !!piece.error;
-  const tonic = tonicOf(piece);
+  const key = keyOf(piece);
+  const tonic = key && tonicOf(key);
   const fullPath = folder ? pathOf(folder, piece.path) : piece.path;
   return (
     <div className="flex-1 overflow-y-auto px-12 py-10">
@@ -99,7 +101,7 @@ export function Detail({
                 tonic={tonic}
               />
             </div>
-            <Facts piece={piece} tonic={tonic} />
+            <Facts piece={piece} keyAt={key} />
           </>
         )}
 
@@ -209,7 +211,7 @@ function day(at: number | null): string {
 }
 
 /** Muted label over value: what the piece is, before it is opened. */
-function Facts({ piece, tonic }: { piece: PieceRow; tonic: number | null }) {
+function Facts({ piece, keyAt }: { piece: PieceRow; keyAt: KeyAt | null }) {
   const facts: [string, React.ReactNode][] = [
     ['Bars', piece.measure_count],
     ['Length', piece.duration_s === null ? null : duration(piece.duration_s)],
@@ -222,8 +224,8 @@ function Facts({ piece, tonic }: { piece: PieceRow; tonic: number | null }) {
     [
       'Key',
       <span key="key" className="flex items-center gap-1.5">
-        {tonic !== null && <TonicDot midi={60 + tonic} />}
-        {keyName(piece)}
+        {keyAt && <TonicDot midi={60 + tonicOf(keyAt)} />}
+        {keyAt && keyName(keyAt)}
       </span>,
     ],
     ['Tempo', tempoText(piece)],
@@ -252,25 +254,10 @@ function TonicDot({ midi }: { midi: number }) {
   );
 }
 
-// The circle of fifths from each mode's tonic, sharps one way and flats the other.
-const KEY_NAMES = {
-  'major+': ['C', 'G', 'D', 'A', 'E', 'B', 'F♯', 'C♯'],
-  'major-': ['C', 'F', 'B♭', 'E♭', 'A♭', 'D♭', 'G♭', 'C♭'],
-  'minor+': ['A', 'E', 'B', 'F♯', 'C♯', 'G♯', 'D♯', 'A♯'],
-  'minor-': ['A', 'D', 'G', 'C', 'F', 'B♭', 'E♭', 'A♭'],
-};
-
-function keyName(piece: PieceRow): string | null {
+/** The key of the index, in the form the harmony works in; a piece never indexed has none. */
+function keyOf(piece: PieceRow): KeyAt | null {
   if (piece.key_sharps === null) return null;
-  const mode = piece.key_mode === 'minor' ? 'minor' : 'major';
-  const names = KEY_NAMES[`${mode}${piece.key_sharps >= 0 ? '+' : '-'}`];
-  return `${names[Math.abs(piece.key_sharps)]} ${mode}`;
-}
-
-/** Pitch class of the key's tonic: seven semitones per sharp, three more down for a minor key. */
-function tonicOf(piece: PieceRow): number | null {
-  if (piece.key_sharps === null) return null;
-  return pitchClass(piece.key_sharps * 7 + (piece.key_mode === 'minor' ? 9 : 0));
+  return { tick: 0, sharps: piece.key_sharps, mode: piece.key_mode === 'minor' ? 1 : 0 };
 }
 
 /** The index stores whether the piece has one tempo, not which; the number lives in the Score. */

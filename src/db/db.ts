@@ -45,8 +45,6 @@ export type Settings = {
   lane_colour: boolean;
   /** Whether each falling block carries the name of its note. */
   lane_names: boolean;
-  /** Whether the falling notes show the key in force over a small keyboard of its scale. */
-  lane_scale: boolean;
   /** Whether the keyboard dims the keys outside the scale in force. */
   keyboard_scale_marks: boolean;
 
@@ -149,7 +147,6 @@ export const LANE_KNOBS = {
   lane_harmony: 'harmony',
   lane_colour: 'colour',
   lane_names: 'names',
-  lane_scale: 'scale',
   keyboard_scale_marks: 'scaleMarks',
 } as const satisfies Record<string, keyof LaneLook>;
 

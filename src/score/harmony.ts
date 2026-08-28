@@ -43,6 +43,13 @@ const MAJOR_7: Shape = { abs: 'M7', rel: 'M⁷', steps: [0, 4, 7, 11] };
 const MINOR_7: Shape = { abs: 'm7', rel: 'm⁷', steps: [0, 3, 7, 10] };
 const HALF_DIMINISHED_7: Shape = { abs: 'ø7', rel: 'ø⁷', steps: [0, 3, 6, 10] };
 const DIMINISHED_7: Shape = { abs: '°7', rel: '°⁷', steps: [0, 3, 6, 9] };
+// The two sevenths only the harmonic minor stacks: on its tonic and on its mediant.
+const MINOR_MAJOR_7: Shape = { abs: 'mM7', rel: 'mM⁷', steps: [0, 3, 7, 11] };
+const AUGMENTED_MAJOR_7: Shape = {
+  abs: '+M7',
+  rel: '+M⁷',
+  steps: [0, 4, 8, 11],
+};
 
 // Pardo's six templates plus the minor seventh, in the order of how often each labels a chord in
 // his corpus, and the cost of picking each one: a fifth of the log2 ratio of its share to the major
@@ -82,11 +89,40 @@ const SEGMENT_BARS = 2;
 
 const MAJOR_SCALE = [0, 2, 4, 5, 7, 9, 11];
 const HARMONIC_MINOR = [0, 2, 3, 5, 7, 8, 11];
+/** The note letters, the pitch class each one is natural at, and the accidentals from -2 to 2. */
+const LETTERS = 'CDEFGAB';
+const LETTER_PCS = [0, 2, 4, 5, 7, 9, 11];
+const ACCIDENTALS = ['♭♭', '♭', '', '♯', '♯♯'];
+/** The letters a key signature takes its sharps on, in order; flats take them in reverse. */
+const SIGNATURE_ORDER = [3, 0, 4, 1, 5, 2, 6];
+/** The triads a scale degree can stack into. */
+const TRIADS = [MAJOR_TRIAD, MINOR_TRIAD, DIMINISHED, AUGMENTED];
+/** The sevenths a scale degree can stack into, over the major scale and the harmonic minor. */
+const SEVENTHS = [
+  MAJOR_7,
+  MINOR_7,
+  DOMINANT_7,
+  HALF_DIMINISHED_7,
+  DIMINISHED_7,
+  MINOR_MAJOR_7,
+  AUGMENTED_MAJOR_7,
+];
+/** What each scale degree does in the key. */
+const ROLES = [
+  'tonic',
+  'supertonic',
+  'mediant',
+  'subdominant',
+  'dominant',
+  'submediant',
+  'leading tone',
+];
 // Semitones from the key signature's major tonic to the mode's tonic, indexed by OSMD's KeyEnum.
 const MODE_OFFSET = [0, 9, 0, 2, 4, 5, 7, 9, 0, 11];
 const MAJOR_MODES = new Set([0, 2, 8]);
 
-const C_MAJOR: KeyAt = { tick: 0, sharps: 0, mode: 0 };
+/** The key a piece with no key signature is read in. */
+export const C_MAJOR: KeyAt = { tick: 0, sharps: 0, mode: 0 };
 
 const WHOLE_NOTE = 4 * TICKS_PER_QUARTER;
 
@@ -133,12 +169,92 @@ function spell(p: number, key: KeyAt, written: number): string {
   return (flat ? FLAT_NAMES : NOTE_NAMES)[p]!;
 }
 
-/** Full name of a key, for the lane's scale panel: "D major", "F♯ minor" — flats for a flat key. */
-export function scaleName(key: KeyAt): string {
-  const name = (key.sharps < 0 ? FLAT_NAMES : NOTE_NAMES)[tonicOf(key)]!;
-  return `${name.replace('#', '♯').replace('b', '♭')} ${
-    MAJOR_MODES.has(key.mode) ? 'major' : 'minor'
-  }`;
+/** Letter index of a key's tonic: four letters up per sharp, five more for a minor key. */
+function letterOf(key: KeyAt): number {
+  const major = (((key.sharps * 4) % 7) + 7) % 7;
+  return MAJOR_MODES.has(key.mode) ? major : (major + 5) % 7;
+}
+
+/**
+ * A pitch class written on one letter: the accidental is how far the pitch stands from the letter's
+ * natural, so B on the letter C reads "C♭" and G♯ on the letter G reads "G♯".
+ */
+function spellOn(letter: number, p: number): string {
+  const away = ((pitchClass(p - LETTER_PCS[letter]!) + 6) % 12) - 6;
+  return LETTERS[letter]! + (ACCIDENTALS[away + 2] ?? '');
+}
+
+/** Full name of a key, spelled by letter: "D major", "F♯ minor", "C♭ major". */
+export function keyName(key: KeyAt): string {
+  return `${spellOn(letterOf(key), tonicOf(key))} ${MAJOR_MODES.has(key.mode) ? 'major' : 'minor'}`;
+}
+
+/** One scale degree of a key: what it is called and what it stacks into. */
+export interface KeyDegree {
+  degree: number;
+  note: string;
+  /** The note as semitones from C, for its colour. */
+  pitch: number;
+  role: string;
+  triad: string;
+  /** The triad's notes, spelled by letter: "D F♯ A". */
+  notes: string;
+  seventh: string;
+}
+
+/** The seven notes of the key's scale, one letter each. */
+function spelledScale(key: KeyAt): string[] {
+  const tonic = tonicOf(key);
+  const letter = letterOf(key);
+  return scaleOf(key).map((step, i) => spellOn((letter + i) % 7, pitchClass(tonic + step)));
+}
+
+/**
+ * The key laid out one entry per scale degree. The chords come from stacking the scale degrees i,
+ * i+2, i+4 and i+6 and matching the semitones above the root against the shapes.
+ */
+export function keyTable(key: KeyAt): KeyDegree[] {
+  const scale = scaleOf(key);
+  const names = spelledScale(key);
+  const tonic = tonicOf(key);
+  return names.map((note, i) => {
+    const stack = [2, 4, 6].map((n) => pitchClass(scale[(i + n) % 7]! - scale[i]!));
+    const match = (shapes: Shape[], size: number) =>
+      shapes.find((each) => each.steps.slice(1, size).every((step, k) => step === stack[k]));
+    const triad = match(TRIADS, 3) ?? MAJOR_TRIAD;
+    const seventh = match(SEVENTHS, 4) ?? MAJOR_7;
+    return {
+      degree: i + 1,
+      note,
+      pitch: tonic + scale[i]!,
+      role: ROLES[i]!,
+      triad: note + triad.abs,
+      notes: [0, 2, 4].map((n) => names[(i + n) % 7]!).join(' '),
+      seventh: note + seventh.abs,
+    };
+  });
+}
+
+/** How many sharps or flats the key signature holds, and which notes they fall on, in order. */
+export function signatureOf(key: KeyAt): { count: number; notes: string[] } {
+  const count = Math.abs(key.sharps);
+  const order = key.sharps < 0 ? [...SIGNATURE_ORDER].reverse() : SIGNATURE_ORDER;
+  const sign = key.sharps < 0 ? '♭' : '♯';
+  return {
+    count,
+    notes: order.slice(0, count).map((letter) => LETTERS[letter]! + sign),
+  };
+}
+
+/** The key sharing this one's signature: the relative minor of a major key, or the other way. */
+export function relativeOf(key: KeyAt): KeyAt {
+  return { ...key, mode: MAJOR_MODES.has(key.mode) ? 1 : 0 };
+}
+
+/** The key on this one's tonic in the other mode: a minor key signs three sharps fewer. */
+export function parallelOf(key: KeyAt): KeyAt {
+  const major = MAJOR_MODES.has(key.mode);
+  return { ...key, sharps: key.sharps + (major ? -3 : 3), mode: major ? 1 : 0 };
 }
 
 /** Sharps and flats of any depth fold to one sign; naturals and none are 0. */
@@ -332,7 +448,12 @@ function segment(score: Score): ChordEvent[] {
     if (!named || (last && last.absolute === named.absolute && last.degree === named.degree)) {
       continue;
     }
-    events.push({ onsetIndex: i, tick: ticks[i]!, measureIndex: onsets[i]!.measureIndex, ...named });
+    events.push({
+      onsetIndex: i,
+      tick: ticks[i]!,
+      measureIndex: onsets[i]!.measureIndex,
+      ...named,
+    });
   }
   return events;
 }
@@ -352,8 +473,7 @@ function nameSegment(
 ): { absolute: string; degree: string } | undefined {
   const notes = [...new Set(units.flat())];
   const line =
-    pitchClasses(notes).size < 2 ||
-    units.every((u) => u.length >= 2 && pitchClasses(u).size === 1);
+    pitchClasses(notes).size < 2 || units.every((u) => u.length >= 2 && pitchClasses(u).size === 1);
   if (line) return undefined;
 
   let { root, shape } = label;
@@ -428,7 +548,10 @@ function fromSymbols(score: Score): ChordEvent[] {
   const events: ChordEvent[] = [];
   for (const symbol of score.chords) {
     const key = keys.findLast((k) => k.tick <= symbol.tick) ?? C_MAJOR;
-    const named = { absolute: symbol.text, degree: degreeOfSymbol(symbol, key) };
+    const named = {
+      absolute: symbol.text,
+      degree: degreeOfSymbol(symbol, key),
+    };
     const last = events[events.length - 1];
     if (last && last.absolute === named.absolute && last.degree === named.degree) continue;
     // The symbol is written over the note it starts on, so it belongs to the next Onset.
@@ -436,7 +559,12 @@ function fromSymbols(score: Score): ChordEvent[] {
     const at = found === -1 ? score.onsets.length - 1 : found;
     const onset = score.onsets[at];
     if (!onset) continue;
-    const event = { onsetIndex: at, tick: onset.tick, measureIndex: onset.measureIndex, ...named };
+    const event = {
+      onsetIndex: at,
+      tick: onset.tick,
+      measureIndex: onset.measureIndex,
+      ...named,
+    };
     // Two symbols over one Onset are one beat, and the later one is what is heard there.
     if (last && last.onsetIndex === at) events[events.length - 1] = event;
     else events.push(event);

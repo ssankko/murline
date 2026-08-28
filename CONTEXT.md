@@ -116,6 +116,10 @@ _Avoid_: Hint note, shadow note
 The part of the play screen that names the chord sounding at the cursor and the next two chords, each in absolute form ("G7/B") and relative to the key as scale degrees ("5⁷/7").
 _Avoid_: Chord track, roman numerals
 
+**Key readout**:
+The name of the key in force in the play screen's top bar, which opens a popover of that key's signature and a table of one column per scale degree: the degree number, its note and its function over the triad it stacks into, that triad's notes and its seventh chord, with the relative and parallel keys under it.
+_Avoid_: Scale panel, key indicator
+
 **Grade**:
 The result of a Performance: one headline number from 0 to 100, with a breakdown into hit rate, timing, velocity, release and extras. A Practice has no grade.
 _Avoid_: Score, rating, karaoke score

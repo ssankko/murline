@@ -44,10 +44,11 @@ import {
 } from '@/play/settings';
 import { clampSection, savedSection, sectionLabel, type Section } from '@/play/section';
 import { useFrameLoop } from '@/play/use-frame-loop';
+import type { KeyAt } from '@/score/harmony';
 import { bpmAt, ScoreError, type Measure } from '@/score/types';
 import { Button } from '@/components/ui/button';
 import { Mixer } from '@/audio/mixer';
-import { BarButton, ICON, TEMPO_STEP, TempoPopover } from '@/screens/bar';
+import { BarButton, ICON, KeyPopover, TEMPO_STEP, TempoPopover } from '@/screens/bar';
 import { SettingsPanel, SpacingPopup, type SettingChange } from '@/screens/settings';
 import { Sheet, type Pinch } from '@/sheet/sheet';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -114,6 +115,8 @@ export function PlayScreen({
   const [section, setSection] = useState<Section | null>(null);
   const [loop, setLoop] = useState(false);
   const [measures, setMeasures] = useState<Measure[]>([]);
+  /** The key the clock stands in, as the lane reads it out of the score in played time. */
+  const [key, setKey] = useState<KeyAt | null>(null);
 
   /** What a pinch on the sheet is choosing while it lasts, which the panel over the paper shows. */
   const [pinch, setPinch] = useState<Pinch | null>(null);
@@ -195,6 +198,7 @@ export function PlayScreen({
         const lane = knobValues(globals, LANE_KNOBS);
         laneRef.current = new Lane(canvasRef.current!, engine, lane, darkRef.current);
         laneRef.current.onSeek = (target) => engine.seek(target);
+        laneRef.current.onKey = setKey;
         // A pinch has already scaled the lane; this only writes down the beats it settled on.
         laneRef.current.onLook = ({ lookaheadBeats }) => {
           if (lookaheadBeats !== undefined) changeLook('lane_lookahead', lookaheadBeats);
@@ -228,6 +232,7 @@ export function PlayScreen({
       sheetRef.current = null;
       engineRef.current = null;
       laneRef.current = null;
+      setKey(null);
     };
   }, [folder, path, intent]);
 
@@ -497,6 +502,7 @@ export function PlayScreen({
             <ArrowLeft {...ICON} />
           </BarButton>
           <b className="ml-1.5 mr-1 min-w-0 truncate text-[13px] font-medium">{title}</b>
+          <KeyPopover at={key} />
           <MidiLight open={midiOpen} onOpenChange={setMidiOpen} />
           <Mixer
             open={mixerOpen}
@@ -591,7 +597,7 @@ export function PlayScreen({
                 </div>
               </div>
             </Collapse>
-            {/* The only worded control: outlined to arm a performance, filled to stop one. */}
+            {/* The only outlined control: an outline arms a performance, a fill stops one. */}
             <Tooltip>
               <TooltipTrigger asChild>
                 <button

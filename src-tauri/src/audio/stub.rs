@@ -74,6 +74,8 @@ pub fn envelope() -> Option<Envelope> {
 
 pub fn set_envelope(_envelope: Envelope) {}
 
+pub fn set_roles(_roles: Vec<crate::audio::sampler::Role>) {}
+
 pub fn preview_load(_notes: Vec<PreviewNote>) {}
 
 pub fn preview_play() {}

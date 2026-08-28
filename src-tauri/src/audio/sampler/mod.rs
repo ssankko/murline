@@ -11,6 +11,7 @@ pub use stream::{Fill, Stream};
 pub mod disk;
 pub mod engine;
 pub mod exs;
+pub mod sf2;
 mod stream;
 
 /// The stretch of a zone that is decoded into RAM at load, so a voice sounds the moment it starts
@@ -26,8 +27,7 @@ pub struct Sample {
 }
 
 impl Sample {
-    /// A sample held whole in memory, which is what the tests play.
-    #[cfg(test)]
+    /// A sample held whole in memory, which is what a SoundFont's zones play from.
     pub fn memory(rate: f64, data: Vec<i16>) -> Self {
         Self { rate, frames: data.len() / 2, data: Some(data) }
     }
@@ -35,10 +35,11 @@ impl Sample {
 
 /// What a zone is for: the tone a key-down sounds, or one of the noises a piano makes around it.
 /// Every role but `Sustain` is a toggle the user may switch off.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
     /// The tone itself, on key-down.
+    #[default]
     Sustain,
     /// The damper falling back on the string, on key-up.
     Release,
@@ -48,6 +49,14 @@ pub enum Role {
     Sympathetic,
     /// The pedal going down and coming up.
     PedalNoise,
+}
+
+impl Role {
+    /// The bit this role holds in the mask `Command::Roles` carries, which is how the toggles
+    /// reach the audio thread without a heap allocation.
+    pub fn bit(self) -> u8 {
+        1 << self as u8
+    }
 }
 
 /// One playable region: the keys and velocities it answers, the key it was recorded at, and where
@@ -83,7 +92,6 @@ pub struct Instrument {
 
 impl Instrument {
     /// An instrument whose samples are all in memory and so needs no reader.
-    #[cfg(test)]
     pub fn memory(zones: Vec<Zone>, samples: Vec<Sample>) -> Self {
         Self { zones, samples, heads: Vec::new(), stream: None }
     }
@@ -101,4 +109,6 @@ pub enum Command {
     /// Ends every voice at once, pedal included.
     AllOff,
     Envelope(Envelope),
+    /// Which roles may start a voice, as `Role::bit` set. `Sustain` sounds whatever this says.
+    Roles(u8),
 }

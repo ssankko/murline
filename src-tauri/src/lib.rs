@@ -107,6 +107,7 @@ pub fn run() {
             audio::audio_show_instrument,
             audio::audio_envelope,
             audio::audio_set_envelope,
+            audio::audio_set_roles,
             audio::preview_load,
             audio::preview_play,
             audio::preview_pause,

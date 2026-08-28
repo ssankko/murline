@@ -3,8 +3,9 @@
 
 use std::f32::consts::PI;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::{Command, Envelope, Fill, Instrument, Stream};
+use super::{Command, Envelope, Fill, Instrument, Role, Stream};
 
 /// Every voice opens under a raised-cosine fade this long, whatever the envelope's attack says, so
 /// a sample whose first frame sits far from zero cannot put a step into the output.
@@ -16,6 +17,27 @@ const CUT_FADE: f64 = 0.005;
 /// The level a voice counts as finished at, -80 dBFS.
 const SILENCE: f32 = 1e-4;
 
+/// The velocity a pedal noise starts at. The velocity bands of a Pedal Noise group hold
+/// round-robin takes of the one noise rather than louder and softer ones, so any band answers.
+// ponytail: one band, so every press sounds alike; rotate the bands if the sameness is heard.
+const PEDAL_VELOCITY: u8 = 64;
+
+/// Voices given up to make room for a newer one, over the life of the process. The hardware tests
+/// read it to see whether a pedalled chord outgrows the voice budget.
+// ponytail: one counter for the process, because the app plays through one engine; put it on the
+// `Sampler` when a second one ever renders.
+static STEALS: AtomicU64 = AtomicU64::new(0);
+
+#[allow(dead_code)]
+pub fn steals() -> u64 {
+    STEALS.load(Ordering::Relaxed)
+}
+
+/// A voice a damper can stop: the tone, and the strings ringing along with it. The noises are
+/// one-shots that play themselves out however the keys and the pedal move afterwards.
+fn damped(role: Role) -> bool {
+    matches!(role, Role::Sustain | Role::Sympathetic)
+}
 
 #[derive(Clone, Copy, Default, PartialEq)]
 enum Stage {
@@ -34,6 +56,8 @@ enum Stage {
 struct Voice {
     active: bool,
     note: u8,
+    /// What the voice is sounding, which says what stops it.
+    role: Role,
     /// Index into the instrument's samples.
     sample: usize,
     /// Index into the instrument's zones, which is where the voice's head frames are.
@@ -231,6 +255,11 @@ pub struct Sampler {
     envelope: Envelope,
     pedal: bool,
     age: u64,
+    /// The roles that may start a voice, as `Role::bit` set. `Sustain` is not in it: the tone
+    /// sounds whatever the toggles say.
+    roles: u8,
+    /// What each key was last struck at, so the noises its key-up makes match the strike.
+    struck: [u8; 128],
 }
 
 impl Sampler {
@@ -249,6 +278,8 @@ impl Sampler {
             envelope: Envelope { attack: 0.0, decay: 0.0, sustain: 1.0, release: 0.3 },
             pedal: false,
             age: 0,
+            roles: u8::MAX,
+            struck: [0; 128],
         }
     }
 
@@ -260,20 +291,9 @@ impl Sampler {
             Command::Load(instrument) => return self.swap(Some(instrument)),
             Command::Unload => return self.swap(None),
             Command::NoteOn { note, velocity } => self.note_on(note, velocity),
-            Command::NoteOff { note } => {
-                let pedal = self.pedal;
-                for v in self.sounding().filter(|v| v.note == note) {
-                    if pedal { v.held = true } else { v.release(rate) }
-                }
-            }
-            Command::Sustain(down) => {
-                self.pedal = down;
-                if !down {
-                    for v in self.voices.iter_mut().filter(|v| v.active && v.held) {
-                        v.release(rate);
-                    }
-                }
-            }
+            Command::NoteOff { note } => self.note_off(note),
+            Command::Sustain(down) => self.pedal(down),
+            Command::Roles(roles) => self.roles = roles,
             Command::AllOff => {
                 self.pedal = false;
                 for v in self.voices.iter_mut().filter(|v| v.active) {
@@ -335,14 +355,93 @@ impl Sampler {
         gone
     }
 
+    /// A key struck: the tone, and the strings the raised dampers let ring along with it.
     fn note_on(&mut self, note: u8, velocity: u8) {
+        self.struck[note as usize] = velocity;
+        let rate = self.rate;
+        // A re-strike lets the ringing voice fall away rather than silencing it.
+        for v in self.sounding().filter(|v| v.note == note && damped(v.role)) {
+            v.release(rate);
+        }
+        self.start(note, velocity, Role::Sustain);
+        if self.pedal {
+            self.start(note, velocity, Role::Sympathetic);
+        }
+    }
+
+    /// A key let go: the key itself coming back up, and, when nothing holds the note on, the
+    /// damper landing on the string.
+    fn note_off(&mut self, note: u8) {
+        let (rate, pedal) = (self.rate, self.pedal);
+        for v in self.sounding().filter(|v| v.note == note && damped(v.role)) {
+            if pedal { v.held = true } else { v.release(rate) }
+        }
+        self.start(note, self.struck[note as usize], Role::KeyOff);
+        if !pedal {
+            self.start(note, self.struck[note as usize], Role::Release);
+        }
+    }
+
+    /// The pedal moving: its own noise either way, and on the way up the dampers landing on every
+    /// string it was holding.
+    fn pedal(&mut self, down: bool) {
+        self.pedal = down;
+        if !down {
+            let rate = self.rate;
+            let mut damping = [false; 128];
+            for v in self.voices.iter_mut().filter(|v| v.active && v.held) {
+                damping[v.note as usize] |= v.role == Role::Sustain;
+                v.release(rate);
+            }
+            for note in 0..128u8 {
+                if damping[note as usize] {
+                    self.start(note, self.struck[note as usize], Role::Release);
+                }
+            }
+        }
+        if let Some(key) = self.pedal_key(down) {
+            self.start(key, PEDAL_VELOCITY, Role::PedalNoise);
+        }
+    }
+
+    /// Which key carries the noise of the pedal going this way. The direction is told by key
+    /// alone: Logic's pianos give the two noises two keys of their own, the up on the lower one
+    /// and the down on the higher.
+    fn pedal_key(&self, down: bool) -> Option<u8> {
+        let zones = self.instrument.as_ref()?.zones.iter();
+        let keys = zones.filter(|z| z.role == Role::PedalNoise).map(|z| z.key_lo);
+        if down { keys.max() } else { keys.min() }
+    }
+
+    /// Sounds every zone that answers this key, this velocity and this role. An EXS layers them:
+    /// Studio Grand holds its three mic sets as three zones over the same key, and a piano whose
+    /// groups split the keyboard has one. A role the user has switched off starts nothing.
+    fn start(&mut self, note: u8, velocity: u8, role: Role) {
+        if velocity == 0 || (role != Role::Sustain && self.roles & role.bit() == 0) {
+            return;
+        }
         // The instrument is held for the whole of this, so nothing here borrows the engine.
         let Some(instrument) = self.instrument.clone() else { return };
-        let Some(index) = instrument.zones.iter().position(|z| {
-            (z.key_lo..=z.key_hi).contains(&note) && (z.vel_lo..=z.vel_hi).contains(&velocity)
-        }) else {
-            return;
-        };
+        for index in 0..instrument.zones.len() {
+            let zone = &instrument.zones[index];
+            if zone.role == role
+                && (zone.key_lo..=zone.key_hi).contains(&note)
+                && (zone.vel_lo..=zone.vel_hi).contains(&velocity)
+            {
+                self.sound(&instrument, index, note, velocity, role);
+            }
+        }
+    }
+
+    /// One voice off one zone, which is where everything a render needs is worked out.
+    fn sound(
+        &mut self,
+        instrument: &Arc<Instrument>,
+        index: usize,
+        note: u8,
+        velocity: u8,
+        role: Role,
+    ) {
         let zone = instrument.zones[index].clone();
         let Some(sample) = instrument.samples.get(zone.sample) else { return };
         let (frames, sample_rate, streamed) =
@@ -356,10 +455,6 @@ impl Sampler {
         let amp = 10f32.powf(zone.gain_db / 20.0) * velocity as f32 / 127.0;
         let attack = envelope.attack > 0.0;
 
-        // A re-strike lets the ringing voice fall away rather than silencing it.
-        for v in self.sounding().filter(|v| v.note == note) {
-            v.release(rate);
-        }
         self.age += 1;
         let slot = self.slot();
 
@@ -385,6 +480,7 @@ impl Sampler {
         self.voices[slot] = Voice {
             active: true,
             note,
+            role,
             sample: zone.sample,
             zone: index,
             retired: false,
@@ -436,6 +532,7 @@ impl Sampler {
         {
             let rate = self.rate;
             self.voices[i].cut(rate);
+            STEALS.fetch_add(1, Ordering::Relaxed);
         }
         if let Some(i) = self.voices.iter().position(|v| !v.active) {
             return i;
@@ -682,6 +779,176 @@ mod tests {
         assert!(peak(&out[..boundary]) > 0.01, "the head sounds");
         assert_eq!(peak(&out[boundary..]), 0.0, "and nothing after it");
         assert!(instrument.stream.as_ref().unwrap().underruns() > 0);
+    }
+
+    /// One zone per role, over a short sine. The noises answer every key so a test can count the
+    /// voices they start; the pedal noises sit on two keys of their own, as Logic's pianos put
+    /// them, the up on the lower key.
+    fn every_role() -> Arc<Instrument> {
+        let frames = (RATE * 0.5) as usize;
+        let mut data = Vec::with_capacity(frames * 2);
+        for i in 0..frames {
+            let v = ((std::f64::consts::TAU * 220.0 * i as f64 / RATE).sin() * 32000.0) as i16;
+            data.push(v);
+            data.push(v);
+        }
+        let zone = |role, key_lo, key_hi| Zone {
+            role,
+            key_lo,
+            key_hi,
+            vel_lo: 0,
+            vel_hi: 127,
+            root: 60,
+            tune_cents: 0,
+            gain_db: 0.0,
+            sample: 0,
+            start: 0,
+            end: frames,
+            loop_: None,
+        };
+        Arc::new(Instrument::memory(
+            vec![
+                zone(Role::Sustain, 0, 127),
+                zone(Role::Release, 0, 127),
+                zone(Role::KeyOff, 0, 127),
+                zone(Role::Sympathetic, 0, 127),
+                zone(Role::PedalNoise, 12, 12),
+                zone(Role::PedalNoise, 24, 24),
+            ],
+            vec![Sample::memory(RATE, data)],
+        ))
+    }
+
+    fn playing(s: &Sampler, role: Role) -> Vec<u8> {
+        s.voices.iter().filter(|v| v.active && v.role == role).map(|v| v.note).collect()
+    }
+
+    #[test]
+    fn a_key_up_sounds_the_key_coming_back_and_the_damper_landing() {
+        let mut s = Sampler::new(RATE, 8);
+        s.apply(Command::Load(every_role()));
+        s.apply(Command::NoteOn { note: 60, velocity: 100 });
+        assert!(playing(&s, Role::Sympathetic).is_empty(), "the pedal is up");
+        s.apply(Command::NoteOff { note: 60 });
+        assert_eq!(playing(&s, Role::KeyOff), vec![60]);
+        assert_eq!(playing(&s, Role::Release), vec![60]);
+    }
+
+    #[test]
+    fn the_pedal_holds_the_damper_back_until_it_comes_up() {
+        let mut s = Sampler::new(RATE, 8);
+        s.apply(Command::Load(every_role()));
+        s.apply(Command::NoteOn { note: 60, velocity: 100 });
+        s.apply(Command::Sustain(true));
+        s.apply(Command::NoteOff { note: 60 });
+        assert_eq!(playing(&s, Role::KeyOff), vec![60], "the key comes up either way");
+        assert!(playing(&s, Role::Release).is_empty(), "the pedal still holds the string");
+        s.apply(Command::Sustain(false));
+        assert_eq!(playing(&s, Role::Release), vec![60]);
+    }
+
+    #[test]
+    fn the_pedal_makes_a_noise_each_way() {
+        let mut s = Sampler::new(RATE, 8);
+        s.apply(Command::Load(every_role()));
+        s.apply(Command::Sustain(true));
+        assert_eq!(playing(&s, Role::PedalNoise), vec![24]);
+        s.apply(Command::Sustain(false));
+        assert_eq!(playing(&s, Role::PedalNoise), vec![24, 12]);
+    }
+
+    #[test]
+    fn a_key_struck_under_the_pedal_rings_the_strings_around_it() {
+        let mut s = Sampler::new(RATE, 8);
+        s.apply(Command::Load(every_role()));
+        s.apply(Command::Sustain(true));
+        s.apply(Command::NoteOn { note: 60, velocity: 100 });
+        assert_eq!(playing(&s, Role::Sustain), vec![60]);
+        assert_eq!(playing(&s, Role::Sympathetic), vec![60]);
+    }
+
+    #[test]
+    fn a_role_switched_off_starts_nothing() {
+        let mut s = Sampler::new(RATE, 8);
+        s.apply(Command::Load(every_role()));
+        s.apply(Command::Roles(0));
+        s.apply(Command::Sustain(true));
+        s.apply(Command::NoteOn { note: 60, velocity: 100 });
+        s.apply(Command::NoteOff { note: 60 });
+        s.apply(Command::Sustain(false));
+        assert_eq!(playing(&s, Role::Sustain), vec![60], "the tone is no toggle");
+        for role in [Role::Release, Role::KeyOff, Role::Sympathetic, Role::PedalNoise] {
+            assert!(playing(&s, role).is_empty(), "{role:?}");
+        }
+    }
+
+    /// Renders in buffer-sized passes at the pace a device would pull them, which is what the
+    /// disk reader is written to keep up with.
+    #[cfg(target_os = "macos")]
+    fn realtime(sampler: &mut Sampler, seconds: f64) -> Vec<f32> {
+        const BUFFER: usize = 512;
+        let mut out = Vec::new();
+        let (mut left, mut right) = ([0.0; BUFFER], [0.0; BUFFER]);
+        while out.len() < (RATE * seconds) as usize {
+            sampler.render(&mut left, &mut right);
+            out.extend_from_slice(&left);
+            std::thread::sleep(std::time::Duration::from_secs_f64(BUFFER as f64 / RATE));
+        }
+        out
+    }
+
+    /// The Concert Grand's own samples, off the disk: the only place to hear whether the noises
+    /// arrive at the moment the key and the pedal ask for them.
+    #[test]
+    #[ignore = "needs the Logic sample library"]
+    #[cfg(target_os = "macos")]
+    fn the_concert_grand_answers_a_key_up_with_a_release_sample() {
+        let path = std::path::PathBuf::from(std::env::var("HOME").unwrap()).join(
+            "Music/Logic Pro Library.bundle/Plug-In Settings/Sampler/z_Internal/Studio Piano/\
+             Concert Grand Piano.exs",
+        );
+        let exs = crate::audio::sampler::exs::read(&path).unwrap();
+        let instrument = Arc::new(crate::audio::sampler::disk::load(&exs, 32).unwrap());
+        let after_key_up = |roles: u8| {
+            let mut s = Sampler::new(RATE, 16);
+            s.apply(Command::Load(instrument.clone()));
+            s.apply(Command::Roles(roles));
+            s.apply(Command::NoteOn { note: 60, velocity: 100 });
+            realtime(&mut s, 0.5);
+            s.apply(Command::NoteOff { note: 60 });
+            rms(&realtime(&mut s, 0.1))
+        };
+        let (on, off) = (after_key_up(u8::MAX), after_key_up(0));
+        println!("100 ms after key-up: roles on {on}, roles off {off}");
+        assert!(on > 2.0 * off, "the release sample is not sounding: {on} against {off}");
+    }
+
+    #[test]
+    fn every_zone_that_answers_a_key_sounds_at_once() {
+        let frames = (RATE * 0.2) as usize;
+        let zone = Zone {
+            role: Role::Sustain,
+            key_lo: 0,
+            key_hi: 127,
+            vel_lo: 0,
+            vel_hi: 127,
+            root: 60,
+            tune_cents: 0,
+            gain_db: 0.0,
+            sample: 0,
+            start: 0,
+            end: frames,
+            loop_: None,
+        };
+        let sample = Sample::memory(RATE, vec![16000; frames * 2]);
+        let layered = Arc::new(Instrument::memory(vec![zone.clone(), zone], vec![sample]));
+
+        let mut s = Sampler::new(RATE, 8);
+        s.apply(Command::Load(layered));
+        s.apply(Command::NoteOn { note: 60, velocity: 100 });
+        assert_eq!(playing(&s, Role::Sustain).len(), 2, "the layers of one key both sound");
+        // And they mix: one alone reaches half of this.
+        assert!(peak(&render(&mut s, 0.1)) > 0.7, "the two layers add up");
     }
 
     #[test]

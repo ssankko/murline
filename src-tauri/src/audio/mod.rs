@@ -79,6 +79,9 @@ pub struct Status {
     /// What the device reports the buffer costs: its own latency, the safety offset, the stream
     /// and the buffer itself, at the rate the device runs.
     pub latency_ms: f64,
+    /// The noises around the tone the loaded instrument offers, each of them a toggle the webview
+    /// keeps for it. Empty for a plugin and for a file that has none of them.
+    pub roles: Vec<sampler::Role>,
 }
 
 impl Status {
@@ -258,12 +261,20 @@ pub fn audio_envelope() -> Option<Envelope> {
     engine::envelope()
 }
 
-/// Replaces it, and keeps it against the reloads that a change of effect or of instrument file
-/// brings. Off the main thread: the sampler takes about a second to accept one, though whatever is
-/// sounding plays on through the change.
-#[tauri::command(async)]
+/// Replaces it. The voice engine has it at the next buffer, and every note struck from there on
+/// follows it; whatever is already sounding plays on unchanged.
+#[tauri::command]
 pub fn audio_set_envelope(envelope: Envelope) {
     engine::set_envelope(envelope);
+}
+
+/// Which of the noises a piano makes around the tone the instrument may sound: the damper landing,
+/// the key coming back up, the strings ringing along, the pedal. The tone itself is no toggle, and
+/// a role the loaded instrument has no samples for is simply silent. The set stands until it is
+/// sent again, and the webview keeps one per instrument and sends it after every load.
+#[tauri::command]
+pub fn audio_set_roles(roles: Vec<sampler::Role>) {
+    engine::set_roles(roles);
 }
 
 /// The Preview's note list, in seconds at the score's own tempo. Replaces whatever was loaded.
@@ -320,6 +331,7 @@ mod tests {
         stub::set_velocity_curve(1, 127, 1.0);
         stub::set_envelope(Envelope::default());
         assert!(stub::envelope().is_none());
+        stub::set_roles(vec![sampler::Role::Release]);
 
         assert!(stub::effects().is_empty());
         assert!(stub::chain().is_empty());
@@ -346,6 +358,7 @@ mod tests {
         assert_eq!(status.buffer_frames, 0);
         assert_eq!(status.latency_ms, 0.0);
         assert_eq!(status.fallback, "");
+        assert!(status.roles.is_empty());
     }
 
     #[test]

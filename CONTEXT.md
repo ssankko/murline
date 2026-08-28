@@ -135,8 +135,12 @@ The audio graph in the Rust side that turns keyboard and Preview notes into soun
 _Avoid_: Synth, audio engine, playback engine
 
 **Instrument**:
-The one Audio Unit instrument, or file the sound engine plays: an EXS through the app's own voice engine, a SoundFont through Apple's sampler. One at a time, global, remembered across launches.
+The one Audio Unit instrument, or file the sound engine plays: an EXS or a SoundFont through the app's own voice engine, a hosted plugin through itself. One at a time, global, remembered across launches.
 _Avoid_: Patch, preset, voice, sound font (a SoundFont is one kind of file an instrument is loaded from)
+
+**Role**:
+One part of a sampled instrument other than the tone a key-down sounds: the release samples, the key-off noise, the sympathetic resonance and the pedal noise. Each is switched on or off on the Sound tab and kept per instrument; an instrument offering none, such as a plugin, is not asked about.
+_Avoid_: Layer, group, articulation, sample set
 
 **Effect chain**:
 The ordered list of Audio Unit effects between the instrument and the output. Each slot has a bypass toggle and keeps its plugin's own settings; a slot whose plugin is not installed keeps its place and is skipped.
@@ -147,11 +151,11 @@ The popover behind the volume button that carries the keyboard volume and the me
 _Avoid_: Volume popover, levels, audio dialog
 
 **Keyboard volume**:
-How loud the whole keyboard sounds, 0 to 200 per cent with 100 the sound as the instrument makes it and 200 twice as loud. It applies after the effect chain, so it sets the finished sound without changing how the instrument or the effects behave.
+How loud the whole keyboard sounds, 0 to 200 per cent with 100 the sound as the instrument makes it and 200 twice as loud. It applies after the effect chain, so it sets the finished sound without changing how the instrument or the effects behave. A peak limiter behind it holds the sound inside full scale, so a loud instrument turned up past 100 does not clip at the device.
 _Avoid_: Master volume, output gain, level
 
 **Envelope**:
-How loud a note is over its own lifetime: the attack it comes in on, the decay down to the sustain it holds at while the key is down, and the release it dies away over once the key comes up. Kept per instrument, so a heavy piano and a thin organ each keep their own. Only a file instrument has one to set; a hosted Audio Unit shapes its notes behind its own window. An EXS takes it at once, through the app's own voice engine, and every voice struck after it follows it, with a fixed 3 ms fade at each voice start whatever the attack. A SoundFont takes it through Apple's sampler, which costs about a second inside CoreAudio and stops the sound for it, so the section sends it once the hand comes off the slider rather than as it moves, and warns from the first touch of a slider until the engine has it. It is put back after every load, which reads the instrument file's own envelope in over it.
+How loud a note is over its own lifetime: the attack it comes in on, the decay down to the sustain it holds at while the key is down, and the release it dies away over once the key comes up. Kept per instrument, so a heavy piano and a thin organ each keep their own. Only a file instrument has one to set; a hosted Audio Unit shapes its notes behind its own window. The engine takes one at once, so the sliders are heard as they move, at one send per frame drawn, and every voice struck after it follows it, with a fixed 3 ms fade at each voice start whatever the attack. Whatever is already sounding plays on unchanged. A load starts the instrument on the same plain hold every file gets, and the one kept for it is sent over that.
 _Avoid_: ADSR (the four sliders, not the concept), amp envelope, volume envelope, contour
 
 **Velocity curve**:

@@ -170,7 +170,7 @@ pub fn apply(graph: &mut Graph, wanted: Vec<Slot>) -> Vec<Slot> {
     // AVAudioEngine flushes every sounding voice when a connection changes, so the path is touched
     // only when it is really another one: a bypass or a state change alone never interrupts a note.
     if wiring(&graph.chain) != wired {
-        let _ = rewire(graph);
+        rewire(graph);
     }
     slots(graph)
 }
@@ -216,19 +216,14 @@ fn slots(graph: &Graph) -> Vec<Slot> {
         .collect()
 }
 
-/// Connects the instrument through every installed plugin to the keyboard fader. A slot whose plugin is
-/// missing is left out; a bypassed one stays in the path and passes its sound through untouched.
-/// The head is whichever node the instrument sounds through, so a hosted plugin and the voice
-/// engine's source node each play through the chain exactly as the sampler does, and the two they
-/// replace are left connected to nothing.
-///
-/// The sampler's file is read in on the way, while the node is out of the path: connecting it is
-/// what initialises it, and an initialised AUSampler loses whatever was loaded into it. Answers
-/// with what that read said, so the load a caller asked for has an outcome to report.
-pub(super) fn rewire(graph: &Graph) -> Result<(), String> {
+/// Connects the instrument through every installed plugin to the keyboard fader. A slot whose
+/// plugin is missing is left out; a bypassed one stays in the path and passes its sound through
+/// untouched. The head is whichever node the instrument sounds through, so a hosted plugin and the
+/// voice engine's source node each play through the chain the same way, and the one that is not
+/// playing is left connected to nothing.
+pub(super) fn rewire(graph: &Graph) {
     let engine = &graph.engine;
     unsafe {
-        engine.disconnectNodeOutput(&graph.sampler);
         engine.disconnectNodeOutput(&graph.source);
         if let Some(plugin) = &graph.plugin {
             engine.disconnectNodeOutput(plugin);
@@ -238,7 +233,6 @@ pub(super) fn rewire(graph: &Graph) -> Result<(), String> {
                 engine.disconnectNodeOutput(unit);
             }
         }
-        let loaded = graph.reload();
         let mut path: Vec<&AVAudioNode> = vec![graph.head()];
         for held in &graph.chain {
             if let Some(unit) = &held.unit {
@@ -251,7 +245,6 @@ pub(super) fn rewire(graph: &Graph) -> Result<(), String> {
         for pair in path.windows(2) {
             engine.connect_to_format(pair[0], pair[1], Some(&graph.format));
         }
-        loaded
     }
 }
 
@@ -313,7 +306,7 @@ fn installed_name(desc: AudioComponentDescription) -> Option<String> {
         .map(|component| unsafe { component.name() }.to_string())
 }
 
-fn description(kind: u32, sub: u32, manufacturer: u32) -> AudioComponentDescription {
+pub(super) fn description(kind: u32, sub: u32, manufacturer: u32) -> AudioComponentDescription {
     AudioComponentDescription {
         componentType: kind,
         componentSubType: sub,
@@ -550,6 +543,8 @@ mod tests {
     const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/sine.sf2");
     const PASS: u32 = 4096;
     const LOOK: u32 = 4410;
+    /// Long enough for the instrument's release to run right out, half a second at 44.1 kHz.
+    const RELEASE: u32 = 22050;
 
     fn offline() -> Graph {
         let mut graph = Graph::build().unwrap();
@@ -578,7 +573,8 @@ mod tests {
         graph.note_on(60, 100);
         graph.render_peak(LOOK).unwrap();
         graph.note_off(60);
-        graph.render_peak(LOOK).unwrap();
+        // The note's own release runs right out first, so what is heard after it is the effect's.
+        graph.render_peak(RELEASE).unwrap();
         graph.render_peak(LOOK).unwrap()
     }
 
@@ -725,6 +721,10 @@ mod tests {
         param(&graph, 0, DRY_WET, 100.0);
         param(&graph, 0, DELAY_TIME, LONG);
         graph.note_on(62, 100);
+        // The limiter between the fader and the mixer carries a lookahead, so the first window
+        // after a rewire still puts out what was in the limiter before it, and the second is the
+        // one that reads the new path.
+        graph.render_peak(LOOK).unwrap();
         assert_eq!(graph.render_peak(LOOK).unwrap(), 0.0, "the sampler plays through the chain");
 
         graph.set_plugin(hosted_instrument());

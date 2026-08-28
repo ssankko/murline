@@ -103,11 +103,6 @@ fn parse(bytes: &[u8], path: &Path) -> Result<Exs, String> {
         }
     }
 
-    // ponytail: a key-down sounds only the Sustain articulation, so the rest are dropped whole;
-    // play the Release and Key Off groups on note-off instead.
-    let sustain = |group: &Group| group.name.to_lowercase().starts_with("sustain");
-    let articulated = groups.iter().any(|g| g.enable_by == ARTICULATION && sustain(g));
-
     let count = samples.len() as u32;
     let zones = zones
         .into_iter()
@@ -121,8 +116,12 @@ fn parse(bytes: &[u8], path: &Path) -> Result<Exs, String> {
                 if group.release_trigger {
                     return None;
                 }
-                if articulated && group.enable_by == ARTICULATION && !sustain(group) {
-                    return None;
+                match role(&group.name) {
+                    Some(role) => zone.role = role,
+                    // An articulation Logic picks by name is the only thing that group answers,
+                    // and a name this engine has no trigger for can never be asked for.
+                    None if group.enable_by == ARTICULATION => return None,
+                    None => {}
                 }
                 zone.gain_db += group.volume as f32;
                 zone.vel_lo = zone.vel_lo.max(group.vel_lo);
@@ -138,6 +137,21 @@ fn parse(bytes: &[u8], path: &Path) -> Result<Exs, String> {
         })
         .collect();
     Ok(Exs { zones, groups, samples })
+}
+
+/// What a group's name says its zones are for. The name is the only place an EXS says it, and
+/// Logic's pianos name every group after the noise it makes. A group named nothing this engine
+/// knows plays the tone, like a file that sorts its zones by no role at all.
+fn role(name: &str) -> Option<Role> {
+    const NAMES: [(&str, Role); 5] = [
+        ("sustain", Role::Sustain),
+        ("release", Role::Release),
+        ("key off", Role::KeyOff),
+        ("sympathetic", Role::Sympathetic),
+        ("pedal noise", Role::PedalNoise),
+    ];
+    let name = name.to_lowercase();
+    NAMES.iter().find(|(prefix, _)| name.starts_with(prefix)).map(|&(_, role)| role)
 }
 
 /// Returns the zone and the indexes of the sample chunk it plays and the group that gates it;
@@ -376,39 +390,51 @@ mod tests {
     }
 
     #[test]
-    fn articulations_leave_only_the_sustain_group() {
-        let articulated: &[&[(usize, &[u8])]] = &[
-            &[(20, b"Sustain"), (168, &[ARTICULATION])],
-            &[(20, b"Key Off"), (168, &[ARTICULATION])],
+    fn a_group_name_says_what_its_zones_are_for() {
+        let named: &[&[(usize, &[u8])]] = &[
+            &[(20, b"Sustain")],
+            &[(20, b"Release")],
+            &[(20, b"Key Off")],
+            &[(20, b"SYMPATHETIC 2")],
+            &[(20, b"Pedal Noise")],
+            &[(20, b"Layer 3")],
         ];
-        let sustain = parse(&blob(&[], articulated), Path::new("/nowhere/x.exs")).unwrap();
-        assert_eq!(sustain.zones.len(), 1, "the zone of the Sustain group stays");
-
-        let key_off = parse(
-            &blob(&[(172, &1u32.to_le_bytes())], articulated),
-            Path::new("/nowhere/x.exs"),
-        )
-        .unwrap();
-        assert!(key_off.zones.is_empty());
+        for (group, want) in [
+            Role::Sustain,
+            Role::Release,
+            Role::KeyOff,
+            Role::Sympathetic,
+            Role::PedalNoise,
+            Role::Sustain,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let bytes = blob(&[(172, &(group as u32).to_le_bytes())], named);
+            let exs = parse(&bytes, Path::new("/nowhere/x.exs")).unwrap();
+            assert_eq!(exs.zones[0].role, want, "group {group}");
+        }
     }
 
     #[test]
-    fn articulations_without_a_sustain_group_leave_every_zone() {
-        let exs = parse(
-            &blob(&[], &[&[(20, b"Key Off"), (168, &[ARTICULATION])]]),
-            Path::new("/nowhere/x.exs"),
-        )
-        .unwrap();
-        assert_eq!(exs.zones.len(), 1);
+    fn an_articulation_this_engine_cannot_ask_for_takes_its_zones_away() {
+        let unknown: &[(usize, &[u8])] = &[(20, b"Soft Pedal"), (168, &[ARTICULATION])];
+        let exs = parse(&blob(&[], &[unknown]), Path::new("/nowhere/x.exs")).unwrap();
+        assert!(exs.zones.is_empty());
+
+        // The same group without the gate is a plain layer of the tone.
+        let open =
+            parse(&blob(&[], &[&[(20, b"Soft Pedal")]]), Path::new("/nowhere/x.exs")).unwrap();
+        assert_eq!(open.zones[0].role, Role::Sustain);
     }
 
-    /// The keys and velocities of 21..=108 and 1..=127 no zone answers, as (key, lowest, highest)
-    /// velocity runs.
+    /// The keys and velocities of 21..=108 and 1..=127 no tone zone answers, as (key, lowest,
+    /// highest) velocity runs.
     fn uncovered(zones: &[Zone]) -> Vec<(u8, u8, u8)> {
         let mut gaps: Vec<(u8, u8, u8)> = Vec::new();
         for key in 21..=108u8 {
             for vel in 1..=127u8 {
-                let answered = zones.iter().any(|z| {
+                let answered = zones.iter().filter(|z| z.role == Role::Sustain).any(|z| {
                     z.key_lo <= key && key <= z.key_hi && z.vel_lo <= vel && vel <= z.vel_hi
                 });
                 if answered {
@@ -466,11 +492,32 @@ mod tests {
             }
             let named: usize = exs.groups.iter().map(|g| g.zones).sum();
             println!("  {} of {named} zones remain", exs.zones.len());
+            for role in
+                [Role::Sustain, Role::Release, Role::KeyOff, Role::Sympathetic, Role::PedalNoise]
+            {
+                let kept = exs.zones.iter().filter(|z| z.role == role);
+                println!("  {role:?}: {} zones", kept.count());
+            }
+            for zone in exs.zones.iter().filter(|z| z.role == Role::PedalNoise) {
+                println!(
+                    "  pedal noise: key {:>3}..{:<3} vel {:>3}..{:<3} root {:>3} {} frames \
+                     from {} in {}",
+                    zone.key_lo,
+                    zone.key_hi,
+                    zone.vel_lo,
+                    zone.vel_hi,
+                    zone.root,
+                    zone.end - zone.start,
+                    zone.start,
+                    exs.samples[zone.sample].path.file_name().unwrap().to_string_lossy(),
+                );
+            }
             println!("  uncovered (key, velocities): {:?}", uncovered(&exs.zones));
 
             let zone = exs
                 .zones
                 .iter()
+                .filter(|z| z.role == Role::Sustain)
                 .find(|z| z.key_lo <= 60 && 60 <= z.key_hi && z.vel_lo <= 127 && 127 <= z.vel_hi)
                 .expect("middle C at full velocity");
             println!("  middle C: {} dB, {zone:?}", zone.gain_db);

@@ -19,15 +19,15 @@ use std::path::{Path, PathBuf};
 
 /// Where Logic keeps the Studio Piano inside its sound library bundle in `~/Music`.
 const STUDIO_PIANO: &str = "Plug-In Settings/Sampler/z_Internal/Studio Piano";
-/// The Studio Piano instruments AUSampler can load. Vintage Upright is left out: its file stores
-/// percent-encoded sample paths the sampler cannot resolve.
+/// The Studio Piano instruments the engine plays. Vintage Upright is left out: its file stores
+/// percent-encoded sample paths that resolve to no sample on disk.
 const LOGIC_PIANOS: [&str; 2] = ["Concert Grand Piano", "Studio Grand Piano"];
-/// What the sampler opens out of the instruments folder.
+/// The instrument files the voice engine reads out of the instruments folder.
 const FILE_KINDS: [&str; 2] = ["sf2", "exs"];
 /// Component type `aumu`: the Audio Unit instruments.
 const MUSIC_DEVICE: u32 = u32::from_be_bytes(*b"aumu");
-/// Apple's DLSMusicDevice and AUMIDISynth, General MIDI players that add nothing over a file in
-/// the sampler.
+/// Apple's DLSMusicDevice and AUMIDISynth, General MIDI players that add nothing over a file the
+/// voice engine plays.
 const NOT_LISTED: [u32; 2] = [u32::from_be_bytes(*b"dls "), u32::from_be_bytes(*b"msyn")];
 /// How long instantiating a plugin may take before the load gives up on it.
 const PATIENCE: std::time::Duration = std::time::Duration::from_secs(60);

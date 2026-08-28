@@ -1,16 +1,14 @@
-//! The sound engine on macOS: one AVAudioEngine graph with three ways to make the instrument's
+//! The sound engine on macOS: one AVAudioEngine graph with two ways to make the instrument's
 //! sound and a player node for the metronome click, all into the main mixer and out to the device.
-//! An EXS file plays through the app's own voice engine behind a source node, a SoundFont through
-//! AVAudioUnitSampler, and a hosted Audio Unit through itself. Every entry point the command
-//! surface and the tests use is a method on `Graph`; the app keeps one of them in `GRAPH` for as
-//! long as it runs.
+//! An instrument file, EXS or SoundFont, plays through the app's own voice engine behind a source
+//! node; a hosted Audio Unit plays through itself. Every entry point the command surface and the
+//! tests use is a method on `Graph`; the app keeps one of them in `GRAPH` for as long as it runs.
 //!
 //! One thing here runs on the audio thread: the source node's render block, which owns the voice
 //! engine and takes its orders through a channel. Everything else is host-side work AVFAudio
 //! documents as safe off that thread.
 
 mod effects;
-mod envelope;
 pub use effects::{chain, effects, set_chain, show_effect};
 
 use crate::audio::device::{self, DeviceId};
@@ -26,22 +24,21 @@ use objc2::rc::Retained;
 use objc2::runtime::Bool;
 use objc2_audio_toolbox::{
     AudioUnit, AudioUnitGetProperty, AudioUnitSetProperty, kAudioOutputUnitProperty_CurrentDevice,
-    kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global,
+    kAudioUnitManufacturer_Apple, kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global,
+    kAudioUnitSubType_PeakLimiter, kAudioUnitType_Effect,
 };
 use objc2_avf_audio::{
     AVAudioEngine, AVAudioEngineConfigurationChangeNotification, AVAudioEngineManualRenderingMode,
     AVAudioFormat, AVAudioFrameCount, AVAudioMixerNode, AVAudioMixing, AVAudioNode,
-    AVAudioPCMBuffer, AVAudioPlayerNode, AVAudioSourceNode, AVAudioUnitMIDIInstrument,
-    AVAudioUnitSampler,
+    AVAudioPCMBuffer, AVAudioPlayerNode, AVAudioSourceNode, AVAudioUnitEffect,
+    AVAudioUnitMIDIInstrument,
 };
 #[cfg(test)]
 use objc2_avf_audio::AVAudioEngineManualRenderingStatus;
 use objc2_core_audio_types::{AudioBuffer, AudioBufferList, AudioTimeStamp};
-use objc2_foundation::{
-    NSError, NSNotification, NSNotificationCenter, NSOperationQueue, NSString, NSURL,
-};
+use objc2_foundation::{NSError, NSNotification, NSNotificationCenter, NSOperationQueue};
 use std::cell::RefCell;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::ptr::{NonNull, from_ref};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, Once, Weak};
@@ -60,14 +57,17 @@ const STRONG_HZ: f64 = 2400.0;
 const WEAK_PEAK: f32 = 0.3;
 const STRONG_PEAK: f32 = 0.4;
 
-/// What an EXS instrument answers a key with until the webview sends the one kept for it: a plain
+/// What a file instrument answers a key with until the webview sends the one kept for it: a plain
 /// hold, the recorded sample carrying its own decay, and a release short enough to read as a
 /// damper falling.
-const EXS_ENVELOPE: Envelope = Envelope { attack: 0.0, decay: 0.0, sustain: 1.0, release: 0.3 };
+const FILE_ENVELOPE: Envelope = Envelope { attack: 0.0, decay: 0.0, sustain: 1.0, release: 0.3 };
 
-/// How many notes the voice engine may hold sounding at once. A pedalled two-handed passage runs
-/// to a few dozen, and every voice past that costs only the samples it mixes.
-const VOICES: usize = 64;
+/// How many voices the engine may hold sounding at once. A key is not a voice: an EXS layers its
+/// zones, so one key of the Studio Grand sounds three mic sets and, under the pedal, three
+/// sympathetic zones beside them, and its key-up sounds six more. Ten keys held and let go reach
+/// about 126. Twice this many ring slots are allocated with the instrument, at 256 KB each, so
+/// the streaming costs 64 MB of buffers at this figure.
+const VOICES: usize = 128;
 
 /// The MIDI channel everything the app plays goes out on.
 const CHANNEL: u8 = 0;
@@ -75,8 +75,6 @@ const CHANNEL: u8 = 0;
 const SUSTAIN: u8 = 64;
 const ALL_SOUND_OFF: u8 = 120;
 const ALL_NOTES_OFF: u8 = 123;
-/// The bank a melodic SoundFont instrument lives in, per Apple's `kAUSampler_DefaultMelodicBankMSB`.
-const MELODIC_BANK_MSB: u8 = 0x79;
 
 /// The buffer sizes the dialog offers, and the one the app starts at.
 pub const FRAME_CHOICES: [u32; 4] = [32, 64, 128, 256];
@@ -105,9 +103,10 @@ const PROGRESS: Duration = Duration::from_millis(33);
 
 /// The one graph the app plays through, empty until `start` builds it.
 pub(super) static GRAPH: Mutex<Option<Graph>> = Mutex::new(None);
-/// AUSampler keeps its loaded samples in one map per process, and two loads at once abort inside
-/// it, so every load in this process takes its turn. Starting a graph counts as one: a hosted unit
-/// reads its own samples in as the engine initialises the node.
+/// Building an Audio Unit and initialising it both open files and start code up inside CoreAudio,
+/// which two at once in one process do not survive, so every one of them takes its turn here.
+/// Starting a graph counts as one: a hosted unit reads its own samples in as the engine
+/// initialises the node.
 static LOADING: Mutex<()> = Mutex::new(());
 
 /// The instrument the user picked: its opaque id, the name the status line says, and why it is
@@ -121,7 +120,6 @@ pub struct Chosen {
 
 pub struct Graph {
     engine: Retained<AVAudioEngine>,
-    sampler: Retained<AVAudioUnitSampler>,
     /// The node the app's own voice engine plays through: its render block holds the voices and
     /// pulls the commands below out of the channel on the audio thread.
     source: Retained<AVAudioSourceNode>,
@@ -131,13 +129,15 @@ pub struct Graph {
     // ponytail: one dead instrument sits here until the next load drains it, which costs its
     // heads and its rings; drain on a timer if that is ever too long to wait.
     graveyard: Receiver<Arc<sampler::Instrument>>,
-    /// The rings of the EXS the voice engine plays, held weakly only to count the underruns.
+    /// The rings of a streamed instrument, held weakly only to count the underruns.
     streaming: Option<Weak<sampler::Stream>>,
-    /// True while the voice engine holds the instrument, false while AUSampler does. A hosted
-    /// plugin displaces both.
-    exs: bool,
+    /// True while the voice engine holds an instrument file, false while a plugin plays instead.
+    file: bool,
+    /// The roles beside the tone the loaded instrument has zones for, which is what the webview
+    /// offers a toggle for. Empty while a plugin or a file without them plays.
+    roles: Vec<sampler::Role>,
     /// The hosted Audio Unit instrument, when the choice is a plugin instead of a file. It plays
-    /// in the sampler's place; the sampler stays in the graph, silent.
+    /// in the voice engine's place, whose node stays in the graph, silent.
     plugin: Option<Retained<AVAudioUnitMIDIInstrument>>,
     clicker: Retained<AVAudioPlayerNode>,
     /// The keyboard volume, a gain the whole instrument path runs through on its way to the mixer.
@@ -145,17 +145,17 @@ pub struct Graph {
     /// a reverb is given and so change how the instrument answers the hands, which is the one
     /// thing turning the volume down must not do. The click does not pass through it.
     fader: Retained<AVAudioMixerNode>,
+    /// Apple's peak limiter, last before the mixer, at its own defaults. The keyboard volume goes
+    /// up to twice unity, so a loud instrument turned up would otherwise reach the device above
+    /// full scale and clip there.
+    limiter: Retained<AVAudioUnitEffect>,
     format: Retained<AVAudioFormat>,
     strong: Retained<AVAudioPCMBuffer>,
     weak: Retained<AVAudioPCMBuffer>,
-    /// The effects between the sampler and the mixer, in the order they play.
+    /// The effects between the instrument and the mixer, in the order they play.
     chain: Vec<effects::Held>,
-    /// The file the sampler plays. AUSampler holds a loaded instrument only from the load to the
-    /// next time its node is initialised, and the engine initialises the node on every start and
-    /// on every change of the wiring, so the file goes back in each time.
-    file: Option<PathBuf>,
-    /// The envelope asked for, if any, which is put back on the sampler after every reload: a load
-    /// reads the instrument file's own envelope in over whatever was set.
+    /// The envelope the voice engine was last given, which is what the panel shows. A load puts
+    /// the file default back, and the webview sends the one kept for the instrument over it.
     envelope: Option<Envelope>,
     /// Frames one offline render pass may take at most, zero while the graph plays to a device.
     offline_frames: u32,
@@ -191,38 +191,46 @@ impl Graph {
                 AVAudioFormat::initStandardFormatWithSampleRate_channels(AVAudioFormat::alloc(), RATE, 2)
                     .ok_or("Stereo audio at 44.1 kHz is not available")?;
             let engine = AVAudioEngine::new();
-            let sampler = AVAudioUnitSampler::new();
             let clicker = AVAudioPlayerNode::new();
             let fader = AVAudioMixerNode::new();
+            let limiter = AVAudioUnitEffect::initWithAudioComponentDescription(
+                AVAudioUnitEffect::alloc(),
+                effects::description(
+                    kAudioUnitType_Effect,
+                    kAudioUnitSubType_PeakLimiter,
+                    kAudioUnitManufacturer_Apple,
+                ),
+            );
             let (commands, orders) = channel();
             let (dead, graveyard) = channel();
             let source = source_node(&format, orders, dead);
-            engine.attachNode(&sampler);
             engine.attachNode(&source);
             engine.attachNode(&clicker);
             engine.attachNode(&fader);
+            engine.attachNode(&limiter);
             let mixer = engine.mainMixerNode();
             // The instrument end of this is rewired whenever the chain changes; the fader's own
-            // connection to the mixer never is, so setting the volume touches no connection.
-            engine.connect_to_format(&sampler, &fader, Some(&format));
-            engine.connect_to_format(&fader, &mixer, Some(&format));
+            // way out through the limiter never is, so setting the volume touches no connection.
+            engine.connect_to_format(&source, &fader, Some(&format));
+            engine.connect_to_format(&fader, &limiter, Some(&format));
+            engine.connect_to_format(&limiter, &mixer, Some(&format));
             engine.connect_to_format(&clicker, &mixer, Some(&format));
             Ok(Graph {
                 strong: blip(&format, STRONG_HZ, STRONG_PEAK)?,
                 weak: blip(&format, WEAK_HZ, WEAK_PEAK)?,
                 format,
                 engine,
-                sampler,
                 source,
                 commands,
                 graveyard,
                 streaming: None,
-                exs: false,
+                file: false,
+                roles: Vec::new(),
                 plugin: None,
                 clicker,
                 fader,
+                limiter,
                 chain: Vec::new(),
-                file: None,
                 envelope: None,
                 offline_frames: 0,
                 chosen: None,
@@ -241,9 +249,6 @@ impl Graph {
     /// Starts the graph on the output device.
     pub fn start(&self) -> Result<(), String> {
         let _turn = LOADING.lock().unwrap();
-        // Starting initialises the sampler, which is what makes a load stick and what loses the
-        // load before it, so the file is read in first while the node is still uninitialised.
-        let _ = self.reload();
         unsafe {
             self.engine.prepare();
             self.engine.startAndReturnError().map_err(reason)?;
@@ -329,43 +334,22 @@ impl Graph {
         }
     }
 
-    /// Loads an instrument file: an EXS into the app's own voice engine, a SoundFont's first
-    /// melodic program or an AUPreset into AUSampler. Reads from disk, so never from the audio
-    /// thread.
+    /// Reads an instrument file and hands it to the voice engine: a SoundFont whole, an EXS as the
+    /// head of each zone with a reader behind it. Everything that can fail happens before anything
+    /// is switched over, so a file that will not read leaves the instrument playing where it was.
+    /// Reads from disk, so never from the audio thread.
     pub fn load_file(&mut self, path: &Path) -> Result<(), String> {
-        if exs_file(path) {
-            return self.load_exs(path);
-        }
-        if sound_bank(path) && not_a_sound_font(path) {
-            return Err("That file is not a SoundFont".into());
-        }
-        // Nothing of the old instrument may ring on through the new one.
-        self.release_all();
-        let _turn = LOADING.lock().unwrap();
-        self.file = Some(path.to_path_buf());
-        // The envelope belongs to the instrument that was playing, not to this one, which brings
-        // its own; the webview sets whatever was kept for this one once the load is through.
-        self.envelope = None;
-        self.drop_plugin();
-        self.unload_exs();
-        // The sampler is the instrument again, so it takes the head of the chain back, and the
-        // rewire is what reads the file in on the way.
-        effects::rewire(self)
-    }
-
-    /// Reads an EXS file and its samples and hands them to the voice engine. Everything that can
-    /// fail happens before anything is switched over, so a file that will not read leaves the
-    /// instrument that was playing exactly where it was.
-    fn load_exs(&mut self, path: &Path) -> Result<(), String> {
-        // One ring per voice slot, which is what the engine sounds at once plus the spares its
-        // steals fade out through.
-        let instrument = Arc::new(sampler::disk::load(&sampler::exs::read(path)?, VOICES * 2)?);
+        let instrument = Arc::new(if sound_bank(path) {
+            sampler::sf2::read(path)?
+        } else {
+            // One ring per voice slot, which is what the engine sounds at once plus the spares its
+            // steals fade out through.
+            sampler::disk::load(&sampler::exs::read(path)?, VOICES * 2)?
+        });
         // Weakly, so unloading the instrument still stops its reader thread.
         self.streaming = instrument.stream.as_ref().map(Arc::downgrade);
         // Nothing of the old instrument may ring on through the new one.
         self.release_all();
-        // AUSampler plays nothing from here on, so it has no file to read back at the next rewire.
-        self.file = None;
         self.load_instrument(instrument)
     }
 
@@ -377,7 +361,7 @@ impl Graph {
     }
 
     /// Puts an instrument straight into the voice engine and gives its node the head of the chain,
-    /// taking out whichever instrument held it. The envelope is the one every EXS starts on until
+    /// taking out whichever instrument held it. The envelope is the one every file starts on until
     /// the webview sends the one kept for this instrument.
     pub(super) fn load_instrument(
         &mut self,
@@ -385,20 +369,31 @@ impl Graph {
     ) -> Result<(), String> {
         self.drop_plugin();
         self.bury();
-        self.exs = true;
-        self.envelope = Some(EXS_ENVELOPE);
+        self.file = true;
+        self.envelope = Some(FILE_ENVELOPE);
+        self.roles = [
+            sampler::Role::Release,
+            sampler::Role::KeyOff,
+            sampler::Role::Sympathetic,
+            sampler::Role::PedalNoise,
+        ]
+        .into_iter()
+        .filter(|&role| instrument.zones.iter().any(|zone| zone.role == role))
+        .collect();
         self.send(Command::Load(instrument));
-        self.send(Command::Envelope(EXS_ENVELOPE));
-        effects::rewire(self)
+        self.send(Command::Envelope(FILE_ENVELOPE));
+        effects::rewire(self);
+        Ok(())
     }
 
-    /// Takes the instrument out of the voice engine, which is what leaves it silent while AUSampler
-    /// or a plugin plays.
+    /// Takes the instrument out of the voice engine, which is what leaves it silent while a plugin
+    /// plays.
     fn unload_exs(&mut self) {
-        if !self.exs {
+        if !self.file {
             return;
         }
-        self.exs = false;
+        self.file = false;
+        self.roles.clear();
         self.send(Command::Unload);
         self.bury();
     }
@@ -414,60 +409,21 @@ impl Graph {
         let _ = self.commands.send(command);
     }
 
-    /// Reads the sampler's file into it again. Called with the node out of the path or the engine
-    /// stopped, which is the one state AUSampler takes a load in: a load made while the node is
-    /// initialised is answered with success and dropped, and the sampler goes on playing the sine
-    /// it plays when it holds nothing at all.
-    fn reload(&self) -> Result<(), String> {
-        if self.plugin.is_some() {
-            return Ok(());
-        }
-        let Some(path) = &self.file else { return Ok(()) };
-        let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
-        unsafe {
-            if sound_bank(path) {
-                self.sampler.loadSoundBankInstrumentAtURL_program_bankMSB_bankLSB_error(
-                    &url,
-                    0,
-                    MELODIC_BANK_MSB,
-                    0,
-                )
-            } else {
-                self.sampler.loadInstrumentAtURL_error(&url)
-            }
-        }
-        .map_err(reason)?;
-        if let Some(want) = self.envelope {
-            envelope::write(&self.sampler, want);
-        }
-        Ok(())
-    }
-
-    /// What the instrument answers a key with now, or nothing when a plugin is playing, which
-    /// shapes its notes behind its own window. The voice engine's is the last one it was given.
+    /// What the instrument answers a key with now: the last envelope the voice engine was given.
+    /// Nothing while a plugin is playing, which shapes its notes behind its own window.
     pub fn envelope(&self) -> Option<Envelope> {
-        if self.plugin.is_some() {
-            return None;
-        }
-        if self.exs {
-            return self.envelope;
-        }
-        envelope::read(&self.sampler)
+        self.envelope.filter(|_| self.plugin.is_none())
     }
 
-    /// Sets it, and remembers it so that the next reload does not read the file's own back over it.
-    /// The voice engine takes one at the next buffer; AUSampler takes about a second over it.
+    /// Sets it, and remembers it so the panel shows what is playing. The voice engine takes it at
+    /// the next buffer, and every note struck from there on follows it.
     pub fn set_envelope(&mut self, want: Envelope) {
         self.envelope = Some(want);
-        if self.exs {
-            self.send(Command::Envelope(want));
-        } else if self.plugin.is_none() {
-            envelope::write(&self.sampler, want);
-        }
+        self.send(Command::Envelope(want));
     }
 
-    /// Puts a hosted Audio Unit instrument in the sampler's place, taking out whichever one played
-    /// before it.
+    /// Puts a hosted Audio Unit instrument in the voice engine's place, taking out whichever one
+    /// played before it.
     pub fn set_plugin(&mut self, unit: Retained<AVAudioUnitMIDIInstrument>) {
         self.envelope = None;
         self.drop_plugin();
@@ -477,7 +433,7 @@ impl Graph {
         self.plugin = Some(unit);
         // Through the effects, not straight to the mixer: the chain belongs to the instrument
         // whichever kind it is.
-        let _ = effects::rewire(self);
+        effects::rewire(self);
     }
 
     fn drop_plugin(&mut self) {
@@ -504,20 +460,17 @@ impl Graph {
         self.chosen.as_ref().filter(|chosen| chosen.failure.is_none()).map(|chosen| chosen.name.as_str())
     }
 
-    /// Whichever unit the MIDI goes to: the plugin when one is hosted, AUSampler otherwise. The
-    /// voice engine takes commands instead, so every caller of this checks `exs` first.
-    fn target(&self) -> &AVAudioUnitMIDIInstrument {
-        self.plugin.as_deref().unwrap_or(&self.sampler)
+    /// Where the MIDI goes: the hosted plugin, the one instrument that takes notes rather than
+    /// commands. The voice engine has nothing here, so every caller checks `file` first.
+    fn target(&self) -> Option<&AVAudioUnitMIDIInstrument> {
+        self.plugin.as_deref()
     }
 
     /// The node the instrument's sound comes out of, which is what the effect chain starts from.
     fn head(&self) -> &AVAudioNode {
-        if let Some(plugin) = &self.plugin {
-            plugin
-        } else if self.exs {
-            &self.source
-        } else {
-            &self.sampler
+        match &self.plugin {
+            Some(plugin) => plugin,
+            None => &self.source,
         }
     }
 
@@ -586,7 +539,7 @@ impl Graph {
     fn apply_buffer(&self) -> Result<(), String> {
         let asked = device::set_buffer_frames(self.device, self.wanted_frames);
         let running = device::buffer_frames(self.device);
-        for unit in [self.output_unit(), unsafe { self.sampler.audioUnit() }] {
+        for unit in [self.output_unit(), unsafe { self.limiter.audioUnit() }] {
             raise_max_frames(unit, running);
         }
         asked
@@ -608,10 +561,10 @@ impl Graph {
     /// output takes it from the return rather than mapping a second time.
     pub fn note_on(&self, note: u8, velocity: u8) -> u8 {
         let velocity = curved(velocity, self.velocity_min, self.velocity_max, self.velocity_curve);
-        if self.exs {
+        if self.file {
             self.send(Command::NoteOn { note, velocity });
-        } else {
-            unsafe { self.target().startNote_withVelocity_onChannel(note, velocity, CHANNEL) };
+        } else if let Some(unit) = self.target() {
+            unsafe { unit.startNote_withVelocity_onChannel(note, velocity, CHANNEL) };
         }
         velocity
     }
@@ -627,25 +580,31 @@ impl Graph {
     }
 
     pub fn note_off(&self, note: u8) {
-        if self.exs {
+        if self.file {
             self.send(Command::NoteOff { note });
-        } else {
-            unsafe { self.target().stopNote_onChannel(note, CHANNEL) };
+        } else if let Some(unit) = self.target() {
+            unsafe { unit.stopNote_onChannel(note, CHANNEL) };
         }
     }
 
     /// The sustain pedal. A note let go while it is down keeps sounding until it comes up.
     pub fn sustain(&self, down: bool) {
-        if self.exs {
+        if self.file {
             self.send(Command::Sustain(down));
         } else {
             self.controller(SUSTAIN, if down { 127 } else { 0 });
         }
     }
 
+    /// Which of the noises around the tone the voice engine may sound. The tone is no toggle, and
+    /// a hosted plugin makes its noises behind its own window, so this reaches only the sampler.
+    pub fn set_roles(&self, roles: &[sampler::Role]) {
+        self.send(Command::Roles(roles.iter().fold(0, |mask, role| mask | role.bit())));
+    }
+
     /// Ends everything sounding, pedal included: what a stopped play and a lost MIDI port send.
     pub fn release_all(&self) {
-        if self.exs {
+        if self.file {
             self.send(Command::AllOff);
             return;
         }
@@ -655,7 +614,9 @@ impl Graph {
     }
 
     fn controller(&self, controller: u8, value: u8) {
-        unsafe { self.target().sendController_withValue_onChannel(controller, value, CHANNEL) };
+        if let Some(unit) = self.target() {
+            unsafe { unit.sendController_withValue_onChannel(controller, value, CHANNEL) };
+        }
     }
 
     /// The Preview's note list, in seconds at the score's own tempo.
@@ -753,14 +714,9 @@ pub(super) fn release_on_main<T: objc2::Message + 'static>(unit: Retained<T>) {
     unsafe { NSOperationQueue::mainQueue().addOperationWithBlock(&let_go) };
 }
 
-/// A SoundFont goes into the sampler by a call of its own, and every other kind whole.
+/// A SoundFont carries its samples inside it; every other kind the engine plays names files.
 fn sound_bank(path: &Path) -> bool {
     path.extension().is_some_and(|kind| kind.eq_ignore_ascii_case("sf2"))
-}
-
-/// An EXS is the app's own to play, samples and all.
-fn exs_file(path: &Path) -> bool {
-    path.extension().is_some_and(|kind| kind.eq_ignore_ascii_case("exs"))
 }
 
 /// The voice engine's node. The block it is built around holds the engine, reads the commands the
@@ -809,16 +765,6 @@ fn source_node(
             RcBlock::as_ptr(&render),
         )
     }
-}
-
-/// True when the file opens and holds something that is plainly no SoundFont. AUSampler traps
-/// inside itself on one of those and takes the app with it, so the header is read here first. A
-/// file that will not open at all is left to the sampler, whose own error says so better.
-fn not_a_sound_font(path: &Path) -> bool {
-    use std::io::Read;
-    let mut head = [0u8; 12];
-    std::fs::File::open(path).and_then(|mut file| file.read_exact(&mut head)).is_ok()
-        && (&head[..4] != b"RIFF" || &head[8..] != b"sfbk")
 }
 
 /// One click as a buffer of samples: a sine falling to silence, because a square end would pop.
@@ -1037,6 +983,7 @@ pub fn status() -> Status {
         Some(_) => Status { available: true, ..Status::default() },
     };
     status.instrument = graph.instrument().unwrap_or_default().into();
+    status.roles.clone_from(&graph.roles);
     graph.describe_output(&mut status);
     status
 }
@@ -1059,6 +1006,10 @@ pub fn envelope() -> Option<Envelope> {
 
 pub fn set_envelope(want: Envelope) {
     with(|graph| graph.set_envelope(want));
+}
+
+pub fn set_roles(roles: Vec<sampler::Role>) {
+    with(|graph| graph.set_roles(&roles));
 }
 
 /// One key of the MIDI keyboard, down or up. Answers the output velocity the note was played at, so
@@ -1128,21 +1079,17 @@ mod tests {
     const LOOK: u32 = 4410;
     /// How long one offline pass lasts, which is the buffer a Preview event falls into.
     const PASS_SECONDS: f64 = PASS as f64 / RATE;
+    /// Long enough for the file envelope's release to run right out, so what a test renders after
+    /// this is what a note that has finished dying away sounds like.
+    const RELEASE: u32 = RATE as u32 / 2;
 
-    /// A graph with the fixture in its sampler, rendering to nothing but the test's own buffer.
+    /// A graph with the fixture in its voice engine, rendering to nothing but the test's own
+    /// buffer.
     fn offline() -> Graph {
         let mut graph = Graph::build().unwrap();
         graph.load_file(Path::new(FIXTURE)).unwrap();
         graph.start_offline(PASS).unwrap();
         graph
-    }
-
-    /// The sine AUSampler plays when it holds no instrument at all. Every test here that hears the
-    /// fixture is worth only the difference between the two sounds, so it has a name.
-    fn the_samplers_own_sine() -> f32 {
-        let mut graph = Graph::build().unwrap();
-        graph.start_offline(PASS).unwrap();
-        note_peak(&mut graph)
     }
 
     /// Plays a note and lets it go again, answering how loud it was. Two instruments differ in
@@ -1165,7 +1112,9 @@ mod tests {
     /// render call that follows it, so the window read is the second one.
     fn at_volume(graph: &mut Graph, percent: u32) -> f32 {
         graph.set_keyboard_volume(percent);
-        graph.note_on(60, 100);
+        // Softly, so that even twice the volume stays under the limiter and the number read here
+        // is the fader's own doing and nothing else's.
+        graph.note_on(60, 40);
         graph.render_peak(LOOK).unwrap();
         let peak = graph.render_peak(LOOK).unwrap();
         graph.release_all();
@@ -1223,22 +1172,17 @@ mod tests {
         ))
     }
 
-    /// The head of the chain moves between the three instruments and back. All of them stay
+    /// The head of the chain moves between the voice engine and a plugin and back. Both stay
     /// attached, so what this hears is that only the one chosen is connected: two heads at once
     /// would sum, and a head left behind would go on sounding.
     #[test]
-    fn the_head_of_the_chain_moves_between_the_voice_engine_the_sampler_and_a_plugin() {
+    fn the_head_of_the_chain_moves_between_the_voice_engine_and_a_plugin() {
         let mut graph = Graph::build().unwrap();
         graph.start_offline(PASS).unwrap();
 
         graph.load_instrument(a_sine_that_starts_at_its_peak()).unwrap();
         let engine = note_peak(&mut graph);
         assert!(engine > 0.01, "the voice engine sounds: {engine}");
-
-        graph.load_file(Path::new(FIXTURE)).unwrap();
-        let sampler = note_peak(&mut graph);
-        assert!(sampler > 0.01, "the sampler sounds in its place: {sampler}");
-        assert!((sampler - engine).abs() > 0.01, "and it is the fixture, not the sine");
 
         graph.set_plugin(hosted_instrument());
         assert!(note_peak(&mut graph) > 0.01, "the plugin takes the head");
@@ -1272,6 +1216,34 @@ mod tests {
         graph.release_all();
     }
 
+    /// The limiter after the fader holds the finished sound inside full scale, so a hot instrument
+    /// at 200 per cent cannot arrive at the device clipped. Bypassing it says how far past full
+    /// scale the same chord would otherwise go.
+    #[test]
+    fn the_limiter_keeps_a_loud_two_hundred_inside_full_scale() {
+        let mut graph = offline();
+        graph.set_keyboard_volume(200);
+
+        let limited = loud_chord(&mut graph);
+        assert!(limited <= 1.0, "the loudest sample stays inside full scale: {limited}");
+
+        unsafe { graph.limiter.setBypass(true) };
+        let raw = loud_chord(&mut graph);
+        assert!(raw > 1.0, "and the limiter is what holds it: {raw} without one");
+    }
+
+    /// Two octaves struck at once and held, at their loudest: what the graph puts out over the
+    /// windows that follow.
+    fn loud_chord(graph: &mut Graph) -> f32 {
+        for note in 48..72 {
+            graph.note_on(note, 127);
+        }
+        let peak = (0..8).map(|_| graph.render_peak(LOOK).unwrap()).fold(0f32, f32::max);
+        graph.release_all();
+        graph.render_peak(LOOK).unwrap();
+        peak
+    }
+
     /// The keyboard fader sets the finished sound: the same note played twice differs by exactly
     /// what the fader was moved by, 100 is the sound untouched, 200 is twice as loud, and a fader
     /// at zero makes no sound at all.
@@ -1288,9 +1260,11 @@ mod tests {
             "and quieter by what the fader says: {quarter} against a quarter of {full}"
         );
 
+        // Twice, to the sample: one note is far under the limiter's threshold, so the limiter that
+        // sits after the fader leaves it alone.
         let double = at_volume(&mut graph, 200);
         assert!(
-            (double - full * 2.0).abs() < full / 50.0,
+            (double - full * 2.0).abs() < full / 100.0,
             "a fader above 100 amplifies: {double} against twice {full}"
         );
 
@@ -1440,10 +1414,9 @@ mod tests {
         release_all();
     }
 
-    /// The same measurement for the voice engine, on the two things AUSampler was measured wrong
-    /// on: the frames right after the onset, where its first sample stepped to about -40 dBFS at
-    /// once, and a re-strike of a key still ringing, where its level fell from 0.027 to 0.000.
-    /// Both are read off the real device with the attack at zero, which is the hardest case.
+    /// The two hardest cases for the voice engine, read off the real device with the attack at
+    /// zero: the frames right after the onset, where a step is the click the start fade exists to
+    /// hide, and a re-strike of a key still ringing, where the level must not fall away.
     /// Run it and read the numbers: `cargo test -- --ignored what_the_voice_engine_looks_like`.
     #[test]
     #[ignore = "opens a real audio device"]
@@ -1532,16 +1505,6 @@ mod tests {
         install(graph);
         set_output_device(None).unwrap();
         set_buffer_frames(DEFAULT_FRAMES).unwrap();
-        let piano = instruments("")
-            .into_iter()
-            .find(|one| one.name == "Concert Grand Piano")
-            .expect("Logic's Concert Grand Piano is on this Mac");
-
-        let started = Instant::now();
-        load_instrument(&piano.id, None).unwrap();
-        let load = started.elapsed();
-        assert!(status().available, "{}", status().reason);
-        println!("the Concert Grand loaded in {load:?}");
 
         type Tapped = (Vec<f32>, Vec<(i64, u32)>);
         let taken: Arc<Mutex<Tapped>> = Arc::new(Mutex::new(Default::default()));
@@ -1565,36 +1528,53 @@ mod tests {
         }
 
         // Ten keys at the hardest strike, held down with the pedal: every one of them streams for
-        // as long as the chord lasts, which is the most the reader is ever asked for.
+        // as long as the chord lasts, which is the most the reader is ever asked for. The Studio
+        // Grand layers three mic sets over each of them, so it asks for three times the voices.
         let chord = [48u8, 52, 55, 60, 64, 67, 72, 76, 79, 84];
-        pedal(127);
-        *taken.lock().unwrap() = Default::default();
-        let before = underruns();
-        for midi in chord {
-            note(midi, 127, true);
-        }
-        sleep(Duration::from_secs(3));
-        for midi in chord {
-            note(midi, 0, false);
-        }
-        pedal(0);
-        sleep(Duration::from_millis(500));
+        for name in ["Concert Grand Piano", "Studio Grand Piano"] {
+            let piano = instruments("")
+                .into_iter()
+                .find(|one| one.name == name)
+                .unwrap_or_else(|| panic!("Logic's {name} is on this Mac"));
+            let started = Instant::now();
+            load_instrument(&piano.id, None).unwrap();
+            let load = started.elapsed();
+            assert!(status().available, "{}", status().reason);
+            println!("\n{name} loaded in {load:?}, roles {:?}", status().roles);
 
-        let (samples, times) = taken.lock().unwrap().clone();
-        let gaps =
-            times.windows(2).filter(|pair| pair[0].0 + i64::from(pair[0].1) != pair[1].0).count();
-        let peak = samples.iter().fold(0f32, |top, one| top.max(one.abs()));
-        println!(
-            "{} notes for 3 s: peak {peak:.4}, {} underruns, {gaps} gaps in the render",
-            chord.len(),
-            underruns() - before
-        );
-        release_all();
+            *taken.lock().unwrap() = Default::default();
+            let (dry, stolen) = (underruns(), sampler::engine::steals());
+            pedal(127);
+            for midi in chord {
+                note(midi, 127, true);
+            }
+            sleep(Duration::from_secs(3));
+            for midi in chord {
+                note(midi, 0, false);
+            }
+            pedal(0);
+            sleep(Duration::from_millis(500));
 
-        assert!(load < Duration::from_secs(3), "loaded in {load:?}");
-        assert!(peak > 0.01, "the chord sounded");
-        assert_eq!(underruns() - before, 0, "no voice ran dry");
-        assert_eq!(gaps, 0, "and the render never skipped");
+            let (samples, times) = taken.lock().unwrap().clone();
+            let gaps = times
+                .windows(2)
+                .filter(|pair| pair[0].0 + i64::from(pair[0].1) != pair[1].0)
+                .count();
+            let peak = samples.iter().fold(0f32, |top, one| top.max(one.abs()));
+            println!(
+                "{} notes for 3 s: peak {peak:.4}, {} underruns, {gaps} gaps, {} voices stolen",
+                chord.len(),
+                underruns() - dry,
+                sampler::engine::steals() - stolen,
+            );
+            release_all();
+
+            assert!(load < Duration::from_secs(3), "loaded in {load:?}");
+            assert!(peak > 0.01, "the chord sounded");
+            assert_eq!(underruns() - dry, 0, "no voice ran dry");
+            assert_eq!(gaps, 0, "and the render never skipped");
+            assert_eq!(sampler::engine::steals() - stolen, 0, "and no voice was given up");
+        }
     }
 
     #[test]
@@ -1650,7 +1630,7 @@ mod tests {
     }
 
     /// The remap is between the keyboard and the instrument, so it is the note that changes, not
-    /// the finished sound: what this hears is the sampler answering a different velocity.
+    /// the finished sound: what this hears is the voice engine answering a different velocity.
     #[test]
     fn the_minimum_velocity_lifts_a_light_strike_and_leaves_a_hard_one() {
         let mut graph = offline();
@@ -1680,31 +1660,29 @@ mod tests {
         assert_eq!(graph.render_peak(LOOK).unwrap(), 0.0);
     }
 
-    /// The app loads its instrument into an engine that has been running since boot, and AUSampler
-    /// takes a load in that state without a word and goes on playing its own sine.
+    /// The app loads its instrument into an engine that has been running since boot, so a file
+    /// read in after the start is what the keyboard sounds.
     #[test]
     fn a_file_loaded_into_a_running_graph_is_what_sounds() {
         let mut graph = Graph::build().unwrap();
         graph.start_offline(PASS).unwrap();
-        graph.load_file(Path::new(FIXTURE)).unwrap();
+        assert_eq!(note_peak(&mut graph), 0.0, "a graph with nothing loaded is silent");
 
-        let peak = note_peak(&mut graph);
-        assert!(peak > 0.01, "the fixture sounds");
-        assert_ne!(peak, the_samplers_own_sine(), "and it is the fixture, not the empty sampler");
+        graph.load_file(Path::new(FIXTURE)).unwrap();
+        assert!(note_peak(&mut graph) > 0.01, "and the fixture sounds once it is in");
     }
 
-    /// Both settings put the sampler's node together again, and AUSampler drops its instrument
-    /// every time one is: the Audio dialog would otherwise turn the piano back into the sine.
+    /// Both settings take the graph apart and put it together again, and the instrument lives in
+    /// the voice engine rather than in the wiring, so neither can lose it.
     #[test]
     fn the_instrument_lives_through_a_restart_and_a_change_of_the_chain() {
-        let sine = the_samplers_own_sine();
         let mut graph = offline();
-        assert_ne!(note_peak(&mut graph), sine, "the fixture is what plays");
+        assert!(note_peak(&mut graph) > 0.01, "the fixture is what plays");
 
         // What a change of output device or buffer does underneath the graph.
         unsafe { graph.engine.stop() };
         graph.start().unwrap();
-        assert_ne!(note_peak(&mut graph), sine, "and after the engine has been round again");
+        assert!(note_peak(&mut graph) > 0.01, "and after the engine has been round again");
 
         effects::apply(&mut graph, vec![crate::audio::Slot {
             id: "aufx:rvb2:appl".into(),
@@ -1713,7 +1691,7 @@ mod tests {
             state: String::new(),
             missing: false,
         }]);
-        assert_ne!(note_peak(&mut graph), sine, "and after the chain changed under it");
+        assert!(note_peak(&mut graph) > 0.01, "and after the chain changed under it");
     }
 
     /// Every output device and buffer setting stops and starts the engine, and the app applies one
@@ -1736,7 +1714,7 @@ mod tests {
 
         graph.note_off(60);
         // The release runs out inside this pass; what comes after it is silence.
-        graph.render_peak(LOOK).unwrap();
+        graph.render_peak(RELEASE).unwrap();
         assert_eq!(graph.render_peak(LOOK).unwrap(), 0.0);
     }
 
@@ -1761,7 +1739,7 @@ mod tests {
         assert!(graph.render_peak(LOOK).unwrap() > 0.01, "the pedal is down");
 
         graph.sustain(false);
-        graph.render_peak(LOOK).unwrap();
+        graph.render_peak(RELEASE).unwrap();
         assert_eq!(graph.render_peak(LOOK).unwrap(), 0.0, "the pedal came up");
     }
 
@@ -1800,23 +1778,23 @@ mod tests {
     }
 
     /// What the user does in the Audio dialog: pick, listen, pick again. Every switch rewires the
-    /// graph and reads the sampler's file back in, so the instrument that ends up in the path has
-    /// to be the one just chosen, however many switches came before it.
+    /// graph, so the instrument that ends up in the path has to be the one just chosen, however
+    /// many switches came before it.
     #[test]
     fn switching_instrument_over_and_over_leaves_the_last_one_chosen_playing() {
-        let sine = the_samplers_own_sine();
         let mut graph = Graph::build().unwrap();
         graph.start_offline(PASS).unwrap();
 
         for _ in 0..3 {
             graph.load_file(Path::new(FIXTURE)).unwrap();
-            assert_ne!(note_peak(&mut graph), sine, "the file plays");
+            let file = note_peak(&mut graph);
+            assert!(file > 0.01, "the file plays");
 
             graph.set_plugin(hosted_instrument());
             assert!(note_peak(&mut graph) > 0.01, "the plugin plays in its place");
 
             graph.load_file(Path::new(FIXTURE)).unwrap();
-            assert_ne!(note_peak(&mut graph), sine, "and the file takes it back");
+            assert_eq!(note_peak(&mut graph), file, "and the file takes it back");
         }
     }
 
@@ -1892,9 +1870,9 @@ mod tests {
     fn a_longer_release_keeps_a_note_sounding_after_the_key_has_come_up() {
         let mut graph = offline();
 
-        // The fixture's SoundFont asks for a millisecond of release, and that is what is read back.
-        let brought = graph.envelope().expect("the sampler's own envelope");
-        assert!(brought.release < 0.01, "the file asked for {}", brought.release);
+        // A file instrument starts on the envelope every one of them starts on.
+        let brought = graph.envelope().expect("the instrument's envelope");
+        assert_eq!(brought.release, FILE_ENVELOPE.release);
         let short = release_ms(&mut graph);
 
         graph.set_envelope(Envelope { release: 0.75, ..brought });
@@ -1902,13 +1880,10 @@ mod tests {
         let long = release_ms(&mut graph);
         assert!(long > short + 100.0, "{long} ms against {short} ms");
 
-        // Changing an effect rewires the graph, which reads the instrument file in again. The
-        // envelope has to outlast that, or it would last only until the next change of anything.
-        effects::rewire(&graph).unwrap();
+        // Changing an effect rewires the graph. The envelope has to outlast that, or it would
+        // last only until the next change of anything.
+        effects::rewire(&graph);
         let after = release_ms(&mut graph);
         assert!(after > short + 100.0, "the rewire left {after} ms");
-
-        // Disposing a sampler that has taken a whole state aborts inside CoreAudio.
-        std::mem::forget(graph);
     }
 }

@@ -20,6 +20,20 @@ export function clampSection(measures: Measure[], section: Section): Section {
   };
 }
 
+/**
+ * The Section a piece reopens in. The file may have changed since it was saved, so a range naming
+ * a bar the piece no longer has is dropped rather than seeking the play somewhere invalid.
+ */
+export function savedSection(
+  measures: Measure[],
+  from: number | null,
+  to: number | null,
+): Section | null {
+  if (from === null || to === null) return null;
+  if (from < 0 || from > to || to >= measures.length) return null;
+  return { from, to };
+}
+
 /** How the loop control names the Section: printed bar numbers, a pickup bar being 0. */
 export function sectionLabel(measures: Measure[], section: Section | null): string {
   if (!section) return 'Loop';

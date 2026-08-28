@@ -3,7 +3,12 @@
 // given, so 0 and false are values like any other and never fall through.
 
 import { PIECE_SETTING_COLUMNS, type PieceSettingRow } from '@/library/queries';
-import { DEFAULT_PLAY_SETTINGS, type HandsSetting, type PlaySettings } from '@/play/settings';
+import {
+  DEFAULT_PLAY_SETTINGS,
+  type HandsSetting,
+  type PlayMode,
+  type PlaySettings,
+} from '@/play/settings';
 
 /** The settings a piece holds of its own. Everything else about a play is global. */
 export type PieceSettings = Pick<PlaySettings, keyof typeof PIECE_SETTING_COLUMNS>;
@@ -21,6 +26,12 @@ export function resolvePlaySettings(piece: PieceSettingRow): PieceSettings {
     metronome: piece.metronome === null ? null : piece.metronome !== 0,
     countInBars: piece.count_in_bars,
     hands: handsOf(piece.hands),
+    mode: modeOf(piece.mode),
+    loop: piece.loop === null ? null : piece.loop !== 0,
+    // A Section is two indices or neither, and null is the built-in default, so both fall through
+    // together. The bars they name may be gone from the file; the play screen is where that shows.
+    sectionFrom: piece.section_from,
+    sectionTo: piece.section_to,
   };
   const settings: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(own) as [keyof PieceSettings, unknown][]) {
@@ -48,4 +59,8 @@ export function validNumber(
 
 function handsOf(text: string | null): HandsSetting | null {
   return text === 'both' || text === 'left' || text === 'right' ? text : null;
+}
+
+function modeOf(text: string | null): PlayMode | null {
+  return text === 'flow' || text === 'wait' ? text : null;
 }

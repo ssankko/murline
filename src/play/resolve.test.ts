@@ -16,12 +16,26 @@ describe('resolvePlaySettings', () => {
       metronome: false,
       countInBars: 0,
       hands: 'both',
+      mode: 'flow',
+      loop: false,
+      sectionFrom: null,
+      sectionTo: null,
     });
   });
 
   it('takes the piece over the built-in default', () => {
     const settings = resolvePlaySettings(
-      row({ tempo_mode: 'bpm', tempo_value: 96, hands: 'right', metronome: 1, count_in_bars: 1 }),
+      row({
+        tempo_mode: 'bpm',
+        tempo_value: 96,
+        hands: 'right',
+        metronome: 1,
+        count_in_bars: 1,
+        mode: 'wait',
+        loop: 1,
+        section_from: 11,
+        section_to: 15,
+      }),
     );
     expect(settings).toEqual({
       tempoMode: 'bpm',
@@ -29,19 +43,32 @@ describe('resolvePlaySettings', () => {
       metronome: true,
       countInBars: 1,
       hands: 'right',
+      mode: 'wait',
+      loop: true,
+      sectionFrom: 11,
+      sectionTo: 15,
     });
   });
 
   it('keeps a piece value of 0 or false instead of falling through', () => {
-    const settings = resolvePlaySettings(row({ count_in_bars: 0, metronome: 0 }));
+    const settings = resolvePlaySettings(row({ count_in_bars: 0, metronome: 0, loop: 0 }));
     expect(settings.countInBars).toBe(0);
     expect(settings.metronome).toBe(false);
+    // Loop is the one where it bites: a stored 0 is Loop turned off, not Loop never set.
+    expect(settings.loop).toBe(false);
+  });
+
+  it('keeps a Section starting at the pickup bar, which is index 0', () => {
+    const settings = resolvePlaySettings(row({ section_from: 0, section_to: 0 }));
+    expect(settings.sectionFrom).toBe(0);
+    expect(settings.sectionTo).toBe(0);
   });
 
   it('ignores a column holding something it does not know', () => {
-    const settings = resolvePlaySettings(row({ hands: 'feet', tempo_mode: 'swing' }));
+    const settings = resolvePlaySettings(row({ hands: 'feet', tempo_mode: 'swing', mode: 'jog' }));
     expect(settings.hands).toBe('both');
     expect(settings.tempoMode).toBe('percent');
+    expect(settings.mode).toBe('flow');
   });
 });
 
@@ -57,6 +84,10 @@ describe('no piece setting has a global default', () => {
       'metronome',
       'countInBars',
       'hands',
+      'mode',
+      'loop',
+      'sectionFrom',
+      'sectionTo',
     ]);
     expect(SETTING_DEFAULTS.keyboard_preset).toBe('piece');
   });

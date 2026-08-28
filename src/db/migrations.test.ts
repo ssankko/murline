@@ -6,15 +6,19 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { PIECE_SETTING_COLUMNS } from '@/library/queries';
 
 const dir = fileURLToPath(new URL('../../src-tauri/migrations', import.meta.url));
 const files = readdirSync(dir).sort();
 
-/** A database with every migration applied, `seed` running after the one before the last. */
-function migrate(seed?: (db: DatabaseSync) => void): DatabaseSync {
+/**
+ * A database with every migration applied, `seed` running once migration `version` is in and the
+ * ones after it are not, which is the shape the migration under test meets on a real machine.
+ */
+function migrate(version: number, seed?: (db: DatabaseSync) => void): DatabaseSync {
   const db = new DatabaseSync(':memory:');
   for (const [at, file] of files.entries()) {
-    if (at === files.length - 1) seed?.(db);
+    if (at === version) seed?.(db);
     db.exec(readFileSync(`${dir}/${file}`, 'utf8'));
   }
   return db;
@@ -40,8 +44,8 @@ function columns(db: DatabaseSync, table: string): string[] {
   );
 }
 
-/** The old shape: a piece holding settings of its own, under global defaults it fell back to. */
-function oldDatabase(db: DatabaseSync): void {
+/** Before 0002: a piece holding settings of its own, under global defaults it fell back to. */
+function inheritingDatabase(db: DatabaseSync): void {
   db.prepare(
     `INSERT INTO piece (path, mtime, size, imported_at, favorite, tempo_mode, tempo_value,
                         metronome, count_in_bars, hands, keyboard_preset, keyboard_lo, keyboard_hi)
@@ -54,10 +58,20 @@ function oldDatabase(db: DatabaseSync): void {
   write(db, 'library_folder', '/Users/me/Scores');
 }
 
+/** Before 0003: a piece practised under the settings it keeps, with nowhere to hold the rest. */
+function practisedDatabase(db: DatabaseSync): void {
+  db.prepare(
+    `INSERT INTO piece (path, mtime, size, imported_at, favorite, tempo_mode, tempo_value,
+                        metronome, count_in_bars, hands)
+     VALUES ('Bach.musicxml', 1, 2, 3, 1, 'bpm', 96, 1, 2, 'left')`,
+  ).run();
+  write(db, 'library_folder', '/Users/me/Scores');
+}
+
 describe('0002, no inheritance', () => {
   it('carries a chosen keyboard preset into the global keyboard size row', () => {
-    const db = migrate((old) => {
-      oldDatabase(old);
+    const db = migrate(1, (old) => {
+      inheritingDatabase(old);
       write(old, 'default_keyboard_preset', 88);
     });
     expect(setting(db, 'keyboard_preset')).toBe(88);
@@ -65,8 +79,8 @@ describe('0002, no inheritance', () => {
   });
 
   it('carries a custom range with its bounds', () => {
-    const db = migrate((old) => {
-      oldDatabase(old);
+    const db = migrate(1, (old) => {
+      inheritingDatabase(old);
       write(old, 'default_keyboard_preset', 'custom');
       write(old, 'default_keyboard_lo', 36);
       write(old, 'default_keyboard_hi', 71);
@@ -77,14 +91,14 @@ describe('0002, no inheritance', () => {
   });
 
   it('leaves no keyboard size behind for a user who never chose one', () => {
-    const db = migrate(oldDatabase);
+    const db = migrate(1, inheritingDatabase);
     expect(setting(db, 'keyboard_preset')).toBeUndefined();
     expect(setting(db, 'keyboard_lo')).toBeUndefined();
   });
 
   it('drops the playing defaults and keeps every other setting', () => {
-    const db = migrate((old) => {
-      oldDatabase(old);
+    const db = migrate(1, (old) => {
+      inheritingDatabase(old);
       write(old, 'default_keyboard_preset', 88);
     });
     const keys = (db.prepare('SELECT key FROM setting').all() as { key: string }[]).map(
@@ -95,7 +109,7 @@ describe('0002, no inheritance', () => {
   });
 
   it('drops the three keyboard columns and keeps the piece and its other settings', () => {
-    const db = migrate(oldDatabase);
+    const db = migrate(1, inheritingDatabase);
     expect(columns(db, 'piece')).not.toContain('keyboard_preset');
     expect(columns(db, 'piece')).not.toContain('keyboard_lo');
     expect(columns(db, 'piece')).not.toContain('keyboard_hi');
@@ -111,10 +125,57 @@ describe('0002, no inheritance', () => {
   });
 
   it('runs on a database that was never opened before', () => {
-    const db = migrate();
+    const db = migrate(1);
     expect(db.prepare('SELECT * FROM piece').all()).toEqual([]);
     expect(columns(db, 'piece')).not.toContain('keyboard_preset');
   });
+});
+
+describe('0003, the practice state persists', () => {
+  it('gives the piece somewhere to hold its mode, Section and Loop', () => {
+    const db = migrate(2, practisedDatabase);
+    expect(columns(db, 'piece')).toEqual(
+      expect.arrayContaining(['mode', 'loop', 'section_from', 'section_to']),
+    );
+  });
+
+  it('leaves a piece practised before it with no practice state and every setting it had', () => {
+    const db = migrate(2, practisedDatabase);
+    // NULL in all four is what opens a piece in flow, with no Section and Loop off.
+    expect(db.prepare('SELECT * FROM piece').get()).toMatchObject({
+      path: 'Bach.musicxml',
+      favorite: 1,
+      tempo_mode: 'bpm',
+      tempo_value: 96,
+      metronome: 1,
+      count_in_bars: 2,
+      hands: 'left',
+      mode: null,
+      loop: null,
+      section_from: null,
+      section_to: null,
+    });
+    expect(setting(db, 'library_folder')).toBe('/Users/me/Scores');
+  });
+
+  it('takes a database still in the shape before 0002 all the way', () => {
+    const db = migrate(1, inheritingDatabase);
+    expect(columns(db, 'piece')).toEqual(expect.arrayContaining(['mode', 'section_from']));
+    expect(db.prepare('SELECT * FROM piece').get()).toMatchObject({ hands: 'left', mode: null });
+  });
+
+  it('runs on a database that was never opened before', () => {
+    const db = migrate(2);
+    expect(db.prepare('SELECT * FROM piece').all()).toEqual([]);
+    expect(columns(db, 'piece')).toContain('section_to');
+  });
+});
+
+it('gives every piece setting a column to be written to', () => {
+  // A setting named in the map but never added to the SQL takes every UPDATE down with it, and the
+  // screen would look right until the piece was reopened.
+  const piece = columns(migrate(0), 'piece');
+  expect(piece).toEqual(expect.arrayContaining(Object.values(PIECE_SETTING_COLUMNS)));
 });
 
 it('applies every migration file the Rust side knows about', () => {

@@ -29,6 +29,12 @@ fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0002_no_inheritance.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 3,
+            description: "practice state",
+            sql: include_str!("../migrations/0003_practice_state.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

@@ -246,7 +246,7 @@ fn ck(status: i32, what: &dyn std::fmt::Display) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::sampler::Fill;
+    use crate::audio::sampler::{Fill, Role};
     use std::path::PathBuf;
     use std::time::Instant;
 
@@ -290,6 +290,7 @@ mod tests {
         std::fs::write(&path, wav(&pcm, RATE)).unwrap();
 
         let zone = Zone {
+            role: Role::Sustain,
             key_lo: 0,
             key_hi: 127,
             vel_lo: 0,

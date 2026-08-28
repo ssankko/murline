@@ -10,7 +10,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::Zone;
+use super::{Role, Zone};
 
 /// One sample file the EXS names, and how many frames of it the zones may use.
 #[derive(Clone, Debug, PartialEq)]
@@ -147,6 +147,7 @@ fn read_zone(c: &Rdr) -> (Zone, u32, u32) {
     let velocity_range_on = opts & (1 << 3) != 0;
     let loop_on = c.u8(117) & 1 != 0;
     let zone = Zone {
+        role: Role::Sustain,
         key_lo: c.u8(90),
         key_hi: c.u8(91),
         vel_lo: if velocity_range_on { c.u8(93) } else { 0 },
@@ -304,6 +305,7 @@ mod tests {
         assert_eq!(
             exs.zones,
             vec![Zone {
+                role: Role::Sustain,
                 key_lo: 48,
                 key_hi: 72,
                 vel_lo: 100,

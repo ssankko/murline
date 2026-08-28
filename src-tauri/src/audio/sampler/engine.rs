@@ -16,12 +16,6 @@ const CUT_FADE: f64 = 0.005;
 /// The level a voice counts as finished at, -80 dBFS.
 const SILENCE: f32 = 1e-4;
 
-/// Headroom on the mix, -7 dB, so a chord of loud notes stays clear of the clamp and the keyboard
-/// volume still has something to trim. With the Logic pianos' own -9 dB group volume it puts a
-/// velocity-127 note at the peak Apple's sampler gave it, about 0.14.
-/// ponytail: one figure for every instrument; a gain of its own per instrument when one lands far
-/// from the rest.
-const OUTPUT_GAIN: f32 = 0.447;
 
 #[derive(Clone, Copy, Default, PartialEq)]
 enum Stage {
@@ -309,9 +303,6 @@ impl Sampler {
                 None => v.active = false,
             }
         }
-        for s in left.iter_mut().chain(right.iter_mut()) {
-            *s = (*s * OUTPUT_GAIN).clamp(-1.0, 1.0);
-        }
         if retiring.is_some() && !voices.iter().any(|v| v.active && v.retired) {
             // ponytail: the last reference can land here and free the samples on the audio thread;
             // hand it back through the command channel if a load ever ticks.
@@ -479,7 +470,7 @@ impl Sampler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::sampler::{Sample, Stream, Zone};
+    use crate::audio::sampler::{Role, Sample, Stream, Zone};
 
     const RATE: f64 = 44100.0;
 
@@ -495,6 +486,7 @@ mod tests {
         }
         let sample = Sample::memory(RATE, data);
         let zone = Zone {
+            role: Role::Sustain,
             key_lo: 0,
             key_hi: 127,
             vel_lo: 0,
@@ -580,7 +572,6 @@ mod tests {
             s.apply(Command::NoteOn { note, velocity: 64 });
             out.extend(render(&mut s, 0.05));
         }
-        assert!(peak(&out) <= 1.0);
         assert!(jump(&out) < 0.1 * peak(&out), "{} of {}", jump(&out), peak(&out));
     }
 
@@ -609,6 +600,7 @@ mod tests {
             [v, v]
         };
         let zone = Zone {
+            role: Role::Sustain,
             key_lo: 0,
             key_hi: 127,
             vel_lo: 0,

@@ -33,11 +33,29 @@ impl Sample {
     }
 }
 
+/// What a zone is for: the tone a key-down sounds, or one of the noises a piano makes around it.
+/// Every role but `Sustain` is a toggle the user may switch off.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Role {
+    /// The tone itself, on key-down.
+    Sustain,
+    /// The damper falling back on the string, on key-up.
+    Release,
+    /// The key itself coming back up, on key-up.
+    KeyOff,
+    /// The other strings ringing along, on key-down while the pedal is down.
+    Sympathetic,
+    /// The pedal going down and coming up.
+    PedalNoise,
+}
+
 /// One playable region: the keys and velocities it answers, the key it was recorded at, and where
 /// in its sample it starts and ends. `start` and `end` are frame indexes; `loop_` is a frame
 /// range played round after the first pass, or nothing for a one-shot.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Zone {
+    pub role: Role,
     pub key_lo: u8,
     pub key_hi: u8,
     pub vel_lo: u8,

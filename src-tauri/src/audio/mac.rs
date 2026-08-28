@@ -1206,6 +1206,7 @@ mod tests {
             .collect();
         Arc::new(sampler::Instrument::memory(
             vec![sampler::Zone {
+                role: sampler::Role::Sustain,
                 key_lo: 0,
                 key_hi: 127,
                 vel_lo: 0,

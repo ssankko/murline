@@ -316,21 +316,18 @@ function searchRows(query: string): typeof SEARCH_ROWS {
  * it.
  *
  * A knob the running play reads is handed to `onGlobalChange` as it is written, so a change
- * mid-practice applies at once. `live` is the way back: a setting the screen behind the panel has
- * just changed itself, which is how a pinch on the lane or the sheet moves its own row.
+ * mid-practice applies at once.
  */
 export function SettingsPanel({
   open,
   onClose,
   onGlobalChange,
-  live,
   jumpTo,
   onOpenMixer,
 }: {
   open: boolean;
   onClose: () => void;
   onGlobalChange?: (...change: SettingChange) => void;
-  live?: SettingChange | null;
   /** The way to the two faders, which are the mixer's and not the panel's. A search result naming
    * one closes the panel and opens the mixer over the button it belongs to. */
   onOpenMixer?: () => void;
@@ -395,13 +392,6 @@ export function SettingsPanel({
   useEffect(() => {
     list.current?.querySelector('[data-selected]')?.scrollIntoView({ block: 'nearest' });
   }, [sel, query]);
-
-  // A pinch writes the setting itself, so the panel only has to follow the value. The two halves
-  // are the dependencies, so a pinch step moves the row and a render on its own does not.
-  const [liveKey, liveValue] = live ?? [];
-  useEffect(() => {
-    if (liveKey) setValues((held) => held && { ...held, [liveKey]: liveValue });
-  }, [liveKey, liveValue]);
 
   function write<K extends keyof Settings>(key: K, value: Settings[K]): void {
     setValues((held) => held && { ...held, [key]: value });

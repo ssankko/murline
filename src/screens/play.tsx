@@ -122,8 +122,6 @@ export function PlayScreen({
 
   /** What a pinch on the sheet is choosing while it lasts, which the panel over the paper shows. */
   const [pinch, setPinch] = useState<Pinch | null>(null);
-  /** The setting the pinch under way is moving, so the settings panel's row moves with it. */
-  const [live, setLive] = useState<SettingChange | null>(null);
   const [split, setSplit] = useState(DEFAULT_SPLIT);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsJump, setSettingsJump] = useState<string | null>(null);
@@ -191,10 +189,7 @@ export function PlayScreen({
         sheet.onLook = ({ spacing }) => {
           setSetting('sheet_spacing', spacing).catch(console.error);
         };
-        sheet.onPinch = (moving) => {
-          setPinch(moving);
-          if (moving) setLive(['sheet_spacing', moving.spacing]);
-        };
+        sheet.onPinch = (moving) => setPinch(moving);
         sheet.onSection = (picked) => {
           if (engine.kind !== 'practice') return;
           changeSection(picked && clampSection(sheet.score.measures, picked));
@@ -208,7 +203,6 @@ export function PlayScreen({
         laneRef.current.onLook = ({ lookaheadBeats }) => {
           if (lookaheadBeats !== undefined) changeLook('lane_lookahead', lookaheadBeats);
         };
-        laneRef.current.onPinch = (lookaheadBeats) => setLive(['lane_lookahead', lookaheadBeats]);
         setSplit(clamp(globals.sheet_split, SPLIT_MIN, SPLIT_MAX));
         setOneStaff(sheet.score.staffCount < 2);
         show(opening, kept);
@@ -648,7 +642,6 @@ export function PlayScreen({
           }}
           onGlobalChange={applyGlobal}
           onOpenMixer={() => setMixerOpen(true)}
-          live={live}
         />
       </div>
     </TooltipProvider>

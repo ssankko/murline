@@ -1,4 +1,4 @@
-import { SettingsPanel, type SettingChange } from '@/screens/settings';
+import { SettingsPanel } from '@/screens/settings';
 import { userEvent } from 'vitest/browser';
 import { createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -203,34 +203,6 @@ test('keyboard size is one row on Look, and the custom range appears only when i
   await vi.waitFor(() =>
     expect(document.querySelector('select[aria-label="Lowest key"]')).toBe(null),
   );
-});
-
-test('a pinch behind the panel moves the row it belongs to', async () => {
-  host = document.createElement('div');
-  document.body.append(host);
-  root = createRoot(host);
-  const show = (live?: SettingChange) =>
-    root!.render(createElement(SettingsPanel, { open: true, onClose: () => {}, live }));
-  show();
-  await vi.waitFor(() => expect(document.querySelector('#setting-row-instrument_id')).toBeTruthy());
-  await openTab('Look');
-
-  const slider = (label: string) =>
-    document.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
-  const spacing = () => slider('Sheet spacing in percent').value;
-  const lookahead = () => slider('Lane lookahead in beats').value;
-  expect(spacing()).not.toBe('200');
-
-  // Every step of a pinch on the sheet arrives as one of these, so the slider drags with it.
-  show(['sheet_spacing', 140]);
-  await vi.waitFor(() => expect(spacing()).toBe('140'));
-  show(['sheet_spacing', 200]);
-  await vi.waitFor(() => expect(spacing()).toBe('200'));
-
-  // A pinch on the lane moves the other slider, and leaves the sheet's where the fingers left it.
-  show(['lane_lookahead', 4.3]);
-  await vi.waitFor(() => expect(lookahead()).toBe('4.3'));
-  expect(spacing()).toBe('200');
 });
 
 test('the search names no row the panel does not render', async () => {

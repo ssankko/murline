@@ -391,11 +391,9 @@ test('the Section band travels from the bars it had to the bars it takes', () =>
   lane.dispose();
 });
 
-test('a pinch reports the lookahead at every step and writes it once the fingers stop', async () => {
+test('a pinch writes the lookahead it settled on once the fingers stop', async () => {
   const { lane, canvas } = mount();
-  const steps: number[] = [];
   const written: number[] = [];
-  lane.onPinch = (beats) => steps.push(beats);
   lane.onLook = ({ lookaheadBeats }) => written.push(lookaheadBeats!);
 
   // A trackpad pinch reaches the page as a wheel with ctrl held, one event per step.
@@ -405,11 +403,9 @@ test('a pinch reports the lookahead at every step and writes it once the fingers
     );
   }
 
-  // Every step is reported, so the Look tab's slider moves under the fingers.
-  expect(steps.length).toBe(3);
-  expect(steps[2]).toBeLessThan(DEFAULT_LANE_LOOK.lookaheadBeats);
-  // The write waits for the pinch to stand still, and then names what the last step chose.
+  // The write waits for the pinch to stand still, and then names where the three steps left it.
   expect(written).toEqual([]);
-  await vi.waitFor(() => expect(written).toEqual([steps[2]]));
+  await vi.waitFor(() => expect(written.length).toBe(1));
+  expect(written[0]).toBeLessThan(DEFAULT_LANE_LOOK.lookaheadBeats);
   lane.dispose();
 });

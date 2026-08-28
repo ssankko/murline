@@ -295,8 +295,6 @@ export class Lane {
   onSeek: ((target: SeekTarget) => void) | null = null;
   /** Where the lane says a pinch has changed its look, once the pinch has stood still. */
   onLook: ((look: Partial<LaneLook>) => void) | null = null;
-  /** Every step of a live pinch: the lookahead the fingers are choosing, before it is written. */
-  onPinch: ((lookaheadBeats: number) => void) | null = null;
 
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
@@ -731,7 +729,6 @@ export class Lane {
     this.look.lookaheadBeats = zoomLookahead(this.look.lookaheadBeats, deltaY);
     // Tenths of a beat, because the Look tab shows this number and takes it back.
     const shown = Math.round(this.look.lookaheadBeats * 10) / 10;
-    this.onPinch?.(shown);
     clearTimeout(this.lookTimer);
     this.lookTimer = window.setTimeout(() => {
       this.onLook?.({ lookaheadBeats: shown });

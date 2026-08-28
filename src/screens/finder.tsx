@@ -8,6 +8,7 @@ import { getSetting } from '@/db/db';
 import { importFiles } from '@/library/import';
 import { reasonOf } from '@/library/notice';
 import { Collapse } from '@/look/collapse';
+import { Loading } from '@/look/loading';
 import { invoke } from '@tauri-apps/api/core';
 import { Download, Search } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -251,6 +252,7 @@ export function Finder({
                       >
                         <Download />
                         {dl.state === 'downloading' ? 'Downloading…' : 'Download'}
+                        <Loading on={dl.state === 'downloading'} label="Downloading the score" />
                       </Button>
                     )
                   )}

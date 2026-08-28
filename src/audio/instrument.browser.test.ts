@@ -18,8 +18,15 @@ const BROKEN = {
   loaded: false,
   reason: '',
 };
+const HOSTED = {
+  id: 'plugin:Vintage Electric Piano',
+  name: 'Vintage Electric Piano',
+  kind: 'plugin',
+  loaded: true,
+  reason: '',
+};
 
-let listed = [CONCERT, BROKEN];
+let listed = [HOSTED, CONCERT, BROKEN];
 let refusal: string | null = null;
 let loads: unknown[] = [];
 /** Set by a test that wants the load to stand still until it releases it. */
@@ -61,7 +68,7 @@ vi.mock('@/db/db', () => ({
 let close: (() => void) | null = null;
 
 beforeEach(() => {
-  listed = [CONCERT, BROKEN];
+  listed = [HOSTED, CONCERT, BROKEN];
   refusal = null;
   held = null;
   loads = [];
@@ -73,8 +80,8 @@ afterEach(() => {
   close = null;
 });
 
-/** Mounts the section and hands back its picker, the text the user can read, and its host. */
-async function open(): Promise<[HTMLSelectElement, () => string, HTMLElement]> {
+/** Mounts the section and hands back the text the user can read and the section's host. */
+async function open(): Promise<[() => string, HTMLElement]> {
   const host = document.createElement('div');
   document.body.append(host);
   const root = createRoot(host);
@@ -83,59 +90,90 @@ async function open(): Promise<[HTMLSelectElement, () => string, HTMLElement]> {
     root.unmount();
     host.remove();
   };
-  const text = (): string => host.textContent ?? '';
-  await vi.waitFor(() => expect(text()).toContain('Concert Grand Piano'));
-  return [host.querySelector('select')!, text, host];
+  // The rows are a portal beside the section, so what the user can read is the whole page.
+  const text = (): string => document.body.textContent ?? '';
+  await vi.waitFor(() => expect(trigger().textContent).toContain('None'));
+  return [text, host];
 }
 
-/** React listens for change on the element itself, so the value moves and the event follows it. */
-function pick(picker: HTMLSelectElement, id: string): void {
-  picker.value = id;
-  picker.dispatchEvent(new Event('change', { bubbles: true }));
+/** The picker itself, which names the instrument in force and beats while one is loading. */
+function trigger(): HTMLElement {
+  return document.querySelector<HTMLElement>('[aria-label="Instrument"]')!;
 }
 
-test('the picker lists what the engine found, and the folder it read', async () => {
-  const [picker, text] = await open();
-  expect([...picker.options].map((option) => option.textContent)).toEqual([
-    'None',
+function openPicker(): void {
+  trigger().dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }));
+}
+
+/** The rows the open picker offers, each one instrument, in the order it lists them. */
+function rows(): HTMLElement[] {
+  return [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
+}
+
+/** Opens the picker and clicks the instrument by the name it reads. */
+async function pick(name: string): Promise<void> {
+  openPicker();
+  await vi.waitFor(() => expect(rows().length).toBeGreaterThan(0));
+  const row = rows().find((each) => each.textContent?.trim() === name);
+  if (!row) throw new Error(`the picker offers no "${name}"`);
+  for (const kind of ['pointerdown', 'pointerup', 'click']) {
+    row.dispatchEvent(new PointerEvent(kind, { bubbles: true, button: 0 }));
+  }
+}
+
+test('the picker groups what the engine found, and names the folder it read', async () => {
+  const [text] = await open();
+  openPicker();
+  await vi.waitFor(() => expect(rows().length).toBe(3));
+  expect(rows().map((row) => row.textContent)).toEqual([
+    'Vintage Electric Piano',
     'Concert Grand Piano',
     'broken.sf2',
   ]);
+  // A hosted Audio Unit and a file on disk are two kinds of instrument, headed apart.
+  expect(text()).toContain('Audio Unit instruments');
+  expect(text()).toContain('Files');
   expect(text()).toContain('/instruments');
 });
 
-test('choosing writes the setting and loads at once', async () => {
-  const [picker] = await open();
-  pick(picker, CONCERT.id);
+test('choosing writes the setting, loads at once, and marks the row it is on', async () => {
+  await open();
+  await pick('Concert Grand Piano');
   await vi.waitFor(() => expect(loads).toEqual([{ id: CONCERT.id, state: null }]));
   expect(written).toContainEqual(['instrument_id', CONCERT.id]);
+  await vi.waitFor(() => expect(trigger().textContent).toContain('Concert Grand Piano'));
+
+  openPicker();
+  await vi.waitFor(() => expect(rows().length).toBe(3));
+  const marked = rows().filter((row) => row.getAttribute('aria-checked') === 'true');
+  expect(marked.map((row) => row.textContent)).toEqual(['Concert Grand Piano']);
 });
 
 test('a load that fails says why, where the instrument was picked', async () => {
   refusal = 'That file is not a SoundFont';
-  const [picker, text] = await open();
-  pick(picker, BROKEN.id);
+  const [text] = await open();
+  await pick('broken.sf2');
   await vi.waitFor(() => expect(text()).toContain('That file is not a SoundFont'));
 });
 
-test('the row says it is loading until the engine has the instrument', async () => {
+test('the picker itself says it is loading until the engine has the instrument', async () => {
   held = hold();
-  const [picker, , host] = await open();
-  pick(picker, CONCERT.id);
-  await vi.waitFor(() => expect(host.querySelector('[role="status"]')).not.toBeNull());
+  await open();
+  await pick('Concert Grand Piano');
+  await vi.waitFor(() => expect(trigger().querySelector('[role="status"]')).not.toBeNull());
   held.release();
-  await vi.waitFor(() => expect(host.querySelector('[role="status"]')).toBeNull());
+  await vi.waitFor(() => expect(trigger().querySelector('[role="status"]')).toBeNull());
 });
 
 test('a load that fails stops saying it is loading', async () => {
   held = hold();
   refusal = 'That file is not a SoundFont';
-  const [picker, text, host] = await open();
-  pick(picker, BROKEN.id);
-  await vi.waitFor(() => expect(host.querySelector('[role="status"]')).not.toBeNull());
+  const [text] = await open();
+  await pick('broken.sf2');
+  await vi.waitFor(() => expect(trigger().querySelector('[role="status"]')).not.toBeNull());
   held.release();
   await vi.waitFor(() => expect(text()).toContain('That file is not a SoundFont'));
-  expect(host.querySelector('[role="status"]')).toBeNull();
+  await vi.waitFor(() => expect(trigger().querySelector('[role="status"]')).toBeNull());
 });
 
 /** Boot reads these three and nothing else of the settings. */

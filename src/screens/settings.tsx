@@ -12,6 +12,7 @@ import { LOOKAHEAD_MAX, LOOKAHEAD_MIN } from '@/lane/lane';
 import { cancelPdmx, downloadPdmx, progressLabel, usePdmxDownload } from '@/library/pdmx';
 import { clamp, rowId } from '@/lib/utils';
 import { noteName } from '@/look/color';
+import { Loading } from '@/look/loading';
 import { setTheme, type Theme } from '@/look/use-dark';
 import { useMidiStatus } from '@/midi/use-midi-status';
 import { validNumber } from '@/play/resolve';
@@ -811,8 +812,9 @@ export function SettingsPanel({
                     <Row id="pdmx_scores" marked={marked === 'pdmx_scores'} label="PDMX scores">
                       <span className="flex flex-none flex-col items-end gap-0.5">
                         <span className="flex items-center gap-3">
-                          <span className="text-muted-ink text-[12px] tabular-nums">
+                          <span className="text-muted-ink flex items-center gap-2 text-[12px] tabular-nums">
                             {pdmxStatus}
+                            <Loading on={downloading} label="Downloading the PDMX scores" />
                           </span>
                           <Button
                             variant="outline"

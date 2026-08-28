@@ -3,13 +3,22 @@
 
 import { restoreEnvelope } from '@/audio/envelope';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { readSettings, setSetting, type Settings } from '@/db/db';
 import { reasonOf } from '@/library/notice';
 import { rowId } from '@/lib/utils';
 import { Loading } from '@/look/loading';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import { useEffect, useState } from 'react';
+import { ChevronDown } from 'lucide-react';
+import { Fragment, useEffect, useState } from 'react';
 
 /** One line of the picker. The id is opaque; only the engine knows what it names. */
 export interface Instrument {
@@ -78,7 +87,7 @@ export function InstrumentSection({
 
   /**
    * A new instrument: the setting first, then the load, whose reason is what the picker says. A
-   * Logic piano takes seconds to load, so the row says it is loading until the engine answers.
+   * Logic piano takes seconds to load, so the picker beats until the engine answers.
    */
   async function choose(id: string): Promise<void> {
     setChosen(id);
@@ -111,7 +120,23 @@ export function InstrumentSection({
     await setSetting('instrument_state', state);
   }
 
-  const plugin = all.find((one) => one.id === chosen)?.kind === 'plugin';
+  const shown = all.find((one) => one.id === chosen);
+  const plugin = shown?.kind === 'plugin';
+
+  /** One heading and the instruments under it, left out while the engine found none of that kind. */
+  const group = (heading: string, ones: Instrument[]) =>
+    ones.length > 0 && (
+      <Fragment key={heading}>
+        <DropdownMenuLabel className="text-muted-ink px-2 py-1 text-[11px]">
+          {heading}
+        </DropdownMenuLabel>
+        {ones.map((one) => (
+          <DropdownMenuRadioItem key={one.id} value={one.id} className="text-[13px]">
+            <span className="truncate">{one.name}</span>
+          </DropdownMenuRadioItem>
+        ))}
+      </Fragment>
+    );
 
   return (
     <section className="flex flex-col gap-2">
@@ -122,26 +147,41 @@ export function InstrumentSection({
         data-marked={marked === 'instrument_id' || undefined}
         className={`flex min-h-8 items-center justify-between gap-3 py-1 text-[12px] ${marked === 'instrument_id' ? 'bg-ink/8' : ''}`}
       >
-        <span className="flex flex-none items-center gap-2">
-          Instrument
-          {loading && <Loading label="Loading the instrument" />}
-        </span>
+        <span className="flex-none">Instrument</span>
         <div className="flex min-w-0 items-center gap-2">
-          <select
-            aria-label="Instrument"
-            value={chosen}
-            onChange={(event) => void choose(event.target.value)}
-            className="border-edge h-7 min-w-0 border bg-transparent px-1.5 text-[12px]"
-          >
-            <option value="" disabled>
-              None
-            </option>
-            {all.map((one) => (
-              <option key={one.id} value={one.id}>
-                {one.name}
-              </option>
-            ))}
-          </select>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                aria-label="Instrument"
+                className="h-7 max-w-[190px] justify-between px-2 text-[12px] font-normal"
+              >
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate">{shown?.name ?? 'None'}</span>
+                  <Loading on={loading} label="Loading the instrument" />
+                </span>
+                <ChevronDown className="size-3.5 opacity-60" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="max-w-[280px]">
+              {all.length === 0 && (
+                <DropdownMenuLabel className="text-muted-ink px-2 py-1 text-[11px]">
+                  No instrument found
+                </DropdownMenuLabel>
+              )}
+              <DropdownMenuRadioGroup value={chosen} onValueChange={(id) => void choose(id)}>
+                {group(
+                  'Audio Unit instruments',
+                  all.filter((one) => one.kind === 'plugin'),
+                )}
+                {group(
+                  'Files',
+                  all.filter((one) => one.kind !== 'plugin'),
+                )}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
           {plugin && (
             <Button
               variant="outline"

@@ -4,10 +4,17 @@ import { createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, expect, test, vi } from 'vitest';
 
+/** Set by the PDMX test so the archive is still coming while it looks at the row. */
+let fetching: { promise: Promise<void>; release: () => void } | null = null;
+
 vi.mock('@tauri-apps/api/core', () => ({
   Channel: class {},
   invoke: async (command: string) => {
     if (command === 'pdmx_status') return false;
+    if (command === 'pdmx_fetch') {
+      await fetching?.promise;
+      return '/pdmx';
+    }
     // The Sound tab asks the engine about itself the moment it is on the page.
     if (command === 'audio_status') return { available: true, reason: '', fallback: '' };
     if (command === 'audio_output_devices') return [];
@@ -331,4 +338,24 @@ test('a query nothing matches says so', async () => {
   await open();
   expect(await search('bassoon')).toEqual([]);
   expect(document.querySelector('ul')!.textContent).toContain('Nothing matches');
+});
+
+test('the PDMX row beats while the archive is coming', async () => {
+  let release = (): void => {};
+  fetching = { promise: new Promise<void>((done) => (release = done)), release: () => release() };
+  await open();
+  await openTab('Library');
+
+  const beating = () => document.querySelector('#setting-row-pdmx_scores [role="status"]');
+  expect(beating()).toBe(null);
+  await userEvent.click(
+    [...document.querySelectorAll<HTMLElement>('button')].find(
+      (each) => each.textContent === 'Download (1.9 GB)',
+    )!,
+  );
+
+  await vi.waitFor(() => expect(beating()).not.toBe(null));
+  fetching.release();
+  await vi.waitFor(() => expect(beating()).toBe(null));
+  fetching = null;
 });

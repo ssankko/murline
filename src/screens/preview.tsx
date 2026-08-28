@@ -74,6 +74,7 @@ export function PreviewScreen({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsJump, setSettingsJump] = useState<string | null>(null);
   const [mixerOpen, setMixerOpen] = useState(false);
+  const [midiOpen, setMidiOpen] = useState(false);
   /** What a pinch on the page is choosing while it lasts, which the panel over the paper shows. */
   const [pinch, setPinch] = useState<Pinch | null>(null);
 
@@ -364,12 +365,7 @@ export function PreviewScreen({
             <Button size="sm" onClick={() => onPlay('performance')}>
               Perform
             </Button>
-            <MidiLight
-              onOpenSettings={() => {
-                setSettingsJump('midi_device');
-                setSettingsOpen(true);
-              }}
-            />
+            <MidiLight open={midiOpen} onOpenChange={setMidiOpen} />
             <Mixer
               open={mixerOpen}
               onOpenChange={setMixerOpen}
@@ -401,6 +397,7 @@ export function PreviewScreen({
           }}
           onGlobalChange={applyGlobal}
           onOpenMixer={() => setMixerOpen(true)}
+          onOpenMidi={() => setMidiOpen(true)}
         />
       </div>
     </TooltipProvider>

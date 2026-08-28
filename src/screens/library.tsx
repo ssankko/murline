@@ -81,6 +81,7 @@ export function Library({
   /** The row the panel opens on, which only the mixer's way into the Sound tab sets. */
   const [settingsJump, setSettingsJump] = useState<string | null>(null);
   const [mixerOpen, setMixerOpen] = useState(false);
+  const [midiOpen, setMidiOpen] = useState(false);
 
   // `scanLibrary` walks a folder once, so a sort change costs the re-list alone.
   useEffect(() => {
@@ -221,12 +222,7 @@ export function Library({
                 </DropdownMenuRadioGroup>
               </DropdownMenuContent>
             </DropdownMenu>
-            <MidiLight
-              onOpenSettings={() => {
-                setSettingsJump('midi_device');
-                setSettingsOpen(true);
-              }}
-            />
+            <MidiLight open={midiOpen} onOpenChange={setMidiOpen} />
             <Mixer
               open={mixerOpen}
               onOpenChange={setMixerOpen}
@@ -363,6 +359,7 @@ export function Library({
           if (key === 'library_folder') onFolder(value as string);
         }}
         onOpenMixer={() => setMixerOpen(true)}
+        onOpenMidi={() => setMidiOpen(true)}
       />
 
       {clash && (

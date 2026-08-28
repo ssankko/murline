@@ -121,6 +121,7 @@ export function PlayScreen({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsJump, setSettingsJump] = useState<string | null>(null);
   const [mixerOpen, setMixerOpen] = useState(false);
+  const [midiOpen, setMidiOpen] = useState(false);
   const [hands, setHands] = useState(DEFAULT_PLAY_SETTINGS.hands);
   /** A one-staff piece is all right hand, so it has no choice of hands to offer. */
   const [oneStaff, setOneStaff] = useState(false);
@@ -496,12 +497,7 @@ export function PlayScreen({
             <ArrowLeft {...ICON} />
           </BarButton>
           <b className="ml-1.5 mr-1 min-w-0 truncate text-[13px] font-medium">{title}</b>
-          <MidiLight
-            onOpenSettings={() => {
-              setSettingsJump('midi_device');
-              setSettingsOpen(true);
-            }}
-          />
+          <MidiLight open={midiOpen} onOpenChange={setMidiOpen} />
           <Mixer
             open={mixerOpen}
             onOpenChange={setMixerOpen}
@@ -643,6 +639,7 @@ export function PlayScreen({
           }}
           onGlobalChange={applyGlobal}
           onOpenMixer={() => setMixerOpen(true)}
+          onOpenMidi={() => setMidiOpen(true)}
         />
       </div>
     </TooltipProvider>

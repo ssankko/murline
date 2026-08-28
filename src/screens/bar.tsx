@@ -97,6 +97,7 @@ export function BarButton({
   wide,
   segment,
   children,
+  ...rest
 }: {
   label: string;
   onClick?: () => void;
@@ -107,7 +108,8 @@ export function BarButton({
   wide?: boolean;
   segment?: boolean;
   children: React.ReactNode;
-}) {
+  // What a `PopoverTrigger asChild` puts on its child: the ref, the click and the open state.
+} & Omit<React.ComponentProps<'button'>, 'onClick' | 'children'>) {
   // A segment sits square inside the pair's shared border and fills when it is the active side;
   // every other toggle is dimmed while off and full ink with an under-bar while on. A control only
   // placed here is `off`: dimmed and inert.
@@ -123,6 +125,7 @@ export function BarButton({
     <Tooltip>
       <TooltipTrigger asChild>
         <button
+          {...rest}
           aria-label={label}
           aria-disabled={off || undefined}
           aria-pressed={pressed}

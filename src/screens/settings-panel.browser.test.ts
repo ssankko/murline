@@ -108,6 +108,24 @@ test('a volume is found whether it is a row here or a fader in the mixer', async
   expect(wheres(touch)).toEqual(['Sound', 'Sound', 'Sound']);
 });
 
+test('a result naming an input device shuts the panel and opens the MIDI popover', async () => {
+  let midi = 0;
+  let closed = 0;
+  await open({ onOpenMidi: () => midi++, onClose: () => closed++ });
+
+  const results = await search('midi');
+  expect(labels(results)).toEqual(['Input device']);
+  expect(wheres(results)).toEqual(['MIDI']);
+  await userEvent.click(results[0]!);
+
+  expect(midi).toBe(1);
+  expect(closed).toBe(1);
+  // The devices are chosen in the popover, so the Playing tab has nothing to show for them.
+  await openTab('Playing');
+  expect(document.querySelector('#setting-row-midi_device')).toBe(null);
+  expect(document.body.textContent).not.toContain('Input device');
+});
+
 test('a result naming a fader shuts the panel and opens the mixer', async () => {
   let mixer = 0;
   let closed = 0;
@@ -164,7 +182,7 @@ test('the sound engine rows are found and jumped to like any other', async () =>
 
 test('a tab name finds every row on that tab', async () => {
   await open();
-  expect(labels(await search('playing'))).toContain('Input device');
+  expect(labels(await search('playing'))).toContain('Matching window (ms)');
 });
 
 test('a word for the harmony display finds the sheet row and the falling-notes row', async () => {
@@ -236,9 +254,10 @@ test('the search names no row the panel does not render', async () => {
   ]) {
     const found = await search(query);
     expect(found.length, query).toBeGreaterThan(0);
-    // A fader is the mixer's and opens it instead, which the test above covers; every other result
-    // has to be on the page once it is clicked.
-    const rows = labels(found).filter((_, at) => wheres(found)[at] !== 'Volume');
+    // A popover's control opens the popover instead, which the tests above cover; every other
+    // result has to be on the page once it is clicked.
+    const popovers = ['Volume', 'MIDI'];
+    const rows = labels(found).filter((_, at) => !popovers.includes(wheres(found)[at]!));
     for (const label of rows) {
       const results = await search(query);
       await userEvent.click(results.find((each) => each.textContent!.startsWith(label))!);

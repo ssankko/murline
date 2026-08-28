@@ -97,10 +97,20 @@ test('a word from a row label finds it and jumps to its tab', async () => {
 test('a volume is found whether it is a row here or a fader in the mixer', async () => {
   await open();
   const results = await search('volume');
-  expect(labels(results)).toEqual(['Keyboard', 'Metronome', 'Softest note volume']);
-  expect(wheres(results)).toEqual(['Volume', 'Volume', 'Sound']);
+  expect(labels(results)).toEqual(['Keyboard', 'Metronome']);
+  expect(wheres(results)).toEqual(['Volume', 'Volume']);
 
   expect(labels(await search('metronome'))).toEqual(['Metronome']);
+
+  // A word the panel's own rows hold still points at the tab they are on, not at the mixer.
+  const touch = await search('touch');
+  expect(labels(touch)).toEqual([
+    'Minimum velocity',
+    'Maximum velocity',
+    'Velocity curve',
+    'Velocity offset',
+  ]);
+  expect(wheres(touch)).toEqual(['Sound', 'Sound', 'Sound', 'Playing']);
 });
 
 test('a result naming a fader shuts the panel and opens the mixer', async () => {

@@ -171,6 +171,44 @@ describe('0003, the practice state persists', () => {
   });
 });
 
+describe('0004, the velocity curve becomes a remap', () => {
+  /** Before 0004: a user who calibrated the softest note's volume as a percent of full. */
+  function calibratedDatabase(percent: number) {
+    return (db: DatabaseSync) => {
+      write(db, 'velocity_floor', percent);
+      write(db, 'velocity_curve', 1.6);
+      write(db, 'library_folder', '/Users/me/Scores');
+    };
+  }
+
+  it('carries the softest note volume across as the minimum velocity it stood for', () => {
+    // 60% of the way from velocity 1 to 127 is what `floor_velocity` made of it.
+    expect(setting(migrate(3, calibratedDatabase(60)), 'velocity_min')).toBe(77);
+    expect(setting(migrate(3, calibratedDatabase(0)), 'velocity_min')).toBe(1);
+    expect(setting(migrate(3, calibratedDatabase(100)), 'velocity_min')).toBe(127);
+  });
+
+  it('leaves the exponent and every other setting alone, and the old key behind', () => {
+    const db = migrate(3, calibratedDatabase(60));
+    expect(setting(db, 'velocity_floor')).toBeUndefined();
+    expect(setting(db, 'velocity_curve')).toBe(1.6);
+    expect(setting(db, 'library_folder')).toBe('/Users/me/Scores');
+    // Nothing stored a maximum, and its default is the 127 the old mapping's hard end already was.
+    expect(setting(db, 'velocity_max')).toBeUndefined();
+  });
+
+  it('writes no minimum for a user who never moved the slider', () => {
+    const db = migrate(3, (old) => write(old, 'library_folder', '/Users/me/Scores'));
+    expect(setting(db, 'velocity_min')).toBeUndefined();
+    expect(setting(db, 'library_folder')).toBe('/Users/me/Scores');
+  });
+
+  it('runs on a database that was never opened before', () => {
+    const db = migrate(3);
+    expect(db.prepare('SELECT * FROM setting').all()).toEqual([]);
+  });
+});
+
 it('gives every piece setting a column to be written to', () => {
   // A setting named in the map but never added to the SQL takes every UPDATE down with it, and the
   // screen would look right until the piece was reopened.

@@ -138,10 +138,16 @@ const SEARCH_ROWS: {
     words: ['sf2', 'exs', 'sound fonts', 'samples'],
   },
   {
-    id: 'velocity_floor',
+    id: 'velocity_min',
     tab: 'sound',
-    label: 'Softest note volume',
-    words: ['quiet', 'floor', 'minimum', 'soft', 'dynamics', 'touch'],
+    label: 'Minimum velocity',
+    words: ['quiet', 'floor', 'softest', 'soft', 'dynamics', 'touch'],
+  },
+  {
+    id: 'velocity_max',
+    tab: 'sound',
+    label: 'Maximum velocity',
+    words: ['loud', 'ceiling', 'hardest', 'top', 'dynamics', 'touch'],
   },
   {
     id: 'velocity_curve',

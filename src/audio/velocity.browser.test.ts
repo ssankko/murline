@@ -15,7 +15,7 @@ vi.mock('@tauri-apps/api/core', () => ({
   },
 }));
 
-let stored: Record<string, number> = { velocity_floor: 0, velocity_curve: 1.6 };
+let stored: Record<string, number> = { velocity_min: 1, velocity_max: 127, velocity_curve: 1 };
 let written: [string, unknown][] = [];
 
 vi.mock('@/db/db', () => ({
@@ -31,7 +31,7 @@ let host: HTMLElement | null = null;
 beforeEach(() => {
   sent = [];
   written = [];
-  stored = { velocity_floor: 0, velocity_curve: 1.6 };
+  stored = { velocity_min: 1, velocity_max: 127, velocity_curve: 1 };
 });
 
 afterEach(() => {
@@ -65,15 +65,19 @@ function dot(): SVGCircleElement | null {
 }
 
 test('the mapping is the one the engine applies', () => {
-  // The two ends are fixed wherever the softest note is put, and the exponent bends the path.
-  expect(curved(1, 0, 1.6)).toBe(1);
-  expect(curved(1, 50, 1.6)).toBe(64);
-  expect(curved(127, 50, 1.6)).toBe(127);
-  expect(curved(0, 50, 1.6)).toBe(0);
+  // Both ends are exact wherever they are put, and the exponent bends the path between them.
+  expect(curved(1, 1, 127, 1.6)).toBe(1);
+  expect(curved(1, 64, 127, 1.6)).toBe(64);
+  expect(curved(127, 64, 127, 1.6)).toBe(127);
+  expect(curved(0, 64, 127, 1.6)).toBe(0);
 
-  expect(curved(64, 0, 1)).toBe(64);
-  expect(curved(64, 0, 2)).toBeLessThan(64);
-  expect(curved(64, 0, 0.5)).toBeGreaterThan(64);
+  // Nothing is clamped: the whole input range is squeezed into the band, not cut off at it.
+  expect(curved(127, 1, 40, 1)).toBe(40);
+  expect(curved(64, 1, 40, 1)).toBe(21);
+
+  expect(curved(64, 1, 127, 1)).toBe(64);
+  expect(curved(64, 1, 127, 2)).toBeLessThan(64);
+  expect(curved(64, 1, 127, 0.5)).toBeGreaterThan(64);
 });
 
 test('the middle of the curve slider is the straight line', () => {
@@ -84,33 +88,54 @@ test('the middle of the curve slider is the straight line', () => {
   expect(positionOf(curveOf(20))).toBe(20);
 });
 
-test('either slider reaches the running engine as it moves, with nothing to apply', async () => {
+test('every slider reaches the running engine as it moves, with nothing to apply', async () => {
   await open();
 
-  await move('Softest note volume', '40');
-  expect(written).toContainEqual(['velocity_floor', 40]);
-  expect(sent).toContainEqual(['audio_set_velocity_curve', { floor: 40, curve: 1.6 }]);
+  await move('Minimum velocity', '40');
+  expect(written).toContainEqual(['velocity_min', 40]);
+  expect(sent).toContainEqual(['audio_set_velocity_curve', { min: 40, max: 127, curve: 1 }]);
 
-  // The curve carries the floor that was just set, so one slider never undoes the other.
-  await move('Velocity curve', '50');
-  expect(written).toContainEqual(['velocity_curve', 1]);
-  expect(sent).toContainEqual(['audio_set_velocity_curve', { floor: 40, curve: 1 }]);
+  await move('Maximum velocity', '90');
+  expect(written).toContainEqual(['velocity_max', 90]);
+  expect(sent).toContainEqual(['audio_set_velocity_curve', { min: 40, max: 90, curve: 1 }]);
+
+  // The curve carries the two ends that were just set, so one slider never undoes another.
+  await move('Velocity curve', '20');
+  expect(written).toContainEqual(['velocity_curve', curveOf(20)]);
+  expect(sent).toContainEqual([
+    'audio_set_velocity_curve',
+    { min: 40, max: 90, curve: curveOf(20) },
+  ]);
+});
+
+test('the minimum cannot be dragged past the maximum, nor the maximum under it', async () => {
+  await open();
+
+  await move('Maximum velocity', '60');
+  await move('Minimum velocity', '100');
+  expect(written).toContainEqual(['velocity_min', 60]);
+  expect(slider('Minimum velocity').value).toBe('60');
+
+  await move('Maximum velocity', '20');
+  expect(written).toContainEqual(['velocity_max', 60]);
+  expect(slider('Maximum velocity').value).toBe('60');
 });
 
 test('the plot marks the last strike and follows the sliders', async () => {
   await open();
   expect(dot()).toBeNull();
 
+  // The strike arrives already remapped, so its height on the plot is the output velocity itself.
   close?.();
   await open(64);
-  const soft = dot()!;
-  expect(soft.getAttribute('data-strike')).toBe('64');
+  const struck = dot()!;
+  expect(struck.getAttribute('data-strike')).toBe('64');
+  const height = struck.getAttribute('cy');
 
-  // A harder curve lifts the same strike, so the dot rises and the headroom above it shrinks.
-  const under = Number(soft.getAttribute('cy'));
-  await move('Velocity curve', '100');
-  await vi.waitFor(() => expect(Number(dot()!.getAttribute('cy'))).toBeLessThan(under));
-
-  // It stayed where it was struck: only the level it came out at moved.
-  expect(dot()!.getAttribute('cx')).toBe(soft.getAttribute('cx'));
+  // Raising the minimum squeezes the band upward, so the input behind that same output was a
+  // lighter press than it was: the dot slides left along the curve and keeps its height.
+  const right = Number(struck.getAttribute('cx'));
+  await move('Minimum velocity', '40');
+  await vi.waitFor(() => expect(Number(dot()!.getAttribute('cx'))).toBeLessThan(right));
+  expect(dot()!.getAttribute('cy')).toBe(height);
 });

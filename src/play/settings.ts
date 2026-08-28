@@ -72,7 +72,8 @@ export interface PlaySettings {
   weightTiming: number;
   weightVelocity: number;
   weightRelease: number;
-  /** Added to every strike's velocity before it meets the ideal, to true up a keyboard. */
+  /** Added to every strike's velocity before it meets the ideal, to true up a keyboard. The strike
+   * arrives already remapped by the velocity curve, so this is a further shift on top of it. */
   velocityOffset: number;
 }
 

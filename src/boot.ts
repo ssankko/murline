@@ -66,7 +66,8 @@ export async function boot(print: (lines: string[]) => void): Promise<Settings> 
       ),
       await failure(() =>
         invoke('audio_set_velocity_curve', {
-          floor: settings.velocity_floor,
+          min: settings.velocity_min,
+          max: settings.velocity_max,
           curve: settings.velocity_curve,
         }),
       ),

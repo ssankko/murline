@@ -62,10 +62,11 @@ const MELODIC_BANK_MSB: u8 = 0x79;
 /// The buffer sizes the dialog offers, and the one the app starts at.
 pub const FRAME_CHOICES: [u32; 4] = [32, 64, 128, 256];
 pub const DEFAULT_FRAMES: u32 = 64;
-/// The velocity mapping the engine starts with: no lift under the softest strike, and the concave
-/// exponent the app shipped with before the curve was made adjustable.
-const DEFAULT_FLOOR: u8 = 1;
-const DEFAULT_CURVE: f64 = 1.6;
+/// The velocity remap the engine starts with: the whole range in, the whole range out, straight.
+/// Out of the box the app hands back exactly what the keyboard sent.
+const DEFAULT_MIN: u8 = 1;
+const DEFAULT_MAX: u8 = 127;
+const DEFAULT_CURVE: f64 = 1.0;
 /// The status line when the device the user picked is not plugged in.
 const GONE: &str = "Your chosen output device is not connected; playing through the system default";
 
@@ -129,9 +130,10 @@ pub struct Graph {
     fell_back: bool,
     /// The buffer the user picked. What the device runs may differ, and the status reports that.
     wanted_frames: u32,
-    /// The two ends of the velocity mapping: the velocity the softest playable strike is lifted to,
-    /// and the exponent of the path from there up to full.
-    velocity_floor: u8,
+    /// The velocity remap: the output the lightest strike lands on, the output the hardest lands
+    /// on, and the exponent of the path between them.
+    velocity_min: u8,
+    velocity_max: u8,
     velocity_curve: f64,
     /// Preview playback's note list and clock, pumped once per rendered buffer.
     preview: Scheduler,
@@ -179,7 +181,8 @@ impl Graph {
                 device: 0,
                 fell_back: false,
                 wanted_frames: DEFAULT_FRAMES,
-                velocity_floor: DEFAULT_FLOOR,
+                velocity_min: DEFAULT_MIN,
+                velocity_max: DEFAULT_MAX,
                 velocity_curve: DEFAULT_CURVE,
                 preview: Scheduler::default(),
             })
@@ -429,16 +432,22 @@ impl Graph {
         status.latency_ms = device::latency_ms(self.device, frames);
     }
 
-    pub fn note_on(&self, note: u8, velocity: u8) {
-        let velocity = curved(velocity, self.velocity_floor, self.velocity_curve);
+    /// Plays the note and answers the output velocity it was played at, which is the velocity the
+    /// rest of the app works in. The remap happens here and only here, so a caller that needs the
+    /// output takes it from the return rather than mapping a second time.
+    pub fn note_on(&self, note: u8, velocity: u8) -> u8 {
+        let velocity = curved(velocity, self.velocity_min, self.velocity_max, self.velocity_curve);
         unsafe { self.target().startNote_withVelocity_onChannel(note, velocity, CHANNEL) };
+        velocity
     }
 
-    /// The velocity mapping: `floor` is the softest note's volume as a percent of full, `curve` the
-    /// exponent of the path from it to full. Nothing is reconnected and no voice is flushed, so the
-    /// user can move either while playing and hear the next strike answer.
-    pub fn set_velocity_curve(&mut self, floor: u32, curve: f64) {
-        self.velocity_floor = floor_velocity(floor);
+    /// The velocity remap: `min` and `max` are the output velocities the lightest and the hardest
+    /// strike land on, `curve` the exponent of the path between them. Nothing is reconnected and no
+    /// voice is flushed, so the user can move any of them while playing and hear the next strike
+    /// answer.
+    pub fn set_velocity_curve(&mut self, min: u32, max: u32, curve: f64) {
+        self.velocity_min = min.clamp(1, 127) as u8;
+        self.velocity_max = max.clamp(1, 127) as u8;
         self.velocity_curve = if curve > 0.0 { curve } else { DEFAULT_CURVE };
     }
 
@@ -526,26 +535,21 @@ impl Graph {
     }
 }
 
-/// The softest note's volume, given as a percent of full, as the velocity the lightest playable
-/// strike is lifted to. Zero percent is velocity 1, the quietest a note can be and still be a note:
-/// a note on at zero velocity is a note off to every instrument.
-fn floor_velocity(percent: u32) -> u8 {
-    1 + ((126 * percent.min(100) + 50) / 100) as u8
-}
-
-/// The velocity the instrument hears: the keyboard's straight line bent so that the softest strike
-/// lands on the floor, the hardest still reaches full, and the path between follows the exponent.
-/// Only the sound is bent; the strike the webview grades carries the velocity the keyboard sent.
+/// Input velocity to output velocity: velocity 1 lands on `min`, velocity 127 lands on `max`, and
+/// the exponent bends the path between them. Nothing is clamped, because every input already lands
+/// inside the two ends. Velocity 0 stays 0, a note on at zero velocity being a note off to every
+/// instrument.
 ///
-/// An exponent above 1 makes soft playing softer and the keyboard harder to fill out, below 1 the
-/// other way, and exactly 1 hands the keyboard's own response back over the floor.
-fn curved(velocity: u8, floor: u8, exponent: f64) -> u8 {
+/// This is the velocity the whole app works in, the instrument and the grade alike, not the sound
+/// alone. An exponent above 1 makes soft playing softer and the keyboard harder to fill out, below
+/// 1 the other way, and exactly 1 is a straight line between the two ends.
+fn curved(velocity: u8, min: u8, max: u8, exponent: f64) -> u8 {
     if velocity == 0 {
         return 0;
     }
-    let floor = f64::from(floor.max(1));
+    let (min, max) = (f64::from(min), f64::from(max));
     let along = f64::from(velocity - 1) / 126.0;
-    (floor + (127.0 - floor) * along.powf(exponent)).round() as u8
+    (min + (max - min) * along.powf(exponent)).round() as u8
 }
 
 /// Hands the last reference to a hosted plugin to the main thread, which is the one thread a
@@ -804,19 +808,23 @@ pub fn set_keyboard_volume(percent: u32) {
     with(|graph| graph.set_keyboard_volume(percent));
 }
 
-pub fn set_velocity_curve(floor: u32, curve: f64) {
-    with(|graph| graph.set_velocity_curve(floor, curve));
+pub fn set_velocity_curve(min: u32, max: u32, curve: f64) {
+    with(|graph| graph.set_velocity_curve(min, max, curve));
 }
 
-/// One key of the MIDI keyboard, down or up.
-pub fn note(midi: u8, velocity: u8, on: bool) {
+/// One key of the MIDI keyboard, down or up. Answers the output velocity the note was played at, so
+/// the caller telling the webview about the strike reports the same number the instrument heard.
+/// A key coming up carries the velocity it arrived with: only a note on is remapped.
+pub fn note(midi: u8, velocity: u8, on: bool) -> u8 {
     with(|graph| {
         if on {
-            graph.note_on(midi, velocity);
+            graph.note_on(midi, velocity)
         } else {
             graph.note_off(midi);
+            velocity
         }
-    });
+    })
+    .unwrap_or(velocity)
 }
 
 /// The sustain pedal, as controller 64 sent it. Half travel and up is down, as every host reads it.
@@ -895,7 +903,7 @@ mod tests {
     }
 
     /// The same, at a velocity of the test's choosing: what one strike comes out at once the
-    /// velocity curve has had it.
+    /// velocity remap has had it.
     fn struck(graph: &mut Graph, velocity: u8) -> f32 {
         graph.note_on(60, velocity);
         let peak = graph.render_peak(LOOK).unwrap();
@@ -1097,46 +1105,68 @@ mod tests {
     }
 
     #[test]
-    fn the_velocity_curve_runs_from_the_softest_note_to_full() {
-        assert_eq!(curved(0, 1, 1.6), 0, "a note off stays a note off");
+    fn the_velocity_remap_runs_from_the_minimum_to_the_maximum() {
+        assert_eq!(curved(0, 1, 127, 1.6), 0, "a note off stays a note off");
 
-        // The two ends are fixed wherever the floor is put: the lightest playable strike is the
-        // softest note the user asked for, and the hardest still reaches full.
-        for percent in [0, 25, 60, 100] {
-            let floor = floor_velocity(percent);
-            assert_eq!(curved(1, floor, 1.6), floor, "the lightest strike is the softest note");
-            assert_eq!(curved(127, floor, 1.6), 127, "the hardest strike reaches full");
+        // Both ends are exact wherever they are put: velocity 1 is the minimum and velocity 127 is
+        // the maximum, whatever the exponent does between them.
+        for (min, max) in [(1, 127), (30, 90), (64, 64), (1, 40), (100, 127)] {
+            for curve in [0.5, 1.0, 1.6, 2.5] {
+                assert_eq!(curved(1, min, max, curve), min, "the lightest strike is the minimum");
+                assert_eq!(curved(127, min, max, curve), max, "the hardest is the maximum");
+            }
+        }
+
+        // Nothing is clamped: every input lands inside the two ends because the map put it there.
+        for each in 1..=127 {
+            assert!((30..=90).contains(&curved(each, 30, 90, 1.6)), "the whole range is remapped");
         }
 
         // The middle of the slider is the straight line, and either side bends off it.
-        assert_eq!(curved(64, 1, 1.0), 64, "an exponent of one is the keyboard's own reading");
-        assert!(curved(64, 1, 2.0) < 64, "a soft curve puts the middle under the straight line");
-        assert!(curved(64, 1, 0.5) > 64, "a hard curve puts it over");
+        assert_eq!(curved(64, 1, 127, 1.0), 64, "an exponent of one is the keyboard's reading");
+        assert!(curved(64, 1, 127, 2.0) < 64, "a soft curve puts the middle under the line");
+        assert!(curved(64, 1, 127, 0.5) > 64, "a hard curve puts it over");
 
-        // Raising the softest note lifts the light end and leaves the hard end where it was.
-        assert!(curved(1, floor_velocity(50), 1.6) > curved(1, floor_velocity(0), 1.6));
-        assert_eq!(curved(127, floor_velocity(50), 1.6), curved(127, floor_velocity(0), 1.6));
+        // Raising the minimum lifts the light end and leaves the hard end where it was.
+        assert!(curved(1, 64, 127, 1.6) > curved(1, 1, 127, 1.6));
+        assert_eq!(curved(127, 64, 127, 1.6), curved(127, 1, 127, 1.6));
 
         for curve in [0.5, 1.0, 1.6, 2.5] {
-            assert!((1..=127).all(|each| curved(each, 1, curve) > 0), "no strike is silenced");
-            assert!(
-                (1..=127).all(|each| curved(each, 1, curve) >= curved(each - 1, 1, curve)),
-                "harder is never quieter"
-            );
+            let out = |each| curved(each, 1, 127, curve);
+            assert!((1..=127).all(|each| out(each) > 0), "no strike is silenced");
+            assert!((1..=127).all(|each| out(each) >= out(each - 1)), "harder is never quieter");
         }
     }
 
-    /// The mapping is between the keyboard and the instrument, so it is the note that changes, not
+    /// The remap is applied once, inside `note_on`, and `note` answers with its result. A caller
+    /// that wants the output velocity takes it from there rather than mapping again, which is what
+    /// keeps the strike the webview grades from being bent twice.
+    #[test]
+    fn a_played_note_answers_the_velocity_it_was_played_at() {
+        let mut graph = offline();
+        graph.set_velocity_curve(40, 100, 1.0);
+
+        let out = graph.note_on(60, 64);
+        assert_eq!(out, curved(64, 40, 100, 1.0), "the note answers its own output velocity");
+        assert_ne!(out, 64, "and it is not the input, under a remap that moves it");
+        assert_ne!(curved(out, 40, 100, 1.0), out, "a second mapping would land somewhere else");
+
+        // A key coming up is not a note on, so nothing is remapped on the way out.
+        graph.note_off(60);
+        graph.release_all();
+    }
+
+    /// The remap is between the keyboard and the instrument, so it is the note that changes, not
     /// the finished sound: what this hears is the sampler answering a different velocity.
     #[test]
-    fn the_softest_note_volume_lifts_a_light_strike_and_leaves_a_hard_one() {
+    fn the_minimum_velocity_lifts_a_light_strike_and_leaves_a_hard_one() {
         let mut graph = offline();
 
-        graph.set_velocity_curve(0, 1.6);
+        graph.set_velocity_curve(1, 127, 1.6);
         let (light, hard) = (struck(&mut graph, 1), struck(&mut graph, 127));
 
-        graph.set_velocity_curve(60, 1.6);
-        assert!(struck(&mut graph, 1) > light, "the softest note came up");
+        graph.set_velocity_curve(76, 127, 1.6);
+        assert!(struck(&mut graph, 1) > light, "the lightest strike came up");
         assert_eq!(struck(&mut graph, 127), hard, "a hard strike is where it was");
     }
 
@@ -1144,10 +1174,10 @@ mod tests {
     fn a_soft_curve_makes_a_middling_strike_quieter_than_a_hard_one() {
         let mut graph = offline();
 
-        graph.set_velocity_curve(0, 2.5);
+        graph.set_velocity_curve(1, 127, 2.5);
         let soft = struck(&mut graph, 64);
 
-        graph.set_velocity_curve(0, 0.5);
+        graph.set_velocity_curve(1, 127, 0.5);
         assert!(struck(&mut graph, 64) > soft, "the same strike is louder under a hard curve");
     }
 

@@ -1,4 +1,4 @@
-// The velocity curve's arithmetic, kept clear of React and the database so that anything can read
+// The velocity remap's arithmetic, kept clear of React and the database so that anything can read
 // it: the plot draws with it, and the grading tests hold it up against what a grade sees.
 
 /** How far each end of the curve slider bends the exponent, either side of the straight line. */
@@ -15,15 +15,15 @@ export function positionOf(curve: number): number {
 }
 
 /**
- * The velocity the instrument hears. It is the same mapping the engine applies in `curved`
- * (`src-tauri/src/audio/mac.rs`): the lightest playable strike lands on the softest note's volume,
- * the hardest reaches full, and the exponent bends the path between.
+ * Input velocity to output velocity. It is the same mapping the engine applies in `curved`
+ * (`src-tauri/src/audio/mac.rs`): velocity 1 lands exactly on `min`, velocity 127 exactly on `max`,
+ * and the exponent bends the path between them. Nothing is clamped, because every input already
+ * lands inside the two ends. Velocity 0 stays 0, a note on at zero velocity being a note off.
  *
- * This is the sound's velocity alone. What a grade reads is the velocity the keyboard sent, which
- * nothing here touches.
+ * This is the velocity the whole app works in. The instrument is played at it and the strike the
+ * webview grades carries it, so a grade reads the output velocity, not what the keyboard sent.
  */
-export function curved(velocity: number, floor: number, curve: number): number {
+export function curved(velocity: number, min: number, max: number, curve: number): number {
   if (velocity <= 0) return 0;
-  const lowest = 1 + Math.round((126 * Math.min(100, Math.max(0, floor))) / 100);
-  return Math.round(lowest + (127 - lowest) * ((velocity - 1) / 126) ** curve);
+  return Math.round(min + (max - min) * ((velocity - 1) / 126) ** curve);
 }

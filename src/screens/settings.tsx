@@ -256,6 +256,20 @@ const SEARCH_ROWS: {
     words: ['chords', 'chord track', 'roman numerals'],
   },
   {
+    id: 'lane_scale',
+    tab: 'look',
+    label: 'Scale',
+    group: 'Falling notes',
+    words: ['key signature', 'major', 'minor', 'tonic', 'keys of the scale'],
+  },
+  {
+    id: 'keyboard_scale_marks',
+    tab: 'look',
+    label: 'Dim keys off the scale',
+    group: 'Falling notes',
+    words: ['out of scale', 'scale marks', 'scale keyboard', 'restrict'],
+  },
+  {
     id: 'lane_colour',
     tab: 'look',
     label: 'Pitch colours',
@@ -686,6 +700,12 @@ export function SettingsPanel({
                           onChange={(value) => write('lane_harmony', value)}
                         />
                       </Row>
+                      <Row id="lane_scale" marked={marked === 'lane_scale'} label="Scale">
+                        <Toggle
+                          value={values.lane_scale}
+                          onChange={(value) => write('lane_scale', value)}
+                        />
+                      </Row>
                       <Row id="lane_colour" marked={marked === 'lane_colour'} label="Pitch colours">
                         <Toggle
                           value={values.lane_colour}
@@ -700,6 +720,16 @@ export function SettingsPanel({
                         <Toggle
                           value={values.keyboard_labels}
                           onChange={(value) => write('keyboard_labels', value)}
+                        />
+                      </Row>
+                      <Row
+                        id="keyboard_scale_marks"
+                        marked={marked === 'keyboard_scale_marks'}
+                        label="Dim keys off the scale"
+                      >
+                        <Toggle
+                          value={values.keyboard_scale_marks}
+                          onChange={(value) => write('keyboard_scale_marks', value)}
                         />
                       </Row>
                     </Rows>

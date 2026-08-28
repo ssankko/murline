@@ -27,6 +27,7 @@ import {
   type Palette,
 } from '@/look/color';
 import { easeInOut, reducedMotion } from '@/look/motion';
+import { scaleName, scaleOf, tonicOf, type KeyAt } from '@/score/harmony';
 import type { Engine, LoopSpan, PlayEvent, SeekTarget, Snapshot } from '@/play/engine';
 import type { Section } from '@/play/section';
 import { isInactiveHand, type HandsSetting } from '@/play/settings';
@@ -42,6 +43,10 @@ export interface LaneLook {
   keyLabels: boolean;
   /** Whether the harmony panels are drawn. */
   harmony: boolean;
+  /** Whether the scale panel at the top left is drawn. */
+  scale: boolean;
+  /** Whether the keys outside the scale in force wear a dimmed face. */
+  scaleMarks: boolean;
   /** Whether a block wears the pitch colour of its note, against one neutral ink for every note. */
   colour: boolean;
   /** Whether a block carries the name of its note, sharps and no octave, at its landing edge. */
@@ -54,6 +59,8 @@ export const DEFAULT_LANE_LOOK: LaneLook = {
   gapPx: 2,
   keyLabels: true,
   harmony: true,
+  scale: true,
+  scaleMarks: false,
   colour: true,
   names: false,
 };
@@ -202,6 +209,20 @@ const PANEL_SLIDE_MS = 250;
 const PANEL_PAD = 6;
 /** The chrome tone a panel over the lane wears: paper enough to read on, sheer enough to see past. */
 const PANEL_FILL = ['rgba(233,233,233,0.82)', 'rgba(22,22,22,0.82)'] as const;
+/**
+ * The scale panel at the lane's top left, the twin of the harmony panels at the right: a key's
+ * name over a one-octave keyboard, its key width, key height, padding and the name's room.
+ */
+const SCALE_KEY_W = 14;
+const SCALE_KEY_H = 26;
+const SCALE_PAD = 6;
+const SCALE_NAME_H = 16;
+/** The white keys of a C-based octave, and the pitch classes whose black key stands on a seam. */
+const SCALE_WHITES = [0, 2, 4, 5, 7, 9, 11];
+const SCALE_BLACKS = [1, 3, 6, 8, 10];
+/** The face a key outside the scale in force dims toward, and how far it goes. */
+const SCALE_DIM = ['#8f8f8f', '#181818'] as const;
+const SCALE_DIM_T = 0.6;
 /** The panel of the chord sounding now, and of each of the two after it: its size and its type. */
 const CHORD_PANEL = { w: 128, h: 64, weight: 700, size: 26 };
 const NEXT_PANEL = { w: 72, h: 36, weight: 600, size: 15 };
@@ -305,6 +326,11 @@ export class Lane {
   private bars: LaneBar[];
   private jumps: LaneJump[];
   private chords: LaneChord[];
+  /** The key changes of the play in played time, empty for a piece with no key signatures. */
+  private laneKeys: KeyAt[];
+  /** The key in force at the clock and its pitch classes, read once a frame. */
+  private scaleKey: KeyAt | null = null;
+  private scalePcs: Set<number> | null = null;
   /** The walk the bars and the dividers were read from; Loop swaps it for the linear one. */
   private walk: PlayStep[];
   private range: [number, number];
@@ -414,6 +440,7 @@ export class Lane {
     this.bars = barsOf(engine.score, this.walk);
     this.jumps = jumpsOf(engine.score, this.walk);
     this.chords = chordsOf(engine.score.harmony, this.walk);
+    this.laneKeys = laneKeysOf(engine.score, this.bars);
     this.hands = engine.settings.hands;
     this.handsBefore = this.hands;
     this.lastResets = engine.resets;
@@ -618,8 +645,10 @@ export class Lane {
       this.bars = barsOf(this.engine.score, this.walk);
       this.jumps = jumpsOf(this.engine.score, this.walk);
       this.chords = chordsOf(this.engine.score.harmony, this.walk);
+      this.laneKeys = laneKeysOf(this.engine.score, this.bars);
       this.walkAt = now;
     }
+    this.readScale();
 
     const loop = this.engine.loopSpan();
     ctx.save();
@@ -641,6 +670,7 @@ export class Lane {
     ctx.rect(0, 0, width, laneH);
     ctx.clip();
     this.drawHarmony(width, loop);
+    this.drawScale();
     ctx.restore();
     this.drawSplashes(laneH);
     this.drawRings(laneH, pxPerTick);
@@ -1264,6 +1294,11 @@ export class Lane {
   private readonly keyFill = (midi: number, base: string): string => {
     const state = this.engine.keyState(midi);
     let face = base;
+    // A key outside the scale in force rests dimmed while the marks are on; every strike and press
+    // below paints its own face over it, so the marks only show what the key does when left alone.
+    if (this.look.scaleMarks && this.scalePcs && !this.scalePcs.has(pitchClass(midi))) {
+      face = mix(base, tone(SCALE_DIM, this.dark), SCALE_DIM_T);
+    }
     if (state === 'color') face = this.sounding(midi, base);
     else if (state === 'grey') {
       const tint = isBlackKey(midi) ? WRONG_TINT.black : WRONG_TINT.white;
@@ -1433,6 +1468,83 @@ export class Lane {
     ctx.globalAlpha = 1;
   }
 
+  /** The key in force at the clock and its pitch classes, for the panel and the key faces. */
+  private readScale(): void {
+    const key = this.laneKeys.findLast((k) => k.tick <= this.playedTick) ?? null;
+    this.scaleKey = key;
+    if (!key) {
+      this.scalePcs = null;
+      return;
+    }
+    const tonic = tonicOf(key);
+    this.scalePcs = new Set(scaleOf(key).map((step) => pitchClass(tonic + step)));
+  }
+
+  /**
+   * The scale panel at the lane's top left, in the harmony panels' chrome: the key in force by
+   * name, over a one-octave keyboard with the scale's keys filled, the tonic in its own pitch
+   * colour, and the rest of the octave a hairline outline.
+   */
+  private drawScale(): void {
+    const key = this.scaleKey;
+    if (!this.look.scale || !key) return;
+    const ctx = this.ctx;
+    const w = SCALE_WHITES.length * SCALE_KEY_W + SCALE_PAD * 2;
+    const h = SCALE_PAD * 2 + SCALE_NAME_H + SCALE_KEY_H;
+    const x = PANEL_INSET;
+    const y = PANEL_INSET;
+    ctx.fillStyle = tone(PANEL_FILL, this.dark);
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, 4);
+    ctx.fill();
+
+    ctx.fillStyle = tone(INK.duration, this.dark);
+    ctx.font = '600 12px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(scaleName(key), x + w / 2, y + SCALE_PAD + SCALE_NAME_H / 2 + 1);
+
+    const tonic = tonicOf(key);
+    const stripY = y + SCALE_PAD + SCALE_NAME_H;
+    const px = x + SCALE_PAD;
+    const ink = tone(INK.duration, this.dark);
+    const line = tone(LANE_BAR, this.dark);
+    const keyFace = (pc: number) =>
+      this.scalePcs!.has(pc) ? (pc === tonic ? colorOf(tonic, 'full', this.dark) : ink) : null;
+    SCALE_WHITES.forEach((pc, i) => {
+      ctx.beginPath();
+      ctx.roundRect(px + i * SCALE_KEY_W, stripY, SCALE_KEY_W - 1, SCALE_KEY_H, 2);
+      const face = keyFace(pc);
+      if (face) {
+        ctx.fillStyle = face;
+        ctx.fill();
+      } else {
+        ctx.strokeStyle = line;
+        ctx.stroke();
+      }
+    });
+    const bw = SCALE_KEY_W * 0.6;
+    for (const pc of SCALE_BLACKS) {
+      // A black key stands on the seam after the white keys below it: C# on 1, D# on 2, and so on.
+      const seam = SCALE_WHITES.filter((white) => white < pc).length * SCALE_KEY_W;
+      ctx.beginPath();
+      ctx.roundRect(px + seam - bw / 2, stripY, bw, SCALE_KEY_H * 0.62, [0, 0, 2, 2]);
+      const face = keyFace(pc);
+      if (face) {
+        ctx.fillStyle = face;
+        ctx.fill();
+      } else {
+        // An empty black key still stands over a white one, so it wears the panel's chrome.
+        ctx.fillStyle = tone(PANEL_FILL, this.dark);
+        ctx.fill();
+        ctx.strokeStyle = line;
+        ctx.stroke();
+      }
+    }
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+  }
+
   /** The panel over the keys, which fades in on a notice and out again once it goes. */
   private drawNotice(width: number, laneH: number): void {
     const eased = easeInOut(Math.min(1, (this.now - this.noticeAt) / NOTICE_FADE_MS));
@@ -1550,6 +1662,24 @@ export function chordsOf(harmony: ChordEvent[], walk: PlayStep[]): LaneChord[] {
     if (event) chords.push({ tick: step.tick, event });
   }
   return chords;
+}
+
+/**
+ * Every key change of the play in played time, one entry where the key a bar carries differs from
+ * the one before it. A key change under a repeat re-marks the keyboard on each pass, and a bar
+ * before the first written change still takes the piece's first key.
+ */
+export function laneKeysOf(score: Score, bars: LaneBar[]): KeyAt[] {
+  if (score.keys.length === 0) return [];
+  const keys: KeyAt[] = [];
+  let held: { sharps: number; mode: number } | null = null;
+  for (const bar of bars) {
+    const change = score.keys.findLast((k) => k.measureIndex <= bar.measure) ?? score.keys[0]!;
+    if (held && change.sharps === held.sharps && change.mode === held.mode) continue;
+    keys.push({ tick: bar.tick, sharps: change.sharps, mode: change.mode });
+    held = change;
+  }
+  return keys;
 }
 
 /** The chord in force at a played tick and the two after it; the first is missing before them all. */

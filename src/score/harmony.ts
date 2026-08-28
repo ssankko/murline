@@ -101,12 +101,12 @@ export function analyzeHarmony(score: Score): ChordEvent[] {
 }
 
 /** Tonic pitch class of a key: the key signature's major tonic moved by the mode. */
-function tonicOf(key: KeyAt): number {
+export function tonicOf(key: KeyAt): number {
   return pitchClass(key.sharps * 7 + (MODE_OFFSET[key.mode] ?? 0));
 }
 
 /** Major, or harmonic minor for every mode that is not a major one. */
-const scaleOf = (key: KeyAt) => (MAJOR_MODES.has(key.mode) ? MAJOR_SCALE : HARMONIC_MINOR);
+export const scaleOf = (key: KeyAt) => (MAJOR_MODES.has(key.mode) ? MAJOR_SCALE : HARMONIC_MINOR);
 
 const inScale = (p: number, key: KeyAt) => scaleOf(key).includes(pitchClass(p - tonicOf(key)));
 
@@ -131,6 +131,14 @@ export function degreeOf(p: number, key: KeyAt, written: number): string {
 function spell(p: number, key: KeyAt, written: number): string {
   const flat = written < 0 || (written === 0 && key.sharps < 0);
   return (flat ? FLAT_NAMES : NOTE_NAMES)[p]!;
+}
+
+/** Full name of a key, for the lane's scale panel: "D major", "F♯ minor" — flats for a flat key. */
+export function scaleName(key: KeyAt): string {
+  const name = (key.sharps < 0 ? FLAT_NAMES : NOTE_NAMES)[tonicOf(key)]!;
+  return `${name.replace('#', '♯').replace('b', '♭')} ${
+    MAJOR_MODES.has(key.mode) ? 'major' : 'minor'
+  }`;
 }
 
 /** Sharps and flats of any depth fold to one sign; naturals and none are 0. */

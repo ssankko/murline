@@ -1,6 +1,6 @@
 import { AccidentalEnum, ChordSymbolEnum } from 'opensheetmusicdisplay';
 import { describe, expect, test } from 'vitest';
-import { analyzeHarmony, degreeOf, type KeyAt } from './harmony';
+import { analyzeHarmony, degreeOf, scaleName, scaleOf, tonicOf, type KeyAt } from './harmony';
 import {
   TICKS_PER_QUARTER,
   type ChordEvent,
@@ -102,6 +102,22 @@ describe('the degree form', () => {
     const score = scoreOf([[60, 64, 67], [62, 66, 69], [60, 64, 67]]);
     score.keys.push({ measureIndex: 1, sharps: 2, mode: 0 });
     expect(names(analyzeHarmony(score))).toEqual(['C 1', 'D 1', 'C ♭7']);
+  });
+});
+
+describe('the scale behind the degree names', () => {
+  test('holds the seven pitch classes of the key, from its tonic', () => {
+    expect(scaleOf(C_MAJOR)).toEqual([0, 2, 4, 5, 7, 9, 11]);
+    expect(scaleOf(A_MINOR)).toEqual([0, 2, 3, 5, 7, 8, 11]);
+    expect(tonicOf(A_MINOR)).toBe(9);
+  });
+
+  test('names the key in full, with the sign of its signature', () => {
+    expect(scaleName(C_MAJOR)).toBe('C major');
+    expect(scaleName({ tick: 0, sharps: 2, mode: 0 })).toBe('D major');
+    expect(scaleName(A_MINOR)).toBe('A minor');
+    expect(scaleName({ tick: 0, sharps: -3, mode: 0 })).toBe('E♭ major');
+    expect(scaleName({ tick: 0, sharps: 3, mode: 1 })).toBe('F♯ minor');
   });
 });
 

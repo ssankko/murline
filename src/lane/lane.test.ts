@@ -1,4 +1,4 @@
-import { TICKS_PER_QUARTER, type ChordEvent } from '@/score/types';
+import { TICKS_PER_QUARTER, type ChordEvent, type KeyChange, type Score } from '@/score/types';
 import { describe, expect, test } from 'vitest';
 import {
   beatsBefore,
@@ -8,6 +8,7 @@ import {
   chordsOf,
   glideLeft,
   jumpOf,
+  laneKeysOf,
   lerpRect,
   popAt,
   pulseAt,
@@ -66,6 +67,40 @@ describe('the harmony in played time', () => {
       tick: each.tick + by,
     }));
     expect(lap.map((each) => each.tick)).toEqual([0, 3 * Q, 6 * Q, 9 * Q]);
+  });
+});
+
+describe('the key in force in played time', () => {
+  const scoreOf = (keys: KeyChange[]): Score => ({ keys }) as Score;
+
+  test('a key change lands on the bar it opens', () => {
+    const keys: KeyChange[] = [
+      { measureIndex: 0, sharps: 2, mode: 0 },
+      { measureIndex: 1, sharps: -3, mode: 0 },
+    ];
+    expect(laneKeysOf(scoreOf(keys), BARS)).toEqual([
+      { tick: 0, sharps: 2, mode: 0 },
+      { tick: 3 * Q, sharps: -3, mode: 0 },
+    ]);
+  });
+
+  test('a repeated bar carries its key again on the next pass', () => {
+    const keys: KeyChange[] = [
+      { measureIndex: 0, sharps: 2, mode: 0 },
+      { measureIndex: 2, sharps: -3, mode: 0 },
+    ];
+    const lap = BARS.map((bar) => ({ ...bar, tick: bar.tick + 9 * Q }));
+    const marks = laneKeysOf(scoreOf(keys), [...BARS, ...lap]).map((key) => [key.tick, key.sharps]);
+    expect(marks).toEqual([
+      [0, 2],
+      [6 * Q, -3],
+      [9 * Q, 2],
+      [15 * Q, -3],
+    ]);
+  });
+
+  test('a piece with no key signatures marks none', () => {
+    expect(laneKeysOf(scoreOf([]), BARS)).toEqual([]);
   });
 });
 

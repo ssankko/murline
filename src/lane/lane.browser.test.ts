@@ -355,6 +355,53 @@ test('a range change carries the keys to their new places', () => {
   lane.dispose();
 });
 
+/** A score in D major, so the panel and the marks both have a scale to show. */
+function scoreInD(): Score {
+  const score = scoreOf(1);
+  score.keys = [{ measureIndex: 0, sharps: 2, mode: 0 }];
+  return score;
+}
+
+test('the scale panel names the key in force and fills its octave', () => {
+  const { engine, lane, ctx } = mount({ score: scoreInD() });
+  lane.frame(engine.snapshot(), engine.windowTicks, performance.timeOrigin + performance.now());
+  // The strip is one octave from C at (22, 38), its white keys 13 wide: the tonic D wears its
+  // pitch colour, the scale's other keys the ink, and the keys outside the scale stay empty.
+  expect(hex(ctx, 42, 51)).toBe(colorOf(2, 'full', false));
+  expect(level(ctx, 84, 51)).toBeLessThan(120);
+  expect(level(ctx, 70, 51)).toBeGreaterThan(200);
+  expect(level(ctx, 36, 45)).toBeLessThan(120);
+  expect(level(ctx, 50, 45)).toBeGreaterThan(200);
+  lane.dispose();
+
+  // Off, and the corner is bare again.
+  const off = mount({ score: scoreInD(), look: { scale: false } });
+  off.lane.frame(off.engine.snapshot(), off.engine.windowTicks, performance.timeOrigin + performance.now());
+  expect(level(off.ctx, 84, 51)).toBeGreaterThan(200);
+  off.lane.dispose();
+});
+
+test('the marks dim the keys outside the scale in force', () => {
+  const laneH = HEIGHT - KEYBOARD_H;
+  const { engine, lane, ctx } = mount({ score: scoreInD() });
+  lane.frame(engine.snapshot(), engine.windowTicks, performance.timeOrigin + performance.now());
+  // Middle C is off the D major scale, D is its tonic: the resting faces say so. The samples sit
+  // where the white faces show, clear of the black keys standing over their seams.
+  expect(hex(ctx, keyX(lane, 60) + 20, laneH + 40)).toBe('#dedede');
+  expect(hex(ctx, keyX(lane, 62) + 28, laneH + 40)).toBe('#dedede');
+  lane.dispose();
+
+  const marks = mount({ score: scoreInD(), look: { scaleMarks: true } });
+  marks.lane.frame(
+    marks.engine.snapshot(),
+    marks.engine.windowTicks,
+    performance.timeOrigin + performance.now(),
+  );
+  expect(hex(marks.ctx, keyX(marks.lane, 60) + 20, laneH + 40)).toBe('#afafaf');
+  expect(hex(marks.ctx, keyX(marks.lane, 62) + 28, laneH + 40)).toBe('#dedede');
+  marks.lane.dispose();
+});
+
 /** How much ink a column of the lane carries, which grows with the Section band over it. */
 function ink(ctx: CanvasRenderingContext2D, x: number, laneH: number): number {
   let sum = 0;

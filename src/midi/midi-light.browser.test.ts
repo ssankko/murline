@@ -114,7 +114,7 @@ test('the popover says what is listened to and takes Use, Default, Hide and Show
   await vi.waitFor(() => expect(button('Default IAC').getAttribute('aria-pressed')).toBe('true'));
   relisted(['IAC'], '2');
 
-  // Hide: out of the list, out of the rule, and no longer the default it was.
+  // Hide: out of the list, out of the rule, and never the default.
   button('Hide IAC').click();
   expect(sent()).toEqual({ pinned: null, hidden: ['2'] });
   await vi.waitFor(() => expect(listed()).toEqual(['Any device', 'Roland']));

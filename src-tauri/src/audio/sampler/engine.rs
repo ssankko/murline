@@ -4,7 +4,7 @@
 use std::f32::consts::PI;
 use std::sync::Arc;
 
-use super::{Command, Envelope, Instrument};
+use super::{Command, Envelope, Fill, Instrument, Stream};
 
 /// Every voice opens under a raised-cosine fade this long, whatever the envelope's attack says, so
 /// a sample whose first frame sits far from zero cannot put a step into the output.
@@ -16,11 +16,12 @@ const CUT_FADE: f64 = 0.005;
 /// The level a voice counts as finished at, -80 dBFS.
 const SILENCE: f32 = 1e-4;
 
-/// Headroom on the mix, -16 dB, so a chord of loud notes stays clear of the clamp and the
-/// keyboard volume still has something to trim.
+/// Headroom on the mix, -7 dB, so a chord of loud notes stays clear of the clamp and the keyboard
+/// volume still has something to trim. With the Logic pianos' own -9 dB group volume it puts a
+/// velocity-127 note at the peak Apple's sampler gave it, about 0.14.
 /// ponytail: one figure for every instrument; a gain of its own per instrument when one lands far
 /// from the rest.
-const OUTPUT_GAIN: f32 = 0.158;
+const OUTPUT_GAIN: f32 = 0.447;
 
 #[derive(Clone, Copy, Default, PartialEq)]
 enum Stage {
@@ -41,10 +42,13 @@ struct Voice {
     note: u8,
     /// Index into the instrument's samples.
     sample: usize,
+    /// Index into the instrument's zones, which is where the voice's head frames are.
+    zone: usize,
     /// Reads the instrument a load handed back rather than the one playing now.
     retired: bool,
     pos: f64,
     step: f64,
+    start: f64,
     end: f64,
     loop_: Option<(f64, f64)>,
     /// Zone gain and velocity together, the constant part of the voice's loudness.
@@ -64,6 +68,14 @@ struct Voice {
     held: bool,
     /// Start order, so the oldest releasing voice is the first to go.
     age: u64,
+    /// The frames of a streamed voice straddling `pos`, and the index of `now` counted from the
+    /// zone's start. A streamed sample arrives in order, so the voice keeps its own two frames
+    /// rather than looking any of them up.
+    now: [i16; 2],
+    next: [i16; 2],
+    cursor: usize,
+    /// Which fill in the voice's slot is the voice's own, so it cannot read another voice's.
+    generation: u64,
 }
 
 impl Voice {
@@ -135,12 +147,19 @@ impl Voice {
         }
     }
 
-    fn mix(&mut self, instrument: &Instrument, left: &mut [f32], right: &mut [f32]) {
-        let Some(sample) = instrument.samples.get(self.sample) else {
-            self.active = false;
-            return;
-        };
-        let data = (*sample.data).as_ref();
+    fn mix(&mut self, slot: usize, instrument: &Instrument, left: &mut [f32], right: &mut [f32]) {
+        match instrument.samples.get(self.sample).map(|sample| sample.data.as_deref()) {
+            Some(Some(data)) => self.mix_memory(data, left, right),
+            Some(None) => match (instrument.heads.get(self.zone), instrument.stream.as_deref()) {
+                (Some(head), Some(stream)) => self.mix_stream(head, slot, stream, left, right),
+                _ => self.active = false,
+            },
+            None => self.active = false,
+        }
+    }
+
+    /// A sample held whole: every frame is a lookup, so a loop costs nothing but a rewind.
+    fn mix_memory(&mut self, data: &[i16], left: &mut [f32], right: &mut [f32]) {
         let Some(last) = (data.len() / 2).checked_sub(1) else {
             self.active = false;
             return;
@@ -153,6 +172,51 @@ impl Voice {
             let (al, ar) = (data[a] as f32, data[a + 1] as f32);
             left[i] += (al + (data[b] as f32 - al) * frac) * gain;
             right[i] += (ar + (data[b + 1] as f32 - ar) * frac) * gain;
+            self.advance();
+            if !self.active {
+                return;
+            }
+        }
+    }
+
+    /// A streamed sample: the zone's head out of RAM, then its slot's ring, with the frame before
+    /// the boundary kept so the interpolation across it is the same as any other.
+    fn mix_stream(
+        &mut self,
+        head: &[i16],
+        slot: usize,
+        stream: &Stream,
+        left: &mut [f32],
+        right: &mut [f32],
+    ) {
+        let head_frames = head.len() / 2;
+        for i in 0..left.len() {
+            let want = (self.pos - self.start) as usize;
+            let mut dry = false;
+            while self.cursor < want {
+                let mut frame = [0i16; 2];
+                if self.cursor + 1 < head_frames {
+                    frame.copy_from_slice(&head[(self.cursor + 1) * 2..][..2]);
+                } else if !stream.read(slot, self.generation, &mut frame) {
+                    dry = true;
+                    break;
+                }
+                self.now = self.next;
+                self.next = frame;
+                self.cursor += 1;
+            }
+            if dry {
+                // The frames that did not arrive in time are gone: the voice is silent until the
+                // ring has something again, and picks the sample up where the reader has got to.
+                self.cursor = want;
+                self.now = [0; 2];
+                self.next = [0; 2];
+            }
+            let gain = self.amp * self.level * self.fade_gain() * self.cut / 32768.0;
+            let frac = (self.pos - self.pos.floor()) as f32;
+            let (nl, nr) = (self.now[0] as f32, self.now[1] as f32);
+            left[i] += (nl + (self.next[0] as f32 - nl) * frac) * gain;
+            right[i] += (nr + (self.next[1] as f32 - nr) * frac) * gain;
             self.advance();
             if !self.active {
                 return;
@@ -234,9 +298,14 @@ impl Sampler {
         left.fill(0.0);
         right.fill(0.0);
         let Self { voices, instrument, retiring, .. } = self;
-        for v in voices.iter_mut().filter(|v| v.active) {
+        for (slot, v) in voices.iter_mut().enumerate().filter(|(_, v)| v.active) {
             match if v.retired { retiring.as_deref() } else { instrument.as_deref() } {
-                Some(playing) => v.mix(playing, left, right),
+                Some(playing) => {
+                    v.mix(slot, playing, left, right);
+                    if let (false, Some(stream)) = (v.active, playing.stream.as_deref()) {
+                        stream.end(slot);
+                    }
+                }
                 None => v.active = false,
             }
         }
@@ -276,14 +345,17 @@ impl Sampler {
     }
 
     fn note_on(&mut self, note: u8, velocity: u8) {
-        let Some(instrument) = self.instrument.as_ref() else { return };
-        let Some(zone) = instrument.zones.iter().find(|z| {
+        // The instrument is held for the whole of this, so nothing here borrows the engine.
+        let Some(instrument) = self.instrument.clone() else { return };
+        let Some(index) = instrument.zones.iter().position(|z| {
             (z.key_lo..=z.key_hi).contains(&note) && (z.vel_lo..=z.vel_hi).contains(&velocity)
         }) else {
             return;
         };
+        let zone = instrument.zones[index].clone();
         let Some(sample) = instrument.samples.get(zone.sample) else { return };
-        let (zone, frames, sample_rate) = (zone.clone(), sample.frames(), sample.rate);
+        let (frames, sample_rate, streamed) =
+            (sample.frames, sample.rate, sample.data.is_none());
         let (rate, envelope) = (self.rate, self.envelope);
 
         let semitones = note as f64 - zone.root as f64 + zone.tune_cents as f64 / 100.0;
@@ -299,17 +371,41 @@ impl Sampler {
         }
         self.age += 1;
         let slot = self.slot();
+
+        let start = zone.start.min(frames);
+        let end = zone.end.min(frames);
+        // The head is what the voice sounds first; the reader is asked for everything after it.
+        let head = instrument.heads.get(index).map_or(0, |head| head.len() / 2);
+        let generation = match instrument.stream.as_deref().filter(|_| streamed) {
+            Some(stream) if start + head < end => stream.start(Fill {
+                slot,
+                sample: zone.sample,
+                from: start + head,
+                to: end,
+                generation: 0,
+            }),
+            _ => 0,
+        };
+        let frame = |at: usize| match instrument.heads.get(index) {
+            Some(head) if at * 2 + 1 < head.len() => [head[at * 2], head[at * 2 + 1]],
+            _ => [0; 2],
+        };
+
         self.voices[slot] = Voice {
             active: true,
             note,
             sample: zone.sample,
+            zone: index,
             retired: false,
-            pos: zone.start.min(frames) as f64,
+            pos: start as f64,
             step,
-            end: zone.end.min(frames) as f64,
+            start: start as f64,
+            end: end as f64,
+            // ponytail: a streamed zone plays to its end once. Logic's pianos loop nothing, so a
+            // looping one wants the reader to wrap round the loop points before it is worth it.
             loop_: zone
                 .loop_
-                .filter(|&(from, to)| to > from && to <= frames)
+                .filter(|&(from, to)| !streamed && to > from && to <= frames)
                 .map(|(from, to)| (from as f64, to as f64)),
             amp,
             stage: if attack { Stage::Attack } else { Stage::Decay },
@@ -334,6 +430,10 @@ impl Sampler {
             cut_step: 0.0,
             held: false,
             age: self.age,
+            now: frame(0),
+            next: frame(1),
+            cursor: 0,
+            generation,
         };
     }
 
@@ -379,7 +479,7 @@ impl Sampler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::sampler::{Sample, Zone};
+    use crate::audio::sampler::{Sample, Stream, Zone};
 
     const RATE: f64 = 44100.0;
 
@@ -393,7 +493,7 @@ mod tests {
             data.push(v);
             data.push(v);
         }
-        let sample = Sample { rate: RATE, data: Box::new(data) };
+        let sample = Sample::memory(RATE, data);
         let zone = Zone {
             key_lo: 0,
             key_hi: 127,
@@ -407,7 +507,7 @@ mod tests {
             end: frames,
             loop_: None,
         };
-        Arc::new(Instrument { zones: vec![zone], samples: vec![sample] })
+        Arc::new(Instrument::memory(vec![zone], vec![sample]))
     }
 
     fn render(sampler: &mut Sampler, seconds: f64) -> Vec<f32> {
@@ -495,6 +595,101 @@ mod tests {
         };
         let (root, octave) = (crossings(60), crossings(72));
         assert!((octave - 2 * root).abs() <= 2, "{octave} against {root}");
+    }
+
+    /// The same sine as `instrument`, as a zone whose head is in memory and whose rest has to be
+    /// read: 0.1 s of head out of a second of sample, so a render of more than that crosses the
+    /// boundary. Answers the instrument and the frame the reader has to make.
+    fn streamed() -> (Arc<Instrument>, impl Fn(usize) -> [i16; 2]) {
+        let frames = RATE as usize;
+        let head_frames = (RATE * 0.1) as usize;
+        let frame = |i: usize| {
+            let phase = std::f64::consts::TAU * 220.0 * i as f64 / RATE;
+            let v = (phase.sin() * 32000.0) as i16;
+            [v, v]
+        };
+        let zone = Zone {
+            key_lo: 0,
+            key_hi: 127,
+            vel_lo: 0,
+            vel_hi: 127,
+            root: 60,
+            tune_cents: 0,
+            gain_db: 0.0,
+            sample: 0,
+            start: 0,
+            end: frames,
+            loop_: None,
+        };
+        let head = (0..head_frames).flat_map(frame).collect();
+        let instrument = Instrument {
+            zones: vec![zone],
+            samples: vec![Sample { rate: RATE, frames, data: None }],
+            heads: vec![head],
+            stream: Some(Arc::new(Stream::new(16, 1 << 16))),
+        };
+        (Arc::new(instrument), frame)
+    }
+
+    /// A thread standing in for the disk: it takes every order and answers it whole. Ends with the
+    /// instrument, like the real reader does.
+    fn feeder(instrument: &Arc<Instrument>, frame: impl Fn(usize) -> [i16; 2] + Send + 'static) {
+        let watch = Arc::downgrade(instrument.stream.as_ref().unwrap());
+        std::thread::spawn(move || {
+            while let Some(stream) = watch.upgrade() {
+                match stream.order() {
+                    Some(fill) if stream.open(&fill) => {
+                        let frames: Vec<i16> = (fill.from..fill.to).flat_map(&frame).collect();
+                        stream.feed(&fill, &frames);
+                    }
+                    _ => std::thread::sleep(std::time::Duration::from_millis(1)),
+                }
+            }
+        });
+    }
+
+    /// Waits for the reader to have the frames the render is about to ask for, which on the real
+    /// device the head buys time for and here would otherwise be a race.
+    fn wait(instrument: &Instrument, slot: usize, frames: usize) {
+        let stream = instrument.stream.as_deref().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while stream.ready(slot) < frames && std::time::Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn a_streamed_zone_runs_out_of_its_head_into_the_ring_without_a_step() {
+        let (instrument, frame) = streamed();
+        feeder(&instrument, frame);
+        let mut s = Sampler::new(RATE, 8);
+        s.apply(Command::Load(instrument.clone()));
+        // A key off its root, so the boundary is crossed between two frames rather than on one.
+        s.apply(Command::NoteOn { note: 61, velocity: 127 });
+        wait(&instrument, 0, (RATE * 0.7) as usize);
+
+        let out = render(&mut s, 0.5);
+        let boundary = (RATE * 0.09) as usize;
+        assert!(peak(&out[boundary..]) > 0.5 * peak(&out[..boundary]), "the sample plays on");
+        // The sample's own slope is the biggest step it may have, and the head has that slope in
+        // it already: a boundary the ear could hear would be a step larger than anything inside.
+        let inside = jump(&out[..boundary]);
+        assert!(jump(&out) <= inside * 1.05, "{} against {inside} inside the head", jump(&out));
+        assert_eq!(instrument.stream.as_ref().unwrap().underruns(), 0);
+    }
+
+    #[test]
+    fn a_ring_that_never_fills_costs_silence_and_an_underrun() {
+        let (instrument, _) = streamed();
+        let mut s = Sampler::new(RATE, 8);
+        s.apply(Command::Load(instrument.clone()));
+        s.apply(Command::NoteOn { note: 60, velocity: 127 });
+
+        let out = render(&mut s, 0.5);
+        let boundary = (RATE * 0.1) as usize;
+        assert!(peak(&out[..boundary]) > 0.01, "the head sounds");
+        assert_eq!(peak(&out[boundary..]), 0.0, "and nothing after it");
+        assert!(instrument.stream.as_ref().unwrap().underruns() > 0);
     }
 
     #[test]

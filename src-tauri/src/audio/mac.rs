@@ -44,7 +44,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::ptr::{NonNull, from_ref};
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, Mutex, Once, Weak};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -128,9 +128,11 @@ pub struct Graph {
     commands: Sender<Command>,
     /// Where the voice engine hands back an instrument it has stopped playing. Draining it drops
     /// the last reference, and with it the sample memory map, off the audio thread.
-    // ponytail: one dead instrument sits here until the next load drains it, which costs a
-    // mapping's worth of address space; drain on a timer if that is ever too long to wait.
+    // ponytail: one dead instrument sits here until the next load drains it, which costs its
+    // heads and its rings; drain on a timer if that is ever too long to wait.
     graveyard: Receiver<Arc<sampler::Instrument>>,
+    /// The rings of the EXS the voice engine plays, held weakly only to count the underruns.
+    streaming: Option<Weak<sampler::Stream>>,
     /// True while the voice engine holds the instrument, false while AUSampler does. A hosted
     /// plugin displaces both.
     exs: bool,
@@ -214,6 +216,7 @@ impl Graph {
                 source,
                 commands,
                 graveyard,
+                streaming: None,
                 exs: false,
                 plugin: None,
                 clicker,
@@ -354,12 +357,23 @@ impl Graph {
     /// fail happens before anything is switched over, so a file that will not read leaves the
     /// instrument that was playing exactly where it was.
     fn load_exs(&mut self, path: &Path) -> Result<(), String> {
-        let instrument = sampler::decode::load(&sampler::exs::read(path)?)?;
+        // One ring per voice slot, which is what the engine sounds at once plus the spares its
+        // steals fade out through.
+        let instrument = Arc::new(sampler::disk::load(&sampler::exs::read(path)?, VOICES * 2)?);
+        // Weakly, so unloading the instrument still stops its reader thread.
+        self.streaming = instrument.stream.as_ref().map(Arc::downgrade);
         // Nothing of the old instrument may ring on through the new one.
         self.release_all();
         // AUSampler plays nothing from here on, so it has no file to read back at the next rewire.
         self.file = None;
-        self.load_instrument(Arc::new(instrument))
+        self.load_instrument(instrument)
+    }
+
+    /// Frames the voice engine wanted from the disk and did not have in time, over the life of the
+    /// instrument playing. Zero is the only good number; the hardware tests read it.
+    #[allow(dead_code)]
+    pub fn underruns(&self) -> u64 {
+        self.streaming.as_ref().and_then(Weak::upgrade).map_or(0, |stream| stream.underruns())
     }
 
     /// Puts an instrument straight into the voice engine and gives its node the head of the chain,
@@ -1190,8 +1204,8 @@ mod tests {
                 [one, one]
             })
             .collect();
-        Arc::new(sampler::Instrument {
-            zones: vec![sampler::Zone {
+        Arc::new(sampler::Instrument::memory(
+            vec![sampler::Zone {
                 key_lo: 0,
                 key_hi: 127,
                 vel_lo: 0,
@@ -1204,8 +1218,8 @@ mod tests {
                 end: frames,
                 loop_: Some((0, frames)),
             }],
-            samples: vec![sampler::Sample { rate: RATE, data: Box::new(data) }],
-        })
+            vec![sampler::Sample::memory(RATE, data)],
+        ))
     }
 
     /// The head of the chain moves between the three instruments and back. All of them stay
@@ -1496,6 +1510,90 @@ mod tests {
             rms(again)
         );
         release_all();
+    }
+
+    fn underruns() -> u64 {
+        GRAPH.lock().unwrap().as_ref().map_or(0, |graph| graph.underruns())
+    }
+
+    /// What streaming costs on the real device: how long the Concert Grand takes to load now that
+    /// only the zone heads are read, and whether ten notes held under the pedal for three seconds
+    /// outrun the reader. A voice the disk cannot keep up with counts underruns and goes silent;
+    /// an engine the render cannot keep up with leaves gaps in the timeline. Both want to be zero.
+    /// Run it and read the numbers: `cargo test -- --ignored a_streamed_chord`.
+    #[test]
+    #[ignore = "opens a real audio device"]
+    fn a_streamed_chord_holds_for_three_seconds_without_running_dry() {
+        use objc2_avf_audio::AVAudioTime;
+
+        let graph = Graph::build().unwrap();
+        graph.start().unwrap();
+        install(graph);
+        set_output_device(None).unwrap();
+        set_buffer_frames(DEFAULT_FRAMES).unwrap();
+        let piano = instruments("")
+            .into_iter()
+            .find(|one| one.name == "Concert Grand Piano")
+            .expect("Logic's Concert Grand Piano is on this Mac");
+
+        let started = Instant::now();
+        load_instrument(&piano.id, None).unwrap();
+        let load = started.elapsed();
+        assert!(status().available, "{}", status().reason);
+        println!("the Concert Grand loaded in {load:?}");
+
+        type Tapped = (Vec<f32>, Vec<(i64, u32)>);
+        let taken: Arc<Mutex<Tapped>> = Arc::new(Mutex::new(Default::default()));
+        let into = taken.clone();
+        let tap = RcBlock::new(
+            move |buffer: NonNull<AVAudioPCMBuffer>, when: NonNull<AVAudioTime>| unsafe {
+                let buffer = buffer.as_ref();
+                let channel = (*buffer.floatChannelData()).as_ptr();
+                let mut held = into.lock().unwrap();
+                let frames = buffer.frameLength();
+                held.1.push((when.as_ref().sampleTime(), frames));
+                for frame in 0..frames as usize {
+                    held.0.push(channel.add(frame).read());
+                }
+            },
+        );
+        unsafe {
+            let held = GRAPH.lock().unwrap();
+            let mixer = held.as_ref().unwrap().engine.mainMixerNode();
+            mixer.installTapOnBus_bufferSize_format_block(0, 1024, None, RcBlock::as_ptr(&tap));
+        }
+
+        // Ten keys at the hardest strike, held down with the pedal: every one of them streams for
+        // as long as the chord lasts, which is the most the reader is ever asked for.
+        let chord = [48u8, 52, 55, 60, 64, 67, 72, 76, 79, 84];
+        pedal(127);
+        *taken.lock().unwrap() = Default::default();
+        let before = underruns();
+        for midi in chord {
+            note(midi, 127, true);
+        }
+        sleep(Duration::from_secs(3));
+        for midi in chord {
+            note(midi, 0, false);
+        }
+        pedal(0);
+        sleep(Duration::from_millis(500));
+
+        let (samples, times) = taken.lock().unwrap().clone();
+        let gaps =
+            times.windows(2).filter(|pair| pair[0].0 + i64::from(pair[0].1) != pair[1].0).count();
+        let peak = samples.iter().fold(0f32, |top, one| top.max(one.abs()));
+        println!(
+            "{} notes for 3 s: peak {peak:.4}, {} underruns, {gaps} gaps in the render",
+            chord.len(),
+            underruns() - before
+        );
+        release_all();
+
+        assert!(load < Duration::from_secs(3), "loaded in {load:?}");
+        assert!(peak > 0.01, "the chord sounded");
+        assert_eq!(underruns() - before, 0, "no voice ran dry");
+        assert_eq!(gaps, 0, "and the render never skipped");
     }
 
     #[test]

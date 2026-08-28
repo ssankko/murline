@@ -5,22 +5,31 @@
 use std::sync::Arc;
 
 pub use super::Envelope;
+pub use stream::{Fill, Stream};
 
 #[cfg(target_os = "macos")]
-pub mod decode;
+pub mod disk;
 pub mod engine;
 pub mod exs;
+mod stream;
 
-/// One decoded sample: stereo, interleaved, 16-bit, at its own rate. `data` is either owned or a
-/// memory map of the PCM cache; the engine only ever reads it.
+/// The stretch of a zone that is decoded into RAM at load, so a voice sounds the moment it starts
+/// and the reader has this long to catch up with it.
+pub const HEAD: f64 = 0.250;
+
+/// One sample: stereo, interleaved, 16-bit, at its own rate. `data` holds every frame for a sample
+/// small enough to keep, and nothing for one the zones read off the disk while they play.
 pub struct Sample {
     pub rate: f64,
-    pub data: Box<dyn AsRef<[i16]> + Send + Sync>,
+    pub frames: usize,
+    pub data: Option<Vec<i16>>,
 }
 
 impl Sample {
-    pub fn frames(&self) -> usize {
-        (*self.data).as_ref().len() / 2
+    /// A sample held whole in memory, which is what the tests play.
+    #[cfg(test)]
+    pub fn memory(rate: f64, data: Vec<i16>) -> Self {
+        Self { rate, frames: data.len() / 2, data: Some(data) }
     }
 }
 
@@ -42,10 +51,24 @@ pub struct Zone {
     pub loop_: Option<(usize, usize)>,
 }
 
-/// Everything a loaded instrument is: its zones and the samples they index.
+/// Everything a loaded instrument is: its zones, the samples they index, and, when the samples are
+/// too big to hold, each zone's head in RAM and the rings the rest arrives through.
 pub struct Instrument {
     pub zones: Vec<Zone>,
     pub samples: Vec<Sample>,
+    /// Each zone's first frames, indexed like `zones`; empty for an instrument held in memory.
+    pub heads: Vec<Vec<i16>>,
+    /// The rings the streamed zones read from. The reader thread holds a weak reference to this,
+    /// so dropping the instrument is what stops it.
+    pub stream: Option<Arc<Stream>>,
+}
+
+impl Instrument {
+    /// An instrument whose samples are all in memory and so needs no reader.
+    #[cfg(test)]
+    pub fn memory(zones: Vec<Zone>, samples: Vec<Sample>) -> Self {
+        Self { zones, samples, heads: Vec::new(), stream: None }
+    }
 }
 
 /// What the rest of the app tells the engine. Sent over a channel and applied on the audio thread.

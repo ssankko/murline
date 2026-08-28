@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import {
   Dialog,
   DialogContent,
@@ -32,6 +33,7 @@ import {
 } from '@/library/queries';
 import { scanLibrary, splitError } from '@/library/scan';
 import { Collapse } from '@/look/collapse';
+import { MidiLight } from '@/midi/midi-light';
 import { Finder } from '@/screens/finder';
 import { Detail } from '@/screens/piece-detail';
 import { Mixer } from '@/audio/mixer';
@@ -196,45 +198,53 @@ export function Library({
   return (
     <div className="relative flex h-full">
       <div className="border-edge-soft flex w-[340px] flex-none flex-col border-r">
-        <div className="flex items-center gap-2 px-4 pt-3.5 pb-2.5">
-          <h1 className="mr-auto text-[15px] font-semibold">Library</h1>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="text-muted-ink text-[12px]">
-                <ArrowUpDown className="size-3.5" />
-                {SORTS.find(([key]) => key === sort)![1]}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuRadioGroup
-                value={sort}
-                onValueChange={(value) => setSort(value as SortOrder)}
-              >
-                {SORTS.map(([key, label]) => (
-                  <DropdownMenuRadioItem key={key} value={key} className="text-[13px]">
-                    {label}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Mixer
-            open={mixerOpen}
-            onOpenChange={setMixerOpen}
-            onSoundSettings={() => {
-              setSettingsJump('instrument_id');
-              setSettingsOpen(true);
-            }}
-          />
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Settings"
-            onClick={() => setSettingsOpen(true)}
-          >
-            <Settings />
-          </Button>
-        </div>
+        <TooltipProvider>
+          <div className="flex items-center gap-2 px-4 pt-3.5 pb-2.5">
+            <h1 className="mr-auto text-[15px] font-semibold">Library</h1>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" className="text-muted-ink text-[12px]">
+                  <ArrowUpDown className="size-3.5" />
+                  {SORTS.find(([key]) => key === sort)![1]}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuRadioGroup
+                  value={sort}
+                  onValueChange={(value) => setSort(value as SortOrder)}
+                >
+                  {SORTS.map(([key, label]) => (
+                    <DropdownMenuRadioItem key={key} value={key} className="text-[13px]">
+                      {label}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <MidiLight
+              onOpenSettings={() => {
+                setSettingsJump('midi_device');
+                setSettingsOpen(true);
+              }}
+            />
+            <Mixer
+              open={mixerOpen}
+              onOpenChange={setMixerOpen}
+              onSoundSettings={() => {
+                setSettingsJump('instrument_id');
+                setSettingsOpen(true);
+              }}
+            />
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Settings"
+              onClick={() => setSettingsOpen(true)}
+            >
+              <Settings />
+            </Button>
+          </div>
+        </TooltipProvider>
 
         {/* No folder at all reads the same as one that has gone: there is nothing to list. */}
         {(!folder || folderGone) && (

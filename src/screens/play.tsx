@@ -24,6 +24,7 @@ import { clamp } from '@/lib/utils';
 import { Collapse } from '@/look/collapse';
 import { Metronome, type MetronomeHandle } from '@/look/metronome';
 import { useDark } from '@/look/use-dark';
+import { MidiLight } from '@/midi/midi-light';
 import { useMidiStatus } from '@/midi/use-midi-status';
 import { click, setClickVolume } from '@/play/click';
 import {
@@ -495,6 +496,12 @@ export function PlayScreen({
             <ArrowLeft {...ICON} />
           </BarButton>
           <b className="ml-1.5 mr-1 min-w-0 truncate text-[13px] font-medium">{title}</b>
+          <MidiLight
+            onOpenSettings={() => {
+              setSettingsJump('midi_device');
+              setSettingsOpen(true);
+            }}
+          />
           <Mixer
             open={mixerOpen}
             onOpenChange={setMixerOpen}

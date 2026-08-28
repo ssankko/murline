@@ -83,13 +83,15 @@ export function TempoPopover({
 
 /**
  * One 32 px shape for every control of the bar. An action is plain ink; a control that is only
- * placed here is `off`, dimmed and inert; a toggle says whether it is on with an under-bar, and one
- * `segment` of a pair says it by filling instead.
+ * placed here is `off`, dimmed and inert; a light with nothing to report is `dim`, dimmed but still
+ * a way into its settings; a toggle says whether it is on with an under-bar, and one `segment` of a
+ * pair says it by filling instead.
  */
 export function BarButton({
   label,
   onClick,
   off,
+  dim,
   pressed,
   disc,
   wide,
@@ -99,6 +101,7 @@ export function BarButton({
   label: string;
   onClick?: () => void;
   off?: boolean;
+  dim?: boolean;
   pressed?: boolean;
   disc?: boolean;
   wide?: boolean;
@@ -109,10 +112,10 @@ export function BarButton({
   // every other toggle is dimmed while off and full ink with an under-bar while on. A control only
   // placed here is `off`: dimmed and inert.
   const filled = segment && pressed;
-  const dim = off || (!segment && pressed === false);
+  const dimmed = off || dim || (!segment && pressed === false);
   const paint = filled
     ? 'bg-ink text-paper'
-    : `${dim ? 'text-ink/35' : ''} ${off ? '' : 'hover:bg-ink/8'}`;
+    : `${dimmed ? 'text-ink/35' : ''} ${off ? '' : 'hover:bg-ink/8'}`;
   const shape = disc
     ? 'size-[34px] rounded-full bg-ink text-paper mx-1 hover:bg-ink/85'
     : `h-8 ${segment ? 'rounded-none' : 'rounded-md'} ${wide ? 'px-1.5' : 'w-8'} ${paint}`;

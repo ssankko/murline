@@ -35,8 +35,9 @@ pub struct Scheduler {
     rate: f64,
     /// The first note not yet started.
     next: usize,
-    /// Off time and note of everything the scheduler has struck and not yet let go.
-    sounding: Vec<(f64, u8)>,
+    /// Off time, note, and whether the note is zero-length (off <= on), of everything the
+    /// scheduler has struck and not yet let go.
+    sounding: Vec<(f64, u8, bool)>,
 }
 
 impl Scheduler {
@@ -103,27 +104,35 @@ impl Scheduler {
         let rate = if self.rate == 0.0 { 1.0 } else { self.rate };
         let end = self.seconds + (frames as f64 / sample_rate) * rate;
 
-        let mut due: Vec<(f64, Event)> = Vec::new();
+        // A tie at the same time breaks by rank: an off goes out before an unrelated on, so a
+        // same-pitch retrigger never lands on top of the voice it is replacing. A zero-length
+        // note's own off is the exception: it must follow its own on, or that voice never starts.
+        const OFF: u8 = 0;
+        const ON: u8 = 1;
+        const OFF_OF_A_ZERO_LENGTH_NOTE: u8 = 2;
+
+        let mut due: Vec<(f64, u8, Event)> = Vec::new();
         while let Some(note) = self.notes.get(self.next) {
             if note.on >= end {
                 break;
             }
-            due.push((note.on, Event { midi: note.midi, velocity: note.velocity, on: true }));
-            self.sounding.push((note.off, note.midi));
+            due.push((note.on, ON, Event { midi: note.midi, velocity: note.velocity, on: true }));
+            self.sounding.push((note.off, note.midi, note.off <= note.on));
             self.next += 1;
         }
         // After the note ons, so a note shorter than one buffer is let go inside the same buffer.
-        self.sounding.retain(|&(off, midi)| {
+        self.sounding.retain(|&(off, midi, zero_length)| {
             let over = off < end;
             if over {
-                due.push((off, Event { midi, velocity: 0, on: false }));
+                let rank = if zero_length { OFF_OF_A_ZERO_LENGTH_NOTE } else { OFF };
+                due.push((off, rank, Event { midi, velocity: 0, on: false }));
             }
             !over
         });
-        due.sort_by(|a, b| a.0.total_cmp(&b.0));
+        due.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
 
         self.seconds = end;
-        due.into_iter().map(|(_, event)| event).collect()
+        due.into_iter().map(|(_, _, event)| event).collect()
     }
 }
 
@@ -194,6 +203,38 @@ mod tests {
         let mut slow = scheduler(notes);
         slow.set_rate(50);
         assert_eq!(strikes(&mut slow, 20), vec![(9, 60)]);
+    }
+
+    #[test]
+    fn a_same_pitch_retrigger_at_the_previous_notes_off_sends_the_off_first() {
+        let mut scheduler = scheduler(vec![
+            note(60, 0.0, BUFFER * 0.5),
+            note(60, BUFFER * 0.5, BUFFER * 5.0),
+        ]);
+
+        assert_eq!(
+            scheduler.pump(FRAMES, RATE),
+            vec![
+                Event { midi: 60, velocity: 80, on: true },
+                Event { midi: 60, velocity: 0, on: false },
+                Event { midi: 60, velocity: 80, on: true },
+            ],
+            "the tied off must reach the sampler before the retrigger's on"
+        );
+    }
+
+    #[test]
+    fn a_zero_length_note_still_sends_its_on_before_its_off() {
+        let mut scheduler = scheduler(vec![note(60, BUFFER * 0.5, BUFFER * 0.5)]);
+
+        assert_eq!(
+            scheduler.pump(FRAMES, RATE),
+            vec![
+                Event { midi: 60, velocity: 80, on: true },
+                Event { midi: 60, velocity: 0, on: false },
+            ],
+            "the note's own off must not jump ahead of its own on"
+        );
     }
 
     #[test]

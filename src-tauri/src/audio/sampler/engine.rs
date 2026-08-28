@@ -4,6 +4,7 @@
 use std::f32::consts::PI;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{SyncSender, TrySendError};
 
 use super::{Command, Envelope, Fill, Instrument, Role, Stream};
 
@@ -252,6 +253,11 @@ pub struct Sampler {
     instrument: Option<Arc<Instrument>>,
     /// The instrument a load handed back, held while its voices fade so their samples stay alive.
     retiring: Option<Arc<Instrument>>,
+    /// An instrument no voice reads any more, waiting for room on `dead`.
+    spent: Option<Arc<Instrument>>,
+    /// Where an instrument the engine has let go leaves for another thread to drop. Freeing the
+    /// heads and joining the reader thread are both too slow for a render.
+    dead: SyncSender<Arc<Instrument>>,
     envelope: Envelope,
     pedal: bool,
     age: u64,
@@ -263,9 +269,10 @@ pub struct Sampler {
 }
 
 impl Sampler {
-    /// Ready to render at `rate` frames a second with at most `max_voices` voices at once. Every
-    /// buffer the engine will ever need is allocated here.
-    pub fn new(rate: f64, max_voices: usize) -> Self {
+    /// Ready to render at `rate` frames a second with at most `max_voices` voices at once, handing
+    /// every instrument it lets go to `dead`. Every buffer the engine will ever need is allocated
+    /// here.
+    pub fn new(rate: f64, max_voices: usize, dead: SyncSender<Arc<Instrument>>) -> Self {
         let max_voices = max_voices.max(1);
         Self {
             rate,
@@ -274,6 +281,8 @@ impl Sampler {
             voices: vec![Voice::default(); max_voices * 2],
             instrument: None,
             retiring: None,
+            spent: None,
+            dead,
             // A plain hold and release, for samples that carry their own decay.
             envelope: Envelope { attack: 0.0, decay: 0.0, sustain: 1.0, release: 0.3 },
             pedal: false,
@@ -283,13 +292,12 @@ impl Sampler {
         }
     }
 
-    /// Applies one command. Answers the instrument let go by a `Load` or `Unload`, so the caller
-    /// can drop it off the audio thread.
-    pub fn apply(&mut self, command: Command) -> Option<Arc<Instrument>> {
+    /// Applies one command.
+    pub fn apply(&mut self, command: Command) {
         let rate = self.rate;
         match command {
-            Command::Load(instrument) => return self.swap(Some(instrument)),
-            Command::Unload => return self.swap(None),
+            Command::Load(instrument) => self.swap(Some(instrument)),
+            Command::Unload => self.swap(None),
             Command::NoteOn { note, velocity } => self.note_on(note, velocity),
             Command::NoteOff { note } => self.note_off(note),
             Command::Sustain(down) => self.pedal(down),
@@ -302,7 +310,6 @@ impl Sampler {
             }
             Command::Envelope(envelope) => self.envelope = envelope,
         }
-        None
     }
 
     /// Writes the next `left.len()` frames into both channels, replacing what was there.
@@ -324,9 +331,18 @@ impl Sampler {
             }
         }
         if retiring.is_some() && !voices.iter().any(|v| v.active && v.retired) {
-            // ponytail: the last reference can land here and free the samples on the audio thread;
-            // hand it back through the command channel if a load ever ticks.
-            *retiring = None;
+            self.spent = self.spent.take().or_else(|| self.retiring.take());
+        }
+        self.bury();
+    }
+
+    /// Hands the spent instrument to the thread that drops it, keeping it for the next render
+    /// while the channel has no room.
+    fn bury(&mut self) {
+        if let Some(gone) = self.spent.take()
+            && let Err(TrySendError::Full(back)) = self.dead.try_send(gone)
+        {
+            self.spent = Some(back);
         }
     }
 
@@ -337,7 +353,7 @@ impl Sampler {
             .filter(|v| v.active && !v.retired && v.stage != Stage::Release && v.stage != Stage::Cut)
     }
 
-    fn swap(&mut self, next: Option<Arc<Instrument>>) -> Option<Arc<Instrument>> {
+    fn swap(&mut self, next: Option<Arc<Instrument>>) {
         let rate = self.rate;
         for v in self.voices.iter_mut().filter(|v| v.active) {
             // A second load inside one fade leaves the older voices nothing to read.
@@ -348,11 +364,19 @@ impl Sampler {
                 v.cut(rate);
             }
         }
+        // Whatever an earlier fade left has just lost its last voice, so it goes out now.
+        self.spent = self.spent.take().or_else(|| self.retiring.take());
+        self.bury();
         let gone = self.instrument.take();
-        self.retiring =
-            gone.clone().filter(|_| self.voices.iter().any(|v| v.active && v.retired));
+        if self.voices.iter().any(|v| v.active && v.retired) {
+            // ponytail: this frees an instrument the channel had no room for, which takes more
+            // loads at once than the graph can leave undrained; deepen the channel if it is hit.
+            self.retiring = gone;
+        } else {
+            self.spent = self.spent.take().or(gone);
+            self.bury();
+        }
         self.instrument = next;
-        gone
     }
 
     /// A key struck: the tone, and the strings the raised dampers let ring along with it.
@@ -568,8 +592,16 @@ impl Sampler {
 mod tests {
     use super::*;
     use crate::audio::sampler::{Role, Sample, Stream, Zone};
+    use std::sync::mpsc::{Receiver, sync_channel};
 
     const RATE: f64 = 44100.0;
+
+    /// An engine and the end of its channel, which has to be held: a dropped receiver would let
+    /// the engine free an instrument itself.
+    fn sampler(max_voices: usize) -> (Sampler, Receiver<Arc<Instrument>>) {
+        let (dead, graveyard) = sync_channel(4);
+        (Sampler::new(RATE, max_voices, dead), graveyard)
+    }
 
     /// A stereo sine that opens at half scale, the hard edge a Logic piano zone starts on.
     fn instrument(hz: f64) -> Arc<Instrument> {
@@ -620,7 +652,7 @@ mod tests {
 
     #[test]
     fn the_start_fade_hides_the_samples_first_edge() {
-        let mut s = Sampler::new(RATE, 8);
+        let (mut s, _dead) = sampler(8);
         s.apply(Command::Envelope(Envelope { attack: 0.0, decay: 0.0, sustain: 1.0, release: 0.5 }));
         s.apply(Command::Load(instrument(20.0)));
         s.apply(Command::NoteOn { note: 60, velocity: 127 });
@@ -631,7 +663,7 @@ mod tests {
 
     #[test]
     fn a_re_strike_leaves_the_ringing_voice_to_release() {
-        let mut s = Sampler::new(RATE, 8);
+        let (mut s, _dead) = sampler(8);
         s.apply(Command::Envelope(Envelope { attack: 0.0, decay: 0.0, sustain: 1.0, release: 1.0 }));
         s.apply(Command::Load(instrument(220.0)));
         s.apply(Command::NoteOn { note: 60, velocity: 64 });
@@ -646,7 +678,7 @@ mod tests {
 
     #[test]
     fn the_pedal_holds_a_note_off_until_it_comes_up() {
-        let mut s = Sampler::new(RATE, 8);
+        let (mut s, _dead) = sampler(8);
         s.apply(Command::Envelope(Envelope { attack: 0.0, decay: 0.0, sustain: 1.0, release: 0.1 }));
         s.apply(Command::Load(instrument(220.0)));
         s.apply(Command::NoteOn { note: 60, velocity: 100 });
@@ -661,7 +693,7 @@ mod tests {
 
     #[test]
     fn stealing_a_voice_costs_no_step_in_the_output() {
-        let mut s = Sampler::new(RATE, 4);
+        let (mut s, _dead) = sampler(4);
         s.apply(Command::Envelope(Envelope { attack: 0.0, decay: 0.0, sustain: 1.0, release: 2.0 }));
         s.apply(Command::Load(instrument(55.0)));
         let mut out = Vec::new();
@@ -675,7 +707,7 @@ mod tests {
     #[test]
     fn an_octave_up_plays_the_sample_twice_as_fast() {
         let crossings = |note| {
-            let mut s = Sampler::new(RATE, 8);
+            let (mut s, _dead) = sampler(8);
             s.apply(Command::Load(instrument(20.0)));
             s.apply(Command::NoteOn { note, velocity: 100 });
             let out = render(&mut s, 0.5);
@@ -751,7 +783,7 @@ mod tests {
     fn a_streamed_zone_runs_out_of_its_head_into_the_ring_without_a_step() {
         let (instrument, frame) = streamed();
         feeder(&instrument, frame);
-        let mut s = Sampler::new(RATE, 8);
+        let (mut s, _dead) = sampler(8);
         s.apply(Command::Load(instrument.clone()));
         // A key off its root, so the boundary is crossed between two frames rather than on one.
         s.apply(Command::NoteOn { note: 61, velocity: 127 });
@@ -770,7 +802,7 @@ mod tests {
     #[test]
     fn a_ring_that_never_fills_costs_silence_and_an_underrun() {
         let (instrument, _) = streamed();
-        let mut s = Sampler::new(RATE, 8);
+        let (mut s, _dead) = sampler(8);
         s.apply(Command::Load(instrument.clone()));
         s.apply(Command::NoteOn { note: 60, velocity: 127 });
 
@@ -825,7 +857,7 @@ mod tests {
 
     #[test]
     fn a_key_up_sounds_the_key_coming_back_and_the_damper_landing() {
-        let mut s = Sampler::new(RATE, 8);
+        let (mut s, _dead) = sampler(8);
         s.apply(Command::Load(every_role()));
         s.apply(Command::NoteOn { note: 60, velocity: 100 });
         assert!(playing(&s, Role::Sympathetic).is_empty(), "the pedal is up");
@@ -836,7 +868,7 @@ mod tests {
 
     #[test]
     fn the_pedal_holds_the_damper_back_until_it_comes_up() {
-        let mut s = Sampler::new(RATE, 8);
+        let (mut s, _dead) = sampler(8);
         s.apply(Command::Load(every_role()));
         s.apply(Command::NoteOn { note: 60, velocity: 100 });
         s.apply(Command::Sustain(true));
@@ -849,7 +881,7 @@ mod tests {
 
     #[test]
     fn the_pedal_makes_a_noise_each_way() {
-        let mut s = Sampler::new(RATE, 8);
+        let (mut s, _dead) = sampler(8);
         s.apply(Command::Load(every_role()));
         s.apply(Command::Sustain(true));
         assert_eq!(playing(&s, Role::PedalNoise), vec![24]);
@@ -859,7 +891,7 @@ mod tests {
 
     #[test]
     fn a_key_struck_under_the_pedal_rings_the_strings_around_it() {
-        let mut s = Sampler::new(RATE, 8);
+        let (mut s, _dead) = sampler(8);
         s.apply(Command::Load(every_role()));
         s.apply(Command::Sustain(true));
         s.apply(Command::NoteOn { note: 60, velocity: 100 });
@@ -869,7 +901,7 @@ mod tests {
 
     #[test]
     fn a_role_switched_off_starts_nothing() {
-        let mut s = Sampler::new(RATE, 8);
+        let (mut s, _dead) = sampler(8);
         s.apply(Command::Load(every_role()));
         s.apply(Command::Roles(0));
         s.apply(Command::Sustain(true));
@@ -910,7 +942,7 @@ mod tests {
         let exs = crate::audio::sampler::exs::read(&path).unwrap();
         let instrument = Arc::new(crate::audio::sampler::disk::load(&exs, 32).unwrap());
         let after_key_up = |roles: u8| {
-            let mut s = Sampler::new(RATE, 16);
+            let (mut s, _dead) = sampler(16);
             s.apply(Command::Load(instrument.clone()));
             s.apply(Command::Roles(roles));
             s.apply(Command::NoteOn { note: 60, velocity: 100 });
@@ -943,7 +975,7 @@ mod tests {
         let sample = Sample::memory(RATE, vec![16000; frames * 2]);
         let layered = Arc::new(Instrument::memory(vec![zone.clone(), zone], vec![sample]));
 
-        let mut s = Sampler::new(RATE, 8);
+        let (mut s, _dead) = sampler(8);
         s.apply(Command::Load(layered));
         s.apply(Command::NoteOn { note: 60, velocity: 100 });
         assert_eq!(playing(&s, Role::Sustain).len(), 2, "the layers of one key both sound");
@@ -952,11 +984,30 @@ mod tests {
     }
 
     #[test]
-    fn a_load_hands_back_the_instrument_it_replaces() {
-        let mut s = Sampler::new(RATE, 8);
+    fn a_load_hands_the_instrument_it_replaces_down_the_channel() {
+        let (mut s, dead) = sampler(8);
         let first = instrument(220.0);
-        assert!(s.apply(Command::Load(first.clone())).is_none());
-        let back = s.apply(Command::Load(instrument(220.0))).unwrap();
-        assert!(Arc::ptr_eq(&back, &first));
+        s.apply(Command::Load(first.clone()));
+        assert!(dead.try_recv().is_err(), "the first load replaces nothing");
+        s.apply(Command::Load(instrument(220.0)));
+        assert!(Arc::ptr_eq(&dead.try_recv().unwrap(), &first));
+    }
+
+    #[test]
+    fn an_instrument_still_fading_goes_down_the_channel_once_its_voices_end() {
+        let (mut s, dead) = sampler(8);
+        let (a, b) = (instrument(220.0), instrument(220.0));
+        s.apply(Command::Load(a.clone()));
+        s.apply(Command::NoteOn { note: 60, velocity: 100 });
+        render(&mut s, 0.05);
+        // The load lands while the voice sounds, so A stays until the cut fade is over.
+        s.apply(Command::Load(b.clone()));
+        assert!(dead.try_recv().is_err(), "A is still being read");
+        render(&mut s, CUT_FADE * 2.0);
+        render(&mut s, 0.01);
+        assert!(Arc::ptr_eq(&dead.try_recv().unwrap(), &a));
+        assert!(dead.try_recv().is_err(), "B is still playing");
+        assert_eq!(Arc::strong_count(&a), 1, "the engine holds nothing of A");
+        assert_eq!(Arc::strong_count(&b), 2);
     }
 }

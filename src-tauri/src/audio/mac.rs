@@ -146,10 +146,10 @@ pub struct Graph {
     /// pulls the commands below out of the channel on the audio thread.
     source: Retained<AVAudioSourceNode>,
     commands: Sender<Command>,
-    /// Where the voice engine hands back an instrument it has stopped playing. Draining it drops
+    /// Where the voice engine hands back the instruments it has stopped playing. Draining it drops
     /// the last reference, and with it the sample memory map, off the audio thread.
-    // ponytail: one dead instrument sits here until the next load drains it, which costs its
-    // heads and its rings; drain on a timer if that is ever too long to wait.
+    // ponytail: a dead instrument sits here until the next load drains it, which costs its heads
+    // and its rings; drain on a timer if that is ever too long to wait.
     graveyard: Receiver<Arc<sampler::Instrument>>,
     /// The rings of a streamed instrument, held weakly only to count the underruns.
     streaming: Option<Weak<sampler::Stream>>,
@@ -228,7 +228,8 @@ impl Graph {
                 ),
             );
             let (commands, orders) = channel();
-            let (dead, graveyard) = channel();
+            // Four slots, filled here so the render block's hand-back allocates nothing.
+            let (dead, graveyard) = sync_channel(4);
             let (previews, operations) = channel();
             // Two slots hold a note list handed back and the one behind it, which is more than a
             // user swapping pieces can fill before the next operation drains them.
@@ -784,12 +785,12 @@ fn sound_bank(path: &Path) -> bool {
 fn source_node(
     format: &AVAudioFormat,
     orders: Receiver<Command>,
-    dead: Sender<Arc<sampler::Instrument>>,
+    dead: SyncSender<Arc<sampler::Instrument>>,
     operations: Receiver<Preview>,
     played: SyncSender<Vec<PreviewNote>>,
     preview: Arc<Shared>,
 ) -> Retained<AVAudioSourceNode> {
-    let voices = RefCell::new(Sampler::new(RATE, VOICES));
+    let voices = RefCell::new(Sampler::new(RATE, VOICES, dead));
     let scheduler = RefCell::new(Scheduler::default());
     let events = RefCell::new(Vec::with_capacity(HELD));
     let render = RcBlock::new(
@@ -799,9 +800,7 @@ fn source_node(
               output: NonNull<AudioBufferList>| {
             let mut voices = voices.borrow_mut();
             while let Ok(command) = orders.try_recv() {
-                if let Some(let_go) = voices.apply(command) {
-                    let _ = dead.send(let_go);
-                }
+                voices.apply(command);
             }
 
             let mut scheduler = scheduler.borrow_mut();
@@ -846,7 +845,7 @@ fn source_node(
                     } else {
                         Command::NoteOff { note: event.midi }
                     };
-                    let _ = voices.apply(command);
+                    voices.apply(command);
                 } else {
                     preview.notes.push(std::slice::from_ref(event));
                 }
@@ -854,7 +853,7 @@ fn source_node(
             if scheduler.ended() {
                 scheduler.stop();
                 if file {
-                    let _ = voices.apply(Command::AllOff);
+                    voices.apply(Command::AllOff);
                 }
             }
             preview.seconds.store(scheduler.seconds().to_bits(), Relaxed);

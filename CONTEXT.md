@@ -131,7 +131,7 @@ The audio graph in the Rust side that turns keyboard and Preview notes into soun
 _Avoid_: Synth, audio engine, playback engine
 
 **Instrument**:
-The one Audio Unit instrument, or file loaded into Apple's sampler, that the sound engine plays. One at a time, global, remembered across launches.
+The one Audio Unit instrument, or file the sound engine plays: an EXS through the app's own voice engine, a SoundFont through Apple's sampler. One at a time, global, remembered across launches.
 _Avoid_: Patch, preset, voice, sound font (a SoundFont is one kind of file an instrument is loaded from)
 
 **Effect chain**:
@@ -147,7 +147,7 @@ How loud the whole keyboard sounds. It applies after the effect chain, so it tri
 _Avoid_: Master volume, output gain, level
 
 **Envelope**:
-How loud a note is over its own lifetime: the attack it comes in on, the decay down to the sustain it holds at while the key is down, and the release it dies away over once the key comes up. Kept per instrument, so a heavy piano and a thin organ each keep their own. Only the sampler has one to set; a hosted Audio Unit shapes its notes behind its own window. Setting it costs about a second inside CoreAudio and the sound stops for it, so it is sent once the hand comes off the slider rather than as it moves, and the section warns from the first touch of a slider until the engine has it. It is put back after every load, which reads the instrument file's own envelope in over it.
+How loud a note is over its own lifetime: the attack it comes in on, the decay down to the sustain it holds at while the key is down, and the release it dies away over once the key comes up. Kept per instrument, so a heavy piano and a thin organ each keep their own. Only a file instrument has one to set; a hosted Audio Unit shapes its notes behind its own window. An EXS takes it at once, through the app's own voice engine, and every voice struck after it follows it, with a fixed 3 ms fade at each voice start whatever the attack. A SoundFont takes it through Apple's sampler, which costs about a second inside CoreAudio and stops the sound for it, so the section sends it once the hand comes off the slider rather than as it moves, and warns from the first touch of a slider until the engine has it. It is put back after every load, which reads the instrument file's own envelope in over it.
 _Avoid_: ADSR (the four sliders, not the concept), amp envelope, volume envelope, contour
 
 **Velocity curve**:

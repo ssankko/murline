@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 pub use super::Envelope;
 
+#[cfg(target_os = "macos")]
+pub mod decode;
 pub mod engine;
 pub mod exs;
 
@@ -58,6 +60,4 @@ pub enum Command {
     /// Ends every voice at once, pedal included.
     AllOff,
     Envelope(Envelope),
-    /// The rate the engine renders at, when the device's changes.
-    Rate(f64),
 }

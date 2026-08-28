@@ -218,8 +218,9 @@ fn slots(graph: &Graph) -> Vec<Slot> {
 
 /// Connects the instrument through every installed plugin to the keyboard fader. A slot whose plugin is
 /// missing is left out; a bypassed one stays in the path and passes its sound through untouched.
-/// The head is whichever node the notes go to, so a hosted plugin instrument plays through the
-/// chain exactly as the sampler does and the one it replaces is left connected to nothing.
+/// The head is whichever node the instrument sounds through, so a hosted plugin and the voice
+/// engine's source node each play through the chain exactly as the sampler does, and the two they
+/// replace are left connected to nothing.
 ///
 /// The sampler's file is read in on the way, while the node is out of the path: connecting it is
 /// what initialises it, and an initialised AUSampler loses whatever was loaded into it. Answers
@@ -228,6 +229,7 @@ pub(super) fn rewire(graph: &Graph) -> Result<(), String> {
     let engine = &graph.engine;
     unsafe {
         engine.disconnectNodeOutput(&graph.sampler);
+        engine.disconnectNodeOutput(&graph.source);
         if let Some(plugin) = &graph.plugin {
             engine.disconnectNodeOutput(plugin);
         }
@@ -237,7 +239,7 @@ pub(super) fn rewire(graph: &Graph) -> Result<(), String> {
             }
         }
         let loaded = graph.reload();
-        let mut path: Vec<&AVAudioNode> = vec![graph.target()];
+        let mut path: Vec<&AVAudioNode> = vec![graph.head()];
         for held in &graph.chain {
             if let Some(unit) = &held.unit {
                 path.push(unit);

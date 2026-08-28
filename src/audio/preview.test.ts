@@ -1,13 +1,14 @@
 import {
   TICKS_PER_QUARTER,
   playedSeconds,
+  stepSeconds,
   type Measure,
   type Note,
   type Onset,
   type Score,
 } from '@/score/types';
 import { expect, test } from 'vitest';
-import { barAt, barSeconds, previewBars, previewNotes } from './preview';
+import { previewNotes, secondsOf, tickAt } from './preview';
 
 const BAR = 4 * TICKS_PER_QUARTER;
 
@@ -111,18 +112,26 @@ test('the piece is as long as its last note off, by the one walk both readings t
   expect(playedSeconds(scoreWithRepeat())).toBe(10);
 });
 
-test('a bar opens once for every pass of the repeat, and a click seeks to its first', () => {
-  const bars = previewBars(scoreWithRepeat());
-  expect(bars).toEqual([
-    { measureIndex: 0, seconds: 0 },
-    { measureIndex: 1, seconds: 4 },
-    { measureIndex: 0, seconds: 6 },
-  ]);
-
-  expect(barAt(bars, 0)).toBe(0);
-  expect(barAt(bars, 3.9)).toBe(0);
-  expect(barAt(bars, 4)).toBe(1);
-  expect(barAt(bars, 7)).toBe(0);
-  expect(barSeconds(bars, 1)).toBe(4);
-  expect(barSeconds(bars, 0)).toBe(0);
+test('a second reads back as the played tick it falls on, and the tick as its second', () => {
+  const score = scoreWithRepeat();
+  const starts = stepSeconds(score);
+  // Bar 1 at 60 BPM: one second per quarter. Bar 2 at 120: half a second. The repeat lands bar 1
+  // again at second 6, at 60 BPM.
+  const cases: [number, number][] = [
+    [0, 0],
+    [1, TICKS_PER_QUARTER],
+    [3.5, 3.5 * TICKS_PER_QUARTER],
+    [4, BAR],
+    [5, BAR + 2 * TICKS_PER_QUARTER],
+    [6, 2 * BAR],
+    [8.5, 2 * BAR + 2.5 * TICKS_PER_QUARTER],
+    [10, 3 * BAR],
+  ];
+  for (const [seconds, tick] of cases) {
+    expect(tickAt(score, starts, seconds)).toBeCloseTo(tick, 6);
+    expect(secondsOf(score, starts, tick)).toBeCloseTo(seconds, 6);
+  }
+  // Past the end the clock stands at the last bar line; before the start, at the first.
+  expect(tickAt(score, starts, 12)).toBe(3 * BAR);
+  expect(tickAt(score, starts, -1)).toBe(0);
 });

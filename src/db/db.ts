@@ -12,8 +12,10 @@ export type Settings = {
   /** The folder holding `mxl/` from the unpacked PDMX tarball; empty until the user picks one. */
   pdmx_folder: string;
   onboarding_done: boolean;
-  /** Id of the one MIDI input port to listen on; NULL listens on every port. */
+  /** Id of the MIDI input port every launch starts on; NULL listens on every port not hidden. */
   midi_device: string | null;
+  /** Ids of the MIDI input ports the player has put away, which "Any device" passes over. */
+  midi_hidden: string[];
   /** System follows `prefers-color-scheme`; Light and Dark pin the paper. */
   theme: Theme;
   /** Share of the window height the sheet takes, 0.2 to 0.6. */
@@ -166,6 +168,7 @@ export const SETTING_DEFAULTS: Settings = {
   pdmx_folder: '',
   onboarding_done: false,
   midi_device: null,
+  midi_hidden: [],
   theme: 'system',
   sheet_split: DEFAULT_SPLIT,
   sheet_proportional: false,

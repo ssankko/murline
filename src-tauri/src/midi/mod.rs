@@ -25,11 +25,12 @@ pub struct Port {
 }
 
 /// What the webview's MIDI module shows: the ports being listened to, every port the machine has,
-/// and the one line saying why there is no MIDI at all.
+/// the one port pinned if there is one, and the one line saying why there is no MIDI at all.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Status {
     pub devices: Vec<String>,
     pub ports: Vec<Port>,
+    pub pinned: Option<String>,
     pub error: Option<String>,
 }
 
@@ -127,12 +128,21 @@ impl Parser {
 }
 
 /// The ports to listen on out of everything the machine now has, and whether one that is open is
-/// not among them. A port that is dropped, unplugged or unpinned, leaves behind every note it was
-/// holding, so the caller releases all of them when this says one is dropped.
-fn relisten(open: &[String], listed: &[Port], pinned: Option<&str>) -> (Vec<String>, bool) {
+/// not among them. A pin is the only port opened, hidden or not; with no pin, every listed port
+/// the player has not hidden. A port that is dropped, unplugged, unpinned or hidden, leaves behind
+/// every note it was holding, so the caller releases all of them when this says one is dropped.
+fn relisten(
+    open: &[String],
+    listed: &[Port],
+    pinned: Option<&str>,
+    hidden: &[String],
+) -> (Vec<String>, bool) {
     let wanted: Vec<String> = listed
         .iter()
-        .filter(|port| pinned.is_none_or(|id| port.id == id))
+        .filter(|port| match pinned {
+            Some(id) => port.id == id,
+            None => !hidden.contains(&port.id),
+        })
         .map(|port| port.id.clone())
         .collect();
     let dropped = open.iter().any(|id| !wanted.contains(id));
@@ -160,14 +170,15 @@ pub fn midi_status() -> Status {
     }
 }
 
-/// Pins one input port by id, or listens on every one again with null. The `midi_device` setting
-/// is written by the webview; this is what the ports do about it at once.
+/// The rule the ports follow: listen on the pinned port alone, or on every port outside the hidden
+/// list when nothing is pinned. The webview owns both, out of the session and the settings, and
+/// sends them whole at every change.
 #[tauri::command]
-pub fn midi_pin(id: Option<String>) {
+pub fn midi_listen(pinned: Option<String>, hidden: Vec<String>) {
     #[cfg(target_os = "macos")]
-    mac::pin(id);
+    mac::listen(pinned, hidden);
     #[cfg(not(target_os = "macos"))]
-    let _ = id;
+    let _ = (pinned, hidden);
 }
 
 #[cfg(test)]
@@ -255,36 +266,60 @@ mod tests {
 
     #[test]
     fn a_port_that_goes_away_is_dropped_and_the_rest_are_listened_to_again() {
-        let (open, dropped) = relisten(&["a".into()], &[port("a"), port("b")], None);
+        let (open, dropped) = relisten(&["a".into()], &[port("a"), port("b")], None, &[]);
         assert_eq!(open, ["a", "b"]);
         assert!(!dropped, "nothing left");
 
-        let (open, dropped) = relisten(&["a".into(), "b".into()], &[port("b")], None);
+        let (open, dropped) = relisten(&["a".into(), "b".into()], &[port("b")], None, &[]);
         assert_eq!(open, ["b"]);
         assert!(dropped, "a is gone, so everything it was holding must be released");
     }
 
     #[test]
     fn a_pinned_port_is_the_only_one_opened_and_it_is_reopened_when_it_returns() {
-        let (open, dropped) = relisten(&[], &[port("a"), port("b")], Some("b"));
+        let (open, dropped) = relisten(&[], &[port("a"), port("b")], Some("b"), &[]);
         assert_eq!(open, ["b"]);
         assert!(!dropped);
 
         // Unplugged: the pin stands, and there is nothing to open.
-        let (open, dropped) = relisten(&["b".into()], &[port("a")], Some("b"));
+        let (open, dropped) = relisten(&["b".into()], &[port("a")], Some("b"), &[]);
         assert_eq!(open, [] as [String; 0]);
         assert!(dropped);
 
         // Plugged back in under the same id: open again, without a restart.
-        let (open, dropped) = relisten(&[], &[port("a"), port("b")], Some("b"));
+        let (open, dropped) = relisten(&[], &[port("a"), port("b")], Some("b"), &[]);
         assert_eq!(open, ["b"]);
         assert!(!dropped);
     }
 
     #[test]
     fn pinning_another_port_drops_the_one_that_was_open_so_nothing_it_held_rings_on() {
-        let (open, dropped) = relisten(&["a".into()], &[port("a"), port("b")], Some("b"));
+        let (open, dropped) = relisten(&["a".into()], &[port("a"), port("b")], Some("b"), &[]);
         assert_eq!(open, ["b"]);
+        assert!(dropped);
+    }
+
+    #[test]
+    fn a_hidden_port_is_left_alone_while_nothing_is_pinned() {
+        let (open, dropped) = relisten(&[], &[port("a"), port("b")], None, &["b".into()]);
+        assert_eq!(open, ["a"]);
+        assert!(!dropped);
+
+        // Hiding the one that was open closes it, so the notes it holds have to be let go.
+        let (open, dropped) = relisten(&["a".into()], &[port("a")], None, &["a".into()]);
+        assert_eq!(open, [] as [String; 0]);
+        assert!(dropped);
+    }
+
+    #[test]
+    fn a_pin_on_a_hidden_port_opens_it_and_dropping_the_pin_leaves_it_hidden() {
+        // Choosing a device is the player saying "this one, now", which outranks having hidden it.
+        let (open, dropped) = relisten(&[], &[port("a"), port("b")], Some("b"), &["b".into()]);
+        assert_eq!(open, ["b"]);
+        assert!(!dropped);
+
+        let (open, dropped) = relisten(&["b".into()], &[port("a"), port("b")], None, &["b".into()]);
+        assert_eq!(open, ["a"]);
         assert!(dropped);
     }
 }

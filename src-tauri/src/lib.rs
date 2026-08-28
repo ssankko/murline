@@ -84,7 +84,7 @@ pub fn run() {
             audio::remember(app.handle().clone());
             finder::warm();
             // The MIDI ports open before the webview asks: a key pressed on the boot screen
-            // already sounds, and the pin arrives from the settings a moment later.
+            // already sounds, and the listening rule arrives from the settings a moment later.
             midi::start(app.handle().clone());
             Ok(())
         })
@@ -114,7 +114,7 @@ pub fn run() {
             audio::preview_rate,
             audio::preview_stop,
             midi::midi_status,
-            midi::midi_pin,
+            midi::midi_listen,
             library::copy_file,
             library::list_library,
             library::read_file,

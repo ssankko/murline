@@ -1,17 +1,23 @@
-import { getSetting } from '@/db/db';
+import { getSettingOr, setSetting } from '@/db/db';
 import type { StrikeEvent } from '@/play/engine';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 
-/** One MIDI input port as the settings dialog lists it. */
+/** One MIDI input port as the MIDI popover lists it. */
 export type MidiPort = { id: string; name: string };
 
 export type MidiStatus = {
   /** Display names of every input port being listened to, in the order Rust lists them. */
   devices: string[];
-  /** Every input port the machine has, whether or not one of them is pinned. */
+  /** Every input port the machine has, the hidden ones included. */
   ports: MidiPort[];
+  /** The port being listened on alone, or null while every port outside `hidden` is open. */
+  pinned: string | null;
+  /** The port the next launch starts on, out of `midi_device`. */
+  defaultId: string | null;
+  /** Ids of the ports "Any device" passes over. */
+  hidden: string[];
   /** Set when MIDI is unreachable, which outside the Tauri window is always. */
   error: string | null;
 };
@@ -37,16 +43,49 @@ export function useMidiStatus(onStrike?: (event: StrikeEvent) => void): MidiStat
   return useSyncExternalStore(subscribe, () => status);
 }
 
-/**
- * Pins one input port by id, or listens on every one again with null. The `midi_device` setting is
- * written by the caller; Rust reopens the ports and says which it listens to in `midi-ports`.
- */
-export function pinMidiDevice(id: string | null): void {
-  invoke('midi_pin', { id }).catch((error: unknown) => publish({ error: String(error) }));
+/** Listens on one port for the rest of the session, or on every port outside `hidden` with null. */
+export function useDevice(id: string | null): void {
+  session = id;
+  void send();
+}
+
+/** Writes the port every launch starts on, and hands the session back to it. */
+export function setDefaultDevice(id: string | null): void {
+  session = undefined;
+  publish({ defaultId: id });
+  setSetting('midi_device', id).catch(console.error);
+  void send();
+}
+
+/** Puts a port away. A hidden port is neither the pin nor the default, or it would open anyway. */
+export function hideDevice(id: string): void {
+  if (session === id) session = undefined;
+  if (status.defaultId === id) {
+    publish({ defaultId: null });
+    setSetting('midi_device', null).catch(console.error);
+  }
+  void hide([...status.hidden, id]);
+}
+
+/** Brings a port back into the list "Any device" opens. */
+export function showDevice(id: string): void {
+  void hide(status.hidden.filter((each) => each !== id));
 }
 
 let started = false;
-let status: MidiStatus = { devices: [], ports: [], error: null };
+let status: MidiStatus = {
+  devices: [],
+  ports: [],
+  pinned: null,
+  defaultId: null,
+  hidden: [],
+  error: null,
+};
+/**
+ * The port picked for this session, `undefined` while the default rules. Null cannot say that:
+ * null is "Any device" picked for the session, which outranks a default naming a port.
+ */
+let session: string | null | undefined;
 const strikes = new Set<(event: StrikeEvent) => void>();
 const listeners = new Set<() => void>();
 
@@ -63,6 +102,20 @@ function publish(next: Partial<MidiStatus>): void {
   for (const listen of listeners) listen();
 }
 
+/** The listening rule as it stands, sent whole because Rust keeps no settings of its own. */
+function send(): Promise<void> {
+  const pinned = session === undefined ? status.defaultId : session;
+  return invoke<void>('midi_listen', { pinned, hidden: status.hidden }).catch((error: unknown) =>
+    publish({ error: String(error) }),
+  );
+}
+
+function hide(hidden: string[]): Promise<void> {
+  publish({ hidden });
+  setSetting('midi_hidden', hidden).catch(console.error);
+  return send();
+}
+
 function start(): void {
   if (started) return;
   started = true;
@@ -71,9 +124,12 @@ function start(): void {
       for (const strike of strikes) strike(payload);
     });
     await listen<MidiStatus>('midi-ports', ({ payload }) => publish(payload));
-    // Rust has no settings of its own, so the pin is sent before the first look at the ports.
-    const device = await getSetting('midi_device').catch(() => null);
-    await invoke('midi_pin', { id: device });
+    publish({
+      defaultId: await getSettingOr('midi_device'),
+      hidden: await getSettingOr('midi_hidden'),
+    });
+    // The rule goes out before the first look at the ports, so what comes back is the rule's.
+    await send();
     publish(await invoke<MidiStatus>('midi_status'));
   })().catch((error: unknown) => publish({ error: String(error) }));
 }

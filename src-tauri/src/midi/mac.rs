@@ -22,6 +22,7 @@ static READER: Mutex<Reader> = Mutex::new(Reader {
     client: None,
     error: None,
     pinned: None,
+    hidden: Vec::new(),
     open: Vec::new(),
     listed: Vec::new(),
 });
@@ -32,15 +33,18 @@ struct Reader {
     client: Option<Client>,
     /// Why there is no MIDI at all, which is the one line the settings dialog shows.
     error: Option<String>,
+    /// The one port to listen on, whether the player picked it for the session or for good.
     pinned: Option<String>,
+    /// The ports the player has put away. Passed over while nothing is pinned.
+    hidden: Vec<String>,
     /// The ports being listened on, by source id. Dropping one closes it.
     open: Vec<(String, InputPort)>,
     listed: Vec<Port>,
 }
 
 impl Reader {
-    /// Lists the machine's sources, opens the ones the pin asks for, closes the rest, and tells the
-    /// webview. Everything a plug, an unplug and a change of pin all go through.
+    /// Lists the machine's sources, opens the ones the listening rule asks for, closes the rest,
+    /// and tells the webview. Everything a plug, an unplug and a change of rule all go through.
     fn sync(&mut self) {
         let listed: Vec<Port> = Sources
             .into_iter()
@@ -51,7 +55,7 @@ impl Reader {
             })
             .collect();
         let open: Vec<String> = self.open.iter().map(|(id, _)| id.clone()).collect();
-        let (wanted, dropped) = relisten(&open, &listed, self.pinned.as_deref());
+        let (wanted, dropped) = relisten(&open, &listed, self.pinned.as_deref(), &self.hidden);
 
         self.open.retain(|(id, _)| wanted.contains(id));
         // A port that went is a port that will never send the note offs for what it was holding.
@@ -107,7 +111,12 @@ impl Reader {
             .filter_map(|(id, _)| self.listed.iter().find(|port| &port.id == id))
             .map(|port| port.name.clone())
             .collect();
-        Status { devices, ports: self.listed.clone(), error: self.error.clone() }
+        Status {
+            devices,
+            ports: self.listed.clone(),
+            pinned: self.pinned.clone(),
+            error: self.error.clone(),
+        }
     }
 }
 
@@ -156,9 +165,10 @@ pub fn status() -> Status {
     READER.lock().unwrap().status()
 }
 
-pub fn pin(id: Option<String>) {
+pub fn listen(pinned: Option<String>, hidden: Vec<String>) {
     let mut reader = READER.lock().unwrap();
-    reader.pinned = id;
+    reader.pinned = pinned;
+    reader.hidden = hidden;
     reader.sync();
 }
 

@@ -11,21 +11,29 @@ import { isInactiveHand, type HandsSetting } from '@/play/settings';
 import { buildScore } from '@/score/build';
 import { loadInto } from '@/score/load';
 import { analyzeHarmony } from '@/score/harmony';
-import { ticksOf, type Note, type PlayStep, type Score } from '@/score/types';
+import type { ChordEvent, Note, PlayStep, Score } from '@/score/types';
+import { OpenSheetMusicDisplay, type Note as OsmdNote } from 'opensheetmusicdisplay';
+import { applyTheme, applyTiers, noteheadEl, paintHead } from './paint';
+import { SpacingPinch, type Pinch } from './pinch';
 import {
-  OpenSheetMusicDisplay,
-  type MusicSystem,
-  type Note as OsmdNote,
-} from 'opensheetmusicdisplay';
-import { applyTheme, applyTiers, noteheadEl, paintHead, type VFNote } from './paint';
+  bandWidth,
+  hitAt,
+  place,
+  systemsOf,
+  type Placement,
+  type SheetHit,
+  type Span,
+} from './place';
 import { projectStates, type Play } from './project';
 import { setTimed } from './spacing';
 
+export { SPACING_MAX, SPACING_MIN, type Pinch } from './pinch';
+
 /** Paper kept above the top staff line, the strip the chord bubbles sit in. */
-const BUBBLE_STRIP = 28;
+export const BUBBLE_STRIP = 28;
 
 /** Height of one row of bubbles, half the strip. */
-const BUBBLE_ROW = 13;
+export const BUBBLE_ROW = 13;
 
 /** Clear paper kept between two bubbles of one row. */
 const BUBBLE_GAP = 6;
@@ -47,7 +55,7 @@ const LABEL_REACH = 3;
  * The ring drawn around the noteheads of the Onset the cursor stands at. It reads as paper
  * cleared out of the amber cursor band, so it works on either paper.
  */
-const OUTLINE = '#ffffff';
+export const OUTLINE = '#ffffff';
 
 /** A backward jump names its bar over the sheet for this long. */
 const MARKER_MS = 800;
@@ -59,10 +67,10 @@ const MARKER_IN_MS = 120;
 const DRAG_SLOP = 4;
 
 /** While Running a scroll detaches the view, and it snaps back this long after the last input. */
-const DETACH_MS = 2000;
+export const DETACH_MS = 2000;
 
 /** How long the view takes to glide back to the cursor once it attaches to it again. */
-const SCROLL_GLIDE_MS = 300;
+export const SCROLL_GLIDE_MS = 300;
 
 /** Part of the view at each edge that counts as off it: a seek landing there still moves the view. */
 const EDGE = 0.1;
@@ -71,7 +79,7 @@ const EDGE = 0.1;
 const RUNNER_W = 2;
 
 /** How long the cursor takes to slide when it is not being moved by the clock. */
-const GLIDE_MS = 220;
+export const GLIDE_MS = 220;
 
 /**
  * Paper a sheet spaced by time takes over the tightest measure's pixels per tick, as a percent. The
@@ -81,27 +89,11 @@ const GLIDE_MS = 220;
  */
 export const DEFAULT_SPACING = 150;
 
-/**
- * Range the time spacing may be pinched to, the same percents the settings slider writes. Under
- * 100 only the bars with slack tighten: the rest stand at their engraved minimum.
- */
-export const SPACING_MIN = 80;
-export const SPACING_MAX = 300;
-
-/**
- * Per trackpad pixel a pinch reports, how much it scales the spacing: `exp(-deltaY * ZOOM_K)`. A
- * spread across the whole trackpad reports about seventy pixels, so it roughly doubles the paper.
- */
-const ZOOM_K = 0.01;
-
-/** The pinch is over once nothing has come in for this long, and what it settled on is drawn. */
-const LOOK_MS = 300;
-
 /** How long the cursor band takes to grow or shrink into a new size, as the Section's tint fades. */
 const EASE_MS = 200;
 
 /** The end of a practice: the cursor band fades away over this long and comes back at the start. */
-const FINISH_MS = 400;
+export const FINISH_MS = 400;
 
 /** Where the cursor stands, in pixels of the unscaled sheet content. */
 interface CursorAt {
@@ -112,30 +104,6 @@ interface CursorAt {
   stepIndex: number;
 }
 
-/** Pixel geometry of one Onset, filled from the graphical model after every render. */
-interface Placed {
-  x: number;
-  /** Right edge of the Onset's measure: what the cursor runs to before a snap. */
-  measureRight: number;
-  system: number;
-}
-
-/**
- * One moment of the sheet held by rests alone: a place the cursor may stand at that no Onset names.
- * The bar and the ticks past its opening line are what a seek to it asks for.
- */
-interface RestMoment {
-  x: number;
-  measure: number;
-  into: number;
-}
-
-/** Where a click on the paper landed: what to seek to, and the bar it fell in. */
-interface SheetHit {
-  seek: SeekTarget;
-  measure: number;
-}
-
 /** A pointer drag on the paper: picking a Section, or moving one of its ends. */
 interface Drag {
   end: 'pick' | 'from' | 'to';
@@ -144,19 +112,6 @@ interface Drag {
   hit: SheetHit;
   x: number;
   moved: boolean;
-}
-
-/** The left and right edge of something drawn on the paper, in unscaled pixels. */
-interface Span {
-  left: number;
-  right: number;
-}
-
-/** A pinch under way: where the fingers are, and the spacing percent they are heading to. */
-export interface Pinch {
-  x: number;
-  y: number;
-  spacing: number;
 }
 
 /** What the sheet shows of a note beyond its place on the staff, both global settings. */
@@ -194,11 +149,6 @@ export class Sheet {
    * is written against the tightest measure of these.
    */
   private engraved: number[] = [];
-  /**
-   * Pixels per tick of a sheet spaced by time, one for the whole of it, which the cursor band takes
-   * its width from. Zero while the sheet is spaced by its engraving.
-   */
-  private pxPerTick = 0;
   /** OSMD's own cap on how far a chord symbol or a lyric may stretch a measure. */
   private readonly elongation: number;
   private readonly host: HTMLElement;
@@ -220,27 +170,16 @@ export class Sheet {
   private readonly band: HTMLElement[];
   /** Takes every listener this sheet put on the host off again. */
   private readonly listeners = new AbortController();
+  private readonly pinch: SpacingPinch;
 
   private section: Section | null = null;
   private drag: Drag | null = null;
   /** Wall-clock time of the last free scroll: the view snaps back two seconds after it. */
   private scrolledAt = -Infinity;
-  /** Spacing percent the newest pinch step asks for, which the render at the end of it carries. */
-  private zoomTo = 0;
-  /** The wait for the pinch to stop; a live pinch is one that has this timer standing. */
-  private lookTimer = 0;
-  /** Spacing the running WebKit gesture started from, zero while no gesture is running. */
-  private gesturing = 0;
-  /** Where the pointer last stood, which is where a pinch shows what it is choosing. */
-  private pointer = { x: 0, y: 0 };
   /** The played timeline the cursor reads; the engine swaps it when Loop goes on. */
   private walk: PlayStep[] = [];
-  /** Left and right edge of each bar in unscaled pixels, for the Section a drag picks. */
-  private boxes: (Span | undefined)[] = [];
-
-  private placed: Placed[] = [];
-  /** Rest moments in no order, which a click is measured against alongside the Onsets. */
-  private rests: RestMoment[] = [];
+  /** Where every Onset, bar and rest moment stands, read off the last render. */
+  private placement: Placement = { placed: [], boxes: [], rests: [], pxPerTick: 0 };
   private system = { top: 0, bottom: 200 };
   /** The top staff line of the first system: the bubble strip ends here. */
   private stafflineY = BUBBLE_STRIP;
@@ -331,88 +270,31 @@ export class Sheet {
     host.addEventListener('pointerdown', (event) => this.down(event), { signal });
     host.addEventListener('pointermove', (event) => this.move(event), { signal });
     host.addEventListener('pointerup', (event) => this.up(event), { signal });
-    // The paper never scrolls by itself: a drag on it selects, and the wheel moves the view.
+    // The paper never scrolls by itself: a drag on it selects, and the wheel moves the view. A
+    // wheel with ctrl held is a pinch, which the pinch below takes.
     host.addEventListener(
       'wheel',
       (event) => {
         event.preventDefault();
-        // A trackpad pinch reaches the page as a wheel with ctrl held, and spaces the sheet
-        // instead of scrolling it.
-        if (event.ctrlKey) {
-          this.pointAt(event);
-          if (!this.gesturing) this.pinch(this.target * Math.exp(-event.deltaY * ZOOM_K));
-          return;
-        }
+        if (event.ctrlKey) return;
         const by = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
         this.scroll.scrollLeft += by;
         this.scrolledAt = performance.now();
       },
       { passive: false, signal },
     );
-    // WebKit answers a trackpad pinch with these rather than with the ctrl-wheel above, and zooms
-    // the whole page unless every one of them is refused. A running gesture owns the pinch, so
-    // fingers reported both ways are only applied once.
-    const gesture = (event: Event): void => {
-      event.preventDefault();
-      this.pointAt(event);
-      const scale = (event as { scale?: number }).scale ?? 1;
-      if (event.type === 'gesturestart') this.gesturing = this.target;
-      else if (this.gesturing) {
-        // WebKit drops and coalesces `gesturechange` freely; `gestureend` is the one event that
-        // always arrives, and its scale carries the whole travel of the fingers.
-        this.pinch(this.gesturing * scale);
-        if (event.type === 'gestureend') {
-          this.gesturing = 0;
-          this.settle();
-        }
-      }
-    };
-    for (const type of ['gesturestart', 'gesturechange', 'gestureend']) {
-      host.addEventListener(type, gesture, { passive: false, signal });
-    }
-  }
-
-  /** What a pinch step compounds on: the target a live pinch is heading to, or the drawn spacing. */
-  private get target(): number {
-    return this.lookTimer ? this.zoomTo : this.spacing;
-  }
-
-  /** Keeps where the pointer stands, from any event that carries a point of its own. */
-  private pointAt(event: Event): void {
-    const at = event as { clientX?: number; clientY?: number };
-    if (at.clientX !== undefined && at.clientY !== undefined) {
-      this.pointer = { x: at.clientX, y: at.clientY };
-    }
-  }
-
-  /**
-   * One step of a pinch on the paper: the spacing the fingers ask for. A sheet spaced by its
-   * engraving has no spacing to pinch and stands still. Nothing is drawn while the fingers move,
-   * only the target and what the screen shows of it; `settle` draws the sheet once at the end.
-   */
-  private pinch(percent: number): void {
-    if (!this.proportional) return;
-    this.zoomTo = clamp(Math.round(percent), SPACING_MIN, SPACING_MAX);
-    this.onPinch?.({ ...this.pointer, spacing: this.zoomTo });
-    clearTimeout(this.lookTimer);
-    this.lookTimer = window.setTimeout(() => this.settle(), LOOK_MS);
-  }
-
-  /**
-   * The end of a pinch: the one render of the whole gesture, at the spacing the fingers settled on,
-   * which is then handed over to be stored. Rendering the sheet takes hundreds of milliseconds and
-   * blocks the main thread, so a render between two steps would eat the events that follow it.
-   */
-  private settle(): void {
-    if (!this.lookTimer) return;
-    clearTimeout(this.lookTimer);
-    this.lookTimer = 0;
-    if (this.zoomTo !== this.spacing) {
-      this.spacing = this.zoomTo;
-      this.reflow();
-      this.onLook?.({ spacing: this.spacing });
-    }
-    this.onPinch?.(null);
+    // The end of a pinch is the one render of the whole gesture, at the spacing the fingers
+    // settled on, which is then handed over to be stored.
+    this.pinch = new SpacingPinch(host, {
+      spacing: () => this.spacing,
+      active: () => this.proportional,
+      onPinch: (pinch) => this.onPinch?.(pinch),
+      onSettle: (spacing) => {
+        this.spacing = spacing;
+        this.reflow();
+        this.onLook?.({ spacing });
+      },
+    });
   }
 
   /** Loads the bytes, renders them on one line and builds the Score of what was rendered. */
@@ -443,7 +325,7 @@ export class Sheet {
 
   /** Left edge of an Onset in pixels of the unscaled content. */
   xOfOnset(index: number): number {
-    return this.placed[index]?.x ?? 0;
+    return this.placement.placed[index]?.x ?? 0;
   }
 
   /** Follows the engine's walk, so the cursor slides along the timeline the clock runs. */
@@ -460,30 +342,9 @@ export class Sheet {
     this.drawSection();
   }
 
-  /**
-   * What a click at a screen x means: the moment nearest it, however far away, and the bar the
-   * click fell in, which is the Onset before it or the next one past that bar's edge. A rest that
-   * beats every notehead to the click is asked for by its place in its bar; equal distances go to
-   * the Onset.
-   */
+  /** What a click at a screen x means: the moment nearest it, and the bar the click fell in. */
   private hitAt(clientX: number): SheetHit | null {
-    const x = this.contentX(clientX);
-    const onsets = this.score.onsets;
-    if (onsets.length === 0) return null;
-    let i = 0;
-    while (i + 1 < onsets.length && this.placed[i + 1]!.x <= x) i++;
-    const next = i + 1 < onsets.length ? i + 1 : i;
-    const near = Math.abs(this.placed[next]!.x - x) < Math.abs(this.placed[i]!.x - x) ? next : i;
-    const bar = x > this.placed[i]!.measureRight ? next : i;
-    let closest = Math.abs(this.placed[near]!.x - x);
-    let rest: RestMoment | undefined;
-    for (const moment of this.rests) {
-      if (Math.abs(moment.x - x) >= closest) continue;
-      closest = Math.abs(moment.x - x);
-      rest = moment;
-    }
-    const seek = rest ? { measure: rest.measure, into: rest.into } : { onset: near };
-    return { seek, measure: onsets[bar]!.measureIndex };
+    return hitAt(this.contentX(clientX), this.score.onsets, this.placement);
   }
 
   /** Repaints the whole sheet for the other theme. The clock never hears about it. */
@@ -749,11 +610,12 @@ export class Sheet {
   private runnerX(playedTick: number, hint: number, windowTicks: number): number {
     const first = this.walk[0];
     if (!first || playedTick >= first.tick) return this.cursorAt(playedTick, hint, windowTicks).x;
-    const from = this.placed[first.onsetIndex]?.x ?? 0;
+    const { placed, pxPerTick } = this.placement;
+    const from = placed[first.onsetIndex]?.x ?? 0;
     const next = this.walk[1];
-    const to = next ? (this.placed[next.onsetIndex]?.x ?? from) : from;
+    const to = next ? (placed[next.onsetIndex]?.x ?? from) : from;
     const span = next ? next.tick - first.tick : 0;
-    const perTick = this.pxPerTick || (span > 0 ? Math.max(0, to - from) / span : 0);
+    const perTick = pxPerTick || (span > 0 ? Math.max(0, to - from) / span : 0);
     return Math.max(0, from - (first.tick - playedTick) * perTick);
   }
 
@@ -774,8 +636,9 @@ export class Sheet {
 
     const step = order[i];
     const next = order[i + 1];
-    const here = this.placed[step?.onsetIndex ?? 0] ?? { x: 0, measureRight: 0, system: 0 };
-    const there = next ? this.placed[next.onsetIndex] : undefined;
+    const { placed, boxes, pxPerTick } = this.placement;
+    const here = placed[step?.onsetIndex ?? 0] ?? { x: 0, measureRight: 0, system: 0 };
+    const there = next ? placed[next.onsetIndex] : undefined;
     const snap = !there || this.jumpAfter[i] || there.system !== here.system;
     const toX = snap ? Math.max(here.measureRight, here.x) : there.x;
     const span = next && step ? next.tick - step.tick : 0;
@@ -784,16 +647,16 @@ export class Sheet {
     // the run back off the first Onset takes it, which is that Onset's own bar rather than the
     // sheet's average.
     const local = span > 0 ? Math.abs(toX - here.x) / span : 0;
-    const perTick = this.pxPerTick || local;
+    const perTick = pxPerTick || local;
     // The walk's own ticks only rise, so a tick under the step is a tick under the first step: the
     // rest a piece opens with. It stands back from that Onset, and no further back than the bar
     // line it belongs to.
     const behind = step && playedTick < step.tick ? (step.tick - playedTick) * local : 0;
     const onset = this.score.onsets[step?.onsetIndex ?? 0];
-    const barLeft = this.boxes[onset?.measureIndex ?? -1]?.left ?? 0;
+    const barLeft = boxes[onset?.measureIndex ?? -1]?.left ?? 0;
     return {
       x: Math.max(barLeft, here.x + (toX - here.x) * done - behind),
-      width: Math.max(2, windowTicks * 2 * perTick),
+      width: bandWidth(windowTicks, perTick),
       onsetIndex: step?.onsetIndex ?? 0,
       stepIndex: i,
     };
@@ -808,7 +671,7 @@ export class Sheet {
   /** Takes only this sheet's own DOM out of the host, which may already hold the next one. */
   dispose(): void {
     this.listeners.abort();
-    clearTimeout(this.lookTimer);
+    this.pinch.dispose();
     this.osmd.clear();
     this.scroll.remove();
   }
@@ -848,7 +711,6 @@ export class Sheet {
 
   /** A drag across the paper picks whole bars: one bar while it stays in one, more as it leaves. */
   private move(event: PointerEvent): void {
-    this.pointAt(event);
     const drag = this.drag;
     if (!drag || event.buttons === 0) return;
     if (!drag.moved && Math.abs(event.clientX - drag.x) < DRAG_SLOP) return;
@@ -867,8 +729,8 @@ export class Sheet {
   /** The tinted band over the Section's bars, with a handle at each end of it. */
   private drawSection(): void {
     const section = this.section;
-    const from = this.boxes[section?.from ?? -1];
-    const to = this.boxes[section?.to ?? -1];
+    const from = this.placement.boxes[section?.from ?? -1];
+    const to = this.placement.boxes[section?.to ?? -1];
     const show = !!(section && from && to);
     // A hidden band keeps its last geometry, which is what it fades out from.
     if (!show) {
@@ -918,54 +780,19 @@ export class Sheet {
   /** Pixel geometry, pitch colours and the ink tiers: everything a fresh render wipes. */
   private layout(): void {
     const unit = 10 * this.osmd.zoom;
-    const rules = this.osmd.EngravingRules;
-    const systems = new Map<MusicSystem, number>();
     let bottom = 200;
-    for (const page of this.osmd.GraphicSheet.MusicPages) {
-      for (const system of page.MusicSystems) {
-        const box = system.PositionAndShape;
-        systems.set(system, systems.size);
-        if (systems.size === 1) {
-          this.stafflineY = (system.StaffLines[0]?.PositionAndShape.AbsolutePosition.y ?? 0) * unit;
-          this.system = {
-            top: (box.AbsolutePosition.y + box.BorderTop) * unit,
-            bottom: (box.AbsolutePosition.y + box.BorderBottom) * unit,
-          };
-        }
-        bottom = Math.max(bottom, (box.AbsolutePosition.y + box.BorderBottom) * unit);
-      }
-    }
-
-    const placed: Placed[] = [];
-    this.boxes = [];
-    for (const onset of this.score.onsets) {
-      // An Onset whose notes are all invisible carries the place of the one before it.
-      let where = placed[placed.length - 1] ?? { x: 0, measureRight: 0, system: 0 };
-      for (const note of onset.notes) {
-        const g = rules.GNote(note.source) as VFNote | undefined;
-        const measure = g?.parentVoiceEntry?.parentStaffEntry?.parentMeasure;
-        if (!g || !measure) continue;
-        const box = measure.PositionAndShape;
-        // Spaced by time an Onset stands at its own notehead, which `spacing.ts` put at its share
-        // of the measure; the engraved place is the whole staff entry, accidentals and all.
-        const head = this.proportional ? headX(g) : undefined;
-        const engraved = g.PositionAndShape.AbsolutePosition.x * unit;
-        where = {
-          x: head === undefined ? engraved : head * this.osmd.zoom,
-          measureRight: (box.AbsolutePosition.x + box.BorderRight) * unit,
-          system: systems.get(measure.ParentMusicSystem) ?? 0,
+    systemsOf(this.osmd).forEach((system, i) => {
+      const box = system.PositionAndShape;
+      if (i === 0) {
+        this.stafflineY = (system.StaffLines[0]?.PositionAndShape.AbsolutePosition.y ?? 0) * unit;
+        this.system = {
+          top: (box.AbsolutePosition.y + box.BorderTop) * unit,
+          bottom: (box.AbsolutePosition.y + box.BorderBottom) * unit,
         };
-        this.boxes[onset.measureIndex] = {
-          left: (box.AbsolutePosition.x + box.BorderLeft) * unit,
-          right: where.measureRight,
-        };
-        break;
       }
-      placed.push(where);
-    }
-    this.placed = placed;
-    this.rests = restsOf(this.osmd, this.score, unit, this.proportional);
-    this.pxPerTick = this.proportional ? perTickOf(this.score.onsets, placed) : 0;
+      bottom = Math.max(bottom, (box.AbsolutePosition.y + box.BorderBottom) * unit);
+    });
+    this.placement = place(this.osmd, this.score, this.proportional);
 
     if (this.walk.length === 0) this.walk = this.score.playOrder;
     this.markJumps();
@@ -1004,21 +831,7 @@ export class Sheet {
     this.bubbles.replaceChildren();
     this.bubbleEls = [];
     if (!this.look.harmony) return;
-    this.bubbleEls = this.score.harmony.map((event) => {
-      const el = child(
-        this.bubbles,
-        'position:absolute;transform:translateX(-50%);display:flex;align-items:baseline;' +
-          `gap:4px;white-space:nowrap;font-size:11px;font-weight:600;line-height:${BUBBLE_ROW}px`,
-      );
-      el.className = 'chord-bubble';
-      el.style.color = tone(INK.duration, this.dark);
-      const degree = document.createElement('i');
-      degree.style.cssText = `font-style:normal;font-weight:400;font-size:8.5px;line-height:${BUBBLE_ROW}px`;
-      degree.style.color = tone(INK.scaffolding, this.dark);
-      degree.textContent = event.degree;
-      el.append(event.absolute, degree);
-      return el;
-    });
+    this.bubbleEls = this.score.harmony.map((event) => makeBubble(this.bubbles, event, this.dark));
 
     // Two rows fill the strip, the lower one stopping just short of the top staff line. A piece
     // whose paper above the staff is thinner than the strip keeps both rows on the paper it has.
@@ -1028,26 +841,12 @@ export class Sheet {
       x: this.xOfOnset(this.score.harmony[i]!.onsetIndex),
       width: el.offsetWidth,
     }));
-    const blocked = rows.map((y) => this.labelSpans(y, y + BUBBLE_ROW));
+    const labels = labelBoxes(this.paper);
+    const blocked = rows.map((y) => labelSpans(labels, y, y + BUBBLE_ROW));
     bubblePlaces(places, blocked).forEach((at, i) => {
       this.bubbleEls[i]!.style.left = `${at.x}px`;
       this.bubbleEls[i]!.style.top = `${rows[at.row]!}px`;
     });
-  }
-
-  /**
-   * Left and right edge of every label OSMD printed into one row of the strip: the tempo mark, the
-   * tempo word, a dynamic above the staff, a bar number. Labels are sorted by their left edge.
-   */
-  private labelSpans(top: number, bottom: number): Span[] {
-    const spans: Span[] = [];
-    for (const label of this.paper.querySelectorAll('svg text, svg .vf-stavetempo')) {
-      const box = (label as SVGGraphicsElement).getBBox();
-      if (Math.min(box.y + box.height, bottom) - Math.max(box.y, top) > LABEL_REACH) {
-        spans.push({ left: box.x, right: box.x + box.width });
-      }
-    }
-    return spans.sort((a, b) => a.left - b.left);
   }
 
   /** Every chord the cursor has left behind reads dimmed; the CSS says how fast. */
@@ -1156,63 +955,44 @@ function clearOf(x: number, width: number, filled: number, spans: Span[]): numbe
 }
 
 /**
- * Every moment of the sheet that rests alone hold, in pixels of the unscaled content. A tick some
- * staff sounds at is an Onset already, and a click there means the Onset, so those are left out.
+ * One chord bubble, hung in the overlay it is given: the chord's absolute name with its degree in
+ * the key beside it, centred on the x it is later placed at.
  */
-function restsOf(
-  osmd: OpenSheetMusicDisplay,
-  score: Score,
-  unit: number,
-  proportional: boolean,
-): RestMoment[] {
-  const sounding = new Set(score.onsets.map((onset) => onset.tick));
-  const taken = new Set<number>();
-  const rests: RestMoment[] = [];
-  osmd.GraphicSheet.MeasureList.forEach((staves, index) => {
-    const measure = score.measures[index];
-    if (!measure) return;
-    for (const staff of staves) {
-      for (const entry of staff?.staffEntries ?? []) {
-        if (!entry.hasOnlyRests()) continue;
-        const into = ticksOf(entry.relInMeasureTimestamp.RealValue);
-        const tick = measure.startTick + into;
-        if (sounding.has(tick) || taken.has(tick)) continue;
-        taken.add(tick);
-        // Spaced by time a rest stands at its own glyph, as an Onset stands at its notehead.
-        const g = entry.graphicalVoiceEntries[0]?.notes[0] as VFNote | undefined;
-        const head = proportional && g ? headX(g) : undefined;
-        const engraved = entry.PositionAndShape.AbsolutePosition.x * unit;
-        rests.push({ x: head === undefined ? engraved : head * osmd.zoom, measure: index, into });
-      }
-    }
-  });
-  return rests;
-}
-
-/** Left edge of the notehead VexFlow drew for a note, in pixels of the unzoomed sheet. */
-function headX(note: VFNote): number | undefined {
-  return (note as { vfnote?: [{ getAbsoluteX(): number }] }).vfnote?.[0]?.getAbsoluteX();
+export function makeBubble(parent: HTMLElement, event: ChordEvent, dark: boolean): HTMLElement {
+  const el = child(
+    parent,
+    'position:absolute;transform:translateX(-50%);display:flex;align-items:baseline;' +
+      `gap:4px;white-space:nowrap;font-size:11px;font-weight:600;line-height:${BUBBLE_ROW}px`,
+  );
+  el.className = 'chord-bubble';
+  el.style.color = tone(INK.duration, dark);
+  const degree = document.createElement('i');
+  degree.style.cssText = `font-style:normal;font-weight:400;font-size:8.5px;line-height:${BUBBLE_ROW}px`;
+  degree.style.color = tone(INK.scaffolding, dark);
+  degree.textContent = event.degree;
+  el.append(event.absolute, degree);
+  return el;
 }
 
 /**
- * The one speed a sheet spaced by time runs at: every gap that stays inside a measure over the
- * ticks it covers. Gaps across a bar line are left out, the bar line and its instructions being
- * paper no duration asks for. A bar too crowded for the width it got keeps VexFlow's packing and
- * runs at a speed of its own, so this is a mean; only the band's width reads it, the cursor itself
- * standing between the Onsets as they were drawn.
+ * The box of every label OSMD printed on the paper: the tempo mark, the tempo word, a dynamic above
+ * the staff, a bar number. Read once per render; a bubble row is then measured against them.
  */
-function perTickOf(
-  onsets: readonly { tick: number; measureIndex: number }[],
-  placed: Placed[],
-): number {
-  let px = 0;
-  let ticks = 0;
-  for (let i = 1; i < onsets.length; i++) {
-    if (onsets[i]!.measureIndex !== onsets[i - 1]!.measureIndex) continue;
-    px += placed[i]!.x - placed[i - 1]!.x;
-    ticks += onsets[i]!.tick - onsets[i - 1]!.tick;
+export function labelBoxes(paper: HTMLElement): DOMRect[] {
+  return [...paper.querySelectorAll('svg text, svg .vf-stavetempo')].map((label) =>
+    (label as SVGGraphicsElement).getBBox(),
+  );
+}
+
+/** Left and right edge of every label reaching into one row of the strip, sorted by left edge. */
+export function labelSpans(labels: DOMRect[], top: number, bottom: number): Span[] {
+  const spans: Span[] = [];
+  for (const box of labels) {
+    if (Math.min(box.y + box.height, bottom) - Math.max(box.y, top) > LABEL_REACH) {
+      spans.push({ left: box.x, right: box.x + box.width });
+    }
   }
-  return ticks > 0 ? px / ticks : 0;
+  return spans.sort((a, b) => a.left - b.left);
 }
 
 function child(parent: HTMLElement, style: string): HTMLElement {

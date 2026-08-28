@@ -35,7 +35,7 @@ One source of scores behind the score finder, searchable by composer and title. 
 _Avoid_: Source, catalogue, repository
 
 **Preview**:
-A view of a piece's whole sheet, opened from the library to read the piece through. Read-only for input and grading: no cursor, no MIDI, no Grade. It can be played, through the sound engine, with a transport of its own.
+A view of a piece's whole sheet, opened from the library to read the piece through. Read-only for input and grading: no MIDI, no Grade, no Section and no Loop. It can be played, through the sound engine, with a transport and a cursor of its own.
 _Avoid_: Viewer, reader, score view
 
 **Piece settings**:

@@ -6,13 +6,6 @@ import type { Envelope } from '@/audio/envelope';
 import { SoundTab } from '@/audio/sound-tab';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { readSettings, setSetting, type Settings } from '@/db/db';
 import { LOOKAHEAD_MAX, LOOKAHEAD_MIN } from '@/lane/lane';
@@ -20,13 +13,13 @@ import { cancelPdmx, downloadPdmx, progressLabel, usePdmxDownload } from '@/libr
 import { clamp, rowId } from '@/lib/utils';
 import { noteName } from '@/look/color';
 import { setTheme, type Theme } from '@/look/use-dark';
-import { pinMidiDevice, useMidiStatus } from '@/midi/use-midi-status';
+import { useMidiStatus } from '@/midi/use-midi-status';
 import { validNumber } from '@/play/resolve';
 import { type KeyboardPreset } from '@/play/settings';
 import { SPACING_MAX, SPACING_MIN, type Pinch } from '@/sheet/sheet';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
-import { ChevronDown, Search } from 'lucide-react';
+import { Search } from 'lucide-react';
 import { Tabs } from 'radix-ui';
 import { useEffect, useRef, useState } from 'react';
 
@@ -78,11 +71,17 @@ const TAB_LABELS: Record<SettingsTab, string> = {
 
 const TABS = Object.entries(TAB_LABELS) as [SettingsTab, string][];
 
-/** Where a search result lives. The mixer is not a tab: it is the popover behind the volume
- * button, and a result naming one of its faders opens it instead of switching tab. */
-type SearchWhere = SettingsTab | 'mixer';
+/** Where a search result lives. The mixer and the MIDI devices are not tabs: they are the popovers
+ * behind the bar's volume and MIDI buttons, and a result naming one of their controls opens that
+ * popover instead of switching tab. */
+type SearchWhere = SettingsTab | 'mixer' | 'midi';
 
-const WHERE_LABELS: Record<SearchWhere, string> = { ...TAB_LABELS, mixer: 'Volume' };
+const WHERE_LABELS: Record<SearchWhere, string> = { ...TAB_LABELS, mixer: 'Volume', midi: 'MIDI' };
+
+/** Whether a result lives on a tab of the panel rather than in a popover of its own. */
+function isTab(where: SearchWhere): where is SettingsTab {
+  return where in TAB_LABELS;
+}
 
 /**
  * Every row the search box can reach, declared here rather than read off the page, so a row on a
@@ -277,9 +276,9 @@ const SEARCH_ROWS: {
   },
   {
     id: 'midi_device',
-    tab: 'playing',
+    tab: 'midi',
     label: 'Input device',
-    words: ['midi', 'keyboard', 'piano', 'port'],
+    words: ['midi', 'keyboard', 'piano', 'port', 'hidden', 'bluetooth'],
   },
   {
     id: 'matching_window_ms',
@@ -355,6 +354,7 @@ export function SettingsPanel({
   onGlobalChange,
   jumpTo,
   onOpenMixer,
+  onOpenMidi,
 }: {
   open: boolean;
   onClose: () => void;
@@ -362,6 +362,8 @@ export function SettingsPanel({
   /** The way to the two faders, which are the mixer's and not the panel's. A search result naming
    * one closes the panel and opens the mixer over the button it belongs to. */
   onOpenMixer?: () => void;
+  /** The same for the input devices, which are the MIDI popover's. */
+  onOpenMidi?: () => void;
   /** A row to open on, named by its id: the same jump a search result makes, for the callers that
    * open the panel at one row rather than at the top. */
   jumpTo?: string | null;
@@ -377,9 +379,6 @@ export function SettingsPanel({
   const [envelope, setEnvelope] = useState(false);
   const [pdmxReady, setPdmxReady] = useState<boolean | null>(null);
   const list = useRef<HTMLUListElement>(null);
-  // Only the port list is wanted here. The Sound tab watches the keys itself, and it is here only
-  // while the panel is open, so a shut panel does not re-render on every strike.
-  const midi = useMidiStatus();
   const pdmx = usePdmxDownload();
   const downloading = pdmx.progress !== null;
 
@@ -400,7 +399,7 @@ export function SettingsPanel({
   // below finds the row on the page.
   useEffect(() => {
     const row = jumpTo && SEARCH_ROWS.find((each) => each.id === jumpTo);
-    if (!open || !row || row.tab === 'mixer') return;
+    if (!open || !row || !isTab(row.tab)) return;
     setTab(row.tab);
     setMarked(row.id);
   }, [open, jumpTo]);
@@ -432,7 +431,6 @@ export function SettingsPanel({
   function write<K extends keyof Settings>(key: K, value: Settings[K]): void {
     setValues((held) => held && { ...held, [key]: value });
     setSetting(key, value).catch(console.error);
-    if (key === 'midi_device') pinMidiDevice(value as string | null);
     // The theme paints the whole app, so it is applied here rather than by whatever is behind.
     if (key === 'theme') setTheme(value as Theme);
     // The pair comes straight out of this function's own key type, so it is one of the union.
@@ -459,11 +457,11 @@ export function SettingsPanel({
   function pick(row: (typeof SEARCH_ROWS)[number]): void {
     setQuery('');
     setSel(0);
-    // A fader is not a row here, so the result hands the player to the mixer rather than to a tab
-    // that does not hold it.
-    if (row.tab === 'mixer') {
+    // A popover's control is not a row here, so the result hands the player to the popover rather
+    // than to a tab that does not hold it.
+    if (!isTab(row.tab)) {
       onClose();
-      onOpenMixer?.();
+      (row.tab === 'mixer' ? onOpenMixer : onOpenMidi)?.();
       return;
     }
     setTab(row.tab);
@@ -737,43 +735,6 @@ export function SettingsPanel({
 
                 <Tabs.Content value="playing" className="flex flex-col gap-7">
                   <Rows>
-                    <Row id="midi_device" marked={marked === 'midi_device'} label="Input device">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            aria-label="MIDI input device"
-                            className="h-7 max-w-[190px] justify-between px-2 text-[12px] font-normal"
-                          >
-                            <span className="truncate">
-                              {midi.ports.find((port) => port.id === values.midi_device)?.name ??
-                                'Any device'}
-                            </span>
-                            <ChevronDown className="size-3.5 opacity-60" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="max-w-[260px]">
-                          <DropdownMenuRadioGroup
-                            value={values.midi_device ?? ''}
-                            onValueChange={(id) => write('midi_device', id || null)}
-                          >
-                            <DropdownMenuRadioItem value="" className="text-[13px]">
-                              Any device
-                            </DropdownMenuRadioItem>
-                            {midi.ports.map((port) => (
-                              <DropdownMenuRadioItem
-                                key={port.id}
-                                value={port.id}
-                                className="text-[13px]"
-                              >
-                                <span className="truncate">{port.name}</span>
-                              </DropdownMenuRadioItem>
-                            ))}
-                          </DropdownMenuRadioGroup>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </Row>
                     <Row
                       id="matching_window_ms"
                       marked={marked === 'matching_window_ms'}

@@ -13,12 +13,6 @@ export interface PreviewNote {
   off: number;
 }
 
-/** Where a bar opens along the played timeline. A repeated bar appears once for every pass. */
-export interface PreviewBar {
-  measureIndex: number;
-  seconds: number;
-}
-
 /** The second a played tick falls on, read on from the step at `from`. */
 function secondsAt(score: Score, starts: number[], playedTick: number, from: number): number {
   let i = from;
@@ -49,29 +43,21 @@ export function previewNotes(score: Score): PreviewNote[] {
   return notes;
 }
 
-/** The bars in played order with the second each opens at, which is what a click seeks to. */
-export function previewBars(score: Score): PreviewBar[] {
-  const starts = stepSeconds(score);
-  const bars: PreviewBar[] = [];
-  score.playOrder.forEach((step, i) => {
-    const measureIndex = score.onsets[step.onsetIndex]!.measureIndex;
-    if (bars[bars.length - 1]?.measureIndex === measureIndex) return;
-    bars.push({ measureIndex, seconds: starts[i]! });
-  });
-  return bars;
+/** The played tick the engine's clock stands at, read back from the seconds it reports. */
+export function tickAt(score: Score, starts: number[], seconds: number): number {
+  const last = score.playOrder.length - 1;
+  if (last < 0) return 0;
+  let i = 0;
+  while (i < last && starts[i + 1]! <= seconds) i++;
+  const step = score.playOrder[i]!;
+  const bpm = bpmAt(score, score.onsets[step.onsetIndex]!.tick);
+  const start = i === 0 ? 0 : step.tick;
+  const tick = start + ((seconds - starts[i]!) * bpm * TICKS_PER_QUARTER) / 60;
+  return Math.min(Math.max(tick, 0), score.totalTicks);
 }
 
-/** The bar sounding at a time, or -1 before the first one. */
-export function barAt(bars: PreviewBar[], seconds: number): number {
-  let index = -1;
-  for (const bar of bars) {
-    if (bar.seconds > seconds + 1e-6) break;
-    index = bar.measureIndex;
-  }
-  return index;
-}
-
-/** The second a bar opens at, taking the first pass when a repeat plays it twice. */
-export function barSeconds(bars: PreviewBar[], measureIndex: number): number {
-  return bars.find((bar) => bar.measureIndex === measureIndex)?.seconds ?? 0;
+/** The second a played tick falls on, which is what a seek to it asks the engine for. */
+export function secondsOf(score: Score, starts: number[], playedTick: number): number {
+  if (score.playOrder.length === 0) return 0;
+  return secondsAt(score, starts, playedTick, 0);
 }

@@ -72,9 +72,6 @@ export interface PlaySettings {
   weightTiming: number;
   weightVelocity: number;
   weightRelease: number;
-  /** Added to every strike's velocity before it meets the ideal, to true up a keyboard. The strike
-   * arrives already remapped by the velocity curve, so this is a further shift on top of it. */
-  velocityOffset: number;
 }
 
 export const DEFAULT_PLAY_SETTINGS: PlaySettings = {
@@ -103,5 +100,4 @@ export const DEFAULT_PLAY_SETTINGS: PlaySettings = {
   weightTiming: 0.7,
   weightVelocity: 0.1,
   weightRelease: 0.2,
-  velocityOffset: 0,
 };

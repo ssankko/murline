@@ -5,7 +5,7 @@
 // This is not the mixer's keyboard fader. The fader trims the finished sound after the effects;
 // the remap changes the velocity itself, which is why a soft strike under a soft curve sounds soft
 // rather than merely quiet. The same map is put on the strike the webview is told about, so a
-// grade reads the output velocity. `velocity_offset` is a further grading calibration on top.
+// grade reads the output velocity.
 
 import { curveOf, curved, positionOf } from '@/audio/curve';
 import { readSettings, setSetting } from '@/db/db';

@@ -41,11 +41,6 @@ describe('the velocity curve', () => {
     expect(velocityGrade(92, 80, s)).toBeCloseTo(50);
   });
 
-  test('the global offset moves the strike before it meets the ideal', () => {
-    expect(velocityGrade(70, 80, settings({ velocityOffset: 10 }))).toBe(100);
-    expect(velocityGrade(80, 80, settings({ velocityOffset: -20 }))).toBe(0);
-  });
-
   // The remap is not the sound's alone: `src-tauri/src/midi/mac.rs` puts it on the strike the
   // webview is told about, so what reaches a grade is the output velocity. Grading a key press is
   // therefore grading the calibration the player set, which is the point of setting it.

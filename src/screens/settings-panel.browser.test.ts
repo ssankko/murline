@@ -104,13 +104,8 @@ test('a volume is found whether it is a row here or a fader in the mixer', async
 
   // A word the panel's own rows hold still points at the tab they are on, not at the mixer.
   const touch = await search('touch');
-  expect(labels(touch)).toEqual([
-    'Minimum velocity',
-    'Maximum velocity',
-    'Velocity curve',
-    'Velocity offset',
-  ]);
-  expect(wheres(touch)).toEqual(['Sound', 'Sound', 'Sound', 'Playing']);
+  expect(labels(touch)).toEqual(['Minimum velocity', 'Maximum velocity', 'Velocity curve']);
+  expect(wheres(touch)).toEqual(['Sound', 'Sound', 'Sound']);
 });
 
 test('a result naming a fader shuts the panel and opens the mixer', async () => {
@@ -169,7 +164,7 @@ test('the sound engine rows are found and jumped to like any other', async () =>
 
 test('a tab name finds every row on that tab', async () => {
   await open();
-  expect(labels(await search('playing'))).toContain('Velocity offset');
+  expect(labels(await search('playing'))).toContain('Input device');
 });
 
 test('a word for the harmony display finds the sheet row and the falling-notes row', async () => {

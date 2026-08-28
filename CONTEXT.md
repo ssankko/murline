@@ -147,5 +147,5 @@ How loud the whole keyboard sounds. It applies after the effect chain, so it tri
 _Avoid_: Master volume, output gain, level
 
 **Velocity curve**:
-The remap from the velocity a key press sends to the velocity the app works in, set by a minimum, a maximum and the shape of the path between them. Velocity 1 lands on the minimum and velocity 127 on the maximum, so the whole of the keyboard's range is squeezed into the band rather than cut off at it. Calibrated by ear. The instrument is played at the output velocity and so is the Preview, and a grade reads the output velocity too. Distinct from the keyboard volume, which trims the finished sound, and from the velocity offset, which is a further shift on top of it for grading alone.
+The remap from the velocity a key press sends to the velocity the app works in, set by a minimum, a maximum and the shape of the path between them. Velocity 1 lands on the minimum and velocity 127 on the maximum, so the whole of the keyboard's range is squeezed into the band rather than cut off at it. Calibrated by ear. The instrument is played at the output velocity and so is the Preview, and a grade reads the output velocity too. Distinct from the keyboard volume, which trims the finished sound rather than the velocity behind it.
 _Avoid_: Velocity sensitivity, dynamics curve, velocity clamp

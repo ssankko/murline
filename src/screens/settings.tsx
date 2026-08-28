@@ -257,12 +257,6 @@ const SEARCH_ROWS: {
     words: ['midi', 'keyboard', 'piano', 'port'],
   },
   {
-    id: 'velocity_offset',
-    tab: 'playing',
-    label: 'Velocity offset',
-    words: ['touch', 'strike', 'force', 'loudness'],
-  },
-  {
     id: 'matching_window_ms',
     tab: 'playing',
     label: 'Matching window (ms)',
@@ -743,23 +737,6 @@ export function SettingsPanel({
                           </DropdownMenuRadioGroup>
                         </DropdownMenuContent>
                       </DropdownMenu>
-                    </Row>
-                    <Row
-                      id="velocity_offset"
-                      marked={marked === 'velocity_offset'}
-                      label="Velocity offset"
-                    >
-                      <div className="flex items-center gap-3">
-                        <NumberField
-                          value={values.velocity_offset}
-                          min={-64}
-                          max={64}
-                          onChange={(value) => write('velocity_offset', value)}
-                        />
-                        <span className="text-muted-ink text-[12px] tabular-nums">
-                          last strike {velocity ?? '—'}
-                        </span>
-                      </div>
                     </Row>
                     <Row
                       id="matching_window_ms"

@@ -53,7 +53,6 @@ export type Settings = {
   // The velocity curve: the remap from the velocity the keyboard sends to the velocity the app
   // works in. All three reach the engine ahead of the instrument, and the same map is put on the
   // strike the webview is told about, so grading and Wait mode read the output velocity too.
-  // `velocity_offset` is a separate grading calibration on top of it.
 
   /** The output velocity the lightest strike lands on, 1 to 127. */
   velocity_min: number;
@@ -98,9 +97,6 @@ export type Settings = {
   grade_weight_timing: number;
   grade_weight_velocity: number;
   grade_weight_release: number;
-  /** Added to every strike's velocity before Grade reads it, to true up a keyboard. The strike is
-   * already remapped by then, so this is a further shift on top of the velocity curve. */
-  velocity_offset: number;
   /** Half-width of the span around an Onset in which a strike counts for it, in milliseconds. */
   matching_window_ms: number;
   /** How far apart the first and last strike of one chord may be, in milliseconds. */
@@ -120,7 +116,6 @@ export const ENGINE_KNOBS = {
   grade_weight_timing: 'weightTiming',
   grade_weight_velocity: 'weightVelocity',
   grade_weight_release: 'weightRelease',
-  velocity_offset: 'velocityOffset',
   matching_window_ms: 'matchingWindowMs',
   togetherness_ms: 'togethernessMs',
   keyboard_preset: 'keyboardPreset',

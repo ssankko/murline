@@ -41,6 +41,12 @@ fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0004_velocity_remap.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 5,
+            description: "no velocity offset",
+            sql: include_str!("../migrations/0005_no_velocity_offset.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

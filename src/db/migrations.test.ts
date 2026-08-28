@@ -207,6 +207,15 @@ describe('0004, the velocity curve becomes a remap', () => {
     const db = migrate(3);
     expect(db.prepare('SELECT * FROM setting').all()).toEqual([]);
   });
+
+  it('clears the velocity offset the remap replaced, leaving the rest', () => {
+    const db = migrate(4, (old) => {
+      write(old, 'velocity_offset', -12);
+      write(old, 'grade_weight_velocity', 0.1);
+    });
+    expect(setting(db, 'velocity_offset')).toBeUndefined();
+    expect(setting(db, 'grade_weight_velocity')).toBe(0.1);
+  });
 });
 
 it('gives every piece setting a column to be written to', () => {

@@ -256,6 +256,13 @@ const SEARCH_ROWS: {
     words: ['chords', 'chord track', 'roman numerals'],
   },
   {
+    id: 'lane_wheel',
+    tab: 'look',
+    label: 'Harmony wheel',
+    group: 'Falling notes',
+    words: ['circle of fifths', 'key', 'chord'],
+  },
+  {
     id: 'keyboard_scale_marks',
     tab: 'look',
     label: 'Dim keys off the scale',
@@ -691,6 +698,12 @@ export function SettingsPanel({
                         <Toggle
                           value={values.lane_harmony}
                           onChange={(value) => write('lane_harmony', value)}
+                        />
+                      </Row>
+                      <Row id="lane_wheel" marked={marked === 'lane_wheel'} label="Harmony wheel">
+                        <Toggle
+                          value={values.lane_wheel}
+                          onChange={(value) => write('lane_wheel', value)}
                         />
                       </Row>
                       <Row id="lane_colour" marked={marked === 'lane_colour'} label="Pitch colours">

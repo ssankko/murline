@@ -14,6 +14,7 @@ import {
   pulseAt,
   slotRect,
   throughWrap,
+  wheelAngle,
   zoomLookahead,
 } from './lane';
 
@@ -28,7 +29,8 @@ const BARS = [0, 1, 2].map((i) => ({
 }));
 
 function chord(onsetIndex: number, absolute: string): ChordEvent {
-  return { onsetIndex, tick: onsetIndex * Q, measureIndex: 0, absolute, degree: '1' };
+  const tick = onsetIndex * Q;
+  return { onsetIndex, tick, measureIndex: 0, absolute, degree: '1', root: 0, tones: [0, 4, 7] };
 }
 
 /** Six Onsets, one per quarter, with bar 1 played again after bar 2. */
@@ -147,6 +149,21 @@ test('a panel between two slots starts at the one and ends at the other', () => 
   const to = slotRect(0, 300);
   expect(lerpRect(from, to, 0)).toEqual(from);
   expect(lerpRect(from, to, 1)).toEqual(to);
+});
+
+describe('the wheel of fifths', () => {
+  test('stands C at twelve o\'clock and steps a fifth every 30 degrees', () => {
+    const step = Math.PI / 6;
+    // Twelve fifths up from C name every pitch class once and close the circle.
+    for (let i = 0; i < 12; i++) {
+      expect(wheelAngle(7 * i)).toBeCloseTo(-Math.PI / 2 + i * step, 10);
+    }
+  });
+
+  test('reads a pitch class in any octave, and both ways round', () => {
+    expect(wheelAngle(60)).toBe(wheelAngle(0));
+    expect(wheelAngle(-5)).toBe(wheelAngle(7));
+  });
 });
 
 describe('the pulse at the now-line', () => {

@@ -116,6 +116,10 @@ _Avoid_: Hint note, shadow note
 The part of the play screen that names the chord sounding at the cursor and the next two chords, each in absolute form ("G7/B") and relative to the key as scale degrees ("5⁷/7").
 _Avoid_: Chord track, roman numerals
 
+**Wheel** (long form: wheel of fifths):
+The circle-of-fifths panel in the falling notes, under the harmony display: twelve segments a fifth apart with C at the top, the seven of the key in force faced in their pitch colours and the other five hollow, the tonic in a badge, and the root of the chord sounding now on a segment that stands off the band. The pointer's wheel is always called the mouse wheel.
+_Avoid_: Dial, circle, chart
+
 **Key readout**:
 The name of the key in force in the play screen's top bar, which opens a popover of that key's signature and a table of one column per scale degree: the degree number, its note and its function over the triad it stacks into, that triad's notes and its seventh chord, with the relative and parallel keys under it.
 _Avoid_: Scale panel, key indicator

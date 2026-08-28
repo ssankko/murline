@@ -42,6 +42,8 @@ export type Settings = {
   sheet_harmony: boolean;
   sheet_colour: boolean;
   lane_harmony: boolean;
+  /** Whether the falling notes carry the wheel under the harmony panels. */
+  lane_wheel: boolean;
   lane_colour: boolean;
   /** Whether each falling block carries the name of its note. */
   lane_names: boolean;
@@ -145,6 +147,7 @@ export const LANE_KNOBS = {
   lane_gap: 'gapPx',
   keyboard_labels: 'keyLabels',
   lane_harmony: 'harmony',
+  lane_wheel: 'wheel',
   lane_colour: 'colour',
   lane_names: 'names',
   keyboard_scale_marks: 'scaleMarks',

@@ -431,6 +431,91 @@ test('the Section band travels from the bars it had to the bars it takes', () =>
   lane.dispose();
 });
 
+/** The wheel's panel: a lane tall enough to hold it, and where it stands in one. */
+const WHEEL_HEIGHT = 600;
+const WHEEL_LEFT = WIDTH - 16 - 200;
+const WHEEL_TOP = 172;
+
+/** Every colour the wheel's panel carries, as `#rrggbb`. */
+function panelColours(ctx: CanvasRenderingContext2D): Set<string> {
+  const dpr = window.devicePixelRatio || 1;
+  const { data } = ctx.getImageData(WHEEL_LEFT * dpr, WHEEL_TOP * dpr, 200 * dpr, 200 * dpr);
+  const seen = new Set<string>();
+  for (let i = 0; i < data.length; i += 4) {
+    const hex = [data[i], data[i + 1], data[i + 2]].map((v) => v!.toString(16).padStart(2, '0'));
+    seen.add(`#${hex.join('')}`);
+  }
+  return seen;
+}
+
+/** The pitch classes of C major but for C, which every note of the test piece already wears. */
+const IN_C = [2, 4, 5, 7, 9, 11];
+
+test('the wheel faces the scale in force, and covers nothing while the setting is off', () => {
+  const wall = performance.timeOrigin + performance.now();
+  const on = mount({ height: WHEEL_HEIGHT });
+  // The first key of all fades in, so the band stands whole a slide after the frame it opens on.
+  on.lane.frame(on.engine.snapshot(), on.engine.windowTicks, wall);
+  on.lane.frame(on.engine.snapshot(), on.engine.windowTicks, wall + 250);
+  const colours = panelColours(on.ctx);
+  for (const pc of IN_C) expect(colours.has(colorOf(pc, 'muted', false))).toBe(true);
+  // A pitch class off the scale is hollow, so its face stands nowhere in the panel.
+  expect(colours.has(colorOf(6, 'muted', false))).toBe(false);
+  on.lane.dispose();
+
+  const off = mount({ height: WHEEL_HEIGHT, look: { wheel: false } });
+  off.lane.frame(off.engine.snapshot(), off.engine.windowTicks, wall);
+  off.lane.frame(off.engine.snapshot(), off.engine.windowTicks, wall + 250);
+  const bare = panelColours(off.ctx);
+  for (const pc of IN_C) expect(bare.has(colorOf(pc, 'muted', false))).toBe(false);
+  off.lane.dispose();
+});
+
+/** Three bars that turn from C major to D major at bar 2 and to E flat major at bar 3. */
+function scoreTurning(): Score {
+  const score = scoreOf(3);
+  score.keys = [
+    { measureIndex: 0, sharps: 0, mode: 0 },
+    { measureIndex: 1, sharps: 2, mode: 0 },
+    { measureIndex: 2, sharps: -3, mode: 0 },
+  ];
+  score.tempoMap = [{ tick: 0, bpm: 480 }];
+  return score;
+}
+
+test('a key change cross-fades the band, and a seek snaps it', () => {
+  const { engine, lane, ctx } = mount({ score: scoreTurning(), height: WHEEL_HEIGHT });
+  const wall = performance.timeOrigin + performance.now();
+  const frame = (at: number) => lane.frame(engine.snapshot(), engine.windowTicks, wall + at);
+  // F sharp belongs to D major alone, and B flat to E flat major alone.
+  const sharp = colorOf(6, 'muted', false);
+  const flat = colorOf(10, 'muted', false);
+  frame(0);
+  expect(panelColours(ctx).has(sharp)).toBe(false);
+
+  // The clock runs into bar 2 in frames of a sixtieth of a second, which is motion and no jump.
+  let at = 0;
+  while (engine.snapshot().playedTick < BAR) {
+    engine.advance(16);
+    at += 16;
+    frame(at);
+  }
+  // The new face takes the whole slide to come up, so it stands nowhere until the end of one.
+  expect(panelColours(ctx).has(sharp)).toBe(false);
+  frame(at + 125);
+  expect(panelColours(ctx).has(sharp)).toBe(false);
+  frame(at + 250);
+  expect(panelColours(ctx).has(sharp)).toBe(true);
+
+  // A seek may land anywhere, so the key it lands in stands in the frame it lands on.
+  engine.seek({ measure: 2 });
+  frame(at + 251);
+  const landed = panelColours(ctx);
+  expect(landed.has(flat)).toBe(true);
+  expect(landed.has(sharp)).toBe(false);
+  lane.dispose();
+});
+
 test('a pinch writes the lookahead it settled on once the fingers stop', async () => {
   const { lane, canvas } = mount();
   const written: number[] = [];

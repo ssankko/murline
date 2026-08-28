@@ -22,12 +22,24 @@ const BROKEN = {
 let listed = [CONCERT, BROKEN];
 let refusal: string | null = null;
 let loads: unknown[] = [];
+/** Set by a test that wants the load to stand still until it releases it. */
+let held: { promise: Promise<void>; release: () => void } | null = null;
+
+/** A load that hangs where the engine would be working, and the way to let it finish. */
+function hold(): { promise: Promise<void>; release: () => void } {
+  let release = (): void => {};
+  const promise = new Promise<void>((resolve) => {
+    release = () => resolve();
+  });
+  return { promise, release };
+}
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: async (command: string, args: Record<string, unknown>) => {
     if (command === 'audio_instruments') return listed;
     if (command === 'audio_load_instrument') {
       loads.push(args);
+      if (held) await held.promise;
       if (refusal) throw new Error(refusal);
       return null;
     }
@@ -51,6 +63,7 @@ let close: (() => void) | null = null;
 beforeEach(() => {
   listed = [CONCERT, BROKEN];
   refusal = null;
+  held = null;
   loads = [];
   written = [];
 });
@@ -60,8 +73,8 @@ afterEach(() => {
   close = null;
 });
 
-/** Mounts the section and hands back its picker and the text the user can read. */
-async function open(): Promise<[HTMLSelectElement, () => string]> {
+/** Mounts the section and hands back its picker, the text the user can read, and its host. */
+async function open(): Promise<[HTMLSelectElement, () => string, HTMLElement]> {
   const host = document.createElement('div');
   document.body.append(host);
   const root = createRoot(host);
@@ -72,7 +85,7 @@ async function open(): Promise<[HTMLSelectElement, () => string]> {
   };
   const text = (): string => host.textContent ?? '';
   await vi.waitFor(() => expect(text()).toContain('Concert Grand Piano'));
-  return [host.querySelector('select')!, text];
+  return [host.querySelector('select')!, text, host];
 }
 
 /** React listens for change on the element itself, so the value moves and the event follows it. */
@@ -103,6 +116,26 @@ test('a load that fails says why, where the instrument was picked', async () => 
   const [picker, text] = await open();
   pick(picker, BROKEN.id);
   await vi.waitFor(() => expect(text()).toContain('That file is not a SoundFont'));
+});
+
+test('the row says it is loading until the engine has the instrument', async () => {
+  held = hold();
+  const [picker, , host] = await open();
+  pick(picker, CONCERT.id);
+  await vi.waitFor(() => expect(host.querySelector('[role="status"]')).not.toBeNull());
+  held.release();
+  await vi.waitFor(() => expect(host.querySelector('[role="status"]')).toBeNull());
+});
+
+test('a load that fails stops saying it is loading', async () => {
+  held = hold();
+  refusal = 'That file is not a SoundFont';
+  const [picker, text, host] = await open();
+  pick(picker, BROKEN.id);
+  await vi.waitFor(() => expect(host.querySelector('[role="status"]')).not.toBeNull());
+  held.release();
+  await vi.waitFor(() => expect(text()).toContain('That file is not a SoundFont'));
+  expect(host.querySelector('[role="status"]')).toBeNull();
 });
 
 /** Boot reads these three and nothing else of the settings. */

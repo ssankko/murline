@@ -50,6 +50,10 @@ _Avoid_: Preferences, defaults
 The modal holding every global setting, grouped into Sound, Look, Playing and Library tabs with one search box reaching across all four. Opened from every screen, and while it is open it owns the whole screen's input.
 _Avoid_: Settings dialog, preferences, options
 
+**Loading indicator**:
+The row of beats that runs wherever the app is waiting on work the user asked for, drawn as the falling notes' countdown is: a capsule for the strong beat and dots for the weak ones, travelling right, the one at the right burning out as a new one is born at the left.
+_Avoid_: Spinner, progress bar, throbber
+
 ### Playing
 
 **Play**:

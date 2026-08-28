@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { readSettings, setSetting, type Settings } from '@/db/db';
 import { reasonOf } from '@/library/notice';
 import { rowId } from '@/lib/utils';
+import { Loading } from '@/look/loading';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useEffect, useState } from 'react';
@@ -56,6 +57,7 @@ export function InstrumentSection({
   const [chosen, setChosen] = useState<string>('');
   const [folder, setFolder] = useState('');
   const [failure, setFailure] = useState('');
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -74,10 +76,14 @@ export function InstrumentSection({
     };
   }, []);
 
-  /** A new instrument: the setting first, then the load, whose reason is what the picker says. */
+  /**
+   * A new instrument: the setting first, then the load, whose reason is what the picker says. A
+   * Logic piano takes seconds to load, so the row says it is loading until the engine answers.
+   */
   async function choose(id: string): Promise<void> {
     setChosen(id);
     setFailure('');
+    setLoading(true);
     await setSetting('instrument_id', id);
     await setSetting('instrument_state', null);
     try {
@@ -85,6 +91,8 @@ export function InstrumentSection({
       await restoreEnvelope(id);
     } catch (error) {
       setFailure(reasonOf(error));
+    } finally {
+      setLoading(false);
     }
     onChanged?.();
   }
@@ -114,7 +122,10 @@ export function InstrumentSection({
         data-marked={marked === 'instrument_id' || undefined}
         className={`flex min-h-8 items-center justify-between gap-3 py-1 text-[12px] ${marked === 'instrument_id' ? 'bg-ink/8' : ''}`}
       >
-        <span className="flex-none">Instrument</span>
+        <span className="flex flex-none items-center gap-2">
+          Instrument
+          {loading && <Loading label="Loading the instrument" />}
+        </span>
         <div className="flex min-w-0 items-center gap-2">
           <select
             aria-label="Instrument"

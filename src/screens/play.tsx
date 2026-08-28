@@ -33,17 +33,10 @@ import {
   type PlayKind,
   type PlayState,
 } from '@/play/engine';
-import {
-  INHERITS_EVERYTHING,
-  pieceDefaultsOf,
-  readPieceDefaults,
-  resolvePlaySettings,
-  type PieceSettings,
-} from '@/play/resolve';
+import { resolvePlaySettings, UNSET_PIECE_SETTINGS, type PieceSettings } from '@/play/resolve';
 import {
   DEFAULT_PLAY_SETTINGS,
   type HandsSetting,
-  type KeyboardPreset,
   TEMPO_RANGE,
   tempoLabel,
   type PlayMode,
@@ -54,7 +47,7 @@ import { useFrameLoop } from '@/play/use-frame-loop';
 import { bpmAt, ScoreError, type Measure } from '@/score/types';
 import { Button } from '@/components/ui/button';
 import { Mixer } from '@/audio/mixer';
-import { GearPopover, SettingsPanel, SpacingPopup, type SettingChange } from '@/screens/settings';
+import { SettingsPanel, SpacingPopup, type SettingChange } from '@/screens/settings';
 import { Sheet, type Pinch } from '@/sheet/sheet';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
@@ -67,7 +60,6 @@ import {
   Plus,
   Repeat,
   RotateCcw,
-  Settings,
   SlidersHorizontal,
   Square,
   Tally4,
@@ -144,14 +136,8 @@ export function PlayScreen({
   const [tempoMode, setTempoMode] = useState<TempoMode>(DEFAULT_PLAY_SETTINGS.tempoMode);
   const [tempo, setTempo] = useState(DEFAULT_PLAY_SETTINGS.tempoValue);
   const [metronome, setMetronome] = useState(DEFAULT_PLAY_SETTINGS.metronome);
+  /** The bar's count-in is a toggle: one bar or none. The engine counts whatever number it holds. */
   const [countInBars, setCountInBars] = useState(DEFAULT_PLAY_SETTINGS.countInBars);
-  /** The bar's count-in toggle turns it off with 0 and back on at the last number of bars. */
-  const countInLast = useRef(Math.max(DEFAULT_PLAY_SETTINGS.countInBars, 1));
-  const [keyboard, setKeyboard] = useState({
-    keyboardPreset: DEFAULT_PLAY_SETTINGS.keyboardPreset as KeyboardPreset,
-    keyboardLo: DEFAULT_PLAY_SETTINGS.keyboardLo,
-    keyboardHi: DEFAULT_PLAY_SETTINGS.keyboardHi,
-  });
   const [mode, setMode] = useState<PlayMode>(DEFAULT_PLAY_SETTINGS.mode);
   /** A mode clicked before the sheet loads has no engine to reach, so the new one opens in it. */
   const modeRef = useRef<PlayMode>(DEFAULT_PLAY_SETTINGS.mode);
@@ -172,7 +158,7 @@ export function PlayScreen({
         await reindexIfChanged(folder, path);
         const bytes = await readScoreFile(pathOf(folder, path));
         const [globals, row] = await Promise.all([readSettings(), getPiece(path).catch(() => null)]);
-        const resolved = resolvePlaySettings(row ?? INHERITS_EVERYTHING, pieceDefaultsOf(globals));
+        const resolved = resolvePlaySettings(row ?? UNSET_PIECE_SETTINGS);
         const sheet = await Sheet.open(
           hostRef.current!,
           bytes,
@@ -183,12 +169,13 @@ export function PlayScreen({
         );
         if (!live) return sheet.dispose();
         sheetRef.current = sheet;
-        // The piece opens as it was left: its own settings over the global defaults over these.
+        // The piece opens as it was left: its own settings over the built-in defaults, with the
+        // global knobs (the grade windows, the keyboard size) between the two.
         const engine = new Engine(sheet.score, {
           ...DEFAULT_PLAY_SETTINGS,
           ...knobValues(globals, ENGINE_KNOBS),
           mode: modeRef.current,
-          ...resolved.settings,
+          ...resolved,
         });
         if (intent === 'performance') engine.arm();
         engineRef.current = engine;
@@ -218,7 +205,7 @@ export function PlayScreen({
         laneRef.current.onPinch = (lookaheadBeats) => setLive(['lane_lookahead', lookaheadBeats]);
         setSplit(clamp(globals.sheet_split, SPLIT_MIN, SPLIT_MAX));
         setOneStaff(sheet.score.staffCount < 2);
-        show(resolved.settings);
+        show(resolved);
         setClickVolume(globals.click_volume);
         setWritten({
           bpm: sheet.score.hasTempo ? Math.round(bpmAt(sheet.score, 0)) : 120,
@@ -304,7 +291,7 @@ export function PlayScreen({
   }
 
   /**
-   * Every piece setting the bar or the gear changes goes to the piece row at once, so the piece
+   * Every piece setting the bar changes goes to the piece row at once, so the piece
    * reopens as it was left. A performance hides those controls, so nothing is written during one.
    */
   function persist(values: PieceSettingValues): void {
@@ -318,24 +305,12 @@ export function PlayScreen({
     setTempo(settings.tempoValue);
     setMetronome(settings.metronome);
     setCountInBars(settings.countInBars);
-    if (settings.countInBars > 0) countInLast.current = settings.countInBars;
     setHands(settings.hands);
-    setKeyboard({
-      keyboardPreset: settings.keyboardPreset,
-      keyboardLo: settings.keyboardLo,
-      keyboardHi: settings.keyboardHi,
-    });
     const engine = engineRef.current;
     if (!engine) return;
     Object.assign(engine.settings, settings);
     sheetRef.current?.setHands(settings.hands);
     laneRef.current?.setRange();
-  }
-
-  /** The piece forgets every setting of its own and plays at the global defaults again. */
-  async function useGlobalDefaults(): Promise<void> {
-    await updatePieceSettings(path, INHERITS_EVERYTHING);
-    show(resolvePlaySettings(INHERITS_EVERYTHING, await readPieceDefaults()).settings);
   }
 
   function changeTempo(value: number): void {
@@ -345,7 +320,6 @@ export function PlayScreen({
   }
 
   function changeCountIn(bars: number): void {
-    if (bars > 0) countInLast.current = bars;
     setCountInBars(bars);
     if (engineRef.current) engineRef.current.settings.countInBars = bars;
     persist({ count_in_bars: bars });
@@ -364,20 +338,6 @@ export function PlayScreen({
     if (engineRef.current) engineRef.current.settings.mode = next;
   }
 
-  function changeKeyboard(preset: KeyboardPreset, lo: number, hi: number): void {
-    setKeyboard({ keyboardPreset: preset, keyboardLo: lo, keyboardHi: hi });
-    const engine = engineRef.current;
-    if (engine) {
-      Object.assign(engine.settings, {
-        keyboardPreset: preset,
-        keyboardLo: lo,
-        keyboardHi: hi,
-      });
-      laneRef.current?.setRange();
-    }
-    persist({ keyboard_preset: String(preset), keyboard_lo: lo, keyboard_hi: hi });
-  }
-
   /** A look knob a pinch turned: the next frame reads the same object the lane holds. */
   function changeLook(key: keyof typeof LANE_KNOBS, value: number | boolean): void {
     showLook(key, value);
@@ -394,6 +354,8 @@ export function PlayScreen({
     const engineField = ENGINE_KNOBS[key as keyof typeof ENGINE_KNOBS];
     if (engineField && engineRef.current) {
       Object.assign(engineRef.current.settings, { [engineField]: value });
+      // The keyboard size is the one engine knob the lane lays itself out from.
+      if (key.startsWith('keyboard_')) laneRef.current?.setRange();
     }
     if (key in LANE_KNOBS) showLook(key as keyof typeof LANE_KNOBS, value as number | boolean);
     if (key === 'sheet_harmony') sheetRef.current?.setLook({ harmony: value });
@@ -522,23 +484,6 @@ export function PlayScreen({
             <ArrowLeft {...ICON} />
           </BarButton>
           <b className="ml-1.5 mr-1 min-w-0 truncate text-[13px] font-medium">{title}</b>
-          <GearPopover
-            trigger={
-              <button
-                aria-label="Piece settings"
-                className="hover:bg-ink/8 relative flex h-8 w-8 flex-none items-center justify-center rounded-md transition-colors duration-150"
-              >
-                <Settings {...ICON} />
-              </button>
-            }
-            performing={performing}
-            keyboard={keyboard}
-            countInBars={countInBars}
-            onKeyboard={changeKeyboard}
-            onCountInBars={changeCountIn}
-            onUseGlobalDefaults={() => useGlobalDefaults().catch(console.error)}
-            onAllSettings={() => setSettingsOpen(true)}
-          />
           <Mixer
             onSoundSettings={() => {
               setSettingsJump('instrument_id');
@@ -555,7 +500,7 @@ export function PlayScreen({
             <BarButton
               label="Count-in"
               pressed={countInBars > 0}
-              onClick={() => changeCountIn(countInBars > 0 ? 0 : countInLast.current)}
+              onClick={() => changeCountIn(countInBars > 0 ? 0 : 1)}
             >
               <Tally4 {...ICON} />
             </BarButton>

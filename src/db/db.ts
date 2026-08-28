@@ -1,12 +1,7 @@
 import type { EffectSlot } from '@/audio/effects';
 import { DEFAULT_LANE_LOOK, DEFAULT_SPLIT, type LaneLook } from '@/lane/lane';
 import type { Theme } from '@/look/use-dark';
-import {
-  DEFAULT_PLAY_SETTINGS,
-  type HandsSetting,
-  type KeyboardPreset,
-  type PlaySettings,
-} from '@/play/settings';
+import { DEFAULT_PLAY_SETTINGS, type KeyboardPreset, type PlaySettings } from '@/play/settings';
 import { DEFAULT_SPACING } from '@/sheet/sheet';
 import Database from '@tauri-apps/plugin-sql';
 
@@ -70,16 +65,12 @@ export type Settings = {
   /** Folder of `.sf2` and `.exs` files the picker lists; empty lists none of its own. */
   instruments_folder: string;
 
-  // Defaults of the piece settings: what a piece plays at while it holds none of its own. Tempo
-  // has no mode here, because BPM belongs to a piece written at one tempo.
+  // Keyboard size: how many keys the lane lays out, for every piece. "piece" fits each piece's own
+  // range; a number is that many keys; "custom" uses the two bounds.
 
-  default_tempo_value: number;
-  default_metronome: boolean;
-  default_count_in_bars: number;
-  default_hands: HandsSetting;
-  default_keyboard_preset: KeyboardPreset;
-  default_keyboard_lo: number;
-  default_keyboard_hi: number;
+  keyboard_preset: KeyboardPreset;
+  keyboard_lo: number;
+  keyboard_hi: number;
 
   // Grade knobs. Global only, so two grades of one piece stay comparable.
 
@@ -118,6 +109,9 @@ export const ENGINE_KNOBS = {
   velocity_offset: 'velocityOffset',
   matching_window_ms: 'matchingWindowMs',
   togetherness_ms: 'togethernessMs',
+  keyboard_preset: 'keyboardPreset',
+  keyboard_lo: 'keyboardLo',
+  keyboard_hi: 'keyboardHi',
 } as const satisfies Record<string, keyof PlaySettings>;
 
 /** The same for the lane's look, which the next frame reads out of the live object. */
@@ -130,17 +124,6 @@ export const LANE_KNOBS = {
   lane_colour: 'colour',
   lane_names: 'names',
 } as const satisfies Record<string, keyof LaneLook>;
-
-/** The global default of a piece setting, and the field of `PieceSettings` it stands for. */
-export const PIECE_DEFAULT_KEYS = {
-  default_tempo_value: 'tempoValue',
-  default_metronome: 'metronome',
-  default_count_in_bars: 'countInBars',
-  default_hands: 'hands',
-  default_keyboard_preset: 'keyboardPreset',
-  default_keyboard_lo: 'keyboardLo',
-  default_keyboard_hi: 'keyboardHi',
-} as const satisfies Record<string, keyof PlaySettings>;
 
 /** One block of `SETTING_DEFAULTS`: each key takes the built-in default of the field it names. */
 function knobDefaults<S, M extends Record<string, keyof S>>(
@@ -183,7 +166,6 @@ export const SETTING_DEFAULTS: Settings = {
   instrument_state: null,
   instruments_folder: '',
   ...knobDefaults(DEFAULT_LANE_LOOK, LANE_KNOBS),
-  ...knobDefaults(DEFAULT_PLAY_SETTINGS, PIECE_DEFAULT_KEYS),
   ...knobDefaults(DEFAULT_PLAY_SETTINGS, ENGINE_KNOBS),
 };
 

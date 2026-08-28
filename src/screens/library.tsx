@@ -32,7 +32,6 @@ import {
 } from '@/library/queries';
 import { scanLibrary, splitError } from '@/library/scan';
 import { Collapse } from '@/look/collapse';
-import { readPieceDefaults, type PieceSettings } from '@/play/resolve';
 import { Finder } from '@/screens/finder';
 import { Detail } from '@/screens/piece-detail';
 import { Mixer } from '@/audio/mixer';
@@ -79,14 +78,6 @@ export function Library({
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** The row the panel opens on, which only the mixer's way into the Sound tab sets. */
   const [settingsJump, setSettingsJump] = useState<string | null>(null);
-  const [defaults, setDefaults] = useState<Partial<PieceSettings>>({});
-
-  // The Play settings list holds the resolved values, so it needs the middle level of every field.
-  // Only closing the dialog can have changed one.
-  useEffect(() => {
-    if (settingsOpen) return;
-    void readPieceDefaults().then(setDefaults);
-  }, [settingsOpen]);
 
   // `scanLibrary` walks a folder once, so a sort change costs the re-list alone.
   useEffect(() => {
@@ -308,7 +299,6 @@ export function Library({
         <Detail
           piece={piece}
           folder={folder}
-          defaults={defaults}
           onFavorite={() => void toggleFavorite(piece)}
           onDelete={() => void remove(piece)}
           onPlay={onPlay}

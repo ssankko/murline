@@ -20,6 +20,11 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }));
 
+// Clicking a control writes it, so the panel needs a database that swallows the write.
+vi.mock('@tauri-apps/plugin-sql', () => ({
+  default: { load: async () => ({ select: async () => [], execute: async () => {} }) },
+}));
+
 let root: Root | null = null;
 let host: HTMLElement | null = null;
 
@@ -152,6 +157,29 @@ test('a word for the harmony display finds the sheet row and the falling-notes r
   expect(marked('sheet_harmony')).toBe(false);
 });
 
+test('keyboard size is one row on Look, and the custom range appears only when it is chosen', async () => {
+  await open();
+
+  // One global row, so choosing 88 once holds for every piece. It used to be three piece columns.
+  const results = await search('88');
+  expect(labels(results)).toEqual(['Keyboard size']);
+  await userEvent.click(results[0]!);
+  expect(activeTab()).toBe('Look');
+  expect(marked('keyboard_size')).toBe(true);
+
+  const preset = (label: string) =>
+    [...host!.querySelectorAll<HTMLButtonElement>('button')].find(
+      (each) => each.textContent === label,
+    )!;
+  expect(host!.querySelector('select[aria-label="Lowest key"]')).toBe(null);
+  await userEvent.click(preset('Custom'));
+  await vi.waitFor(() =>
+    expect(host!.querySelector('select[aria-label="Lowest key"]')).toBeTruthy(),
+  );
+  await userEvent.click(preset('88'));
+  await vi.waitFor(() => expect(host!.querySelector('select[aria-label="Lowest key"]')).toBe(null));
+});
+
 test('a pinch behind the panel moves the row it belongs to', async () => {
   host = document.createElement('div');
   document.body.append(host);
@@ -199,6 +227,8 @@ test('the search names no row the panel does not render', async () => {
     'theme',
     'pinch',
     'labels',
+    'keys',
+    '88',
   ]) {
     const found = labels(await search(query));
     expect(found.length, query).toBeGreaterThan(0);

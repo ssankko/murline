@@ -5,15 +5,15 @@
 //! tests use is a method on `Graph`; the app keeps one of them in `GRAPH` for as long as it runs.
 //!
 //! One thing here runs on the audio thread: the source node's render block, which owns the voice
-//! engine and takes its orders through a channel. Everything else is host-side work AVFAudio
-//! documents as safe off that thread.
+//! engine and the Preview's clock and takes the orders for both through channels. Everything else
+//! is host-side work AVFAudio documents as safe off that thread.
 
 mod effects;
 pub use effects::{chain, effects, set_chain, show_effect};
 
 use crate::audio::device::{self, DeviceId};
-use crate::audio::preview::{PreviewNote, Scheduler};
-use crate::audio::sampler::{self, Command, engine::Sampler};
+use crate::audio::preview::{Event, HELD, PreviewNote, Scheduler};
+use crate::audio::sampler::{self, Command, Ring, engine::Sampler};
 use crate::audio::{Envelope, OutputDevice, Status, progress};
 // The instrument the graph plays, and the window a hosted plugin brings with it.
 pub use crate::audio::instruments::{list as instruments, load as load_instrument};
@@ -40,7 +40,9 @@ use objc2_foundation::{NSError, NSNotification, NSNotificationCenter, NSOperatio
 use std::cell::RefCell;
 use std::path::Path;
 use std::ptr::{NonNull, from_ref};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::mpsc::{Receiver, Sender, SyncSender, TrySendError, channel, sync_channel};
 use std::sync::{Arc, Mutex, Once, Weak};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -87,12 +89,6 @@ const DEFAULT_CURVE: f64 = 1.0;
 /// The status line when the device the user picked is not plugged in.
 const GONE: &str = "Your chosen output device is not connected; playing through the system default";
 
-/// How often the Preview's pump wakes while a piece plays, and while nothing does.
-// ponytail: the pump runs on a wall-clock thread rather than in the source node's render block,
-// which would have to take the graph's lock on the audio thread to send the notes. Two
-// milliseconds is inside one 64-frame buffer; move the pump into the block, over a lock-free
-// hand-off, if the jitter is ever audible.
-const PUMP: Duration = Duration::from_millis(2);
 /// The longest the graph waits for the output device's first render before it starts the click
 /// player on it.
 const FIRST_RENDER: Duration = Duration::from_secs(2);
@@ -100,6 +96,32 @@ const FIRST_RENDER: Duration = Duration::from_secs(2);
 const IDLE: Duration = Duration::from_millis(20);
 /// About thirty progress events a second, which is what the moving bar highlight needs.
 const PROGRESS: Duration = Duration::from_millis(33);
+/// Preview events the render block may leave waiting for a hosted plugin, and how many the
+/// reporter takes out of the ring at a time. A wake behind schedule empties it over several turns.
+const PREVIEW_RING: usize = 1024;
+const PREVIEW_BATCH: usize = 64;
+
+/// What the Preview's scheduler, which lives in the render block, is told to do.
+enum Preview {
+    Load(Vec<PreviewNote>),
+    Play,
+    Pause,
+    Seek(f64),
+    Rate(u32),
+    Stop,
+}
+
+/// The Preview across the audio thread: what the render block publishes about the playback, which
+/// instrument its events belong to, and the ring a hosted plugin's notes leave the block by.
+struct Shared {
+    /// Where the playback stands, as `f64::to_bits`.
+    seconds: AtomicU64,
+    playing: AtomicBool,
+    /// True while the voice engine holds the instrument, so the block plays the events into it;
+    /// false while a plugin does, and they go out through `notes` for the reporter to start.
+    file: AtomicBool,
+    notes: Ring<Event>,
+}
 
 /// The one graph the app plays through, empty until `start` builds it.
 pub(super) static GRAPH: Mutex<Option<Graph>> = Mutex::new(None);
@@ -174,8 +196,12 @@ pub struct Graph {
     velocity_min: u8,
     velocity_max: u8,
     velocity_curve: f64,
-    /// Preview playback's note list and clock, pumped once per rendered buffer.
-    preview: Scheduler,
+    /// Preview operations on their way to the scheduler inside the render block.
+    previews: Sender<Preview>,
+    /// Note lists the render block has finished with, so they are freed here and not on the audio
+    /// thread. Drained at every operation, the way `graveyard` is at every load.
+    played: Receiver<Vec<PreviewNote>>,
+    preview: Arc<Shared>,
 }
 
 // AVFAudio's classes carry no main-thread requirement, and every call into one goes through the
@@ -203,7 +229,17 @@ impl Graph {
             );
             let (commands, orders) = channel();
             let (dead, graveyard) = channel();
-            let source = source_node(&format, orders, dead);
+            let (previews, operations) = channel();
+            // Two slots hold a note list handed back and the one behind it, which is more than a
+            // user swapping pieces can fill before the next operation drains them.
+            let (finished, played) = sync_channel(2);
+            let preview = Arc::new(Shared {
+                seconds: AtomicU64::new(0),
+                playing: AtomicBool::new(false),
+                file: AtomicBool::new(false),
+                notes: Ring::new(PREVIEW_RING),
+            });
+            let source = source_node(&format, orders, dead, operations, finished, preview.clone());
             engine.attachNode(&source);
             engine.attachNode(&clicker);
             engine.attachNode(&fader);
@@ -241,7 +277,9 @@ impl Graph {
                 velocity_min: DEFAULT_MIN,
                 velocity_max: DEFAULT_MAX,
                 velocity_curve: DEFAULT_CURVE,
-                preview: Scheduler::default(),
+                previews,
+                played,
+                preview,
             })
         }
     }
@@ -309,8 +347,6 @@ impl Graph {
             let render = self.engine.manualRenderingBlock();
             let mut left = frames;
             while left > 0 {
-                // One pump per pass, exactly as the device path pumps once per buffer.
-                self.pump(left.min(self.offline_frames));
                 // The frame length is set again every pass: the block writes back how much it
                 // rendered, and the next pass must be offered the whole buffer once more.
                 buffer.setFrameLength(self.offline_frames);
@@ -370,6 +406,7 @@ impl Graph {
         self.drop_plugin();
         self.bury();
         self.file = true;
+        self.preview.file.store(true, Relaxed);
         self.envelope = Some(FILE_ENVELOPE);
         self.roles = [
             sampler::Role::Release,
@@ -393,6 +430,7 @@ impl Graph {
             return;
         }
         self.file = false;
+        self.preview.file.store(false, Relaxed);
         self.roles.clear();
         self.send(Command::Unload);
         self.bury();
@@ -619,50 +657,66 @@ impl Graph {
         }
     }
 
-    /// The Preview's note list, in seconds at the score's own tempo.
-    pub fn preview_load(&mut self, notes: Vec<PreviewNote>) {
-        self.preview.load(notes);
+    /// The Preview's note list, in seconds at the score's own tempo and at the output velocities
+    /// the curve maps its notes to. The curve is read here and only here, so one changed while a
+    /// piece plays is heard from the next load on.
+    pub fn preview_load(&self, mut notes: Vec<PreviewNote>) {
+        for note in &mut notes {
+            note.velocity =
+                curved(note.velocity, self.velocity_min, self.velocity_max, self.velocity_curve);
+        }
+        self.tell(Preview::Load(notes));
         self.release_all();
     }
 
-    pub fn preview_play(&mut self) {
-        self.preview.play();
+    pub fn preview_play(&self) {
+        self.tell(Preview::Play);
     }
 
-    pub fn preview_pause(&mut self) {
-        self.preview.pause();
+    pub fn preview_pause(&self) {
+        self.tell(Preview::Pause);
         self.release_all();
     }
 
-    pub fn preview_seek(&mut self, seconds: f64) {
-        self.preview.seek(seconds);
+    pub fn preview_seek(&self, seconds: f64) {
+        self.tell(Preview::Seek(seconds));
         self.release_all();
     }
 
-    pub fn preview_rate(&mut self, percent: u32) {
-        self.preview.set_rate(percent);
+    pub fn preview_rate(&self, percent: u32) {
+        self.tell(Preview::Rate(percent));
         self.release_all();
     }
 
     /// Stops and forgets the note list: what leaving the Preview sends.
-    pub fn preview_stop(&mut self) {
-        self.preview.load(Vec::new());
+    pub fn preview_stop(&self) {
+        self.tell(Preview::Stop);
         self.release_all();
     }
 
-    /// Sends the Preview events of the next `frames` frames to the instrument, and ends the play
-    /// when the last note has been let go.
-    fn pump(&mut self, frames: u32) {
-        for event in self.preview.pump(frames, RATE) {
-            if event.on {
-                self.note_on(event.midi, event.velocity);
-            } else {
-                self.note_off(event.midi);
+    /// One operation for the render block's scheduler, and with it the freeing of whatever note
+    /// list the block has handed back.
+    fn tell(&self, operation: Preview) {
+        while self.played.try_recv().is_ok() {}
+        let _ = self.previews.send(operation);
+    }
+
+    /// Where the playback stands and whether it runs, as the render block last published it.
+    fn preview_progress(&self) -> (f64, bool) {
+        (f64::from_bits(self.preview.seconds.load(Relaxed)), self.preview.playing.load(Relaxed))
+    }
+
+    /// Plays one Preview event on the hosted plugin. Its velocity has already been through the
+    /// curve, so nothing is remapped here.
+    fn play_preview(&self, event: Event) {
+        if let Some(unit) = self.target() {
+            unsafe {
+                if event.on {
+                    unit.startNote_withVelocity_onChannel(event.midi, event.velocity, CHANNEL);
+                } else {
+                    unit.stopNote_onChannel(event.midi, CHANNEL);
+                }
             }
-        }
-        if self.preview.ended() {
-            self.preview.stop();
-            self.release_all();
         }
     }
 
@@ -719,16 +773,25 @@ fn sound_bank(path: &Path) -> bool {
     path.extension().is_some_and(|kind| kind.eq_ignore_ascii_case("sf2"))
 }
 
-/// The voice engine's node. The block it is built around holds the engine, reads the commands the
-/// graph sends it and writes the voices into the two channels the graph asked for. It runs on the
-/// audio thread, so it takes no lock, allocates nothing and says nothing: an instrument it stops
-/// playing goes down `dead` for another thread to drop.
+/// The voice engine's node. The block it is built around holds the engine and the Preview's
+/// scheduler, reads the orders the graph sends both of them and writes the voices into the two
+/// channels the graph asked for. It runs on the audio thread, so it takes no lock, allocates
+/// nothing and says nothing: an instrument it stops playing goes down `dead` for another thread to
+/// drop, and a note list it lets go of down `played`.
+///
+/// Deriving the Preview's clock from the frames rendered here is what keeps it on the audio clock,
+/// so a note lands in the buffer its time falls in whatever the host thread is doing.
 fn source_node(
     format: &AVAudioFormat,
     orders: Receiver<Command>,
     dead: Sender<Arc<sampler::Instrument>>,
+    operations: Receiver<Preview>,
+    played: SyncSender<Vec<PreviewNote>>,
+    preview: Arc<Shared>,
 ) -> Retained<AVAudioSourceNode> {
     let voices = RefCell::new(Sampler::new(RATE, VOICES));
+    let scheduler = RefCell::new(Scheduler::default());
+    let events = RefCell::new(Vec::with_capacity(HELD));
     let render = RcBlock::new(
         move |_silence: NonNull<Bool>,
               _when: NonNull<AudioTimeStamp>,
@@ -740,6 +803,63 @@ fn source_node(
                     let _ = dead.send(let_go);
                 }
             }
+
+            let mut scheduler = scheduler.borrow_mut();
+            while let Ok(operation) = operations.try_recv() {
+                let old = match operation {
+                    Preview::Load(notes) => scheduler.load(notes),
+                    Preview::Stop => scheduler.load(Vec::new()),
+                    Preview::Play => {
+                        scheduler.play();
+                        Vec::new()
+                    }
+                    Preview::Pause => {
+                        scheduler.pause();
+                        Vec::new()
+                    }
+                    Preview::Seek(seconds) => {
+                        scheduler.seek(seconds);
+                        Vec::new()
+                    }
+                    Preview::Rate(percent) => {
+                        scheduler.set_rate(percent);
+                        Vec::new()
+                    }
+                };
+                // An empty list owns no memory and is dropped here; a real one goes out to be
+                // freed elsewhere, or is leaked until the next drain when every slot is taken.
+                if !old.is_empty()
+                    && let Err(TrySendError::Full(kept) | TrySendError::Disconnected(kept)) =
+                        played.try_send(old)
+                {
+                    std::mem::forget(kept);
+                }
+            }
+
+            let mut events = events.borrow_mut();
+            scheduler.pump(frames, RATE, &mut events);
+            let file = preview.file.load(Relaxed);
+            for event in events.iter() {
+                if file {
+                    let command = if event.on {
+                        Command::NoteOn { note: event.midi, velocity: event.velocity }
+                    } else {
+                        Command::NoteOff { note: event.midi }
+                    };
+                    let _ = voices.apply(command);
+                } else {
+                    preview.notes.push(std::slice::from_ref(event));
+                }
+            }
+            if scheduler.ended() {
+                scheduler.stop();
+                if file {
+                    let _ = voices.apply(Command::AllOff);
+                }
+            }
+            preview.seconds.store(scheduler.seconds().to_bits(), Relaxed);
+            preview.playing.store(scheduler.playing(), Relaxed);
+
             unsafe {
                 let list = output.as_ptr();
                 let buffers = std::slice::from_raw_parts_mut(
@@ -872,9 +992,9 @@ pub fn start() -> Result<(), String> {
     watch_configuration(&graph.engine);
     *GRAPH.lock().unwrap() = Some(graph);
     device::watch(devices_changed);
-    static PUMPING: Once = Once::new();
-    PUMPING.call_once(|| {
-        std::thread::spawn(pump_forever);
+    static REPORTING: Once = Once::new();
+    REPORTING.call_once(|| {
+        std::thread::spawn(report_forever);
     });
     Ok(())
 }
@@ -914,35 +1034,38 @@ fn watch_configuration(engine: &AVAudioEngine) {
     std::mem::forget(token);
 }
 
-/// The Preview's clock on the device path: wake, work out how many frames went by, send the events
-/// that fall in them, and tell the webview where the playback stands.
-fn pump_forever() {
-    let mut last = Instant::now();
+/// Reports the Preview: it tells the webview where the render block's clock stands, and starts on
+/// a hosted plugin the notes the block left in the ring, an Audio Unit being no thing to call from
+/// the audio thread.
+// ponytail: a plugin's notes are started at this thread's wake rather than at the frame they fall
+// on; MusicDeviceMIDIEvent with a frame offset, sent from inside the block, is the exact upgrade.
+fn report_forever() {
     let mut told = Instant::now() - PROGRESS;
+    let mut was_playing = false;
+    let mut notes = [Event::default(); PREVIEW_BATCH];
     loop {
-        let frames = (last.elapsed().as_secs_f64() * RATE) as u32;
-        let Some((was_playing, playing, seconds)) = with(|graph| {
-            let was_playing = graph.preview.playing();
-            if was_playing {
-                graph.pump(frames);
+        let Some((seconds, playing)) = with(|graph| {
+            loop {
+                let took = graph.preview.notes.pop(&mut notes);
+                if took == 0 {
+                    break;
+                }
+                for &event in &notes[..took] {
+                    graph.play_preview(event);
+                }
             }
-            (was_playing, graph.preview.playing(), graph.preview.seconds())
+            graph.preview_progress()
         }) else {
             sleep(IDLE);
             continue;
         };
-        if !was_playing {
-            last = Instant::now();
-            sleep(IDLE);
-            continue;
-        }
-        last += Duration::from_secs_f64(frames as f64 / RATE);
         // The end of the piece is told at once, so the play button comes back without a wait.
-        if !playing || told.elapsed() >= PROGRESS {
+        if (playing || was_playing) && (!playing || told.elapsed() >= PROGRESS) {
             told = Instant::now();
             progress(seconds, playing);
         }
-        sleep(PUMP);
+        was_playing = playing;
+        sleep(IDLE);
     }
 }
 
@@ -1486,6 +1609,122 @@ mod tests {
         release_all();
     }
 
+    /// The Preview's clock read off the real device: eight quarter notes of middle C at 120 BPM,
+    /// tapped at the mixer and measured onset to onset. The clock lives in the render block, so
+    /// the spacing must hold to well inside one buffer however the host threads are scheduled.
+    /// Run it and read the numbers: `cargo test -- --ignored the_preview_keeps_its_beat`.
+    #[test]
+    #[ignore = "opens a real audio device"]
+    fn the_preview_keeps_its_beat_on_the_real_device() {
+        use objc2_avf_audio::AVAudioTime;
+
+        /// One beat at 120 BPM, and how long each note is held of it.
+        const BEAT: f64 = 0.5;
+        const HELD_FOR: f64 = 0.4;
+        const NOTES: usize = 8;
+
+        let graph = Graph::build().unwrap();
+        graph.start().unwrap();
+        install(graph);
+        set_output_device(None).unwrap();
+        set_buffer_frames(DEFAULT_FRAMES).unwrap();
+        let piano = instruments("")
+            .into_iter()
+            .find(|one| one.name == "Concert Grand Piano")
+            .expect("Logic's Concert Grand Piano is on this Mac");
+        load_instrument(&piano.id, None).unwrap();
+        assert!(status().available, "{}", status().reason);
+
+        // Room for the whole tap up front: a tap block that grows its buffer holds up the render
+        // thread, and a held-up render thread is a hole in what this measures.
+        let taken: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::with_capacity(96_000 * 8)));
+        let into = taken.clone();
+        let tap = RcBlock::new(
+            move |buffer: NonNull<AVAudioPCMBuffer>, _when: NonNull<AVAudioTime>| unsafe {
+                let buffer = buffer.as_ref();
+                let channel = (*buffer.floatChannelData()).as_ptr();
+                let mut held = into.lock().unwrap();
+                for frame in 0..buffer.frameLength() as usize {
+                    held.push(channel.add(frame).read());
+                }
+            },
+        );
+        let rate = unsafe {
+            let held = GRAPH.lock().unwrap();
+            let mixer = held.as_ref().unwrap().engine.mainMixerNode();
+            mixer.installTapOnBus_bufferSize_format_block(0, 1024, None, RcBlock::as_ptr(&tap));
+            mixer.outputFormatForBus(0).sampleRate()
+        };
+
+        preview_load(
+            (0..NOTES)
+                .map(|beat| PreviewNote {
+                    midi: 60,
+                    velocity: 100,
+                    on: beat as f64 * BEAT,
+                    off: beat as f64 * BEAT + HELD_FOR,
+                })
+                .collect(),
+        );
+        preview_play();
+        sleep(Duration::from_secs(5));
+        preview_stop();
+
+        let samples = taken.lock().unwrap().clone();
+        // The first note speaks where the sound first rises out of the silence before it. A plain
+        // level does not find the ones after it, which strike into the ringing of the one before:
+        // they are the same sample at the same velocity, so each is placed instead at the lag that
+        // fits the first note's attack best over the frames around the beat it is due on.
+        let loudest = samples.iter().fold(0f32, |top, one| top.max(one.abs()));
+        let beat = (rate * BEAT) as usize;
+        let window = (rate * 0.025) as usize;
+        let first = samples
+            .iter()
+            .position(|one| one.abs() > loudest * 0.05)
+            .expect("the first note sounded");
+        let attack = &samples[first..first + (rate * 0.020) as usize];
+        // How far the two are apart, squared and summed: nought where they are the same frames,
+        // and the ringing of the note before only lifts the whole curve.
+        let apart = |at: usize| -> f64 {
+            attack
+                .iter()
+                .zip(&samples[at..])
+                .map(|(a, b)| f64::from(*a - *b) * f64::from(*a - *b))
+                .sum()
+        };
+        let onsets: Vec<usize> = (0..NOTES)
+            .map(|note| {
+                let expected = first + note * beat;
+                (expected.saturating_sub(window)..expected + window)
+                    .min_by(|&a, &b| apart(a).total_cmp(&apart(b)))
+                    .expect("every note sounded")
+            })
+            .collect();
+        assert_eq!(onsets[0], first, "the first note fits itself where it stands");
+
+        let ms = |frames: f64| frames * 1000.0 / rate;
+        let spacings: Vec<f64> =
+            onsets.windows(2).map(|pair| ms((pair[1] - pair[0]) as f64)).collect();
+        // How far each note landed from the beat it was written on. A note is struck at the head
+        // of the buffer its time falls in, so it comes early by anything up to one buffer and
+        // never late, and the error of the note before it is not carried into the next: this is
+        // what says the clock is the audio clock and has not drifted over the eight beats.
+        let off: Vec<f64> = (0..NOTES)
+            .map(|note| ms(onsets[note] as f64 - (onsets[0] + note * beat) as f64))
+            .collect();
+        let buffer = ms(f64::from(status().buffer_frames));
+        let worst = off.iter().fold(0f64, |top, one| top.max(one.abs()));
+        let list = |these: &[f64]| {
+            these.iter().map(|one| format!("{one:.3}")).collect::<Vec<_>>().join(" ")
+        };
+        println!("tap at {rate} Hz, buffer {} frames, {buffer:.3} ms", status().buffer_frames);
+        println!("onset to onset in ms: {}", list(&spacings));
+        println!("off the written beat in ms: {}", list(&off));
+        println!("worst {worst:.3} ms against a buffer of {buffer:.3} ms");
+        assert!(worst <= buffer, "a note landed {worst:.3} ms off its beat");
+        release_all();
+    }
+
     fn underruns() -> u64 {
         GRAPH.lock().unwrap().as_ref().map_or(0, |graph| graph.underruns())
     }
@@ -1846,8 +2085,40 @@ mod tests {
         graph.preview_play();
         graph.render_peak(PASS).unwrap();
 
-        assert!(!graph.preview.playing());
-        assert_eq!(graph.preview.seconds(), 0.0);
+        assert_eq!(graph.preview_progress(), (0.0, false));
+    }
+
+    /// A plugin holds the head of the chain and the source node is out of the path, but the
+    /// Preview's clock lives in that node's block: the fader keeps it on a silenced input of its
+    /// own so it is still rendered, and its notes come out through the ring for the reporter.
+    #[test]
+    fn the_preview_clock_runs_on_while_a_plugin_holds_the_head() {
+        let mut graph = offline();
+        graph.set_plugin(hosted_instrument());
+        graph.preview_load(vec![preview_note(60, 0.0, 100.0)]);
+        graph.preview_play();
+
+        assert_eq!(graph.render_peak(PASS).unwrap(), 0.0, "the muted node is heard by nothing");
+        let (seconds, playing) = graph.preview_progress();
+        assert!(playing && seconds >= PASS_SECONDS, "the clock moved on: {seconds}");
+
+        let mut notes = [Event::default(); 4];
+        assert_eq!(graph.preview.notes.pop(&mut notes), 1);
+        assert_eq!(notes[0], Event { midi: 60, velocity: 100, on: true });
+    }
+
+    /// The render block owns the note list while it plays, and the audio thread is no place to
+    /// free one: a load in the middle of a piece has to hand the list it replaces back out.
+    #[test]
+    fn a_load_while_playing_hands_the_old_note_list_back_out_of_the_render_block() {
+        let mut graph = offline();
+        graph.preview_load(vec![preview_note(60, 0.0, 100.0), preview_note(64, 0.0, 100.0)]);
+        graph.preview_play();
+        graph.render_peak(PASS).unwrap();
+
+        graph.preview_load(vec![preview_note(72, 0.0, 100.0)]);
+        graph.render_peak(PASS).unwrap();
+        assert_eq!(graph.played.try_recv().map(|old| old.len()), Ok(2));
     }
 
     /// How long a note goes on sounding after the key comes up, to the nearest hundredth of a

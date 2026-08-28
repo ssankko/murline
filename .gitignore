@@ -9,3 +9,4 @@ __screenshots__/
 scripts/cache/
 .worktrees/
 .impeccable/hook.cache.json
+.claude/worktrees/

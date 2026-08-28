@@ -10,7 +10,7 @@ use Ordering::{Acquire, Relaxed, Release};
 /// A single-producer single-consumer ring. Both sides hold it by shared reference: the writer only
 /// moves `write` and the reader only moves `read`, so neither ever waits for the other. The two
 /// counters run on without wrapping and the slot they name is `counter & mask`.
-struct Ring<T> {
+pub(crate) struct Ring<T> {
     slots: UnsafeCell<Box<[T]>>,
     mask: usize,
     write: AtomicUsize,
@@ -23,7 +23,7 @@ unsafe impl<T: Send> Sync for Ring<T> {}
 
 impl<T: Copy + Default> Ring<T> {
     /// Room for at least `capacity` items, rounded up to the power of two the mask needs.
-    fn new(capacity: usize) -> Self {
+    pub(crate) fn new(capacity: usize) -> Self {
         let capacity = capacity.max(1).next_power_of_two();
         Self {
             slots: UnsafeCell::new(vec![T::default(); capacity].into_boxed_slice()),
@@ -42,7 +42,7 @@ impl<T: Copy + Default> Ring<T> {
     }
 
     /// Writer side. Answers how many items went in, which is fewer than asked when the ring fills.
-    fn push(&self, items: &[T]) -> usize {
+    pub(crate) fn push(&self, items: &[T]) -> usize {
         let write = self.write.load(Relaxed);
         let take = items.len().min(self.room());
         let slots = unsafe { &mut *self.slots.get() };
@@ -54,7 +54,7 @@ impl<T: Copy + Default> Ring<T> {
     }
 
     /// Reader side. Answers how many items came out, which is fewer than asked when it runs dry.
-    fn pop(&self, out: &mut [T]) -> usize {
+    pub(crate) fn pop(&self, out: &mut [T]) -> usize {
         let read = self.read.load(Relaxed);
         let take = out.len().min(self.ready());
         let slots = unsafe { &*self.slots.get() };

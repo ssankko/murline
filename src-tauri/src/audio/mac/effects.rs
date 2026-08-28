@@ -20,7 +20,9 @@ use objc2_audio_toolbox::{
     AudioComponentDescription, AudioUnitCocoaViewInfo, AudioUnitGetProperty,
     kAudioUnitProperty_CocoaUI, kAudioUnitScope_Global,
 };
-use objc2_avf_audio::{AVAudioNode, AVAudioUnit, AVAudioUnitComponentManager, AVAudioUnitEffect};
+use objc2_avf_audio::{
+    AVAudioMixing, AVAudioNode, AVAudioUnit, AVAudioUnitComponentManager, AVAudioUnitEffect,
+};
 use objc2_foundation::{
     NSBundle, NSData, NSDataBase64DecodingOptions, NSDataBase64EncodingOptions, NSDictionary,
     NSNotificationCenter, NSObjectProtocol, NSPoint, NSPropertyListFormat,
@@ -245,6 +247,14 @@ pub(super) fn rewire(graph: &Graph) {
         for pair in path.windows(2) {
             engine.connect_to_format(pair[0], pair[1], Some(&graph.format));
         }
+        // A plugin at the head leaves the source node out of the path, so it keeps an input of its
+        // own on the fader, silenced: the block behind that node carries the Preview's clock and
+        // has to go on being rendered, and nothing it renders may reach the output.
+        let plays = graph.plugin.is_none();
+        if !plays {
+            engine.connect_to_format(&graph.source, &graph.fader, Some(&graph.format));
+        }
+        graph.source.setVolume(if plays { 1.0 } else { 0.0 });
     }
 }
 

@@ -15,12 +15,16 @@ pub struct PreviewNote {
 }
 
 /// What the engine sends to the instrument: a note on with its velocity, or a note off.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Event {
     pub midi: u8,
     pub velocity: u8,
     pub on: bool,
 }
+
+/// Room kept for the notes sounding at once and for the events of one buffer. `pump` runs on the
+/// audio thread, so both lists are reserved to this at load and never grow there.
+pub const HELD: usize = 256;
 
 /// The note list and where in it the playback is. `pump` is the whole of it: a render callback asks
 /// for the events of the frames it is about to render, and gets them in the order they sound.
@@ -38,14 +42,21 @@ pub struct Scheduler {
     /// Off time, note, and whether the note is zero-length (off <= on), of everything the
     /// scheduler has struck and not yet let go.
     sounding: Vec<(f64, u8, bool)>,
+    /// One buffer's events with the time and tie rank they are sorted by. A field rather than a
+    /// local so that a pump on the audio thread allocates nothing.
+    due: Vec<(f64, u8, Event)>,
 }
 
 impl Scheduler {
-    pub fn load(&mut self, mut notes: Vec<PreviewNote>) {
+    /// Takes the note list and hands back the one it replaces, which the caller drops where
+    /// dropping is allowed.
+    pub fn load(&mut self, mut notes: Vec<PreviewNote>) -> Vec<PreviewNote> {
         // `seek` bisects the list, so the order the webview sent is made sure of here.
-        notes.sort_by(|a, b| a.on.total_cmp(&b.on));
-        self.notes = notes;
+        notes.sort_unstable_by(|a, b| a.on.total_cmp(&b.on));
+        self.sounding.reserve(HELD);
+        self.due.reserve(HELD);
         self.stop();
+        std::mem::replace(&mut self.notes, notes)
     }
 
     pub fn play(&mut self) {
@@ -94,12 +105,14 @@ impl Scheduler {
         self.playing && self.next >= self.notes.len() && self.sounding.is_empty()
     }
 
-    /// The events of the next `frames` frames, in the order they sound, and the clock moved past
-    /// them. An event whose scaled time falls inside the buffer is sent at this callback, so the
-    /// error is never more than one buffer.
-    pub fn pump(&mut self, frames: u32, sample_rate: f64) -> Vec<Event> {
+    /// Writes the events of the next `frames` frames into `out`, in the order they sound, and
+    /// moves the clock past them. An event whose scaled time falls inside the buffer is sent at
+    /// this callback, so the error is never more than one buffer. Nothing is allocated as long as
+    /// `out` holds `HELD`, which is what lets the audio thread call it.
+    pub fn pump(&mut self, frames: u32, sample_rate: f64, out: &mut Vec<Event>) {
+        out.clear();
         if !self.playing {
-            return Vec::new();
+            return;
         }
         let rate = if self.rate == 0.0 { 1.0 } else { self.rate };
         let end = self.seconds + (frames as f64 / sample_rate) * rate;
@@ -111,7 +124,8 @@ impl Scheduler {
         const ON: u8 = 1;
         const OFF_OF_A_ZERO_LENGTH_NOTE: u8 = 2;
 
-        let mut due: Vec<(f64, u8, Event)> = Vec::new();
+        let due = &mut self.due;
+        due.clear();
         while let Some(note) = self.notes.get(self.next) {
             if note.on >= end {
                 break;
@@ -129,10 +143,10 @@ impl Scheduler {
             }
             !over
         });
-        due.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        due.sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
 
         self.seconds = end;
-        due.into_iter().map(|(_, _, event)| event).collect()
+        out.extend(due.iter().map(|&(_, _, event)| event));
     }
 }
 
@@ -158,11 +172,18 @@ mod tests {
         scheduler
     }
 
+    /// One buffer's events, as a list the assertions compare against.
+    fn pump(scheduler: &mut Scheduler) -> Vec<Event> {
+        let mut events = Vec::new();
+        scheduler.pump(FRAMES, RATE, &mut events);
+        events
+    }
+
     /// The buffer index each note on landed in over `count` buffers.
     fn strikes(scheduler: &mut Scheduler, count: u32) -> Vec<(u32, u8)> {
         let mut at = Vec::new();
         for buffer in 0..count {
-            for event in scheduler.pump(FRAMES, RATE) {
+            for event in pump(scheduler) {
                 if event.on {
                     at.push((buffer, event.midi));
                 }
@@ -176,22 +197,22 @@ mod tests {
         let mut scheduler =
             scheduler(vec![note(60, 0.0, BUFFER * 2.5), note(64, BUFFER * 3.5, BUFFER * 4.0)]);
 
-        assert_eq!(scheduler.pump(FRAMES, RATE), vec![Event { midi: 60, velocity: 80, on: true }]);
-        assert!(scheduler.pump(FRAMES, RATE).is_empty(), "nothing falls in the second buffer");
-        assert_eq!(scheduler.pump(FRAMES, RATE), vec![Event { midi: 60, velocity: 0, on: false }]);
-        assert_eq!(scheduler.pump(FRAMES, RATE), vec![Event { midi: 64, velocity: 80, on: true }]);
-        assert_eq!(scheduler.pump(FRAMES, RATE), vec![Event { midi: 64, velocity: 0, on: false }]);
+        assert_eq!(pump(&mut scheduler), vec![Event { midi: 60, velocity: 80, on: true }]);
+        assert!(pump(&mut scheduler).is_empty(), "nothing falls in the second buffer");
+        assert_eq!(pump(&mut scheduler), vec![Event { midi: 60, velocity: 0, on: false }]);
+        assert_eq!(pump(&mut scheduler), vec![Event { midi: 64, velocity: 80, on: true }]);
+        assert_eq!(pump(&mut scheduler), vec![Event { midi: 64, velocity: 0, on: false }]);
         assert!(scheduler.ended());
     }
 
     #[test]
     fn a_seek_drops_what_was_sounding_and_carries_on_from_the_new_time() {
         let mut scheduler = scheduler(vec![note(60, 0.0, 10.0), note(72, 1.0, 1.5)]);
-        assert!(!scheduler.pump(FRAMES, RATE).is_empty(), "the first note struck");
+        assert!(!pump(&mut scheduler).is_empty(), "the first note struck");
 
         scheduler.seek(1.0 - BUFFER / 2.0);
         // The note that was under way is not struck again and never asks to be let go.
-        assert_eq!(scheduler.pump(FRAMES, RATE), vec![Event { midi: 72, velocity: 80, on: true }]);
+        assert_eq!(pump(&mut scheduler), vec![Event { midi: 72, velocity: 80, on: true }]);
     }
 
     #[test]
@@ -213,7 +234,7 @@ mod tests {
         ]);
 
         assert_eq!(
-            scheduler.pump(FRAMES, RATE),
+            pump(&mut scheduler),
             vec![
                 Event { midi: 60, velocity: 80, on: true },
                 Event { midi: 60, velocity: 0, on: false },
@@ -228,7 +249,7 @@ mod tests {
         let mut scheduler = scheduler(vec![note(60, BUFFER * 0.5, BUFFER * 0.5)]);
 
         assert_eq!(
-            scheduler.pump(FRAMES, RATE),
+            pump(&mut scheduler),
             vec![
                 Event { midi: 60, velocity: 80, on: true },
                 Event { midi: 60, velocity: 0, on: false },
@@ -240,16 +261,16 @@ mod tests {
     #[test]
     fn a_paused_or_stopped_scheduler_sends_nothing() {
         let mut scheduler = scheduler(vec![note(60, BUFFER * 1.5, 10.0)]);
-        assert!(scheduler.pump(FRAMES, RATE).is_empty(), "the note is still one buffer away");
+        assert!(pump(&mut scheduler).is_empty(), "the note is still one buffer away");
 
         scheduler.pause();
-        assert!(scheduler.pump(FRAMES, RATE).is_empty());
+        assert!(pump(&mut scheduler).is_empty());
 
         scheduler.play();
         assert_eq!(strikes(&mut scheduler, 4), vec![(0, 60)], "resumed where it stood");
 
         scheduler.stop();
         assert_eq!(scheduler.seconds(), 0.0);
-        assert!(scheduler.pump(FRAMES, RATE).is_empty());
+        assert!(pump(&mut scheduler).is_empty());
     }
 }

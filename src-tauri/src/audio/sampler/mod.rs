@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 pub use super::Envelope;
 pub use stream::{Fill, Stream};
+pub(crate) use stream::Ring;
 
 #[cfg(target_os = "macos")]
 pub mod disk;

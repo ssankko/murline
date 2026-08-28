@@ -5,12 +5,14 @@
 import type { AudioStatus } from '@/audio/sound-tab';
 import { barAt, barSeconds, previewBars, previewNotes, type PreviewBar } from '@/audio/preview';
 import { Button } from '@/components/ui/button';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import { clamp } from '@/lib/utils';
 import { baseNameOf, pathOf, readScoreFile } from '@/library/index-file';
 import { setNotice } from '@/library/notice';
 import { getPiece } from '@/library/queries';
 import { reindexIfChanged } from '@/library/scan';
 import { useDark } from '@/look/use-dark';
+import { MidiLight } from '@/midi/midi-light';
 import { TEMPO_RANGE } from '@/play/settings';
 import { ScoreError } from '@/score/types';
 import { Mixer } from '@/audio/mixer';
@@ -196,67 +198,75 @@ export function PreviewScreen({
 
   return (
     <div className="bg-chrome fixed inset-0 flex flex-col">
-      <div className="border-edge-soft flex h-12 flex-none items-center gap-2 border-b px-2">
-        <button
-          aria-label="Back to library"
-          onClick={onBack}
-          className="hover:bg-ink/8 flex size-8 flex-none items-center justify-center transition-colors duration-150"
-        >
-          <ArrowLeft size={18} strokeWidth={1.75} />
-        </button>
-        <b className="min-w-0 truncate text-[13px] font-medium">{title}</b>
-        {/* A disabled button swallows its own tooltip, so the reason hangs on the wrapper. */}
-        <div className="ml-auto flex flex-none items-center gap-1" title={reason || undefined}>
+      <TooltipProvider>
+        <div className="border-edge-soft flex h-12 flex-none items-center gap-2 border-b px-2">
           <button
-            aria-label={playing ? 'Pause' : 'Play'}
-            disabled={off}
-            onClick={() => void toggle()}
-            className={TRANSPORT}
-          >
-            {playing ? <Pause {...ICON} /> : <Play {...ICON} />}
-          </button>
-          <button
-            aria-label="Slower"
-            disabled={off}
-            onClick={() => stepTempo(-TEMPO_STEP)}
-            className={TRANSPORT}
-          >
-            <Minus {...ICON} />
-          </button>
-          <span className="w-11 text-center text-[12px] tabular-nums">{percent} %</span>
-          <button
-            aria-label="Faster"
-            disabled={off}
-            onClick={() => stepTempo(TEMPO_STEP)}
-            className={TRANSPORT}
-          >
-            <Plus {...ICON} />
-          </button>
-        </div>
-        <div className="flex flex-none items-center gap-2 pl-2">
-          <Button variant="outline" size="sm" onClick={() => onPlay('practice')}>
-            Practice
-          </Button>
-          <Button size="sm" onClick={() => onPlay('performance')}>
-            Perform
-          </Button>
-          <Mixer
-            open={mixerOpen}
-            onOpenChange={setMixerOpen}
-            onSoundSettings={() => {
-              setSettingsJump('instrument_id');
-              setSettingsOpen(true);
-            }}
-          />
-          <button
-            aria-label="Settings"
-            onClick={() => setSettingsOpen(true)}
+            aria-label="Back to library"
+            onClick={onBack}
             className="hover:bg-ink/8 flex size-8 flex-none items-center justify-center transition-colors duration-150"
           >
-            <SlidersHorizontal {...ICON} />
+            <ArrowLeft size={18} strokeWidth={1.75} />
           </button>
+          <b className="min-w-0 truncate text-[13px] font-medium">{title}</b>
+          {/* A disabled button swallows its own tooltip, so the reason hangs on the wrapper. */}
+          <div className="ml-auto flex flex-none items-center gap-1" title={reason || undefined}>
+            <button
+              aria-label={playing ? 'Pause' : 'Play'}
+              disabled={off}
+              onClick={() => void toggle()}
+              className={TRANSPORT}
+            >
+              {playing ? <Pause {...ICON} /> : <Play {...ICON} />}
+            </button>
+            <button
+              aria-label="Slower"
+              disabled={off}
+              onClick={() => stepTempo(-TEMPO_STEP)}
+              className={TRANSPORT}
+            >
+              <Minus {...ICON} />
+            </button>
+            <span className="w-11 text-center text-[12px] tabular-nums">{percent} %</span>
+            <button
+              aria-label="Faster"
+              disabled={off}
+              onClick={() => stepTempo(TEMPO_STEP)}
+              className={TRANSPORT}
+            >
+              <Plus {...ICON} />
+            </button>
+          </div>
+          <div className="flex flex-none items-center gap-2 pl-2">
+            <Button variant="outline" size="sm" onClick={() => onPlay('practice')}>
+              Practice
+            </Button>
+            <Button size="sm" onClick={() => onPlay('performance')}>
+              Perform
+            </Button>
+            <MidiLight
+              onOpenSettings={() => {
+                setSettingsJump('midi_device');
+                setSettingsOpen(true);
+              }}
+            />
+            <Mixer
+              open={mixerOpen}
+              onOpenChange={setMixerOpen}
+              onSoundSettings={() => {
+                setSettingsJump('instrument_id');
+                setSettingsOpen(true);
+              }}
+            />
+            <button
+              aria-label="Settings"
+              onClick={() => setSettingsOpen(true)}
+              className="hover:bg-ink/8 flex size-8 flex-none items-center justify-center transition-colors duration-150"
+            >
+              <SlidersHorizontal {...ICON} />
+            </button>
+          </div>
         </div>
-      </div>
+      </TooltipProvider>
 
       <SettingsPanel
         open={settingsOpen}

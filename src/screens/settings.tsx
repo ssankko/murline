@@ -2,6 +2,7 @@
 // general. What the open piece does right now is the play toolbar's. Every control writes on
 // change; there is no Save.
 
+import type { Envelope } from '@/audio/envelope';
 import { SoundTab } from '@/audio/sound-tab';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
@@ -156,6 +157,30 @@ const SEARCH_ROWS: {
     words: ['touch', 'response', 'sensitivity', 'dynamics', 'strike', 'force', 'exponent'],
   },
   {
+    id: 'envelope_attack',
+    tab: 'sound',
+    label: 'Attack',
+    words: ['envelope', 'adsr', 'onset', 'fade in', 'swell'],
+  },
+  {
+    id: 'envelope_decay',
+    tab: 'sound',
+    label: 'Decay',
+    words: ['envelope', 'adsr', 'fall', 'settle'],
+  },
+  {
+    id: 'envelope_sustain',
+    tab: 'sound',
+    label: 'Sustain',
+    words: ['envelope', 'adsr', 'hold', 'level', 'body'],
+  },
+  {
+    id: 'envelope_release',
+    tab: 'sound',
+    label: 'Release',
+    words: ['envelope', 'adsr', 'tail', 'ring', 'decay after', 'fade out', 'abrupt', 'cut off'],
+  },
+  {
     id: 'effect_chain',
     tab: 'sound',
     label: 'Effect chain',
@@ -298,14 +323,20 @@ const SEARCH_ROWS: {
   },
 ];
 
-/** The rows whose label, tab name or one of their words holds what was typed. */
-function searchRows(query: string): typeof SEARCH_ROWS {
+/**
+ * The rows whose label, tab name or one of their words holds what was typed. `envelope` says
+ * whether the instrument playing has an envelope to shape; a hosted plugin has none, and the
+ * search must not offer rows the panel is not showing.
+ */
+function searchRows(query: string, envelope: boolean): typeof SEARCH_ROWS {
   const needle = query.trim().toLowerCase();
   if (!needle) return [];
-  return SEARCH_ROWS.filter((row) =>
-    [row.label, WHERE_LABELS[row.tab], row.group ?? '', ...row.words].some((word) =>
-      word.toLowerCase().includes(needle),
-    ),
+  return SEARCH_ROWS.filter(
+    (row) =>
+      (envelope || !row.id.startsWith('envelope_')) &&
+      [row.label, WHERE_LABELS[row.tab], row.group ?? '', ...row.words].some((word) =>
+        word.toLowerCase().includes(needle),
+      ),
   );
 }
 
@@ -342,14 +373,13 @@ export function SettingsPanel({
   const [sel, setSel] = useState(0);
   /** The row a search result jumped to, held until the next jump or the next open. */
   const [marked, setMarked] = useState<string | null>(null);
-  const [velocity, setVelocity] = useState<number | null>(null);
+  /** Whether the instrument playing has an envelope, which is what puts its rows in the search. */
+  const [envelope, setEnvelope] = useState(false);
   const [pdmxReady, setPdmxReady] = useState<boolean | null>(null);
   const list = useRef<HTMLUListElement>(null);
-  // The three screens hold the component whether it is open or not, so a shut panel must not
-  // re-render on every strike.
-  const midi = useMidiStatus((event) => {
-    if (open && event.on) setVelocity(event.velocity);
-  });
+  // Only the port list is wanted here. The Sound tab watches the keys itself, and it is here only
+  // while the panel is open, so a shut panel does not re-render on every strike.
+  const midi = useMidiStatus();
   const pdmx = usePdmxDownload();
   const downloading = pdmx.progress !== null;
 
@@ -358,6 +388,12 @@ export function SettingsPanel({
   useEffect(() => {
     if (open) readSettings().then(setValues, console.error);
     else setMarked(null);
+    if (open) {
+      invoke<Envelope | null>('audio_envelope').then(
+        (one) => setEnvelope(one !== null),
+        () => setEnvelope(false),
+      );
+    }
   }, [open, downloading]);
 
   // The tab and the mark land in one render, as they do for a search result, so the scroll effect
@@ -417,7 +453,7 @@ export function SettingsPanel({
     if (typeof picked === 'string') write(key, picked);
   }
 
-  const results = searchRows(query);
+  const results = searchRows(query, envelope);
   const selected = results[Math.min(sel, results.length - 1)] ?? null;
 
   function pick(row: (typeof SEARCH_ROWS)[number]): void {
@@ -537,7 +573,7 @@ export function SettingsPanel({
                   {/* The sound engine's own settings write straight to it, not through `write`:
                     each one has to reach the running engine as well as the database. The two
                     volumes are not here at all; they are the mixer's two faders. */}
-                  <SoundTab marked={marked} velocity={velocity} />
+                  <SoundTab marked={marked} />
                 </Tabs.Content>
 
                 <Tabs.Content value="look" className="flex flex-col gap-6">

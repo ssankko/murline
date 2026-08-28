@@ -146,6 +146,14 @@ _Avoid_: Volume popover, levels, audio dialog
 How loud the whole keyboard sounds. It applies after the effect chain, so it trims the finished sound without changing how the instrument or the effects behave.
 _Avoid_: Master volume, output gain, level
 
+**Envelope**:
+How loud a note is over its own lifetime: the attack it comes in on, the decay down to the sustain it holds at while the key is down, and the release it dies away over once the key comes up. Kept per instrument, so a heavy piano and a thin organ each keep their own. Only the sampler has one to set; a hosted Audio Unit shapes its notes behind its own window. Setting it costs about a second inside CoreAudio and the sound stops for it, so it is sent once the hand comes off the slider rather than as it moves, and the section warns from the first touch of a slider until the engine has it. It is put back after every load, which reads the instrument file's own envelope in over it.
+_Avoid_: ADSR (the four sliders, not the concept), amp envelope, volume envelope, contour
+
 **Velocity curve**:
 The remap from the velocity a key press sends to the velocity the app works in, set by a minimum, a maximum and the shape of the path between them. Velocity 1 lands on the minimum and velocity 127 on the maximum, so the whole of the keyboard's range is squeezed into the band rather than cut off at it. Calibrated by ear. The instrument is played at the output velocity and so is the Preview, and a grade reads the output velocity too. Distinct from the keyboard volume, which trims the finished sound rather than the velocity behind it.
 _Avoid_: Velocity sensitivity, dynamics curve, velocity clamp
+
+**Sounding**:
+The keys the Sound tab's two plots draw: the ones under the hands, plus the ones let go and still dying away. Each carries the velocity it was struck at and how long it was held, and each is drawn in its own pitch colour, the same colours the lane uses. The touch plot puts one at the height it was struck; the envelope plot walks one along the envelope. A key let go leaves both plots at once, after the envelope's release, so neither is left holding a note the other has finished with. The tab counts them itself and only while the panel is open.
+_Avoid_: Active notes, held keys, note pool

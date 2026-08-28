@@ -1,6 +1,7 @@
 // The Sound tab's Instrument section: the instrument the keyboard and the Preview play. The
 // engine finds them, this picks one, and every control writes its setting on change.
 
+import { restoreEnvelope } from '@/audio/envelope';
 import { Button } from '@/components/ui/button';
 import { readSettings, setSetting, type Settings } from '@/db/db';
 import { reasonOf } from '@/library/notice';
@@ -41,6 +42,7 @@ export async function restoreInstrument(settings: Settings): Promise<void> {
   // The stored state belongs to the stored instrument, so a fresh default starts at its own.
   const state = chosen === settings.instrument_id ? settings.instrument_state : null;
   await invoke('audio_load_instrument', { id: chosen, state });
+  await restoreEnvelope(chosen);
 }
 
 export function InstrumentSection({
@@ -80,6 +82,7 @@ export function InstrumentSection({
     await setSetting('instrument_state', null);
     try {
       await invoke('audio_load_instrument', { id, state: null });
+      await restoreEnvelope(id);
     } catch (error) {
       setFailure(reasonOf(error));
     }

@@ -33,6 +33,9 @@ let written: [string, unknown][] = [];
 // their reads have to resolve even though nothing here mounts one.
 vi.mock('@/db/db', () => ({
   readSettings: async () => stored,
+  // The Sound tab reaches the MIDI ports, which read the pinned device, though the mixer shows
+  // neither; the mock has to answer for the whole module the mixer's imports pull in.
+  getSetting: async () => null,
   getSettingOr: async (_key: string, fallback: unknown) => fallback,
   setSetting: async (key: string, value: unknown) => {
     written.push([key, value]);

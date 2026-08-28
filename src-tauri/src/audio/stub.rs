@@ -2,7 +2,7 @@
 //! so the webview needs no platform branch of its own; the app runs as it always did, silently.
 
 use crate::audio::preview::PreviewNote;
-use crate::audio::{Effect, Instrument, OutputDevice, Slot, Status};
+use crate::audio::{Effect, Envelope, Instrument, OutputDevice, Slot, Status};
 
 const PLATFORM: &str = "No sound engine on this platform";
 
@@ -66,6 +66,13 @@ pub fn load_instrument(_id: &str, _state: Option<&str>) -> Result<(), String> {
 pub async fn show_instrument(_app: tauri::AppHandle) -> Result<Option<String>, String> {
     Err(PLATFORM.into())
 }
+
+/// No instrument is loaded, so there is no envelope to describe.
+pub fn envelope() -> Option<Envelope> {
+    None
+}
+
+pub fn set_envelope(_envelope: Envelope) {}
 
 pub fn preview_load(_notes: Vec<PreviewNote>) {}
 

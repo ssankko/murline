@@ -1,13 +1,16 @@
 import { SoundTab } from '@/audio/sound-tab';
+import type { StrikeEvent } from '@/play/engine';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, expect, test, vi } from 'vitest';
 
 let answer: unknown = { available: false, reason: 'No instrument chosen' };
+let envelope: unknown = null;
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: async (command: string) => {
     if (command === 'audio_status') return answer;
+    if (command === 'audio_envelope') return envelope;
     if (command === 'audio_output_devices') return [];
     if (command === 'audio_set_output_device' || command === 'audio_set_buffer_frames') return;
     if (command === 'audio_instruments') return [];
@@ -19,24 +22,37 @@ vi.mock('@tauri-apps/api/core', () => ({
 // The Output section follows the engine's device-list event; nothing here plugs anything in.
 vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }));
 
+/** The tab's own ear on the keyboard, which a test plays by hand. */
+let strike: ((event: StrikeEvent) => void) | undefined;
+vi.mock('@/midi/use-midi-status', () => ({
+  useMidiStatus: (onStrike?: (event: StrikeEvent) => void) => {
+    strike = onStrike;
+    return { devices: [], ports: [], error: null };
+  },
+}));
+
 let close: (() => void) | null = null;
+let host: HTMLElement | null = null;
 
 afterEach(() => {
   close?.();
   close = null;
+  host = null;
+  answer = { available: false, reason: 'No instrument chosen' };
+  envelope = null;
 });
 
 /** Mounts the tab and hands back the text the user can read in it. */
 async function open(): Promise<() => string> {
-  const host = document.createElement('div');
+  host = document.createElement('div');
   document.body.append(host);
   const root = createRoot(host);
   root.render(createElement(SoundTab, {}));
   close = () => {
     root.unmount();
-    host.remove();
+    host?.remove();
   };
-  const text = (): string => host.textContent ?? '';
+  const text = (): string => host?.textContent ?? '';
   await vi.waitFor(() => expect(text()).toContain('Effect chain'));
   return text;
 }
@@ -92,4 +108,22 @@ test('a search result marks the row it named, wherever in the tab it lives', asy
   for (const id of ['audio_output_device', 'instrument_id', 'instruments_folder', 'effect_chain']) {
     expect(host.querySelector(`#setting-row-${id}`), id).toBeTruthy();
   }
+});
+
+test('both plots let go of a key together, once the envelope has finished with it', async () => {
+  answer = { available: true, reason: '', fallback: '' };
+  envelope = { attack: 0.01, decay: 0.05, sustain: 0.8, release: 0.3 };
+  const text = await open();
+  await vi.waitFor(() => expect(text()).toContain('Envelope'));
+
+  const marks = () => host!.querySelectorAll('[data-strike], [data-head]').length;
+  strike!({ midi: 60, velocity: 80, time: 0, on: true });
+  // One on the touch plot at the height it was struck, one walking the envelope.
+  await vi.waitFor(() => expect(marks()).toBe(2));
+
+  // Still drawn a third of the way through the release, and gone by the end of it.
+  strike!({ midi: 60, velocity: 0, time: 0, on: false });
+  await new Promise((done) => setTimeout(done, 100));
+  expect(marks()).toBe(2);
+  await vi.waitFor(() => expect(marks()).toBe(0), { timeout: 2000 });
 });

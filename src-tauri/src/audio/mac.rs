@@ -7,11 +7,12 @@
 //! host-side ones AVFAudio documents as safe off it.
 
 mod effects;
+mod envelope;
 pub use effects::{chain, effects, set_chain, show_effect};
 
 use crate::audio::device::{self, DeviceId};
 use crate::audio::preview::{PreviewNote, Scheduler};
-use crate::audio::{OutputDevice, Status, progress};
+use crate::audio::{Envelope, OutputDevice, Status, progress};
 // The instrument the graph plays, and the window a hosted plugin brings with it.
 pub use crate::audio::instruments::{list as instruments, load as load_instrument};
 pub use crate::audio::window::show_instrument;
@@ -118,6 +119,9 @@ pub struct Graph {
     /// next time its node is initialised, and the engine initialises the node on every start and
     /// on every change of the wiring, so the file goes back in each time.
     file: Option<PathBuf>,
+    /// The envelope asked for, if any, which is put back on the sampler after every reload: a load
+    /// reads the instrument file's own envelope in over whatever was set.
+    envelope: Option<Envelope>,
     /// Frames one offline render pass may take at most, zero while the graph plays to a device.
     offline_frames: u32,
     /// The instrument the user picked, which is what makes the engine playable.
@@ -175,6 +179,7 @@ impl Graph {
                 fader,
                 chain: Vec::new(),
                 file: None,
+                envelope: None,
                 offline_frames: 0,
                 chosen: None,
                 chosen_device: None,
@@ -278,6 +283,9 @@ impl Graph {
         self.release_all();
         let _turn = LOADING.lock().unwrap();
         self.file = Some(path.to_path_buf());
+        // The envelope belongs to the instrument that was playing, not to this one, which brings
+        // its own; the webview sets whatever was kept for this one once the load is through.
+        self.envelope = None;
         self.drop_plugin();
         // The sampler is the instrument again, so it takes the head of the chain back, and the
         // rewire is what reads the file in on the way.
@@ -306,12 +314,33 @@ impl Graph {
                 self.sampler.loadInstrumentAtURL_error(&url)
             }
         }
-        .map_err(reason)
+        .map_err(reason)?;
+        if let Some(want) = self.envelope {
+            envelope::write(&self.sampler, want);
+        }
+        Ok(())
+    }
+
+    /// What the sampler answers a key with now, or nothing when a plugin is playing in its place.
+    pub fn envelope(&self) -> Option<Envelope> {
+        if self.plugin.is_some() {
+            return None;
+        }
+        envelope::read(&self.sampler)
+    }
+
+    /// Sets it, and remembers it so that the next reload does not read the file's own back over it.
+    pub fn set_envelope(&mut self, want: Envelope) {
+        self.envelope = Some(want);
+        if self.plugin.is_none() {
+            envelope::write(&self.sampler, want);
+        }
     }
 
     /// Puts a hosted Audio Unit instrument in the sampler's place, taking out whichever one played
     /// before it.
     pub fn set_plugin(&mut self, unit: Retained<AVAudioUnitMIDIInstrument>) {
+        self.envelope = None;
         self.drop_plugin();
         let _turn = LOADING.lock().unwrap();
         unsafe { self.engine.attachNode(&unit) };
@@ -810,6 +839,14 @@ pub fn set_keyboard_volume(percent: u32) {
 
 pub fn set_velocity_curve(min: u32, max: u32, curve: f64) {
     with(|graph| graph.set_velocity_curve(min, max, curve));
+}
+
+pub fn envelope() -> Option<Envelope> {
+    with(|graph| graph.envelope()).flatten()
+}
+
+pub fn set_envelope(want: Envelope) {
+    with(|graph| graph.set_envelope(want));
 }
 
 /// One key of the MIDI keyboard, down or up. Answers the output velocity the note was played at, so
@@ -1377,5 +1414,45 @@ mod tests {
 
         assert!(!graph.preview.playing());
         assert_eq!(graph.preview.seconds(), 0.0);
+    }
+
+    /// How long a note goes on sounding after the key comes up, to the nearest hundredth of a
+    /// second. A thousandth of full scale counts as silence.
+    fn release_ms(graph: &mut Graph) -> f64 {
+        const STEP: u32 = 441;
+        graph.note_on(60, 100);
+        graph.render_peak(LOOK).unwrap();
+        graph.note_off(60);
+        let mut steps = 0;
+        while steps < 300 && graph.render_peak(STEP).unwrap() > 0.001 {
+            steps += 1;
+        }
+        graph.release_all();
+        graph.render_peak(LOOK).unwrap();
+        f64::from(steps) * 10.0
+    }
+
+    #[test]
+    fn a_longer_release_keeps_a_note_sounding_after_the_key_has_come_up() {
+        let mut graph = offline();
+
+        // The fixture's SoundFont asks for a millisecond of release, and that is what is read back.
+        let brought = graph.envelope().expect("the sampler's own envelope");
+        assert!(brought.release < 0.01, "the file asked for {}", brought.release);
+        let short = release_ms(&mut graph);
+
+        graph.set_envelope(Envelope { release: 0.75, ..brought });
+        assert_eq!(graph.envelope().expect("the envelope set").release, 0.75);
+        let long = release_ms(&mut graph);
+        assert!(long > short + 100.0, "{long} ms against {short} ms");
+
+        // Changing an effect rewires the graph, which reads the instrument file in again. The
+        // envelope has to outlast that, or it would last only until the next change of anything.
+        effects::rewire(&graph).unwrap();
+        let after = release_ms(&mut graph);
+        assert!(after > short + 100.0, "the rewire left {after} ms");
+
+        // Disposing a sampler that has taken a whole state aborts inside CoreAudio.
+        std::mem::forget(graph);
     }
 }

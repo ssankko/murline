@@ -1,4 +1,5 @@
 import type { EffectSlot } from '@/audio/effects';
+import type { Envelope } from '@/audio/envelope';
 import { DEFAULT_LANE_LOOK, DEFAULT_SPLIT, type LaneLook } from '@/lane/lane';
 import type { Theme } from '@/look/use-dark';
 import { DEFAULT_PLAY_SETTINGS, type KeyboardPreset, type PlaySettings } from '@/play/settings';
@@ -74,6 +75,11 @@ export type Settings = {
   instrument_id: string | null;
   /** What a plugin instrument's own window was last left set to. */
   instrument_state: string | null;
+  /** The envelope each sampler instrument has been given, under the instrument's own opaque id.
+   * One missing from here plays with the envelope its file asks for, which is why this holds only
+   * the instruments the user has actually shaped. Plugins never appear: they have their own
+   * window for it. */
+  instrument_envelopes: Record<string, Envelope>;
   /** Folder of `.sf2` and `.exs` files the picker lists; empty lists none of its own. */
   instruments_folder: string;
 
@@ -176,6 +182,7 @@ export const SETTING_DEFAULTS: Settings = {
   audio_buffer_frames: 64,
   instrument_id: null,
   instrument_state: null,
+  instrument_envelopes: {},
   instruments_folder: '',
   ...knobDefaults(DEFAULT_LANE_LOOK, LANE_KNOBS),
   ...knobDefaults(DEFAULT_PLAY_SETTINGS, ENGINE_KNOBS),

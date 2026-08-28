@@ -1,4 +1,5 @@
 import { curveOf, curved, positionOf } from '@/audio/curve';
+import type { Sounding } from '@/audio/sounding';
 import { VelocitySection } from '@/audio/velocity';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -40,11 +41,16 @@ afterEach(() => {
   host = null;
 });
 
-async function open(velocity: number | null = null): Promise<void> {
+/** A key struck at that velocity and still down, which is all this plot reads of one. */
+function key(midi: number, velocity: number): Sounding {
+  return { midi, velocity, on: true, at: performance.now(), held: 0 };
+}
+
+async function open(sounding: Sounding[] = []): Promise<void> {
   host = document.createElement('div');
   document.body.append(host);
   const root = createRoot(host);
-  root.render(createElement(VelocitySection, { velocity }));
+  root.render(createElement(VelocitySection, { sounding }));
   close = () => {
     root.unmount();
     host?.remove();
@@ -62,6 +68,10 @@ function move(label: string, to: string): Promise<void> {
 
 function dot(): SVGCircleElement | null {
   return host!.querySelector('circle');
+}
+
+function dots(): SVGCircleElement[] {
+  return [...host!.querySelectorAll('circle')];
 }
 
 test('the mapping is the one the engine applies', () => {
@@ -121,13 +131,20 @@ test('the minimum cannot be dragged past the maximum, nor the maximum under it',
   expect(slider('Maximum velocity').value).toBe('60');
 });
 
-test('the plot marks the last strike and follows the sliders', async () => {
+test('the plot marks every key under the hands, each in its own colour', async () => {
+  await open([key(60, 40), key(64, 80), key(67, 110)]);
+  expect(dots().map((one) => one.getAttribute('data-strike'))).toEqual(['40', '80', '110']);
+  // Three pitches, three colours, so a chord can be told apart on the plot.
+  expect(new Set(dots().map((one) => one.getAttribute('fill'))).size).toBe(3);
+});
+
+test('the plot marks a strike and follows the sliders', async () => {
   await open();
   expect(dot()).toBeNull();
 
   // The strike arrives already remapped, so its height on the plot is the output velocity itself.
   close?.();
-  await open(64);
+  await open([key(60, 64)]);
   const struck = dot()!;
   expect(struck.getAttribute('data-strike')).toBe('64');
   const height = struck.getAttribute('cy');

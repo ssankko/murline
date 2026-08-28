@@ -8,24 +8,27 @@
 // grade reads the output velocity.
 
 import { curveOf, curved, positionOf } from '@/audio/curve';
+import { Knob } from '@/audio/knob';
+import type { Sounding } from '@/audio/sounding';
 import { readSettings, setSetting } from '@/db/db';
-import { rowId } from '@/lib/utils';
+import { colorOf } from '@/look/color';
+import { useDark } from '@/look/use-dark';
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 
 type Remap = { min: number; max: number; curve: number };
 
 /**
- * The three controls of the velocity remap, beside a plot of what they make. `velocity` is the last
- * strike the panel heard, which the plot marks so the player can see how much harder they can
- * still press.
+ * The three controls of the velocity remap, beside a plot of what they make. `sounding` is every
+ * key the panel has heard lately, which the plot marks so the player can see how much harder they
+ * can still press.
  */
 export function VelocitySection({
   marked,
-  velocity,
+  sounding = [],
 }: {
   marked?: string | null;
-  velocity?: number | null;
+  sounding?: Sounding[];
 }) {
   const [values, setValues] = useState<Remap | null>(null);
 
@@ -119,55 +122,9 @@ export function VelocitySection({
             onChange={writeCurve}
           />
         </div>
-        <CurvePlot min={min} max={max} curve={curve} velocity={velocity ?? null} />
+        <CurvePlot min={min} max={max} curve={curve} sounding={sounding} />
       </div>
     </section>
-  );
-}
-
-function Knob({
-  id,
-  marked,
-  label,
-  lo,
-  hi,
-  value,
-  readout,
-  disabled,
-  onChange,
-}: {
-  id: string;
-  marked?: string | null;
-  label: string;
-  lo: number;
-  hi: number;
-  value: number;
-  readout: string;
-  disabled: boolean;
-  onChange: (value: number) => void;
-}) {
-  return (
-    <label
-      id={rowId(id)}
-      data-marked={marked === id || undefined}
-      className={`flex min-h-8 items-center gap-2 py-1 text-[12px] ${marked === id ? 'bg-ink/8' : ''}`}
-    >
-      <span className="flex-none whitespace-nowrap">{label}</span>
-      <input
-        type="range"
-        aria-label={label}
-        min={lo}
-        max={hi}
-        step={1}
-        value={value}
-        disabled={disabled}
-        onChange={(event) => onChange(Number(event.target.value))}
-        className="accent-ink ml-auto min-w-0 flex-1 disabled:opacity-30"
-      />
-      <span className="text-muted-ink w-8 flex-none text-right text-[11px] tabular-nums">
-        {readout}
-      </span>
-    </label>
   );
 }
 
@@ -176,23 +133,24 @@ const STEPS = 32;
 
 /**
  * The remap, small, beside the controls that make it: input velocity across, output velocity up,
- * both over the full 0 to 127, so a narrow minimum-to-maximum band reads as the band it is. The
- * dot is the last strike, and the gap above it is the headroom left in the hands.
+ * both over the full 0 to 127, so a narrow minimum-to-maximum band reads as the band it is. Each
+ * dot is a key, in its own pitch colour, and the gap above it is the headroom left in the hands.
  *
- * The strike arrives already remapped, because the remap governs the whole app, so the dot is put
- * on the curve at the output it is: the map is run backwards to find the input behind it.
+ * Strikes arrive already remapped, because the remap governs the whole app, so a dot is put on the
+ * curve at the output it is: the map is run backwards to find the input behind it.
  */
 function CurvePlot({
   min,
   max,
   curve,
-  velocity,
+  sounding,
 }: {
   min: number;
   max: number;
   curve: number;
-  velocity: number | null;
+  sounding: Sounding[];
 }) {
+  const dark = useDark();
   // Inset, so that the dot at either end of the curve is drawn whole rather than half off the box.
   const inset = (part: number) => 8 + part * 84;
   const across = (each: number) => inset((each - 1) / 126);
@@ -210,7 +168,7 @@ function CurvePlot({
     <svg
       viewBox="0 0 100 100"
       role="img"
-      aria-label="Input velocity against output velocity, with the last strike marked"
+      aria-label="Input velocity against output velocity, with every key lately struck marked"
       className="border-edge-soft size-[68px] flex-none border"
     >
       <polyline
@@ -220,15 +178,18 @@ function CurvePlot({
         strokeWidth={1.5}
         vectorEffect="non-scaling-stroke"
       />
-      {velocity !== null && velocity > 0 && (
-        <circle
-          data-strike={velocity}
-          cx={across(behind(velocity))}
-          cy={inset(1 - velocity / 127)}
-          r={7}
-          fill="currentColor"
-        />
-      )}
+      {sounding
+        .filter((note) => note.velocity > 0)
+        .map((note) => (
+          <circle
+            key={note.midi}
+            data-strike={note.velocity}
+            cx={across(behind(note.velocity))}
+            cy={inset(1 - note.velocity / 127)}
+            r={7}
+            fill={colorOf(note.midi, 'full', dark)}
+          />
+        ))}
     </svg>
   );
 }

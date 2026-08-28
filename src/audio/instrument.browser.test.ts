@@ -42,6 +42,8 @@ vi.mock('@/db/db', () => ({
   setSetting: async (key: string, value: unknown) => {
     written.push([key, value]);
   },
+  // No instrument here has been given an envelope, so restoring one after a load does nothing.
+  getSettingOr: async () => ({}),
 }));
 
 let close: (() => void) | null = null;

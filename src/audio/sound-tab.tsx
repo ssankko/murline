@@ -3,9 +3,13 @@
 // it.
 
 import { EffectsSection } from '@/audio/effects';
+import { EnvelopeSection } from '@/audio/envelope';
 import { InstrumentSection } from '@/audio/instrument';
 import { OutputSection } from '@/audio/output';
+import { sounded, type Sounding } from '@/audio/sounding';
 import { VelocitySection } from '@/audio/velocity';
+import { getSettingOr } from '@/db/db';
+import { useMidiStatus } from '@/midi/use-midi-status';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useEffect, useState } from 'react';
@@ -77,27 +81,66 @@ export function useAudioStatus(round = 0): AudioStatus | null {
 
 /**
  * The sound engine's own settings, under the panel's Sound tab. `marked` is the row a search
- * result jumped to, handed down so each section can mark its own. `velocity` is the last strike
- * the panel heard, which the velocity curve's plot marks.
+ * result jumped to, handed down so each section can mark its own.
  */
-export function SoundTab({
-  marked,
-  velocity,
-}: {
-  marked?: string | null;
-  velocity?: number | null;
-}) {
+export function SoundTab({ marked }: { marked?: string | null }) {
   // A section that changed something the status line reads asks for this to go round again.
   const [round, setRound] = useState(0);
   const status = useAudioStatus(round);
+  const [instrument, setInstrument] = useState<string | null>(null);
+  const sounding = useSounding();
+
+  // The envelope is kept under the instrument's id, so the tab has to know which one is playing.
+  useEffect(() => {
+    let live = true;
+    getSettingOr('instrument_id').then((id) => live && setInstrument(id), console.error);
+    return () => {
+      live = false;
+    };
+  }, [round]);
 
   return (
     <div className="flex min-w-0 flex-col gap-7">
       <OutputSection marked={marked} />
       <InstrumentSection marked={marked} onChanged={() => setRound((round) => round + 1)} />
-      <VelocitySection marked={marked} velocity={velocity} />
+      <VelocitySection marked={marked} sounding={sounding.keys} />
+      <EnvelopeSection
+        marked={marked}
+        sounding={sounding.keys}
+        onRelease={sounding.dieAfter}
+        instrument={instrument}
+        round={round}
+      />
       <EffectsSection marked={marked} />
       {trouble(status) && <p className="text-muted-ink text-[12px]">{trouble(status)}</p>}
     </div>
   );
+}
+
+/** How long a key that has come up is drawn for while no envelope has said, in seconds. */
+const DYING = 1;
+
+/**
+ * Every key under the hands, for the two plots that mark them. The tab is only here while the
+ * panel is open, so nothing is counted while it is shut.
+ *
+ * A key that has come up is dropped once it has died away, which is the envelope's release, so the
+ * two plots let go of it together rather than the touch plot holding a dot the envelope has
+ * already finished with. `dieAfter` is how the envelope section says what its release is now.
+ */
+function useSounding(): { keys: Sounding[]; dieAfter: (seconds: number) => void } {
+  const [keys, setKeys] = useState<Sounding[]>([]);
+  const [dying, setDying] = useState(DYING);
+
+  useMidiStatus((event) => {
+    const at = performance.now();
+    setKeys((all) => sounded(all, event, at));
+    if (event.on) return;
+    setTimeout(
+      () => setKeys((all) => all.filter((one) => one.midi !== event.midi || one.on)),
+      dying * 1000,
+    );
+  });
+
+  return { keys, dieAfter: setDying };
 }

@@ -114,6 +114,17 @@ pub struct Slot {
     pub missing: bool,
 }
 
+/// How a sampler instrument's loudness answers a key: seconds to reach full loudness, seconds to
+/// fall from there, the fraction of full loudness a held note settles at, and seconds to fade once
+/// the key comes up. Only the sampler has one; a hosted plugin shapes its notes in its own window.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct Envelope {
+    pub attack: f64,
+    pub decay: f64,
+    pub sustain: f64,
+    pub release: f64,
+}
+
 /// One output device as the picker lists it. The system default is not a row here; the dialog
 /// offers it as the choice of no device at all.
 #[derive(Debug, Serialize)]
@@ -238,6 +249,21 @@ pub async fn audio_show_instrument(app: tauri::AppHandle) -> Result<Option<Strin
     engine::show_instrument(app).await
 }
 
+/// The envelope the loaded instrument answers a key with now. Null when a plugin is playing, which
+/// is how the webview knows to offer no envelope for it, and null where there is no engine.
+#[tauri::command]
+pub fn audio_envelope() -> Option<Envelope> {
+    engine::envelope()
+}
+
+/// Replaces it, and keeps it against the reloads that a change of effect or of instrument file
+/// brings. Off the main thread: the sampler takes about a second to accept one, though whatever is
+/// sounding plays on through the change.
+#[tauri::command(async)]
+pub fn audio_set_envelope(envelope: Envelope) {
+    engine::set_envelope(envelope);
+}
+
 /// The Preview's note list, in seconds at the score's own tempo. Replaces whatever was loaded.
 #[tauri::command]
 pub fn preview_load(notes: Vec<PreviewNote>) {
@@ -290,6 +316,8 @@ mod tests {
         stub::set_keyboard_volume(100);
         stub::set_keyboard_volume(0);
         stub::set_velocity_curve(1, 127, 1.0);
+        stub::set_envelope(Envelope::default());
+        assert!(stub::envelope().is_none());
 
         assert!(stub::effects().is_empty());
         assert!(stub::chain().is_empty());

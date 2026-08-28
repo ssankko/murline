@@ -32,7 +32,6 @@ import {
 } from '@/library/queries';
 import { scanLibrary, splitError } from '@/library/scan';
 import { Collapse } from '@/look/collapse';
-import { readPieceDefaults, type PieceSettings } from '@/play/resolve';
 import { Finder } from '@/screens/finder';
 import { Detail } from '@/screens/piece-detail';
 import { SettingsPanel } from '@/screens/settings';
@@ -76,14 +75,6 @@ export function Library({
   /** The lower-cased, NFC folder-relative paths of every present piece, read when the finder opens. */
   const [finding, setFinding] = useState<Set<string> | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [defaults, setDefaults] = useState<Partial<PieceSettings>>({});
-
-  // The Play settings list holds the resolved values, so it needs the middle level of every field.
-  // Only closing the dialog can have changed one.
-  useEffect(() => {
-    if (settingsOpen) return;
-    void readPieceDefaults().then(setDefaults);
-  }, [settingsOpen]);
 
   // `scanLibrary` walks a folder once, so a sort change costs the re-list alone.
   useEffect(() => {
@@ -299,7 +290,6 @@ export function Library({
         <Detail
           piece={piece}
           folder={folder}
-          defaults={defaults}
           onFavorite={() => void toggleFavorite(piece)}
           onDelete={() => void remove(piece)}
           onPlay={onPlay}

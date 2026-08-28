@@ -33,7 +33,7 @@ import { isInactiveHand, type HandsSetting } from '@/play/settings';
 import { barsOfWalk, beatOf } from '@/score/beat';
 import { TICKS_PER_QUARTER, type ChordEvent, type PlayStep, type Score } from '@/score/types';
 
-/** Look knobs, all global settings the gear writes to. */
+/** Look knobs, all global settings the Look tab writes to. */
 export interface LaneLook {
   lookaheadBeats: number;
   /** Width of a block as a percent of its key. */
@@ -287,7 +287,7 @@ export interface BeatGlyph {
 }
 
 export class Lane {
-  /** Live look knobs: the gear writes into this object and the next frame reads it. */
+  /** Live look knobs: the panel writes into this object and the next frame reads it. */
   readonly look: LaneLook;
   /** Shown over the keys while the app has no MIDI input. */
   notice: string | null = null;

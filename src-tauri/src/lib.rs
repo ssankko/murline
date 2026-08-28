@@ -16,12 +16,20 @@ fn ensure_dir(path: String) -> Result<(), String> {
 
 /// Numbered SQL files applied in order and tracked by `PRAGMA user_version`.
 fn migrations() -> Vec<Migration> {
-    vec![Migration {
-        version: 1,
-        description: "init",
-        sql: include_str!("../migrations/0001_init.sql"),
-        kind: MigrationKind::Up,
-    }]
+    vec![
+        Migration {
+            version: 1,
+            description: "init",
+            sql: include_str!("../migrations/0001_init.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 2,
+            description: "no inheritance",
+            sql: include_str!("../migrations/0002_no_inheritance.sql"),
+            kind: MigrationKind::Up,
+        },
+    ]
 }
 
 /// The paper grey the window opens on, dark when macOS is in its dark appearance. The webview

@@ -40,7 +40,7 @@ export interface PlaySettings {
   hands: HandsSetting;
   mode: PlayMode;
   metronome: boolean;
-  /** Bars of count-in before every start of motion; 0 turns the count-in off. */
+  /** Bars of count-in before motion starts. The toolbar writes 0 or 1; the engine counts any. */
   countInBars: number;
   keyboardPreset: KeyboardPreset;
   keyboardLo: number;
@@ -77,7 +77,7 @@ export const DEFAULT_PLAY_SETTINGS: PlaySettings = {
   hands: 'both',
   mode: 'flow',
   metronome: false,
-  countInBars: 1,
+  countInBars: 0,
   keyboardPreset: 'piece',
   keyboardLo: 21,
   keyboardHi: 108,

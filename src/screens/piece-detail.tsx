@@ -1,5 +1,5 @@
-// The detail pane of the library page: what a piece is, what it has been played, and what it will
-// play at. Nothing here writes; Favorite and Delete are the list pane's, handed down as callbacks.
+// The detail pane of the library page: what a piece is and what it has been played. Nothing here
+// writes; Favorite and Delete are the list pane's, handed down as callbacks.
 
 import { Button } from '@/components/ui/button';
 import { pathOf } from '@/library/index-file';
@@ -8,17 +8,15 @@ import { recentPlays, type PieceRow, type PlayRow } from '@/library/queries';
 import { splitError } from '@/library/scan';
 import { colorOf, noteName, pitchClass } from '@/look/color';
 import { useDark } from '@/look/use-dark';
-import { resolvePlaySettings, type Inherited, type PieceSettings } from '@/play/resolve';
 import { tempoLabel } from '@/play/settings';
 import { RangeStrip } from '@/screens/range-strip';
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 
-/** Title, facts, the keys the piece uses, the buttons that open it, its history and its settings. */
+/** Title, facts, the keys the piece uses, the buttons that open it and its history. */
 export function Detail({
   piece,
   folder,
-  defaults,
   onFavorite,
   onDelete,
   onPlay,
@@ -26,8 +24,6 @@ export function Detail({
 }: {
   piece: PieceRow;
   folder: string | null;
-  /** The Playing defaults group, the level a piece falls back to. */
-  defaults: Partial<PieceSettings>;
   onFavorite: () => void;
   onDelete: () => void;
   onPlay: (path: string, intent: 'practice' | 'performance') => void;
@@ -133,68 +129,12 @@ export function Detail({
           </Button>
         </div>
 
-        <div className="mt-12 grid grid-cols-[3fr_2fr] gap-12">
+        <div className="mt-12">
           <History piece={piece} />
-          <PlaySettingsList piece={piece} defaults={defaults} />
         </div>
       </div>
     </div>
   );
-}
-
-/**
- * What the piece plays at: its own settings where it holds any, the global default elsewhere. The
- * play screen is the editor; this list only reads.
- */
-function PlaySettingsList({
-  piece,
-  defaults,
-}: {
-  piece: PieceRow;
-  defaults: Partial<PieceSettings>;
-}) {
-  const { settings, inherited } = resolvePlaySettings(piece, defaults);
-  const rows: [string, string, keyof Inherited][] = [
-    [
-      'Tempo',
-      tempoLabel(settings.tempoMode, settings.tempoValue),
-      'tempoValue',
-    ],
-    ['Metronome', settings.metronome ? 'on' : 'off', 'metronome'],
-    ['Count-in', countInText(settings.countInBars), 'countInBars'],
-    ['Hands', settings.hands, 'hands'],
-    ['Keyboard', keyboardText(settings), 'keyboardPreset'],
-  ];
-  return (
-    <section className="flex flex-col gap-3">
-      <h3 className="text-[13px] font-semibold">Play settings</h3>
-      <dl className="divide-edge-soft border-edge-soft divide-y border-y">
-        {rows.map(([label, value, field]) => (
-          <div key={label} className="flex justify-between gap-3 py-1.5 text-[12px]">
-            <dt className="text-muted-ink">{label}</dt>
-            <dd
-              className={inherited[field] ? 'text-muted-ink' : ''}
-              title={inherited[field] ? 'Global default' : undefined}
-            >
-              {value}
-            </dd>
-          </div>
-        ))}
-      </dl>
-    </section>
-  );
-}
-
-function countInText(bars: number): string {
-  return bars === 0 ? 'off' : `${bars} bar${bars === 1 ? '' : 's'}`;
-}
-
-function keyboardText(settings: PieceSettings): string {
-  if (settings.keyboardPreset === 'piece') return 'piece range';
-  if (settings.keyboardPreset === 'custom') {
-    return `${noteName(settings.keyboardLo)}–${noteName(settings.keyboardHi)}`;
-  }
-  return `${settings.keyboardPreset} keys`;
 }
 
 /**

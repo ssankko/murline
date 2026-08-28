@@ -1,6 +1,6 @@
-// The settings surfaces: the panel, a right-hand slide-over opened from every screen, and the gear
-// popover on the play screen that holds what the open piece plays at. Every control writes on
-// change; there is no Save.
+// The settings panel: a right-hand slide-over opened from every screen, holding everything the app
+// does in general. What the open piece does right now is the play toolbar's. Every control writes
+// on change; there is no Save.
 
 import { SoundTab } from '@/audio/sound-tab';
 import { Button } from '@/components/ui/button';
@@ -12,7 +12,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { readSettings, setSetting, type Settings } from '@/db/db';
 import { LOOKAHEAD_MAX, LOOKAHEAD_MIN } from '@/lane/lane';
 import { cancelPdmx, downloadPdmx, progressLabel, usePdmxDownload } from '@/library/pdmx';
@@ -20,7 +19,7 @@ import { clamp, rowId } from '@/lib/utils';
 import { noteName } from '@/look/color';
 import { setTheme, type Theme } from '@/look/use-dark';
 import { pinMidiDevice, useMidiStatus } from '@/midi/use-midi-status';
-import { validNumber, type PieceSettings } from '@/play/resolve';
+import { validNumber } from '@/play/resolve';
 import { type KeyboardPreset } from '@/play/settings';
 import { SPACING_MAX, SPACING_MIN, type Pinch } from '@/sheet/sheet';
 import { invoke } from '@tauri-apps/api/core';
@@ -213,6 +212,12 @@ const SEARCH_ROWS: {
     label: 'Note names on keys',
     group: 'Falling notes',
     words: ['letters', 'labels', 'piano'],
+  },
+  {
+    id: 'keyboard_size',
+    tab: 'look',
+    label: 'Keyboard size',
+    words: ['keys', 'range', 'octaves', '88', 'width', 'custom'],
   },
   {
     id: 'midi_device',
@@ -604,6 +609,30 @@ export function SettingsPanel({
                     </Row>
                   </Rows>
                 </section>
+
+                {/* Keyboard size lays the keys out under the falling notes and changes nothing on
+                    the sheet, so it sits outside that heading rather than under it. */}
+                <Rows>
+                  <Row id="keyboard_size" marked={marked === 'keyboard_size'} label="Keyboard size">
+                    <Segmented
+                      options={PRESETS}
+                      value={values.keyboard_preset}
+                      onChange={(value) => write('keyboard_preset', value)}
+                    />
+                  </Row>
+                  {values.keyboard_preset === 'custom' && (
+                    <Row label="Custom range">
+                      <CustomRange
+                        lo={values.keyboard_lo}
+                        hi={values.keyboard_hi}
+                        onChange={(lo, hi) => {
+                          write('keyboard_lo', lo);
+                          write('keyboard_hi', hi);
+                        }}
+                      />
+                    </Row>
+                  )}
+                </Rows>
               </Tabs.Content>
 
               <Tabs.Content value="playing" className="flex flex-col gap-7">
@@ -764,80 +793,6 @@ export function SettingsPanel({
   );
 }
 
-/**
- * The gear under the play screen's bar: the keyboard range of the open piece, its count-in, and the
- * way out to every app-wide setting. What the app looks like in general is the Look tab's.
- */
-export function GearPopover({
-  trigger,
-  performing,
-  keyboard,
-  countInBars,
-  onKeyboard,
-  onCountInBars,
-  onUseGlobalDefaults,
-  onAllSettings,
-}: {
-  trigger: React.ReactNode;
-  /** A performance writes no setting, so everything that would write is off. */
-  performing: boolean;
-  keyboard: Pick<PieceSettings, 'keyboardPreset' | 'keyboardLo' | 'keyboardHi'>;
-  countInBars: number;
-  onKeyboard: (preset: KeyboardPreset, lo: number, hi: number) => void;
-  onCountInBars: (bars: number) => void;
-  onUseGlobalDefaults: () => void;
-  onAllSettings: () => void;
-}) {
-  return (
-    <Popover>
-      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
-      <PopoverContent side="bottom" align="start" className="flex w-72 flex-col gap-4 p-3">
-        {!performing && (
-          <PopoverGroup title="Keyboard">
-            <Segmented
-              options={PRESETS}
-              value={keyboard.keyboardPreset}
-              onChange={(preset) => onKeyboard(preset, keyboard.keyboardLo, keyboard.keyboardHi)}
-            />
-            {keyboard.keyboardPreset === 'custom' && (
-              <CustomRange
-                lo={keyboard.keyboardLo}
-                hi={keyboard.keyboardHi}
-                onChange={(lo, hi) => onKeyboard('custom', lo, hi)}
-              />
-            )}
-          </PopoverGroup>
-        )}
-
-        {!performing && (
-          <PopoverGroup title="Playing">
-            <Row label="Count-in bars">
-              <NumberField value={countInBars} min={0} max={8} onChange={onCountInBars} />
-            </Row>
-          </PopoverGroup>
-        )}
-
-        {!performing && (
-          <div className="border-edge-soft flex flex-col items-start gap-1.5 border-t pt-3">
-            <button
-              onClick={onUseGlobalDefaults}
-              className="hover:text-ink text-muted-ink text-[12px] underline underline-offset-2"
-            >
-              Use global defaults
-            </button>
-            <button
-              onClick={onAllSettings}
-              className="hover:text-ink text-muted-ink text-[12px] underline underline-offset-2"
-            >
-              All settings…
-            </button>
-          </div>
-        )}
-      </PopoverContent>
-    </Popover>
-  );
-}
-
 /** Paper kept between the fingers and the panel a pinch raises, and from the window's edges. */
 const PINCH_GAP = 12;
 const PINCH_W = 200;
@@ -894,16 +849,6 @@ export function SpacingPopup({ pinch }: { pinch: Pinch | null }) {
 /** The divided list the panel's rows sit in. */
 function Rows({ children }: { children: React.ReactNode }) {
   return <div className="divide-edge-soft border-edge-soft divide-y border-y">{children}</div>;
-}
-
-/** A group inside the gear popover, which is too narrow for the dialog's group furniture. */
-function PopoverGroup({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="flex flex-col gap-1.5">
-      <h3 className="text-muted-ink text-[11px] tracking-wide uppercase">{title}</h3>
-      {children}
-    </section>
-  );
 }
 
 function Row({
@@ -966,7 +911,7 @@ function NumberField({
   /** What this field last wrote, so a value that moved elsewhere is told apart from typing. */
   const written = useRef(value);
 
-  // "Reset group" and "Use global defaults" both move the value without the field being touched.
+  // A pinch behind the panel moves the value without the field being touched.
   useEffect(() => {
     if (value === written.current) return;
     written.current = value;

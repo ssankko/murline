@@ -1,9 +1,11 @@
-// The Audio dialog's Instrument section: the instrument the keyboard and the Preview play. The
+// The Sound tab's Instrument section: the instrument the keyboard and the Preview play. The
 // engine finds them, this picks one, and every control writes its setting on change.
 
+import { restoreEnvelope } from '@/audio/envelope';
 import { Button } from '@/components/ui/button';
 import { readSettings, setSetting, type Settings } from '@/db/db';
 import { reasonOf } from '@/library/notice';
+import { rowId } from '@/lib/utils';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useEffect, useState } from 'react';
@@ -40,9 +42,16 @@ export async function restoreInstrument(settings: Settings): Promise<void> {
   // The stored state belongs to the stored instrument, so a fresh default starts at its own.
   const state = chosen === settings.instrument_id ? settings.instrument_state : null;
   await invoke('audio_load_instrument', { id: chosen, state });
+  await restoreEnvelope(chosen);
 }
 
-export function InstrumentSection({ onChanged }: { onChanged?: () => void }) {
+export function InstrumentSection({
+  marked,
+  onChanged,
+}: {
+  marked?: string | null;
+  onChanged?: () => void;
+}) {
   const [all, setAll] = useState<Instrument[]>([]);
   const [chosen, setChosen] = useState<string>('');
   const [folder, setFolder] = useState('');
@@ -73,6 +82,7 @@ export function InstrumentSection({ onChanged }: { onChanged?: () => void }) {
     await setSetting('instrument_state', null);
     try {
       await invoke('audio_load_instrument', { id, state: null });
+      await restoreEnvelope(id);
     } catch (error) {
       setFailure(reasonOf(error));
     }
@@ -99,7 +109,11 @@ export function InstrumentSection({ onChanged }: { onChanged?: () => void }) {
     <section className="flex flex-col gap-2">
       <h3 className="text-[13px] font-semibold">Instrument</h3>
 
-      <div className="flex min-h-8 items-center justify-between gap-3 py-1 text-[12px]">
+      <div
+        id={rowId('instrument_id')}
+        data-marked={marked === 'instrument_id' || undefined}
+        className={`flex min-h-8 items-center justify-between gap-3 py-1 text-[12px] ${marked === 'instrument_id' ? 'bg-ink/8' : ''}`}
+      >
         <span className="flex-none">Instrument</span>
         <div className="flex min-w-0 items-center gap-2">
           <select
@@ -132,7 +146,11 @@ export function InstrumentSection({ onChanged }: { onChanged?: () => void }) {
 
       {failure && <p className="text-muted-ink text-[12px]">{failure}</p>}
 
-      <div className="flex min-h-8 items-center justify-between gap-3 py-1 text-[12px]">
+      <div
+        id={rowId('instruments_folder')}
+        data-marked={marked === 'instruments_folder' || undefined}
+        className={`flex min-h-8 items-center justify-between gap-3 py-1 text-[12px] ${marked === 'instruments_folder' ? 'bg-ink/8' : ''}`}
+      >
         <span className="flex flex-col gap-0.5">
           Instruments folder
           <span className="text-muted-ink text-[11px] leading-snug">

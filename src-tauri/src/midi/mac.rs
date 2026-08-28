@@ -113,10 +113,15 @@ impl Reader {
 
 /// One message: the instrument hears it first, and the webview is told after, because the sound is
 /// what the player is waiting for and the screen is not.
+///
+/// The velocity the webview is told about is the one the note was played at, not the one the
+/// keyboard sent: the remap governs the whole app, so grading, Wait mode and the last-strike
+/// readout all read the output velocity. `note` answers with it, which is what keeps the map from
+/// being applied a second time here.
 fn play(app: Option<&AppHandle>, message: Message, time: f64) {
     match message {
         Message::Note { midi, velocity, on } => {
-            audio::mac::note(midi, velocity, on);
+            let velocity = audio::mac::note(midi, velocity, on);
             if let Some(app) = app {
                 let _ = app.emit(STRIKE, Strike { midi, velocity, time, on });
             }

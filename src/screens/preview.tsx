@@ -2,7 +2,7 @@
 // that plays it through the sound engine. The notes are scheduled in Rust; this screen only builds
 // the note list, sends the transport commands and moves the bar highlight the engine reports.
 
-import type { AudioStatus } from '@/audio/dialog';
+import type { AudioStatus } from '@/audio/sound-tab';
 import { barAt, barSeconds, previewBars, previewNotes, type PreviewBar } from '@/audio/preview';
 import { Button } from '@/components/ui/button';
 import { clamp } from '@/lib/utils';
@@ -13,10 +13,12 @@ import { reindexIfChanged } from '@/library/scan';
 import { useDark } from '@/look/use-dark';
 import { TEMPO_RANGE } from '@/play/settings';
 import { ScoreError } from '@/score/types';
+import { Mixer } from '@/audio/mixer';
+import { SettingsPanel } from '@/screens/settings';
 import { PreviewSheet } from '@/sheet/preview-sheet';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { ArrowLeft, Minus, Pause, Play, Plus } from 'lucide-react';
+import { ArrowLeft, Minus, Pause, Play, Plus, SlidersHorizontal } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 /** A window drag fires the observer far faster than a whole sheet can be drawn again. */
@@ -55,6 +57,9 @@ export function PreviewScreen({
   const [percent, setPercent] = useState(100);
   /** Why there is no sound, empty when there is; null until the engine has answered. */
   const [reason, setReason] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsJump, setSettingsJump] = useState<string | null>(null);
+  const [mixerOpen, setMixerOpen] = useState(false);
 
   // The note list is the engine's business and never redraws anything, so it stays out of state.
   const notesRef = useRef<ReturnType<typeof previewNotes>>([]);
@@ -180,6 +185,9 @@ export function PreviewScreen({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      // The settings panel and every popover are `role="dialog"`: while one is open Escape is its
+      // own and never reaches the transport.
+      if (document.querySelector('[role="dialog"][data-state="open"]')) return;
       if (event.key === 'Escape') backRef.current();
     };
     window.addEventListener('keydown', onKey);
@@ -225,15 +233,40 @@ export function PreviewScreen({
             <Plus {...ICON} />
           </button>
         </div>
-        <div className="flex flex-none gap-2 pl-2">
+        <div className="flex flex-none items-center gap-2 pl-2">
           <Button variant="outline" size="sm" onClick={() => onPlay('practice')}>
             Practice
           </Button>
           <Button size="sm" onClick={() => onPlay('performance')}>
             Perform
           </Button>
+          <Mixer
+            open={mixerOpen}
+            onOpenChange={setMixerOpen}
+            onSoundSettings={() => {
+              setSettingsJump('instrument_id');
+              setSettingsOpen(true);
+            }}
+          />
+          <button
+            aria-label="Settings"
+            onClick={() => setSettingsOpen(true)}
+            className="hover:bg-ink/8 flex size-8 flex-none items-center justify-center transition-colors duration-150"
+          >
+            <SlidersHorizontal {...ICON} />
+          </button>
         </div>
       </div>
+
+      <SettingsPanel
+        open={settingsOpen}
+        jumpTo={settingsJump}
+        onClose={() => {
+          setSettingsOpen(false);
+          setSettingsJump(null);
+        }}
+        onOpenMixer={() => setMixerOpen(true)}
+      />
 
       {/* The systems flow down and the paper never scrolls sideways: it is fitted to the width. */}
       <div className="bg-paper flex-1 overflow-x-hidden overflow-y-auto">

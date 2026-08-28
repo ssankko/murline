@@ -1,5 +1,5 @@
-// The settings one play runs under. A piece setting falls back to the global one and a global one
-// to the defaults here; that resolution happens where a play is started, never inside the engine.
+// The settings one play runs under. A piece setting falls back to the defaults here and to nothing
+// else; that resolution happens where a play is started, never inside the engine.
 
 import type { Hand } from '@/score/types';
 
@@ -40,8 +40,13 @@ export interface PlaySettings {
   hands: HandsSetting;
   mode: PlayMode;
   metronome: boolean;
-  /** Bars of count-in before every start of motion; 0 turns the count-in off. */
+  /** Bars of count-in before motion starts. The toolbar writes 0 or 1; the engine counts any. */
   countInBars: number;
+  /** Whether the Section, or the whole piece without one, wraps instead of ending. */
+  loop: boolean;
+  /** The Section as measure indices, both ends inside it. Either one null is no Section. */
+  sectionFrom: number | null;
+  sectionTo: number | null;
   keyboardPreset: KeyboardPreset;
   keyboardLo: number;
   keyboardHi: number;
@@ -67,8 +72,6 @@ export interface PlaySettings {
   weightTiming: number;
   weightVelocity: number;
   weightRelease: number;
-  /** Added to every strike's velocity before it meets the ideal, to true up a keyboard. */
-  velocityOffset: number;
 }
 
 export const DEFAULT_PLAY_SETTINGS: PlaySettings = {
@@ -77,7 +80,10 @@ export const DEFAULT_PLAY_SETTINGS: PlaySettings = {
   hands: 'both',
   mode: 'flow',
   metronome: false,
-  countInBars: 1,
+  countInBars: 0,
+  loop: false,
+  sectionFrom: null,
+  sectionTo: null,
   keyboardPreset: 'piece',
   keyboardLo: 21,
   keyboardHi: 108,
@@ -94,5 +100,4 @@ export const DEFAULT_PLAY_SETTINGS: PlaySettings = {
   weightTiming: 0.7,
   weightVelocity: 0.1,
   weightRelease: 0.2,
-  velocityOffset: 0,
 };

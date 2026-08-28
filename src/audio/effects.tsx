@@ -1,4 +1,4 @@
-// The Audio dialog's Effects section: the ordered chain of effects after the instrument. The whole
+// The Sound tab's effect chain: the ordered chain of effects after the instrument. The whole
 // chain is one global setting, and every change here writes it and hands it to the engine, which
 // answers with what it made of it: the names the plugins call themselves and the slots whose plugin
 // this Mac does not have.
@@ -11,6 +11,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { getSettingOr, setSetting } from '@/db/db';
+import { rowId } from '@/lib/utils';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Plus } from 'lucide-react';
@@ -40,7 +41,7 @@ function stored(slot: EffectSlot): EffectSlot {
   return { id: slot.id, name: slot.name, bypass: slot.bypass, state: slot.state };
 }
 
-export function EffectsSection() {
+export function EffectsSection({ marked }: { marked?: string | null }) {
   const [slots, setSlots] = useState<EffectSlot[]>([]);
   const [available, setAvailable] = useState<Effect[]>([]);
   const [dragging, setDragging] = useState<number | null>(null);
@@ -88,8 +89,12 @@ export function EffectsSection() {
   }
 
   return (
-    <section className="flex flex-col gap-2">
-      <h3 className="text-[13px] font-semibold">Effects</h3>
+    <section
+      id={rowId('effect_chain')}
+      data-marked={marked === 'effect_chain' || undefined}
+      className={`flex flex-col gap-2 ${marked === 'effect_chain' ? 'bg-ink/8' : ''}`}
+    >
+      <h3 className="text-[13px] font-semibold">Effect chain</h3>
 
       {slots.map((slot, at) => (
         <div

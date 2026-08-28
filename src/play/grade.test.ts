@@ -1,5 +1,6 @@
 import { noteGrade, playGrade, releaseGrade, timingGrade, velocityGrade } from '@/play/grade';
 import type { NoteStrike } from '@/play/grade';
+import { curved } from '@/audio/curve';
 import { DEFAULT_PLAY_SETTINGS, type PlaySettings } from '@/play/settings';
 import { describe, expect, test } from 'vitest';
 
@@ -40,9 +41,46 @@ describe('the velocity curve', () => {
     expect(velocityGrade(92, 80, s)).toBeCloseTo(50);
   });
 
-  test('the global offset moves the strike before it meets the ideal', () => {
-    expect(velocityGrade(70, 80, settings({ velocityOffset: 10 }))).toBe(100);
-    expect(velocityGrade(80, 80, settings({ velocityOffset: -20 }))).toBe(0);
+  // The remap is not the sound's alone: `src-tauri/src/midi/mac.rs` puts it on the strike the
+  // webview is told about, so what reaches a grade is the output velocity. Grading a key press is
+  // therefore grading the calibration the player set, which is the point of setting it.
+  test('a strike reaches a grade already remapped', () => {
+    // What the keyboard sent, and what the app works in once the remap has had it.
+    const pressed = 80;
+    const struck = curved(pressed, 30, 90, 1.6);
+    expect(struck).not.toBe(pressed);
+
+    // The grade is the remapped strike's, not the key press's, and the two differ.
+    expect(velocityGrade(struck, struck, s)).toBe(100);
+    expect(velocityGrade(struck, pressed, s)).toBeLessThan(100);
+
+    // Different calibrations put the same key press on different grades against one ideal.
+    const grades = [
+      [1, 127, 1.6],
+      [30, 90, 0.5],
+      [100, 127, 2.5],
+    ].map(([min, max, curve]) => velocityGrade(curved(pressed, min!, max!, curve!), 80, s));
+    expect(new Set(grades).size).toBeGreaterThan(1);
+  });
+
+  test('the remap pins the lightest strike to the minimum and the hardest to the maximum', () => {
+    for (const [min, max, curve] of [
+      [1, 127, 1.6],
+      [30, 90, 0.5],
+      [64, 64, 2.5],
+    ]) {
+      expect(curved(1, min!, max!, curve!)).toBe(min);
+      expect(curved(127, min!, max!, curve!)).toBe(max);
+    }
+    // A note on at zero velocity is a note off, so it is left where it is.
+    expect(curved(0, 30, 90, 1.6)).toBe(0);
+  });
+
+  // The remap is applied once, by the engine, before the strike is emitted. A second application
+  // anywhere on the webview side would land somewhere else, which is what this pins.
+  test('a remapped strike put through the remap again is a different number', () => {
+    const once = curved(80, 30, 90, 1.6);
+    expect(curved(once, 30, 90, 1.6)).not.toBe(once);
   });
 });
 

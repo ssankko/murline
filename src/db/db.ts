@@ -1,12 +1,8 @@
 import type { EffectSlot } from '@/audio/effects';
+import type { Envelope } from '@/audio/envelope';
 import { DEFAULT_LANE_LOOK, DEFAULT_SPLIT, type LaneLook } from '@/lane/lane';
 import type { Theme } from '@/look/use-dark';
-import {
-  DEFAULT_PLAY_SETTINGS,
-  type HandsSetting,
-  type KeyboardPreset,
-  type PlaySettings,
-} from '@/play/settings';
+import { DEFAULT_PLAY_SETTINGS, type KeyboardPreset, type PlaySettings } from '@/play/settings';
 import { DEFAULT_SPACING } from '@/sheet/sheet';
 import Database from '@tauri-apps/plugin-sql';
 
@@ -49,8 +45,23 @@ export type Settings = {
 
   /** Loudness of the metronome click, 0 to 100. */
   click_volume: number;
+  /** The mixer's keyboard fader, 0 to 100: a gain after the effect chain in the sound engine, so
+   * it trims everything the instrument path makes without changing how it makes it. */
+  keyboard_volume: number;
   /** The effects the sound engine plays the instrument through, in the order they play. */
   effect_chain: EffectSlot[];
+
+  // The velocity curve: the remap from the velocity the keyboard sends to the velocity the app
+  // works in. All three reach the engine ahead of the instrument, and the same map is put on the
+  // strike the webview is told about, so grading and Wait mode read the output velocity too.
+
+  /** The output velocity the lightest strike lands on, 1 to 127. */
+  velocity_min: number;
+  /** The output velocity the hardest strike lands on, 1 to 127. Never below `velocity_min`. */
+  velocity_max: number;
+  /** The exponent of the path between the two. Above 1 makes soft playing softer, below 1 fills
+   * out sooner, and exactly 1 is a straight line between the two ends. */
+  velocity_curve: number;
 
   /** Opaque id of the device the sound engine plays through; NULL is the system default. */
   audio_output_device: string | null;
@@ -64,19 +75,20 @@ export type Settings = {
   instrument_id: string | null;
   /** What a plugin instrument's own window was last left set to. */
   instrument_state: string | null;
+  /** The envelope each sampler instrument has been given, under the instrument's own opaque id.
+   * One missing from here plays with the envelope its file asks for, which is why this holds only
+   * the instruments the user has actually shaped. Plugins never appear: they have their own
+   * window for it. */
+  instrument_envelopes: Record<string, Envelope>;
   /** Folder of `.sf2` and `.exs` files the picker lists; empty lists none of its own. */
   instruments_folder: string;
 
-  // Defaults of the piece settings: what a piece plays at while it holds none of its own. Tempo
-  // has no mode here, because BPM belongs to a piece written at one tempo.
+  // Keyboard size: how many keys the lane lays out, for every piece. "piece" fits each piece's own
+  // range; a number is that many keys; "custom" uses the two bounds.
 
-  default_tempo_value: number;
-  default_metronome: boolean;
-  default_count_in_bars: number;
-  default_hands: HandsSetting;
-  default_keyboard_preset: KeyboardPreset;
-  default_keyboard_lo: number;
-  default_keyboard_hi: number;
+  keyboard_preset: KeyboardPreset;
+  keyboard_lo: number;
+  keyboard_hi: number;
 
   // Grade knobs. Global only, so two grades of one piece stay comparable.
 
@@ -91,8 +103,6 @@ export type Settings = {
   grade_weight_timing: number;
   grade_weight_velocity: number;
   grade_weight_release: number;
-  /** Added to every strike's velocity before Grade reads it, to true up a keyboard. */
-  velocity_offset: number;
   /** Half-width of the span around an Onset in which a strike counts for it, in milliseconds. */
   matching_window_ms: number;
   /** How far apart the first and last strike of one chord may be, in milliseconds. */
@@ -112,9 +122,11 @@ export const ENGINE_KNOBS = {
   grade_weight_timing: 'weightTiming',
   grade_weight_velocity: 'weightVelocity',
   grade_weight_release: 'weightRelease',
-  velocity_offset: 'velocityOffset',
   matching_window_ms: 'matchingWindowMs',
   togetherness_ms: 'togethernessMs',
+  keyboard_preset: 'keyboardPreset',
+  keyboard_lo: 'keyboardLo',
+  keyboard_hi: 'keyboardHi',
 } as const satisfies Record<string, keyof PlaySettings>;
 
 /** The same for the lane's look, which the next frame reads out of the live object. */
@@ -127,17 +139,6 @@ export const LANE_KNOBS = {
   lane_colour: 'colour',
   lane_names: 'names',
 } as const satisfies Record<string, keyof LaneLook>;
-
-/** The global default of a piece setting, and the field of `PieceSettings` it stands for. */
-export const PIECE_DEFAULT_KEYS = {
-  default_tempo_value: 'tempoValue',
-  default_metronome: 'metronome',
-  default_count_in_bars: 'countInBars',
-  default_hands: 'hands',
-  default_keyboard_preset: 'keyboardPreset',
-  default_keyboard_lo: 'keyboardLo',
-  default_keyboard_hi: 'keyboardHi',
-} as const satisfies Record<string, keyof PlaySettings>;
 
 /** One block of `SETTING_DEFAULTS`: each key takes the built-in default of the field it names. */
 function knobDefaults<S, M extends Record<string, keyof S>>(
@@ -172,14 +173,18 @@ export const SETTING_DEFAULTS: Settings = {
   sheet_harmony: true,
   sheet_colour: true,
   click_volume: 70,
+  keyboard_volume: 100,
   effect_chain: [],
+  velocity_min: 1,
+  velocity_max: 127,
+  velocity_curve: 1,
   audio_output_device: null,
   audio_buffer_frames: 64,
   instrument_id: null,
   instrument_state: null,
+  instrument_envelopes: {},
   instruments_folder: '',
   ...knobDefaults(DEFAULT_LANE_LOOK, LANE_KNOBS),
-  ...knobDefaults(DEFAULT_PLAY_SETTINGS, PIECE_DEFAULT_KEYS),
   ...knobDefaults(DEFAULT_PLAY_SETTINGS, ENGINE_KNOBS),
 };
 

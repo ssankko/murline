@@ -40,9 +40,9 @@ export function timingGrade(timingMs: number, s: PlaySettings): number {
   return ramp(Math.abs(timingMs), s.timingFlatMs, s.timingZeroMs);
 }
 
-/** How loud the strike was against the Score's ideal, the global offset put on the strike first. */
+/** How loud the strike was against the Score's ideal. The strike arrives already remapped. */
 export function velocityGrade(velocity: number, ideal: number, s: PlaySettings): number {
-  return ramp(Math.abs(velocity + s.velocityOffset - ideal), s.velocityFlat, s.velocityZero);
+  return ramp(Math.abs(velocity - ideal), s.velocityFlat, s.velocityZero);
 }
 
 /** How long the key was held against the written duration. Articulation marks are not read. */

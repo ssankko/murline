@@ -16,12 +16,38 @@ fn ensure_dir(path: String) -> Result<(), String> {
 
 /// Numbered SQL files applied in order and tracked by `PRAGMA user_version`.
 fn migrations() -> Vec<Migration> {
-    vec![Migration {
-        version: 1,
-        description: "init",
-        sql: include_str!("../migrations/0001_init.sql"),
-        kind: MigrationKind::Up,
-    }]
+    vec![
+        Migration {
+            version: 1,
+            description: "init",
+            sql: include_str!("../migrations/0001_init.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 2,
+            description: "no inheritance",
+            sql: include_str!("../migrations/0002_no_inheritance.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 3,
+            description: "practice state",
+            sql: include_str!("../migrations/0003_practice_state.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 4,
+            description: "velocity remap",
+            sql: include_str!("../migrations/0004_velocity_remap.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 5,
+            description: "no velocity offset",
+            sql: include_str!("../migrations/0005_no_velocity_offset.sql"),
+            kind: MigrationKind::Up,
+        },
+    ]
 }
 
 /// The paper grey the window opens on, dark when macOS is in its dark appearance. The webview
@@ -67,6 +93,8 @@ pub fn run() {
             audio::audio_start,
             audio::audio_status,
             audio::audio_click,
+            audio::audio_set_keyboard_volume,
+            audio::audio_set_velocity_curve,
             audio::audio_effects,
             audio::audio_chain,
             audio::audio_set_chain,
@@ -77,6 +105,8 @@ pub fn run() {
             audio::audio_instruments,
             audio::audio_load_instrument,
             audio::audio_show_instrument,
+            audio::audio_envelope,
+            audio::audio_set_envelope,
             audio::preview_load,
             audio::preview_play,
             audio::preview_pause,

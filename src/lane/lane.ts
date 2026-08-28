@@ -33,7 +33,7 @@ import { isInactiveHand, type HandsSetting } from '@/play/settings';
 import { barsOfWalk, beatOf } from '@/score/beat';
 import { TICKS_PER_QUARTER, type ChordEvent, type PlayStep, type Score } from '@/score/types';
 
-/** Look knobs, all global settings the gear writes to. */
+/** Look knobs, all global settings the Look tab writes to. */
 export interface LaneLook {
   lookaheadBeats: number;
   /** Width of a block as a percent of its key. */
@@ -58,9 +58,9 @@ export const DEFAULT_LANE_LOOK: LaneLook = {
   names: false,
 };
 
-/** The span the gear offers for the lookahead, which a pinch zoom stays inside. */
-const LOOK_MIN = 1;
-const LOOK_MAX = 32;
+/** The span the Look tab offers for the lookahead, which a pinch zoom stays inside. */
+export const LOOKAHEAD_MIN = 1;
+export const LOOKAHEAD_MAX = 32;
 /** Beats per unit of pinch delta: a full spread, about 140 of delta, halves the beats in view. */
 const ZOOM_RATE = 0.005;
 /** How long after a WebKit gesture event a ctrl-wheel is that same pinch, reported twice. */
@@ -287,7 +287,7 @@ export interface BeatGlyph {
 }
 
 export class Lane {
-  /** Live look knobs: the gear writes into this object and the next frame reads it. */
+  /** Live look knobs: the panel writes into this object and the next frame reads it. */
   readonly look: LaneLook;
   /** Shown over the keys while the app has no MIDI input. */
   notice: string | null = null;
@@ -727,10 +727,11 @@ export class Lane {
    */
   private zoom(deltaY: number): void {
     this.look.lookaheadBeats = zoomLookahead(this.look.lookaheadBeats, deltaY);
+    // Tenths of a beat, because the Look tab shows this number and takes it back.
+    const shown = Math.round(this.look.lookaheadBeats * 10) / 10;
     clearTimeout(this.lookTimer);
     this.lookTimer = window.setTimeout(() => {
-      // Tenths of a beat, because the gear shows this number and takes it back.
-      this.onLook?.({ lookaheadBeats: Math.round(this.look.lookaheadBeats * 10) / 10 });
+      this.onLook?.({ lookaheadBeats: shown });
     }, LOOK_SETTLE_MS);
   }
 
@@ -1582,7 +1583,7 @@ export function beatsBefore(bars: LaneBar[], playedTick: number, chordTick: numb
  * pinch near the ends of the span still moves.
  */
 export function zoomLookahead(beats: number, deltaY: number): number {
-  return clamp(beats * Math.exp(deltaY * ZOOM_RATE), LOOK_MIN, LOOK_MAX);
+  return clamp(beats * Math.exp(deltaY * ZOOM_RATE), LOOKAHEAD_MIN, LOOKAHEAD_MAX);
 }
 
 /** A list in played time cut at the wrap, with the lap's own entries again one lap later. */

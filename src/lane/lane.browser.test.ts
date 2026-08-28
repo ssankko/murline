@@ -390,3 +390,22 @@ test('the Section band travels from the bars it had to the bars it takes', () =>
   expect(midway).toBeLessThan(three);
   lane.dispose();
 });
+
+test('a pinch writes the lookahead it settled on once the fingers stop', async () => {
+  const { lane, canvas } = mount();
+  const written: number[] = [];
+  lane.onLook = ({ lookaheadBeats }) => written.push(lookaheadBeats!);
+
+  // A trackpad pinch reaches the page as a wheel with ctrl held, one event per step.
+  for (let i = 0; i < 3; i++) {
+    canvas.dispatchEvent(
+      new WheelEvent('wheel', { deltaY: -40, ctrlKey: true, cancelable: true, bubbles: true }),
+    );
+  }
+
+  // The write waits for the pinch to stand still, and then names where the three steps left it.
+  expect(written).toEqual([]);
+  await vi.waitFor(() => expect(written.length).toBe(1));
+  expect(written[0]).toBeLessThan(DEFAULT_LANE_LOOK.lookaheadBeats);
+  lane.dispose();
+});

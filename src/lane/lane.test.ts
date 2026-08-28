@@ -101,7 +101,7 @@ describe('the lookahead under a pinch', () => {
     expect(zoomLookahead(8, HALF)).toBeCloseTo(16);
   });
 
-  test('stops at the ends of the span the gear offers', () => {
+  test('stops at the ends of the span the panel offers', () => {
     expect(zoomLookahead(2, -10 * HALF)).toBe(1);
     expect(zoomLookahead(30, 10 * HALF)).toBe(32);
   });

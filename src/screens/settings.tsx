@@ -1,15 +1,11 @@
-// The two settings surfaces: the global dialog, opened from the library gear and from the play
-// screen's gear popover, and the gear popover itself, which edits the open piece. Every control
-// writes on change; there is no Save.
+// The settings panel: a centred modal opened from every screen, holding everything the app does in
+// general. What the open piece does right now is the play toolbar's. Every control writes on
+// change; there is no Save.
 
+import type { Envelope } from '@/audio/envelope';
+import { SoundTab } from '@/audio/sound-tab';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,28 +14,20 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import {
-  LANE_KNOBS,
-  PIECE_DEFAULT_KEYS,
-  readSettings,
-  setSetting,
-  SETTING_DEFAULTS,
-  type Settings,
-} from '@/db/db';
-import type { LaneLook } from '@/lane/lane';
+import { readSettings, setSetting, type Settings } from '@/db/db';
+import { LOOKAHEAD_MAX, LOOKAHEAD_MIN } from '@/lane/lane';
 import { cancelPdmx, downloadPdmx, progressLabel, usePdmxDownload } from '@/library/pdmx';
-import { clamp } from '@/lib/utils';
+import { clamp, rowId } from '@/lib/utils';
 import { noteName } from '@/look/color';
-import { setTheme, useTheme, type Theme } from '@/look/use-dark';
+import { setTheme, type Theme } from '@/look/use-dark';
 import { pinMidiDevice, useMidiStatus } from '@/midi/use-midi-status';
-import { validNumber, type PieceSettings } from '@/play/resolve';
-import { TEMPO_RANGE, type HandsSetting, type KeyboardPreset } from '@/play/settings';
+import { validNumber } from '@/play/resolve';
+import { type KeyboardPreset } from '@/play/settings';
 import { SPACING_MAX, SPACING_MIN, type Pinch } from '@/sheet/sheet';
 import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
-import { ChevronDown, Eye } from 'lucide-react';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import { ChevronDown, Search } from 'lucide-react';
+import { Tabs } from 'radix-ui';
 import { useEffect, useRef, useState } from 'react';
 
 /** The whole keyboard, the span both note dropdowns offer. */
@@ -49,12 +37,6 @@ const THEMES: [Theme, string][] = [
   ['system', 'System'],
   ['light', 'Light'],
   ['dark', 'Dark'],
-];
-
-const HANDS: [HandsSetting, string][] = [
-  ['both', 'Both'],
-  ['left', 'Left'],
-  ['right', 'Right'],
 ];
 
 const PRESETS: [KeyboardPreset, string][] = [
@@ -67,14 +49,7 @@ const PRESETS: [KeyboardPreset, string][] = [
   ['custom', 'Custom'],
 ];
 
-/** The lane's numbers, drawn by the dialog and by the gear popover from the one span each. */
-const LANE_FIELDS: [key: keyof typeof LANE_KNOBS, label: string, min: number, max: number][] = [
-  ['lane_lookahead', 'Lookahead (beats)', 1, 32],
-  ['lane_note_width', 'Note width (%)', 10, 100],
-  ['lane_gap', 'Gap (px)', 0, 20],
-];
-
-/** Every Grade knob in one place: the group is uniform, so it is drawn from a list. */
+/** The eleven knobs that shape a Grade. Uncalibrated, so they ship only in a dev build. */
 const GRADE_KNOBS: [keyof Settings, string, number, number][] = [
   ['grade_weight_timing', 'Timing weight', 0, 1],
   ['grade_weight_velocity', 'Velocity weight', 0, 1],
@@ -87,39 +62,348 @@ const GRADE_KNOBS: [keyof Settings, string, number, number][] = [
   ['grade_release_flat_hi', 'Release full marks to', 0, 10],
   ['grade_release_zero_lo', 'Release zero below', 0, 10],
   ['grade_release_zero_hi', 'Release zero above', 0, 10],
-  ['matching_window_ms', 'Matching window (ms)', 1, 1000],
-  ['togetherness_ms', 'Togetherness window (ms)', 1, 1000],
 ];
 
 /** One global setting as it was just written: a key, with a value of that key's own type. */
 export type SettingChange = { [K in keyof Settings]: [key: K, value: Settings[K]] }[keyof Settings];
 
+type SettingsTab = 'sound' | 'look' | 'playing' | 'library';
+
+const TAB_LABELS: Record<SettingsTab, string> = {
+  sound: 'Sound',
+  look: 'Look',
+  playing: 'Playing',
+  library: 'Library',
+};
+
+const TABS = Object.entries(TAB_LABELS) as [SettingsTab, string][];
+
+/** Where a search result lives. The mixer is not a tab: it is the popover behind the volume
+ * button, and a result naming one of its faders opens it instead of switching tab. */
+type SearchWhere = SettingsTab | 'mixer';
+
+const WHERE_LABELS: Record<SearchWhere, string> = { ...TAB_LABELS, mixer: 'Volume' };
+
 /**
- * Every global setting, in the five groups. A knob the running play reads is handed to
- * `onGlobalChange` as it is written, so a change mid-practice applies at once.
+ * Every row the search box can reach, declared here rather than read off the page, so a row on a
+ * tab that is not open is still findable. `words` holds what a player types instead of the label,
+ * seeded from the _Avoid_ lines of `CONTEXT.md`.
+ *
+ * A row belongs here only once the panel renders it. An entry for a row that is not on screen
+ * sends the search to a tab with nothing on it, which is worse than finding nothing at all.
+ *
+ * `group` names the heading a row sits under, which the Look tab needs: its two Harmony rows and
+ * its two Pitch colours rows are told apart by their heading and by nothing else.
  */
-export function SettingsDialog({
+const SEARCH_ROWS: {
+  id: string;
+  tab: SearchWhere;
+  label: string;
+  group?: string;
+  words: string[];
+}[] = [
+  {
+    id: 'keyboard_volume',
+    tab: 'mixer',
+    label: 'Keyboard',
+    words: ['volume', 'loudness', 'gain', 'level', 'quiet', 'night', 'master'],
+  },
+  {
+    id: 'click_volume',
+    tab: 'mixer',
+    label: 'Metronome',
+    words: ['volume', 'loudness', 'click', 'beat', 'level'],
+  },
+  {
+    id: 'audio_output_device',
+    tab: 'sound',
+    label: 'Output device',
+    words: ['speakers', 'headphones', 'interface', 'sound card', 'playback engine'],
+  },
+  {
+    id: 'audio_buffer_frames',
+    tab: 'sound',
+    label: 'Buffer (frames)',
+    words: ['latency', 'delay', 'lag', 'block size', 'samples'],
+  },
+  {
+    id: 'instrument_id',
+    tab: 'sound',
+    label: 'Instrument',
+    words: ['patch', 'preset', 'voice', 'sound font', 'synth', 'piano sound'],
+  },
+  {
+    id: 'instruments_folder',
+    tab: 'sound',
+    label: 'Instruments folder',
+    words: ['sf2', 'exs', 'sound fonts', 'samples'],
+  },
+  {
+    id: 'velocity_min',
+    tab: 'sound',
+    label: 'Minimum velocity',
+    words: ['quiet', 'floor', 'softest', 'soft', 'dynamics', 'touch'],
+  },
+  {
+    id: 'velocity_max',
+    tab: 'sound',
+    label: 'Maximum velocity',
+    words: ['loud', 'ceiling', 'hardest', 'top', 'dynamics', 'touch'],
+  },
+  {
+    id: 'velocity_curve',
+    tab: 'sound',
+    label: 'Velocity curve',
+    words: ['touch', 'response', 'sensitivity', 'dynamics', 'strike', 'force', 'exponent'],
+  },
+  {
+    id: 'envelope_attack',
+    tab: 'sound',
+    label: 'Attack',
+    words: ['envelope', 'adsr', 'onset', 'fade in', 'swell'],
+  },
+  {
+    id: 'envelope_decay',
+    tab: 'sound',
+    label: 'Decay',
+    words: ['envelope', 'adsr', 'fall', 'settle'],
+  },
+  {
+    id: 'envelope_sustain',
+    tab: 'sound',
+    label: 'Sustain',
+    words: ['envelope', 'adsr', 'hold', 'level', 'body'],
+  },
+  {
+    id: 'envelope_release',
+    tab: 'sound',
+    label: 'Release',
+    words: ['envelope', 'adsr', 'tail', 'ring', 'decay after', 'fade out', 'abrupt', 'cut off'],
+  },
+  {
+    id: 'effect_chain',
+    tab: 'sound',
+    label: 'Effect chain',
+    words: ['reverb', 'fx chain', 'rack', 'inserts', 'effects bus', 'plugin', 'audio unit'],
+  },
+  {
+    id: 'theme',
+    tab: 'look',
+    label: 'Theme',
+    words: ['dark', 'light', 'appearance', 'colour scheme'],
+  },
+  {
+    id: 'sheet_proportional',
+    tab: 'look',
+    label: 'Space notes by time',
+    group: 'Sheet',
+    words: ['proportional', 'even', 'rhythm'],
+  },
+  {
+    id: 'sheet_spacing',
+    tab: 'look',
+    label: 'Spacing',
+    group: 'Sheet',
+    words: ['zoom', 'pinch', 'width', 'stretch'],
+  },
+  {
+    id: 'sheet_harmony',
+    tab: 'look',
+    label: 'Harmony',
+    group: 'Sheet',
+    words: ['chords', 'chord track', 'roman numerals'],
+  },
+  {
+    id: 'sheet_colour',
+    tab: 'look',
+    label: 'Pitch colours',
+    group: 'Sheet',
+    words: ['color', 'rainbow', 'notes'],
+  },
+  {
+    id: 'lane_lookahead',
+    tab: 'look',
+    label: 'Lookahead (beats)',
+    group: 'Falling notes',
+    words: ['zoom', 'pinch', 'speed', 'ahead'],
+  },
+  {
+    id: 'lane_note_width',
+    tab: 'look',
+    label: 'Note width (%)',
+    group: 'Falling notes',
+    words: ['block', 'bar', 'thickness'],
+  },
+  {
+    id: 'lane_gap',
+    tab: 'look',
+    label: 'Gap (px)',
+    group: 'Falling notes',
+    words: ['block', 'space', 'padding'],
+  },
+  {
+    id: 'lane_names',
+    tab: 'look',
+    label: 'Note names on blocks',
+    group: 'Falling notes',
+    words: ['letters', 'labels', 'pitch'],
+  },
+  {
+    id: 'lane_harmony',
+    tab: 'look',
+    label: 'Harmony',
+    group: 'Falling notes',
+    words: ['chords', 'chord track', 'roman numerals'],
+  },
+  {
+    id: 'lane_colour',
+    tab: 'look',
+    label: 'Pitch colours',
+    group: 'Falling notes',
+    words: ['color', 'rainbow', 'notes'],
+  },
+  {
+    id: 'keyboard_labels',
+    tab: 'look',
+    label: 'Note names on keys',
+    group: 'Falling notes',
+    words: ['letters', 'labels', 'piano'],
+  },
+  {
+    id: 'keyboard_size',
+    tab: 'look',
+    label: 'Keyboard size',
+    words: ['keys', 'range', 'octaves', '88', 'width', 'custom'],
+  },
+  {
+    id: 'midi_device',
+    tab: 'playing',
+    label: 'Input device',
+    words: ['midi', 'keyboard', 'piano', 'port'],
+  },
+  {
+    id: 'matching_window_ms',
+    tab: 'playing',
+    label: 'Matching window (ms)',
+    words: ['hit window', 'tolerance', 'timing'],
+  },
+  {
+    id: 'togetherness_ms',
+    tab: 'playing',
+    label: 'Togetherness window (ms)',
+    words: ['chord', 'spread', 'together'],
+  },
+  ...(import.meta.env.DEV
+    ? [
+        {
+          id: 'grade_tuning',
+          tab: 'playing' as const,
+          label: 'Grade tuning',
+          words: ['score', 'rating', 'karaoke', 'weight', 'release'],
+        },
+      ]
+    : []),
+  {
+    id: 'library_folder',
+    tab: 'library',
+    label: 'Library folder',
+    words: ['storage', 'data directory', 'scores', 'files'],
+  },
+  {
+    id: 'pdmx_folder',
+    tab: 'library',
+    label: 'PDMX folder',
+    words: ['storage', 'data directory'],
+  },
+  {
+    id: 'pdmx_scores',
+    tab: 'library',
+    label: 'PDMX scores',
+    words: ['download', 'catalogue', 'source', 'provider'],
+  },
+];
+
+/**
+ * The rows whose label, tab name or one of their words holds what was typed. `envelope` says
+ * whether the instrument playing has an envelope to shape; a hosted plugin has none, and the
+ * search must not offer rows the panel is not showing.
+ */
+function searchRows(query: string, envelope: boolean): typeof SEARCH_ROWS {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [];
+  return SEARCH_ROWS.filter(
+    (row) =>
+      (envelope || !row.id.startsWith('envelope_')) &&
+      [row.label, WHERE_LABELS[row.tab], row.group ?? '', ...row.words].some((word) =>
+        word.toLowerCase().includes(needle),
+      ),
+  );
+}
+
+/**
+ * Every app-wide setting, in four tabs, in a centred modal shaped like the score finder. The
+ * overlay dims lighter than the finder's so the sheet and the lane behind stay legible and keep
+ * animating while a control is moved. It reads nothing the play clock owns and writes nothing to
+ * it.
+ *
+ * A knob the running play reads is handed to `onGlobalChange` as it is written, so a change
+ * mid-practice applies at once.
+ */
+export function SettingsPanel({
+  open,
   onClose,
   onGlobalChange,
+  jumpTo,
+  onOpenMixer,
 }: {
+  open: boolean;
   onClose: () => void;
   onGlobalChange?: (...change: SettingChange) => void;
+  /** The way to the two faders, which are the mixer's and not the panel's. A search result naming
+   * one closes the panel and opens the mixer over the button it belongs to. */
+  onOpenMixer?: () => void;
+  /** A row to open on, named by its id: the same jump a search result makes, for the callers that
+   * open the panel at one row rather than at the top. */
+  jumpTo?: string | null;
 }) {
   const [values, setValues] = useState<Settings | null>(null);
-  const [velocity, setVelocity] = useState<number | null>(null);
+  const [tab, setTab] = useState<SettingsTab>('sound');
+  const [query, setQuery] = useState('');
+  /** Which search result the arrow keys are on. */
+  const [sel, setSel] = useState(0);
+  /** The row a search result jumped to, held until the next jump or the next open. */
+  const [marked, setMarked] = useState<string | null>(null);
+  /** Whether the instrument playing has an envelope, which is what puts its rows in the search. */
+  const [envelope, setEnvelope] = useState(false);
   const [pdmxReady, setPdmxReady] = useState<boolean | null>(null);
-  const midi = useMidiStatus((event) => {
-    if (event.on) setVelocity(event.velocity);
-  });
-  const theme = useTheme();
+  const list = useRef<HTMLUListElement>(null);
+  // Only the port list is wanted here. The Sound tab watches the keys itself, and it is here only
+  // while the panel is open, so a shut panel does not re-render on every strike.
+  const midi = useMidiStatus();
   const pdmx = usePdmxDownload();
   const downloading = pdmx.progress !== null;
 
-  // A finished PDMX download writes the folder itself, so the settings are read again when one
-  // stops: the dialog is not always open to hear about it.
+  // Read again at every open, so the panel is in step with the popovers and with a finished PDMX
+  // download, which writes the folder itself while nothing is listening.
   useEffect(() => {
-    readSettings().then(setValues, console.error);
-  }, [downloading]);
+    if (open) readSettings().then(setValues, console.error);
+    else setMarked(null);
+    if (open) {
+      invoke<Envelope | null>('audio_envelope').then(
+        (one) => setEnvelope(one !== null),
+        () => setEnvelope(false),
+      );
+    }
+  }, [open, downloading]);
+
+  // The tab and the mark land in one render, as they do for a search result, so the scroll effect
+  // below finds the row on the page.
+  useEffect(() => {
+    const row = jumpTo && SEARCH_ROWS.find((each) => each.id === jumpTo);
+    if (!open || !row || row.tab === 'mixer') return;
+    setTab(row.tab);
+    setMarked(row.id);
+  }, [open, jumpTo]);
 
   // Whether the folder in force holds unpacked scores. Rust answers off the disk, not the setting.
   useEffect(() => {
@@ -135,17 +419,24 @@ export function SettingsDialog({
     };
   }, [values?.pdmx_folder]);
 
+  // The tab switch and the mark land in one render, so the row is on the page by the time this
+  // runs. A row on a tab nobody has built yet is not in `SEARCH_ROWS`, so there is nothing to miss.
+  useEffect(() => {
+    if (marked) document.getElementById(rowId(marked))?.scrollIntoView({ block: 'center' });
+  }, [marked]);
+
+  useEffect(() => {
+    list.current?.querySelector('[data-selected]')?.scrollIntoView({ block: 'nearest' });
+  }, [sel, query]);
+
   function write<K extends keyof Settings>(key: K, value: Settings[K]): void {
     setValues((held) => held && { ...held, [key]: value });
     setSetting(key, value).catch(console.error);
-    if (key === 'theme') setTheme(value as Theme);
     if (key === 'midi_device') pinMidiDevice(value as string | null);
+    // The theme paints the whole app, so it is applied here rather than by whatever is behind.
+    if (key === 'theme') setTheme(value as Theme);
     // The pair comes straight out of this function's own key type, so it is one of the union.
     onGlobalChange?.(...([key, value] as SettingChange));
-  }
-
-  function reset(keys: (keyof Settings)[]): void {
-    for (const key of keys) write(key, SETTING_DEFAULTS[key] as never);
   }
 
   /** One line for the PDMX row: how far the download has got, or what is on disk. */
@@ -158,456 +449,443 @@ export function SettingsDialog({
         : 'Not downloaded';
 
   async function chooseFolder(key: 'library_folder' | 'pdmx_folder'): Promise<void> {
-    const picked = await open({ directory: true, defaultPath: values?.[key] || undefined });
+    const picked = await openDialog({ directory: true, defaultPath: values?.[key] || undefined });
     if (typeof picked === 'string') write(key, picked);
   }
 
-  // The box is centred on itself, so it must mount at its full size: content that arrived later
-  // would grow the box and re-centre it under the open animation.
-  if (!values) return null;
+  const results = searchRows(query, envelope);
+  const selected = results[Math.min(sel, results.length - 1)] ?? null;
 
-  return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-[560px]">
-        <DialogHeader>
-          <DialogTitle className="text-[15px]">Settings</DialogTitle>
-          <DialogDescription className="sr-only">Every setting of the app.</DialogDescription>
-        </DialogHeader>
-
-        {/* The dialog box is a grid, whose track is as wide as its widest content unless the
-            column is let go under it: without min-w-0 a long path widens the whole box. */}
-        <div className="flex min-w-0 flex-col gap-7">
-          {/* The library folder is the library, and an empty one has no undo, so Reset leaves it. */}
-          <Group
-            title="Library"
-            onReset={() => reset(['pdmx_folder'])}
-            note="A new library folder re-points the app. No file is moved."
-          >
-            <Row label="Library folder">
-              <Path
-                value={values.library_folder}
-                onChoose={() => chooseFolder('library_folder').catch(console.error)}
-              />
-            </Row>
-            <Row label="PDMX folder">
-              <Path
-                value={values.pdmx_folder}
-                onChoose={() => chooseFolder('pdmx_folder').catch(console.error)}
-              />
-            </Row>
-            <Row label="PDMX scores">
-              <span className="flex flex-none flex-col items-end gap-0.5">
-                <span className="flex items-center gap-3">
-                  <span className="text-muted-ink text-[12px] tabular-nums">{pdmxStatus}</span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 flex-none"
-                    onClick={() => {
-                      if (downloading) cancelPdmx();
-                      else void downloadPdmx();
-                    }}
-                  >
-                    {downloading ? 'Cancel' : 'Download PDMX (1.9 GB)'}
-                  </Button>
-                </span>
-                {pdmx.error && (
-                  <span className="text-[11px] text-red-600 dark:text-red-400">{pdmx.error}</span>
-                )}
-              </span>
-            </Row>
-          </Group>
-
-          <Group
-            title="Playing defaults"
-            note="A piece that holds a setting of its own keeps it."
-            onReset={() => reset(Object.keys(PIECE_DEFAULT_KEYS) as (keyof Settings)[])}
-          >
-            <Row label="Tempo (%)">
-              <NumberField
-                value={values.default_tempo_value}
-                min={TEMPO_RANGE.percent[0]}
-                max={TEMPO_RANGE.percent[1]}
-                onChange={(value) => write('default_tempo_value', value)}
-              />
-            </Row>
-            <Row label="Metronome">
-              <Toggle
-                value={values.default_metronome}
-                onChange={(value) => write('default_metronome', value)}
-              />
-            </Row>
-            <Row label="Count-in bars">
-              <NumberField
-                value={values.default_count_in_bars}
-                min={0}
-                max={8}
-                onChange={(value) => write('default_count_in_bars', value)}
-              />
-            </Row>
-            <Row label="Hands">
-              <Segmented
-                options={HANDS}
-                value={values.default_hands}
-                onChange={(value) => write('default_hands', value)}
-              />
-            </Row>
-            <Row label="Keyboard">
-              <Segmented
-                options={PRESETS}
-                value={values.default_keyboard_preset}
-                onChange={(value) => write('default_keyboard_preset', value)}
-              />
-            </Row>
-            {values.default_keyboard_preset === 'custom' && (
-              <Row label="Custom range">
-                <CustomRange
-                  lo={values.default_keyboard_lo}
-                  hi={values.default_keyboard_hi}
-                  onChange={(lo, hi) => {
-                    write('default_keyboard_lo', lo);
-                    write('default_keyboard_hi', hi);
-                  }}
-                />
-              </Row>
-            )}
-          </Group>
-
-          <Group
-            title="Play screen"
-            onReset={() =>
-              reset([
-                ...LANE_FIELDS.map(([key]) => key),
-                'keyboard_labels',
-                'click_volume',
-                'theme',
-              ])
-            }
-          >
-            {LANE_FIELDS.map(([key, label, min, max]) => (
-              <Row key={key} label={label}>
-                <NumberField
-                  value={values[key] as number}
-                  min={min}
-                  max={max}
-                  onChange={(value) => write(key, value as never)}
-                />
-              </Row>
-            ))}
-            <Row label="Note names on keys">
-              <Toggle
-                value={values.keyboard_labels}
-                onChange={(value) => write('keyboard_labels', value)}
-              />
-            </Row>
-            <Row label="Click volume">
-              <NumberField
-                value={values.click_volume}
-                min={0}
-                max={100}
-                onChange={(value) => write('click_volume', value)}
-              />
-            </Row>
-            <Row label="Theme">
-              <Segmented
-                options={THEMES}
-                value={theme}
-                onChange={(value) => write('theme', value)}
-              />
-            </Row>
-          </Group>
-
-          <Group title="MIDI" onReset={() => reset(['midi_device', 'velocity_offset'])}>
-            <Row label="Input device">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    aria-label="MIDI input device"
-                    className="h-7 max-w-[190px] justify-between px-2 text-[12px] font-normal"
-                  >
-                    <span className="truncate">
-                      {midi.ports.find((port) => port.id === values.midi_device)?.name ??
-                        'Any device'}
-                    </span>
-                    <ChevronDown className="size-3.5 opacity-60" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="max-w-[260px]">
-                  <DropdownMenuRadioGroup
-                    value={values.midi_device ?? ''}
-                    onValueChange={(id) => write('midi_device', id || null)}
-                  >
-                    <DropdownMenuRadioItem value="" className="text-[13px]">
-                      Any device
-                    </DropdownMenuRadioItem>
-                    {midi.ports.map((port) => (
-                      <DropdownMenuRadioItem
-                        key={port.id}
-                        value={port.id}
-                        className="text-[13px]"
-                      >
-                        <span className="truncate">{port.name}</span>
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </Row>
-            <Row label="Velocity offset">
-              <div className="flex items-center gap-3">
-                <NumberField
-                  value={values.velocity_offset}
-                  min={-64}
-                  max={64}
-                  onChange={(value) => write('velocity_offset', value)}
-                />
-                <span className="text-muted-ink text-[12px] tabular-nums">
-                  last strike {velocity ?? '—'}
-                </span>
-              </div>
-            </Row>
-          </Group>
-
-          <details className="flex flex-col gap-2">
-            <summary className="cursor-pointer text-[13px] font-semibold">
-              Grade tuning
-            </summary>
-            <div className="mt-3">
-              <Group
-                title=""
-                note="Grade normalises the three weights whatever they hold."
-                onReset={() => reset(GRADE_KNOBS.map(([key]) => key))}
-              >
-                {GRADE_KNOBS.map(([key, label, min, max]) => (
-                  <Row key={key} label={label}>
-                    <NumberField
-                      value={values[key] as number}
-                      min={min}
-                      max={max}
-                      onChange={(value) => write(key, value as never)}
-                    />
-                  </Row>
-                ))}
-              </Group>
-            </div>
-          </details>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/**
- * The gear under the play screen's bar: the look of the app and of the lane, the keyboard range of
- * the open piece, and the way out to every other setting.
- */
-export function GearPopover({
-  trigger,
-  performing,
-  keyboard,
-  countInBars,
-  look,
-  onKeyboard,
-  onCountInBars,
-  onLook,
-  onUseGlobalDefaults,
-  onAllSettings,
-}: {
-  trigger: React.ReactNode;
-  /** A performance writes no setting, so everything that would write is off. */
-  performing: boolean;
-  keyboard: Pick<PieceSettings, 'keyboardPreset' | 'keyboardLo' | 'keyboardHi'>;
-  countInBars: number;
-  look: LaneLook;
-  onKeyboard: (preset: KeyboardPreset, lo: number, hi: number) => void;
-  onCountInBars: (bars: number) => void;
-  onLook: (key: keyof typeof LANE_KNOBS, value: number | boolean) => void;
-  onUseGlobalDefaults: () => void;
-  onAllSettings: () => void;
-}) {
-  const theme = useTheme();
-
-  return (
-    <Popover>
-      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
-      <PopoverContent side="bottom" align="start" className="flex w-72 flex-col gap-4 p-3">
-        <PopoverGroup title="Look">
-          <Row label="Theme">
-            <Segmented
-              options={THEMES}
-              value={theme}
-              onChange={(value) => {
-                setTheme(value);
-                setSetting('theme', value).catch(console.error);
-              }}
-            />
-          </Row>
-        </PopoverGroup>
-
-        {!performing && (
-          <PopoverGroup title="Keyboard">
-            <Segmented
-              options={PRESETS}
-              value={keyboard.keyboardPreset}
-              onChange={(preset) => onKeyboard(preset, keyboard.keyboardLo, keyboard.keyboardHi)}
-            />
-            {keyboard.keyboardPreset === 'custom' && (
-              <CustomRange
-                lo={keyboard.keyboardLo}
-                hi={keyboard.keyboardHi}
-                onChange={(lo, hi) => onKeyboard('custom', lo, hi)}
-              />
-            )}
-          </PopoverGroup>
-        )}
-
-        {!performing && (
-          <PopoverGroup title="Playing">
-            <Row label="Count-in bars">
-              <NumberField value={countInBars} min={0} max={8} onChange={onCountInBars} />
-            </Row>
-          </PopoverGroup>
-        )}
-
-        <PopoverGroup title="Falling notes">
-          {LANE_FIELDS.map(([key, label, min, max]) => (
-            <Row key={key} label={label}>
-              <NumberField
-                value={look[LANE_KNOBS[key]] as number}
-                min={min}
-                max={max}
-                onChange={(value) => onLook(key, value)}
-              />
-            </Row>
-          ))}
-          <Row label="Note names on keys">
-            <Toggle value={look.keyLabels} onChange={(value) => onLook('keyboard_labels', value)} />
-          </Row>
-        </PopoverGroup>
-
-        {!performing && (
-          <div className="border-edge-soft flex flex-col items-start gap-1.5 border-t pt-3">
-            <button
-              onClick={onUseGlobalDefaults}
-              className="hover:text-ink text-muted-ink text-[12px] underline underline-offset-2"
-            >
-              Use global defaults
-            </button>
-            <button
-              onClick={onAllSettings}
-              className="hover:text-ink text-muted-ink text-[12px] underline underline-offset-2"
-            >
-              All settings…
-            </button>
-          </div>
-        )}
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-/**
- * The eye in the play bar: what the two views show of a note beyond its place in time. Every
- * control is a global setting, written at once and handed to `onChange` so the play applies it.
- */
-export function ViewPopover({ onChange }: { onChange: (...change: SettingChange) => void }) {
-  const [values, setValues] = useState<Settings | null>(null);
-
-  useEffect(() => {
-    readSettings().then(setValues, console.error);
-  }, []);
-
-  function write<K extends keyof Settings>(key: K, value: Settings[K]): void {
-    setValues((held) => held && { ...held, [key]: value });
-    setSetting(key, value).catch(console.error);
-    // The pair comes straight out of this function's own key type, so it is one of the union.
-    onChange(...([key, value] as SettingChange));
+  function pick(row: (typeof SEARCH_ROWS)[number]): void {
+    setQuery('');
+    setSel(0);
+    // A fader is not a row here, so the result hands the player to the mixer rather than to a tab
+    // that does not hold it.
+    if (row.tab === 'mixer') {
+      onClose();
+      onOpenMixer?.();
+      return;
+    }
+    setTab(row.tab);
+    setMarked(row.id);
   }
 
-  // Reading again at every open keeps this popover in step with the settings dialog.
-  return (
-    <Popover onOpenChange={(open) => open && readSettings().then(setValues, console.error)}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <PopoverTrigger asChild>
-            <button
-              aria-label="View"
-              className="hover:bg-ink/8 relative flex h-8 w-8 flex-none items-center justify-center rounded-md transition-colors duration-150"
-            >
-              <Eye size={18} strokeWidth={1.75} />
-            </button>
-          </PopoverTrigger>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">View</TooltipContent>
-      </Tooltip>
-      <PopoverContent side="bottom" align="start" className="flex w-64 flex-col gap-4 p-3">
-        {values && (
-          <>
-            <PopoverGroup title="Sheet">
-              <Row label="Harmony">
-                <Toggle
-                  value={values.sheet_harmony}
-                  onChange={(value) => write('sheet_harmony', value)}
-                />
-              </Row>
-              <Row label="Pitch colours">
-                <Toggle
-                  value={values.sheet_colour}
-                  onChange={(value) => write('sheet_colour', value)}
-                />
-              </Row>
-              <Row label="Space notes by time">
-                <Toggle
-                  value={values.sheet_proportional}
-                  onChange={(value) => write('sheet_proportional', value)}
-                />
-              </Row>
-              <Row label="Spacing">
-                <span className="flex flex-none items-center gap-2">
-                  <input
-                    type="range"
-                    aria-label="Sheet spacing in percent"
-                    min={SPACING_MIN}
-                    max={SPACING_MAX}
-                    step={5}
-                    value={values.sheet_spacing}
-                    disabled={!values.sheet_proportional}
-                    onChange={(event) => write('sheet_spacing', Number(event.target.value))}
-                    className="accent-ink w-24 disabled:opacity-30"
-                  />
-                  <span className="text-muted-ink w-8 text-right text-[11px] tabular-nums">
-                    {values.sheet_spacing}
-                  </span>
-                </span>
-              </Row>
-            </PopoverGroup>
+  // The arrows belong to the search box alone: every slider, select and toggle on the tabs below
+  // reads its own arrow keys, so the list must not take them from the whole modal.
+  function onSearchKey(event: React.KeyboardEvent): void {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setSel((at) => Math.min(at + 1, results.length - 1));
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setSel((at) => Math.max(at - 1, 0));
+    } else if (event.key === 'Enter' && selected) {
+      event.preventDefault();
+      pick(selected);
+    }
+  }
 
-            <PopoverGroup title="Falling notes">
-              <Row label="Harmony">
-                <Toggle
-                  value={values.lane_harmony}
-                  onChange={(value) => write('lane_harmony', value)}
-                />
-              </Row>
-              <Row label="Pitch colours">
-                <Toggle
-                  value={values.lane_colour}
-                  onChange={(value) => write('lane_colour', value)}
-                />
-              </Row>
-              <Row label="Note names on blocks">
-                <Toggle
-                  value={values.lane_names}
-                  onChange={(value) => write('lane_names', value)}
-                />
-              </Row>
-            </PopoverGroup>
-          </>
-        )}
-      </PopoverContent>
-    </Popover>
+  return (
+    // Radix owns the overlay, the focus trap, Escape and the click outside. Its content carries
+    // `role="dialog"` with `data-state="open"`, which is what the play screen's keys watch for:
+    // while the panel is open, Space and Escape are the panel's and never reach the clock.
+    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+      <DialogContent
+        showCloseButton={false}
+        // Lighter than the finder's `bg-black/50`: the sheet and the lane behind have to stay
+        // readable while a look setting is moved.
+        overlayClassName="bg-black/20"
+        className="top-[12%] flex max-h-[70vh] w-[640px] translate-y-0 flex-col gap-0 p-0 sm:max-w-[640px]"
+      >
+        <DialogTitle className="sr-only">Settings</DialogTitle>
+
+        <div className="border-edge-soft relative flex flex-none items-center gap-2.5 border-b px-4">
+          <Search className="text-muted-ink size-4" />
+          <input
+            autoFocus
+            value={query}
+            aria-label="Search settings"
+            placeholder="Search settings"
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setSel(0);
+            }}
+            onKeyDown={onSearchKey}
+            className="placeholder:text-muted-ink flex-1 bg-transparent py-3 text-[15px] outline-none"
+          />
+          {query.trim() !== '' && (
+            <ul
+              ref={list}
+              className="bg-chrome border-edge-soft absolute inset-x-0 top-full z-10 max-h-64 overflow-y-auto border shadow-md"
+            >
+              {results.length === 0 && (
+                <li className="text-muted-ink px-4 py-3 text-[12px]">Nothing matches “{query}”.</li>
+              )}
+              {results.map((row, at) => (
+                <li key={row.id}>
+                  <button
+                    data-selected={row === selected || undefined}
+                    onMouseMove={() => sel !== at && setSel(at)}
+                    onClick={() => pick(row)}
+                    className={`flex w-full items-baseline gap-3 px-4 py-1.5 text-left text-[12px] ${
+                      row === selected ? 'bg-(--fill-selected)' : ''
+                    }`}
+                  >
+                    <span className="min-w-0 truncate">{row.label}</span>
+                    <span className="text-muted-ink ml-auto flex-none text-[11px]">
+                      {row.group
+                        ? `${WHERE_LABELS[row.tab]} · ${row.group}`
+                        : WHERE_LABELS[row.tab]}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <Tabs.Root
+          value={tab}
+          onValueChange={(next) => {
+            setTab(next as SettingsTab);
+            setMarked(null);
+          }}
+          className="flex min-h-0 flex-1 flex-col"
+        >
+          <Tabs.List className="border-edge-soft flex flex-none gap-0.5 border-b px-4 pt-3">
+            {TABS.map(([each, label]) => (
+              <Tabs.Trigger
+                key={each}
+                value={each}
+                className="text-muted-ink data-[state=active]:border-ink data-[state=active]:text-ink hover:text-ink -mb-px border-b-2 border-transparent px-2 pb-1.5 text-[12px] font-medium transition-colors duration-150"
+              >
+                {label}
+              </Tabs.Trigger>
+            ))}
+          </Tabs.List>
+
+          {/* The box is a grid whose track is as wide as its widest content unless the column is let
+            go under it: without min-w-0 a long path widens the whole panel. */}
+          <div className="flex min-w-0 flex-1 flex-col overflow-y-auto px-4 py-4">
+            {values && (
+              <>
+                <Tabs.Content value="sound" className="flex flex-col gap-7">
+                  {/* The sound engine's own settings write straight to it, not through `write`:
+                    each one has to reach the running engine as well as the database. The two
+                    volumes are not here at all; they are the mixer's two faders. */}
+                  <SoundTab marked={marked} />
+                </Tabs.Content>
+
+                <Tabs.Content value="look" className="flex flex-col gap-6">
+                  <Rows>
+                    <Row id="theme" marked={marked === 'theme'} label="Theme">
+                      <Segmented
+                        options={THEMES}
+                        value={values.theme}
+                        onChange={(value) => write('theme', value)}
+                      />
+                    </Row>
+                  </Rows>
+
+                  {/* Sheet and falling notes each carry their own harmony and their own colours, so
+                    each heading names the view its rows move and nothing else. */}
+                  <section className="flex flex-col gap-1.5">
+                    <h3 className="text-muted-ink text-[11px] tracking-wide uppercase">Sheet</h3>
+                    <Rows>
+                      <Row
+                        id="sheet_proportional"
+                        marked={marked === 'sheet_proportional'}
+                        label="Space notes by time"
+                      >
+                        <Toggle
+                          value={values.sheet_proportional}
+                          onChange={(value) => write('sheet_proportional', value)}
+                        />
+                      </Row>
+                      <Row id="sheet_spacing" marked={marked === 'sheet_spacing'} label="Spacing">
+                        <Slider
+                          label="Sheet spacing in percent"
+                          value={values.sheet_spacing}
+                          min={SPACING_MIN}
+                          max={SPACING_MAX}
+                          step={5}
+                          disabled={!values.sheet_proportional}
+                          onChange={(value) => write('sheet_spacing', value)}
+                        />
+                      </Row>
+                      <Row id="sheet_harmony" marked={marked === 'sheet_harmony'} label="Harmony">
+                        <Toggle
+                          value={values.sheet_harmony}
+                          onChange={(value) => write('sheet_harmony', value)}
+                        />
+                      </Row>
+                      <Row
+                        id="sheet_colour"
+                        marked={marked === 'sheet_colour'}
+                        label="Pitch colours"
+                      >
+                        <Toggle
+                          value={values.sheet_colour}
+                          onChange={(value) => write('sheet_colour', value)}
+                        />
+                      </Row>
+                    </Rows>
+                  </section>
+
+                  <section className="flex flex-col gap-1.5">
+                    <h3 className="text-muted-ink text-[11px] tracking-wide uppercase">
+                      Falling notes
+                    </h3>
+                    <Rows>
+                      <Row
+                        id="lane_lookahead"
+                        marked={marked === 'lane_lookahead'}
+                        label="Lookahead (beats)"
+                      >
+                        <Slider
+                          label="Lane lookahead in beats"
+                          value={values.lane_lookahead}
+                          min={LOOKAHEAD_MIN}
+                          max={LOOKAHEAD_MAX}
+                          step={0.1}
+                          onChange={(value) => write('lane_lookahead', value)}
+                        />
+                      </Row>
+                      <Row
+                        id="lane_note_width"
+                        marked={marked === 'lane_note_width'}
+                        label="Note width (%)"
+                      >
+                        <NumberField
+                          value={values.lane_note_width}
+                          min={10}
+                          max={100}
+                          onChange={(value) => write('lane_note_width', value)}
+                        />
+                      </Row>
+                      <Row id="lane_gap" marked={marked === 'lane_gap'} label="Gap (px)">
+                        <NumberField
+                          value={values.lane_gap}
+                          min={0}
+                          max={20}
+                          onChange={(value) => write('lane_gap', value)}
+                        />
+                      </Row>
+                      <Row
+                        id="lane_names"
+                        marked={marked === 'lane_names'}
+                        label="Note names on blocks"
+                      >
+                        <Toggle
+                          value={values.lane_names}
+                          onChange={(value) => write('lane_names', value)}
+                        />
+                      </Row>
+                      <Row id="lane_harmony" marked={marked === 'lane_harmony'} label="Harmony">
+                        <Toggle
+                          value={values.lane_harmony}
+                          onChange={(value) => write('lane_harmony', value)}
+                        />
+                      </Row>
+                      <Row id="lane_colour" marked={marked === 'lane_colour'} label="Pitch colours">
+                        <Toggle
+                          value={values.lane_colour}
+                          onChange={(value) => write('lane_colour', value)}
+                        />
+                      </Row>
+                      <Row
+                        id="keyboard_labels"
+                        marked={marked === 'keyboard_labels'}
+                        label="Note names on keys"
+                      >
+                        <Toggle
+                          value={values.keyboard_labels}
+                          onChange={(value) => write('keyboard_labels', value)}
+                        />
+                      </Row>
+                    </Rows>
+                  </section>
+
+                  {/* Keyboard size lays the keys out under the falling notes and changes nothing on
+                    the sheet, so it sits outside that heading rather than under it. */}
+                  <Rows>
+                    <Row
+                      id="keyboard_size"
+                      marked={marked === 'keyboard_size'}
+                      label="Keyboard size"
+                    >
+                      <Segmented
+                        options={PRESETS}
+                        value={values.keyboard_preset}
+                        onChange={(value) => write('keyboard_preset', value)}
+                      />
+                    </Row>
+                    {values.keyboard_preset === 'custom' && (
+                      <Row label="Custom range">
+                        <CustomRange
+                          lo={values.keyboard_lo}
+                          hi={values.keyboard_hi}
+                          onChange={(lo, hi) => {
+                            write('keyboard_lo', lo);
+                            write('keyboard_hi', hi);
+                          }}
+                        />
+                      </Row>
+                    )}
+                  </Rows>
+                </Tabs.Content>
+
+                <Tabs.Content value="playing" className="flex flex-col gap-7">
+                  <Rows>
+                    <Row id="midi_device" marked={marked === 'midi_device'} label="Input device">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            aria-label="MIDI input device"
+                            className="h-7 max-w-[190px] justify-between px-2 text-[12px] font-normal"
+                          >
+                            <span className="truncate">
+                              {midi.ports.find((port) => port.id === values.midi_device)?.name ??
+                                'Any device'}
+                            </span>
+                            <ChevronDown className="size-3.5 opacity-60" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="max-w-[260px]">
+                          <DropdownMenuRadioGroup
+                            value={values.midi_device ?? ''}
+                            onValueChange={(id) => write('midi_device', id || null)}
+                          >
+                            <DropdownMenuRadioItem value="" className="text-[13px]">
+                              Any device
+                            </DropdownMenuRadioItem>
+                            {midi.ports.map((port) => (
+                              <DropdownMenuRadioItem
+                                key={port.id}
+                                value={port.id}
+                                className="text-[13px]"
+                              >
+                                <span className="truncate">{port.name}</span>
+                              </DropdownMenuRadioItem>
+                            ))}
+                          </DropdownMenuRadioGroup>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </Row>
+                    <Row
+                      id="matching_window_ms"
+                      marked={marked === 'matching_window_ms'}
+                      label="Matching window (ms)"
+                    >
+                      <NumberField
+                        value={values.matching_window_ms}
+                        min={1}
+                        max={1000}
+                        onChange={(value) => write('matching_window_ms', value)}
+                      />
+                    </Row>
+                    <Row
+                      id="togetherness_ms"
+                      marked={marked === 'togetherness_ms'}
+                      label="Togetherness window (ms)"
+                    >
+                      <NumberField
+                        value={values.togetherness_ms}
+                        min={1}
+                        max={1000}
+                        onChange={(value) => write('togetherness_ms', value)}
+                      />
+                    </Row>
+                  </Rows>
+
+                  {import.meta.env.DEV && (
+                    <details id={rowId('grade_tuning')} open={marked === 'grade_tuning'}>
+                      <summary className="cursor-pointer text-[13px] font-semibold">
+                        Grade tuning
+                      </summary>
+                      <p className="text-muted-ink mt-1 text-[11.5px]">
+                        Grade normalises the three weights whatever they hold.
+                      </p>
+                      <div className="mt-3">
+                        <Rows>
+                          {GRADE_KNOBS.map(([key, label, min, max]) => (
+                            <Row key={key} label={label}>
+                              <NumberField
+                                value={values[key] as number}
+                                min={min}
+                                max={max}
+                                onChange={(value) => write(key, value as never)}
+                              />
+                            </Row>
+                          ))}
+                        </Rows>
+                      </div>
+                    </details>
+                  )}
+                </Tabs.Content>
+
+                <Tabs.Content value="library" className="flex flex-col gap-2">
+                  <p className="text-muted-ink text-[11.5px]">
+                    A new library folder re-points the app. No file is moved.
+                  </p>
+                  <Rows>
+                    <Row
+                      id="library_folder"
+                      marked={marked === 'library_folder'}
+                      label="Library folder"
+                    >
+                      <Path
+                        value={values.library_folder}
+                        onChoose={() => chooseFolder('library_folder').catch(console.error)}
+                      />
+                    </Row>
+                    <Row id="pdmx_folder" marked={marked === 'pdmx_folder'} label="PDMX folder">
+                      <Path
+                        value={values.pdmx_folder}
+                        onChoose={() => chooseFolder('pdmx_folder').catch(console.error)}
+                      />
+                    </Row>
+                    <Row id="pdmx_scores" marked={marked === 'pdmx_scores'} label="PDMX scores">
+                      <span className="flex flex-none flex-col items-end gap-0.5">
+                        <span className="flex items-center gap-3">
+                          <span className="text-muted-ink text-[12px] tabular-nums">
+                            {pdmxStatus}
+                          </span>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 flex-none"
+                            onClick={() => {
+                              if (downloading) cancelPdmx();
+                              else void downloadPdmx();
+                            }}
+                          >
+                            {downloading ? 'Cancel' : 'Download (1.9 GB)'}
+                          </Button>
+                        </span>
+                        {pdmx.error && (
+                          <span className="text-[11px] text-red-600 dark:text-red-400">
+                            {pdmx.error}
+                          </span>
+                        )}
+                      </span>
+                    </Row>
+                  </Rows>
+                </Tabs.Content>
+              </>
+            )}
+          </div>
+        </Tabs.Root>
+
+        <footer className="border-edge-soft text-muted-ink flex flex-none justify-end gap-3 border-t px-4 py-2 text-[12px]">
+          <span>↑↓ select</span>
+          <span>↩ open</span>
+          <span>esc close</span>
+        </footer>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -664,63 +942,31 @@ export function SpacingPopup({ pinch }: { pinch: Pinch | null }) {
   );
 }
 
-function Group({
-  title,
-  note,
-  onReset,
-  children,
-}: {
-  title: string;
-  note?: string;
-  onReset: () => void;
-  children: React.ReactNode;
-}) {
-  // A reset to a default equal to the value in force changes no prop, so the fields are rebuilt
-  // by their key: text a field refused, and the message under it, start over from the setting.
-  const [round, setRound] = useState(0);
-  return (
-    <section className="flex flex-col gap-2">
-      <div className="flex items-baseline gap-3">
-        {title && <h3 className="text-[13px] font-semibold">{title}</h3>}
-        {note && <p className="text-muted-ink text-[11.5px]">{note}</p>}
-        <button
-          onClick={() => {
-            onReset();
-            setRound((n) => n + 1);
-          }}
-          className="text-muted-ink hover:text-ink ml-auto text-[11.5px] underline underline-offset-2"
-        >
-          Reset group
-        </button>
-      </div>
-      <div key={round} className="divide-edge-soft border-edge-soft divide-y border-y">
-        {children}
-      </div>
-    </section>
-  );
-}
-
-/** A group inside the gear popover, which is too narrow for the dialog's group furniture. */
-function PopoverGroup({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="flex flex-col gap-1.5">
-      <h3 className="text-muted-ink text-[11px] tracking-wide uppercase">{title}</h3>
-      {children}
-    </section>
-  );
+/** The divided list the panel's rows sit in. */
+function Rows({ children }: { children: React.ReactNode }) {
+  return <div className="divide-edge-soft border-edge-soft divide-y border-y">{children}</div>;
 }
 
 function Row({
+  id,
   label,
   hint,
+  marked,
   children,
 }: {
+  /** Set on a panel row, so a search result can scroll to it and mark it. */
+  id?: string;
   label: string;
   hint?: string;
+  marked?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex min-h-8 items-center justify-between gap-3 py-1 text-[12px]">
+    <div
+      id={id && rowId(id)}
+      data-marked={marked || undefined}
+      className={`flex min-h-8 items-center justify-between gap-3 py-1 text-[12px] ${marked ? 'bg-ink/8' : ''}`}
+    >
       <span className={hint ? 'flex flex-col gap-0.5' : 'flex-none'}>
         {label}
         {hint && <span className="text-muted-ink text-[11px] leading-snug">{hint}</span>}
@@ -761,7 +1007,7 @@ function NumberField({
   /** What this field last wrote, so a value that moved elsewhere is told apart from typing. */
   const written = useRef(value);
 
-  // "Reset group" and "Use global defaults" both move the value without the field being touched.
+  // A pinch behind the panel moves the value without the field being touched.
   useEffect(() => {
     if (value === written.current) return;
     written.current = value;
@@ -786,6 +1032,42 @@ function NumberField({
         className="h-7 w-20 px-2 text-right text-[12px] tabular-nums"
       />
       {error && <span className="text-[11px] text-red-600 dark:text-red-400">{error}</span>}
+    </span>
+  );
+}
+
+/** A number dragged rather than typed, with its value beside it. A pinch moves one of these. */
+function Slider({
+  label,
+  value,
+  min,
+  max,
+  step,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  disabled?: boolean;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <span className="flex flex-none items-center gap-2">
+      <input
+        type="range"
+        aria-label={label}
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="accent-ink w-24 disabled:opacity-30"
+      />
+      <span className="text-muted-ink w-8 text-right text-[11px] tabular-nums">{value}</span>
     </span>
   );
 }

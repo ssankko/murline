@@ -61,6 +61,16 @@ export async function boot(print: (lines: string[]) => void): Promise<Settings> 
       ),
       await failure(() => restoreInstrument(settings)),
       await failure(() => invoke('audio_set_chain', { chain: settings.effect_chain })),
+      await failure(() =>
+        invoke('audio_set_keyboard_volume', { percent: settings.keyboard_volume }),
+      ),
+      await failure(() =>
+        invoke('audio_set_velocity_curve', {
+          min: settings.velocity_min,
+          max: settings.velocity_max,
+          curve: settings.velocity_curve,
+        }),
+      ),
     ];
     const first = reasons.find(Boolean);
     if (first) throw new Error(first);

@@ -1,7 +1,6 @@
 // The play screen: one 48 px bar of controls over the sheet, with the lane under it. One clock,
 // one frame loop, no state of the play in React beyond what the bar has to draw.
 
-import { AudioDialog } from '@/audio/dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
@@ -11,15 +10,7 @@ import {
   readSettings,
   setSetting,
 } from '@/db/db';
-import {
-  DEFAULT_LANE_LOOK,
-  DEFAULT_SPLIT,
-  Lane,
-  SPLIT_MAX,
-  SPLIT_MIN,
-  TOP_BAR,
-  type LaneLook,
-} from '@/lane/lane';
+import { DEFAULT_SPLIT, Lane, SPLIT_MAX, SPLIT_MIN, TOP_BAR } from '@/lane/lane';
 import { baseNameOf, pathOf, readScoreFile } from '@/library/index-file';
 import { setNotice } from '@/library/notice';
 import {
@@ -33,7 +24,7 @@ import { reindexIfChanged } from '@/library/scan';
 import { clamp } from '@/lib/utils';
 import { Collapse } from '@/look/collapse';
 import { Metronome, type MetronomeHandle } from '@/look/metronome';
-import { flipTheme, useDark } from '@/look/use-dark';
+import { useDark } from '@/look/use-dark';
 import { useMidiStatus } from '@/midi/use-midi-status';
 import { click, setClickVolume } from '@/play/click';
 import {
@@ -42,38 +33,25 @@ import {
   type PlayKind,
   type PlayState,
 } from '@/play/engine';
-import {
-  INHERITS_EVERYTHING,
-  pieceDefaultsOf,
-  readPieceDefaults,
-  resolvePlaySettings,
-  type PieceSettings,
-} from '@/play/resolve';
+import { resolvePlaySettings, UNSET_PIECE_SETTINGS, type PieceSettings } from '@/play/resolve';
 import {
   DEFAULT_PLAY_SETTINGS,
   type HandsSetting,
-  type KeyboardPreset,
   TEMPO_RANGE,
   tempoLabel,
   type PlayMode,
   type TempoMode,
 } from '@/play/settings';
-import { clampSection, sectionLabel, type Section } from '@/play/section';
+import { clampSection, savedSection, sectionLabel, type Section } from '@/play/section';
 import { useFrameLoop } from '@/play/use-frame-loop';
 import { bpmAt, ScoreError, type Measure } from '@/score/types';
 import { Button } from '@/components/ui/button';
-import {
-  GearPopover,
-  SettingsDialog,
-  SpacingPopup,
-  ViewPopover,
-  type SettingChange,
-} from '@/screens/settings';
+import { Mixer } from '@/audio/mixer';
+import { SettingsPanel, SpacingPopup, type SettingChange } from '@/screens/settings';
 import { Sheet, type Pinch } from '@/sheet/sheet';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
   ArrowLeft,
-  AudioLines,
   FastForward,
   Hand,
   Minus,
@@ -82,7 +60,7 @@ import {
   Plus,
   Repeat,
   RotateCcw,
-  Settings,
+  SlidersHorizontal,
   Square,
   Tally4,
 } from 'lucide-react';
@@ -137,7 +115,7 @@ export function PlayScreen({
     null,
   );
 
-  /** The Section and the toggle that gives it force. Both die with the screen. */
+  /** The Section and the toggle that gives it force. Both are kept with the piece. */
   const [section, setSection] = useState<Section | null>(null);
   const [loop, setLoop] = useState(false);
   const [measures, setMeasures] = useState<Measure[]>([]);
@@ -145,9 +123,9 @@ export function PlayScreen({
   /** What a pinch on the sheet is choosing while it lasts, which the panel over the paper shows. */
   const [pinch, setPinch] = useState<Pinch | null>(null);
   const [split, setSplit] = useState(DEFAULT_SPLIT);
-  const [look, setLook] = useState<LaneLook>(DEFAULT_LANE_LOOK);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [audioOpen, setAudioOpen] = useState(false);
+  const [settingsJump, setSettingsJump] = useState<string | null>(null);
+  const [mixerOpen, setMixerOpen] = useState(false);
   const [hands, setHands] = useState(DEFAULT_PLAY_SETTINGS.hands);
   /** A one-staff piece is all right hand, so it has no choice of hands to offer. */
   const [oneStaff, setOneStaff] = useState(false);
@@ -157,17 +135,9 @@ export function PlayScreen({
   const [tempoMode, setTempoMode] = useState<TempoMode>(DEFAULT_PLAY_SETTINGS.tempoMode);
   const [tempo, setTempo] = useState(DEFAULT_PLAY_SETTINGS.tempoValue);
   const [metronome, setMetronome] = useState(DEFAULT_PLAY_SETTINGS.metronome);
+  /** The bar's count-in is a toggle: one bar or none. The engine counts whatever number it holds. */
   const [countInBars, setCountInBars] = useState(DEFAULT_PLAY_SETTINGS.countInBars);
-  /** The bar's count-in toggle turns it off with 0 and back on at the last number of bars. */
-  const countInLast = useRef(Math.max(DEFAULT_PLAY_SETTINGS.countInBars, 1));
-  const [keyboard, setKeyboard] = useState({
-    keyboardPreset: DEFAULT_PLAY_SETTINGS.keyboardPreset as KeyboardPreset,
-    keyboardLo: DEFAULT_PLAY_SETTINGS.keyboardLo,
-    keyboardHi: DEFAULT_PLAY_SETTINGS.keyboardHi,
-  });
   const [mode, setMode] = useState<PlayMode>(DEFAULT_PLAY_SETTINGS.mode);
-  /** A mode clicked before the sheet loads has no engine to reach, so the new one opens in it. */
-  const modeRef = useRef<PlayMode>(DEFAULT_PLAY_SETTINGS.mode);
   /** The score's own tempo, and whether it has only one, which is what BPM mode needs. */
   const [written, setWritten] = useState({ bpm: 120, constant: false });
   const midi = useMidiStatus((event) => engineRef.current?.strike(event));
@@ -185,7 +155,7 @@ export function PlayScreen({
         await reindexIfChanged(folder, path);
         const bytes = await readScoreFile(pathOf(folder, path));
         const [globals, row] = await Promise.all([readSettings(), getPiece(path).catch(() => null)]);
-        const resolved = resolvePlaySettings(row ?? INHERITS_EVERYTHING, pieceDefaultsOf(globals));
+        const resolved = resolvePlaySettings(row ?? UNSET_PIECE_SETTINGS);
         const sheet = await Sheet.open(
           hostRef.current!,
           bytes,
@@ -196,41 +166,46 @@ export function PlayScreen({
         );
         if (!live) return sheet.dispose();
         sheetRef.current = sheet;
-        // The piece opens as it was left: its own settings over the global defaults over these.
+        // The file may have changed since the Section was saved, so the engine is never given one
+        // naming a bar this piece no longer has.
+        const kept = savedSection(sheet.score.measures, resolved.sectionFrom, resolved.sectionTo);
+        const opening: PieceSettings = {
+          ...resolved,
+          sectionFrom: kept?.from ?? null,
+          sectionTo: kept?.to ?? null,
+        };
+        // The piece opens as it was left: its own settings over the built-in defaults, with the
+        // global knobs (the grade windows, the keyboard size) between the two.
         const engine = new Engine(sheet.score, {
           ...DEFAULT_PLAY_SETTINGS,
           ...knobValues(globals, ENGINE_KNOBS),
-          mode: modeRef.current,
-          ...resolved.settings,
+          ...opening,
         });
         if (intent === 'performance') engine.arm();
         engineRef.current = engine;
         // The sheet knows where a click landed; the screen decides what it means.
         sheet.onSeek = (target) => engine.seek(target);
-        // A pinch has already spaced the sheet; this only stores what it settled on. A View
-        // popover standing open keeps its own slider until it is reopened and rereads the setting.
+        // A pinch has already spaced the sheet; this only stores what it settled on.
         sheet.onLook = ({ spacing }) => {
           setSetting('sheet_spacing', spacing).catch(console.error);
         };
-        sheet.onPinch = setPinch;
+        sheet.onPinch = (moving) => setPinch(moving);
         sheet.onSection = (picked) => {
           if (engine.kind !== 'practice') return;
-          setSection(picked && clampSection(sheet.score.measures, picked));
+          changeSection(picked && clampSection(sheet.score.measures, picked));
         };
         setMeasures(sheet.score.measures);
         sheet.setLook({ harmony: globals.sheet_harmony, colour: globals.sheet_colour });
         const lane = knobValues(globals, LANE_KNOBS);
         laneRef.current = new Lane(canvasRef.current!, engine, lane, darkRef.current);
         laneRef.current.onSeek = (target) => engine.seek(target);
-        // A pinch has already scaled the lane; this only shows the beats it settled on in the gear
-        // and writes them down.
+        // A pinch has already scaled the lane; this only writes down the beats it settled on.
         laneRef.current.onLook = ({ lookaheadBeats }) => {
           if (lookaheadBeats !== undefined) changeLook('lane_lookahead', lookaheadBeats);
         };
         setSplit(clamp(globals.sheet_split, SPLIT_MIN, SPLIT_MAX));
-        setLook(lane);
         setOneStaff(sheet.score.staffCount < 2);
-        show(resolved.settings);
+        show(opening, kept);
         setClickVolume(globals.click_volume);
         setWritten({
           bpm: sheet.score.hasTempo ? Math.round(bpmAt(sheet.score, 0)) : 120,
@@ -316,7 +291,7 @@ export function PlayScreen({
   }
 
   /**
-   * Every piece setting the bar or the gear changes goes to the piece row at once, so the piece
+   * Every piece setting the bar changes goes to the piece row at once, so the piece
    * reopens as it was left. A performance hides those controls, so nothing is written during one.
    */
   function persist(values: PieceSettingValues): void {
@@ -325,29 +300,20 @@ export function PlayScreen({
   }
 
   /** Puts a resolved set of piece settings on the bar, the engine, the sheet and the keyboard. */
-  function show(settings: PieceSettings): void {
+  function show(settings: PieceSettings, kept: Section | null): void {
     setTempoMode(settings.tempoMode);
     setTempo(settings.tempoValue);
     setMetronome(settings.metronome);
     setCountInBars(settings.countInBars);
-    if (settings.countInBars > 0) countInLast.current = settings.countInBars;
     setHands(settings.hands);
-    setKeyboard({
-      keyboardPreset: settings.keyboardPreset,
-      keyboardLo: settings.keyboardLo,
-      keyboardHi: settings.keyboardHi,
-    });
+    setMode(settings.mode);
+    setLoop(settings.loop);
+    setSection(kept);
     const engine = engineRef.current;
     if (!engine) return;
     Object.assign(engine.settings, settings);
     sheetRef.current?.setHands(settings.hands);
     laneRef.current?.setRange();
-  }
-
-  /** The piece forgets every setting of its own and plays at the global defaults again. */
-  async function useGlobalDefaults(): Promise<void> {
-    await updatePieceSettings(path, INHERITS_EVERYTHING);
-    show(resolvePlaySettings(INHERITS_EVERYTHING, await readPieceDefaults()).settings);
   }
 
   function changeTempo(value: number): void {
@@ -357,7 +323,6 @@ export function PlayScreen({
   }
 
   function changeCountIn(bars: number): void {
-    if (bars > 0) countInLast.current = bars;
     setCountInBars(bars);
     if (engineRef.current) engineRef.current.settings.countInBars = bars;
     persist({ count_in_bars: bars });
@@ -371,36 +336,33 @@ export function PlayScreen({
 
   /** Wait mode takes hold from the Onset the cursor stands at; Flow lets go from there. */
   function changeMode(next: PlayMode): void {
-    modeRef.current = next;
     setMode(next);
     if (engineRef.current) engineRef.current.settings.mode = next;
+    persist({ mode: next });
   }
 
-  function changeKeyboard(preset: KeyboardPreset, lo: number, hi: number): void {
-    setKeyboard({ keyboardPreset: preset, keyboardLo: lo, keyboardHi: hi });
-    const engine = engineRef.current;
-    if (engine) {
-      Object.assign(engine.settings, {
-        keyboardPreset: preset,
-        keyboardLo: lo,
-        keyboardHi: hi,
-      });
-      laneRef.current?.setRange();
-    }
-    persist({ keyboard_preset: String(preset), keyboard_lo: lo, keyboard_hi: hi });
+  // The Section and Loop reach the engine through the effect that watches them, so these two only
+  // move the screen's own state and write it down.
+
+  function changeLoop(on: boolean): void {
+    setLoop(on);
+    persist({ loop: on ? 1 : 0 });
   }
 
-  /** A look knob the gear turns: the next frame reads the same object the lane holds. */
+  function changeSection(next: Section | null): void {
+    setSection(next);
+    persist({ section_from: next?.from ?? null, section_to: next?.to ?? null });
+  }
+
+  /** A look knob a pinch turned: the next frame reads the same object the lane holds. */
   function changeLook(key: keyof typeof LANE_KNOBS, value: number | boolean): void {
     showLook(key, value);
     setSetting(key, value as never).catch(console.error);
   }
 
-  /** The lane's look as the gear or the dialog just wrote it, on the screen and on the lane. */
+  /** The lane's look as the panel just wrote it, on the lane the next frame draws. */
   function showLook(key: keyof typeof LANE_KNOBS, value: number | boolean): void {
-    const field = LANE_KNOBS[key];
-    setLook((held) => ({ ...held, [field]: value }));
-    Object.assign(laneRef.current?.look ?? {}, { [field]: value });
+    Object.assign(laneRef.current?.look ?? {}, { [LANE_KNOBS[key]]: value });
   }
 
   /** A global knob the dialog writes reaches the running play through the same live objects. */
@@ -408,6 +370,8 @@ export function PlayScreen({
     const engineField = ENGINE_KNOBS[key as keyof typeof ENGINE_KNOBS];
     if (engineField && engineRef.current) {
       Object.assign(engineRef.current.settings, { [engineField]: value });
+      // The keyboard size is the one engine knob the lane lays itself out from.
+      if (key.startsWith('keyboard_')) laneRef.current?.setRange();
     }
     if (key in LANE_KNOBS) showLook(key as keyof typeof LANE_KNOBS, value as number | boolean);
     if (key === 'sheet_harmony') sheetRef.current?.setLook({ harmony: value });
@@ -469,15 +433,14 @@ export function PlayScreen({
         // Escape clears the Section only in a practice that is already still; every other play,
         // an armed performance included, it aborts.
         const engine = engineRef.current;
-        if (engine?.kind === 'practice' && engine.snapshot().state === 'idle') setSection(null);
+        if (engine?.kind === 'practice' && engine.snapshot().state === 'idle') changeSection(null);
         else engine?.abort();
-      } else if (event.key === 'd' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        setSetting('theme', flipTheme()).catch(console.error);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+    // Escape writes the cleared Section down, so the handler must hold the piece on screen now.
+  }, [path]);
 
   /** Play and pause are the same key and the same disc, whatever the play is doing. */
   function toggle(): void {
@@ -538,36 +501,25 @@ export function PlayScreen({
             <ArrowLeft {...ICON} />
           </BarButton>
           <b className="ml-1.5 mr-1 min-w-0 truncate text-[13px] font-medium">{title}</b>
-          <GearPopover
-            trigger={
-              <button
-                aria-label="Piece settings"
-                className="hover:bg-ink/8 relative flex h-8 w-8 flex-none items-center justify-center rounded-md transition-colors duration-150"
-              >
-                <Settings {...ICON} />
-              </button>
-            }
-            performing={performing}
-            keyboard={keyboard}
-            countInBars={countInBars}
-            look={look}
-            onKeyboard={changeKeyboard}
-            onCountInBars={changeCountIn}
-            onLook={changeLook}
-            onUseGlobalDefaults={() => useGlobalDefaults().catch(console.error)}
-            onAllSettings={() => setSettingsOpen(true)}
+          <Mixer
+            open={mixerOpen}
+            onOpenChange={setMixerOpen}
+            onSoundSettings={() => {
+              setSettingsJump('instrument_id');
+              setSettingsOpen(true);
+            }}
+            onGlobalChange={applyGlobal}
           />
-          <BarButton label="Audio" onClick={() => setAudioOpen(true)}>
-            <AudioLines {...ICON} />
+          <BarButton label="Settings" onClick={() => setSettingsOpen(true)}>
+            <SlidersHorizontal {...ICON} />
           </BarButton>
-          <ViewPopover onChange={applyGlobal} />
 
           {/* The play disc keeps the window's midline whatever the two sides hold. */}
           <div className="absolute left-1/2 flex -translate-x-1/2 items-center gap-0.5">
             <BarButton
               label="Count-in"
               pressed={countInBars > 0}
-              onClick={() => changeCountIn(countInBars > 0 ? 0 : countInLast.current)}
+              onClick={() => changeCountIn(countInBars > 0 ? 0 : 1)}
             >
               <Tally4 {...ICON} />
             </BarButton>
@@ -583,7 +535,7 @@ export function PlayScreen({
               <BarButton
                 label={sectionLabel(measures, section)}
                 pressed={loop}
-                onClick={() => setLoop((on) => !on)}
+                onClick={() => changeLoop(!loop)}
               >
                 <Repeat {...ICON} />
               </BarButton>
@@ -681,12 +633,16 @@ export function PlayScreen({
 
         <SpacingPopup pinch={pinch} />
 
-        {settingsOpen && (
-          <SettingsDialog onClose={() => setSettingsOpen(false)} onGlobalChange={applyGlobal} />
-        )}
-
-        {/* The dialog is global, so it changes nothing the frame loop reads: the clock runs on. */}
-        {audioOpen && <AudioDialog onClose={() => setAudioOpen(false)} />}
+        <SettingsPanel
+          open={settingsOpen}
+          jumpTo={settingsJump}
+          onClose={() => {
+            setSettingsOpen(false);
+            setSettingsJump(null);
+          }}
+          onGlobalChange={applyGlobal}
+          onOpenMixer={() => setMixerOpen(true)}
+        />
       </div>
     </TooltipProvider>
   );

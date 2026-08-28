@@ -1,4 +1,3 @@
-import { AudioDialog } from '@/audio/dialog';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -32,16 +31,15 @@ import {
   type SortOrder,
 } from '@/library/queries';
 import { scanLibrary, splitError } from '@/library/scan';
-import { setSetting } from '@/db/db';
 import { Collapse } from '@/look/collapse';
-import { readPieceDefaults, type PieceSettings } from '@/play/resolve';
 import { Finder } from '@/screens/finder';
 import { Detail } from '@/screens/piece-detail';
-import { SettingsDialog } from '@/screens/settings';
+import { Mixer } from '@/audio/mixer';
+import { SettingsPanel } from '@/screens/settings';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open } from '@tauri-apps/plugin-dialog';
-import { ArrowUpDown, AudioLines, Settings } from 'lucide-react';
+import { ArrowUpDown, Settings } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 const SORTS: [SortOrder, string][] = [
@@ -78,15 +76,9 @@ export function Library({
   /** The lower-cased, NFC folder-relative paths of every present piece, read when the finder opens. */
   const [finding, setFinding] = useState<Set<string> | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [audioOpen, setAudioOpen] = useState(false);
-  const [defaults, setDefaults] = useState<Partial<PieceSettings>>({});
-
-  // The Play settings list holds the resolved values, so it needs the middle level of every field.
-  // Only closing the dialog can have changed one.
-  useEffect(() => {
-    if (settingsOpen) return;
-    void readPieceDefaults().then(setDefaults);
-  }, [settingsOpen]);
+  /** The row the panel opens on, which only the mixer's way into the Sound tab sets. */
+  const [settingsJump, setSettingsJump] = useState<string | null>(null);
+  const [mixerOpen, setMixerOpen] = useState(false);
 
   // `scanLibrary` walks a folder once, so a sort change costs the re-list alone.
   useEffect(() => {
@@ -168,14 +160,6 @@ export function Library({
     if (failures.length) setNotice(failureNotice(failures));
   }
 
-  /** A new library folder: the setting moves, the launch scan runs again, no file is touched. */
-  async function chooseFolder(): Promise<void> {
-    const picked = await open({ directory: true, defaultPath: folder ?? undefined });
-    if (typeof picked !== 'string') return;
-    await setSetting('library_folder', picked);
-    onFolder(picked);
-  }
-
   /** "In library" answers for the whole folder, not for the rows the current sort shows. */
   async function openFinder(): Promise<void> {
     const paths = await allPiecePaths();
@@ -234,9 +218,14 @@ export function Library({
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button variant="ghost" size="icon" aria-label="Audio" onClick={() => setAudioOpen(true)}>
-            <AudioLines />
-          </Button>
+          <Mixer
+            open={mixerOpen}
+            onOpenChange={setMixerOpen}
+            onSoundSettings={() => {
+              setSettingsJump('instrument_id');
+              setSettingsOpen(true);
+            }}
+          />
           <Button
             variant="ghost"
             size="icon"
@@ -254,13 +243,14 @@ export function Library({
               Library folder not found
               <span className="text-muted-ink"> {folder}</span>
             </p>
+            {/* The folder has one home now: the panel's Library tab. */}
             <Button
               variant="outline"
               size="sm"
               className="ml-auto h-7 flex-none"
-              onClick={() => void chooseFolder()}
+              onClick={() => setSettingsOpen(true)}
             >
-              Choose…
+              Settings…
             </Button>
           </div>
         )}
@@ -312,7 +302,6 @@ export function Library({
         <Detail
           piece={piece}
           folder={folder}
-          defaults={defaults}
           onFavorite={() => void toggleFavorite(piece)}
           onDelete={() => void remove(piece)}
           onPlay={onPlay}
@@ -352,16 +341,19 @@ export function Library({
         />
       )}
 
-      {audioOpen && <AudioDialog onClose={() => setAudioOpen(false)} />}
-
-      {settingsOpen && (
-        <SettingsDialog
-          onClose={() => setSettingsOpen(false)}
-          onGlobalChange={(key, value) => {
-            if (key === 'library_folder') onFolder(value as string);
-          }}
-        />
-      )}
+      {/* A new library folder re-points the app. The scan runs again and no file is touched. */}
+      <SettingsPanel
+        open={settingsOpen}
+        jumpTo={settingsJump}
+        onClose={() => {
+          setSettingsOpen(false);
+          setSettingsJump(null);
+        }}
+        onGlobalChange={(key, value) => {
+          if (key === 'library_folder') onFolder(value as string);
+        }}
+        onOpenMixer={() => setMixerOpen(true)}
+      />
 
       {clash && (
         <Dialog open onOpenChange={() => clash.decide('cancel')}>

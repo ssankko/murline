@@ -39,11 +39,16 @@ A view of a piece's whole sheet, opened from the library to read the piece throu
 _Avoid_: Viewer, reader, score view
 
 **Piece settings**:
-Settings that apply to one piece (tempo, metronome, count-in, hands, keyboard). A piece setting that is unset falls back to the global setting.
+The settings that belong to one piece and are set on the play toolbar while practising it: tempo, hands, metronome, count-in, Flow or Wait, the Section and Loop. Each piece keeps its own, with a built-in starting value and nothing global behind it.
+_Avoid_: Per-piece settings, overrides, piece defaults
 
 **Global settings**:
-Settings that apply to the whole app: the default value of every piece setting, used when a piece has no value of its own, and everything that is never per piece (grade windows and weights, lane look, MIDI device, velocity offset, theme).
+The settings that apply to the whole app rather than to any one piece: sound, look, MIDI, grading, keyboard size and the library folders.
 _Avoid_: Preferences, defaults
+
+**Settings panel**:
+The modal holding every global setting, grouped into Sound, Look, Playing and Library tabs with one search box reaching across all four. Opened from every screen, and while it is open it owns the whole screen's input.
+_Avoid_: Settings dialog, preferences, options
 
 ### Playing
 
@@ -56,7 +61,7 @@ A play in Flow or Wait mode in which the user may pause, seek, loop and change a
 _Avoid_: Practice run, practice mode, rehearsal
 
 **Performance**:
-A play of the whole piece in Flow mode, from the first bar to the last with repeats, at one tempo and one hands setting, with no pause, seek or setting change. The only kind of play that earns a Grade.
+A play of the whole piece in Flow mode, from the first bar to the last with repeats, at one tempo and one hands setting, with no pause, seek or setting change. The only kind of play that earns a Grade. Whatever mode, Section and Loop the piece has saved are set aside for its duration and handed back when it ends.
 _Avoid_: Performance run, performance mode, test, exam
 
 **Sheet**:
@@ -84,12 +89,16 @@ One moment in the score at which one or more notes start. The unit Wait mode wai
 _Avoid_: Beat, step, chord
 
 **Section**:
-A range of whole bars of a piece, picked by dragging on the sheet. Inert until Loop is on: with Loop off a practice runs through it to the end of the piece.
+A range of whole bars of a piece, picked by dragging on the sheet and kept with the piece. Inert until Loop is on: with Loop off a practice runs through it to the end of the piece.
 _Avoid_: Range, loop range, region
 
 **Loop**:
-The toggle that gives the Section force: the practice starts at the Section, plays its bars in written order, and wraps from its last bar line back to its start. With no Section, the whole piece wraps.
+The toggle that gives the Section force: the practice starts at the Section, plays its bars in written order, and wraps from its last bar line back to its start. With no Section, the whole piece wraps. Kept with the piece, as the Section is.
 _Avoid_: Repeat, cycle
+
+**Keyboard size**:
+The span of keys the on-screen keyboard draws: a fixed number of keys, a custom range, or the span the open piece needs. One global setting, the same for every piece.
+_Avoid_: Keyboard preset, key range, keyboard width
 
 **Inactive hand**:
 The hand not selected when the hands setting is left or right. Its notes are context only: never expected, never graded, never required by Wait mode, and a strike on one of them is absorbed.
@@ -129,6 +138,22 @@ _Avoid_: Patch, preset, voice, sound font (a SoundFont is one kind of file an in
 The ordered list of Audio Unit effects between the instrument and the output. Each slot has a bypass toggle and keeps its plugin's own settings; a slot whose plugin is not installed keeps its place and is skipped.
 _Avoid_: FX chain, rack, inserts, effects bus
 
-**Audio dialog**:
-The one global dialog for the output device, the instrument and the effect chain, opened from the Audio button on the play screen and the library screen. Every control writes on change, and one line says what is wrong with the sound engine.
-_Avoid_: Audio settings, sound preferences (see Global settings)
+**Mixer**:
+The popover behind the volume button that carries the keyboard volume and the metronome's, names the output device and instrument in force, and says when the sound engine is down.
+_Avoid_: Volume popover, levels, audio dialog
+
+**Keyboard volume**:
+How loud the whole keyboard sounds. It applies after the effect chain, so it trims the finished sound without changing how the instrument or the effects behave.
+_Avoid_: Master volume, output gain, level
+
+**Envelope**:
+How loud a note is over its own lifetime: the attack it comes in on, the decay down to the sustain it holds at while the key is down, and the release it dies away over once the key comes up. Kept per instrument, so a heavy piano and a thin organ each keep their own. Only the sampler has one to set; a hosted Audio Unit shapes its notes behind its own window. Setting it costs about a second inside CoreAudio and the sound stops for it, so it is sent once the hand comes off the slider rather than as it moves, and the section warns from the first touch of a slider until the engine has it. It is put back after every load, which reads the instrument file's own envelope in over it.
+_Avoid_: ADSR (the four sliders, not the concept), amp envelope, volume envelope, contour
+
+**Velocity curve**:
+The remap from the velocity a key press sends to the velocity the app works in, set by a minimum, a maximum and the shape of the path between them. Velocity 1 lands on the minimum and velocity 127 on the maximum, so the whole of the keyboard's range is squeezed into the band rather than cut off at it. Calibrated by ear. The instrument is played at the output velocity and so is the Preview, and a grade reads the output velocity too. Distinct from the keyboard volume, which trims the finished sound rather than the velocity behind it.
+_Avoid_: Velocity sensitivity, dynamics curve, velocity clamp
+
+**Sounding**:
+The keys the Sound tab's two plots draw: the ones under the hands, plus the ones let go and still dying away. Each carries the velocity it was struck at and how long it was held, and each is drawn in its own pitch colour, the same colours the lane uses. The touch plot puts one at the height it was struck; the envelope plot walks one along the envelope. A key let go leaves both plots at once, after the envelope's release, so neither is left holding a note the other has finished with. The tab counts them itself and only while the panel is open.
+_Avoid_: Active notes, held keys, note pool

@@ -1,59 +1,43 @@
-// Where the settings of one play come from: the piece's own column, else the global default, else
-// the built-in default. A piece column of NULL is what "inherit" looks like in the database, so 0
-// and false are values like any other and never fall through.
+// Where the settings of one play come from: the piece's own column, else the built-in default.
+// There is no level between the two. A piece column of NULL is a setting the piece has never been
+// given, so 0 and false are values like any other and never fall through.
 
-import { knobValues, PIECE_DEFAULT_KEYS, readSettings, type Settings } from '@/db/db';
 import { PIECE_SETTING_COLUMNS, type PieceSettingRow } from '@/library/queries';
 import {
   DEFAULT_PLAY_SETTINGS,
   type HandsSetting,
-  type KeyboardPreset,
+  type PlayMode,
   type PlaySettings,
 } from '@/play/settings';
 
-/** The settings a piece may hold of its own. Everything else about a play is global. */
+/** The settings a piece holds of its own. Everything else about a play is global. */
 export type PieceSettings = Pick<PlaySettings, keyof typeof PIECE_SETTING_COLUMNS>;
 
-/** True for every field the piece left NULL, which is what the library shows muted. */
-export type Inherited = Record<keyof PieceSettings, boolean>;
-
-/** A row that holds no setting of its own, which is what "Use global defaults" leaves behind. */
-export const INHERITS_EVERYTHING = Object.fromEntries(
+/** A row holding no setting of its own, which is what a piece never opened before looks like. */
+export const UNSET_PIECE_SETTINGS = Object.fromEntries(
   Object.values(PIECE_SETTING_COLUMNS).map((column) => [column, null]),
 ) as PieceSettingRow;
 
-/** The three levels, field by field, with the ones the piece did not answer for. */
-export function resolvePlaySettings(
-  piece: PieceSettingRow,
-  globals: Partial<PieceSettings>,
-): { settings: PieceSettings; inherited: Inherited } {
+/** The piece's own value in every field it has one, and the built-in default in the rest. */
+export function resolvePlaySettings(piece: PieceSettingRow): PieceSettings {
   const own: { [K in keyof PieceSettings]: PieceSettings[K] | null } = {
     tempoMode: piece.tempo_mode === 'percent' || piece.tempo_mode === 'bpm' ? piece.tempo_mode : null,
     tempoValue: piece.tempo_value,
     metronome: piece.metronome === null ? null : piece.metronome !== 0,
     countInBars: piece.count_in_bars,
     hands: handsOf(piece.hands),
-    keyboardPreset: presetOf(piece.keyboard_preset),
-    keyboardLo: piece.keyboard_lo,
-    keyboardHi: piece.keyboard_hi,
+    mode: modeOf(piece.mode),
+    loop: piece.loop === null ? null : piece.loop !== 0,
+    // A Section is two indices or neither, and null is the built-in default, so both fall through
+    // together. The bars they name may be gone from the file; the play screen is where that shows.
+    sectionFrom: piece.section_from,
+    sectionTo: piece.section_to,
   };
   const settings: Record<string, unknown> = {};
-  const inherited: Record<string, boolean> = {};
   for (const [key, value] of Object.entries(own) as [keyof PieceSettings, unknown][]) {
-    settings[key] = value ?? globals[key] ?? DEFAULT_PLAY_SETTINGS[key];
-    inherited[key] = value === null;
+    settings[key] = value ?? DEFAULT_PLAY_SETTINGS[key];
   }
-  return { settings: settings as PieceSettings, inherited: inherited as Inherited };
-}
-
-/** The Playing defaults group: the middle level of the resolution. Tempo mode is never global. */
-export function pieceDefaultsOf(settings: Settings): Partial<PieceSettings> {
-  return knobValues(settings, PIECE_DEFAULT_KEYS);
-}
-
-/** The same, for a caller that holds no settings of its own yet. */
-export async function readPieceDefaults(): Promise<Partial<PieceSettings>> {
-  return pieceDefaultsOf(await readSettings());
+  return settings as PieceSettings;
 }
 
 /**
@@ -77,9 +61,6 @@ function handsOf(text: string | null): HandsSetting | null {
   return text === 'both' || text === 'left' || text === 'right' ? text : null;
 }
 
-/** The preset column holds "piece", "custom" or the key count as text. */
-function presetOf(text: string | null): KeyboardPreset | null {
-  if (text === 'piece' || text === 'custom') return text;
-  const keys = Number(text);
-  return text !== null && [25, 49, 61, 76, 88].includes(keys) ? (keys as KeyboardPreset) : null;
+function modeOf(text: string | null): PlayMode | null {
+  return text === 'flow' || text === 'wait' ? text : null;
 }

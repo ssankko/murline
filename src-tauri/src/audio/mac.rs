@@ -7,11 +7,12 @@
 //! host-side ones AVFAudio documents as safe off it.
 
 mod effects;
+mod envelope;
 pub use effects::{chain, effects, set_chain, show_effect};
 
 use crate::audio::device::{self, DeviceId};
 use crate::audio::preview::{PreviewNote, Scheduler};
-use crate::audio::{OutputDevice, Status, progress};
+use crate::audio::{Envelope, OutputDevice, Status, progress};
 // The instrument the graph plays, and the window a hosted plugin brings with it.
 pub use crate::audio::instruments::{list as instruments, load as load_instrument};
 pub use crate::audio::window::show_instrument;
@@ -24,8 +25,8 @@ use objc2_audio_toolbox::{
 };
 use objc2_avf_audio::{
     AVAudioEngine, AVAudioEngineConfigurationChangeNotification, AVAudioEngineManualRenderingMode,
-    AVAudioFormat, AVAudioMixing, AVAudioPCMBuffer, AVAudioPlayerNode, AVAudioUnitMIDIInstrument,
-    AVAudioUnitSampler,
+    AVAudioFormat, AVAudioMixerNode, AVAudioMixing, AVAudioPCMBuffer, AVAudioPlayerNode,
+    AVAudioUnitMIDIInstrument, AVAudioUnitSampler,
 };
 #[cfg(test)]
 use objc2_avf_audio::AVAudioEngineManualRenderingStatus;
@@ -62,6 +63,11 @@ const MELODIC_BANK_MSB: u8 = 0x79;
 /// The buffer sizes the dialog offers, and the one the app starts at.
 pub const FRAME_CHOICES: [u32; 4] = [32, 64, 128, 256];
 pub const DEFAULT_FRAMES: u32 = 64;
+/// The velocity remap the engine starts with: the whole range in, the whole range out, straight.
+/// Out of the box the app hands back exactly what the keyboard sent.
+const DEFAULT_MIN: u8 = 1;
+const DEFAULT_MAX: u8 = 127;
+const DEFAULT_CURVE: f64 = 1.0;
 /// The status line when the device the user picked is not plugged in.
 const GONE: &str = "Your chosen output device is not connected; playing through the system default";
 
@@ -99,6 +105,11 @@ pub struct Graph {
     /// in the sampler's place; the sampler stays in the graph, silent.
     plugin: Option<Retained<AVAudioUnitMIDIInstrument>>,
     clicker: Retained<AVAudioPlayerNode>,
+    /// The keyboard volume, a gain the whole instrument path runs through on its way to the mixer.
+    /// It sits after the effects on purpose: a trim before them would change what a compressor or
+    /// a reverb is given and so change how the instrument answers the hands, which is the one
+    /// thing turning the volume down must not do. The click does not pass through it.
+    fader: Retained<AVAudioMixerNode>,
     format: Retained<AVAudioFormat>,
     strong: Retained<AVAudioPCMBuffer>,
     weak: Retained<AVAudioPCMBuffer>,
@@ -108,6 +119,9 @@ pub struct Graph {
     /// next time its node is initialised, and the engine initialises the node on every start and
     /// on every change of the wiring, so the file goes back in each time.
     file: Option<PathBuf>,
+    /// The envelope asked for, if any, which is put back on the sampler after every reload: a load
+    /// reads the instrument file's own envelope in over whatever was set.
+    envelope: Option<Envelope>,
     /// Frames one offline render pass may take at most, zero while the graph plays to a device.
     offline_frames: u32,
     /// The instrument the user picked, which is what makes the engine playable.
@@ -120,6 +134,11 @@ pub struct Graph {
     fell_back: bool,
     /// The buffer the user picked. What the device runs may differ, and the status reports that.
     wanted_frames: u32,
+    /// The velocity remap: the output the lightest strike lands on, the output the hardest lands
+    /// on, and the exponent of the path between them.
+    velocity_min: u8,
+    velocity_max: u8,
+    velocity_curve: f64,
     /// Preview playback's note list and clock, pumped once per rendered buffer.
     preview: Scheduler,
 }
@@ -139,10 +158,15 @@ impl Graph {
             let engine = AVAudioEngine::new();
             let sampler = AVAudioUnitSampler::new();
             let clicker = AVAudioPlayerNode::new();
+            let fader = AVAudioMixerNode::new();
             engine.attachNode(&sampler);
             engine.attachNode(&clicker);
+            engine.attachNode(&fader);
             let mixer = engine.mainMixerNode();
-            engine.connect_to_format(&sampler, &mixer, Some(&format));
+            // The instrument end of this is rewired whenever the chain changes; the fader's own
+            // connection to the mixer never is, so setting the volume touches no connection.
+            engine.connect_to_format(&sampler, &fader, Some(&format));
+            engine.connect_to_format(&fader, &mixer, Some(&format));
             engine.connect_to_format(&clicker, &mixer, Some(&format));
             Ok(Graph {
                 strong: blip(&format, STRONG_HZ, STRONG_PEAK)?,
@@ -152,14 +176,19 @@ impl Graph {
                 sampler,
                 plugin: None,
                 clicker,
+                fader,
                 chain: Vec::new(),
                 file: None,
+                envelope: None,
                 offline_frames: 0,
                 chosen: None,
                 chosen_device: None,
                 device: 0,
                 fell_back: false,
                 wanted_frames: DEFAULT_FRAMES,
+                velocity_min: DEFAULT_MIN,
+                velocity_max: DEFAULT_MAX,
+                velocity_curve: DEFAULT_CURVE,
                 preview: Scheduler::default(),
             })
         }
@@ -254,6 +283,9 @@ impl Graph {
         self.release_all();
         let _turn = LOADING.lock().unwrap();
         self.file = Some(path.to_path_buf());
+        // The envelope belongs to the instrument that was playing, not to this one, which brings
+        // its own; the webview sets whatever was kept for this one once the load is through.
+        self.envelope = None;
         self.drop_plugin();
         // The sampler is the instrument again, so it takes the head of the chain back, and the
         // rewire is what reads the file in on the way.
@@ -282,12 +314,33 @@ impl Graph {
                 self.sampler.loadInstrumentAtURL_error(&url)
             }
         }
-        .map_err(reason)
+        .map_err(reason)?;
+        if let Some(want) = self.envelope {
+            envelope::write(&self.sampler, want);
+        }
+        Ok(())
+    }
+
+    /// What the sampler answers a key with now, or nothing when a plugin is playing in its place.
+    pub fn envelope(&self) -> Option<Envelope> {
+        if self.plugin.is_some() {
+            return None;
+        }
+        envelope::read(&self.sampler)
+    }
+
+    /// Sets it, and remembers it so that the next reload does not read the file's own back over it.
+    pub fn set_envelope(&mut self, want: Envelope) {
+        self.envelope = Some(want);
+        if self.plugin.is_none() {
+            envelope::write(&self.sampler, want);
+        }
     }
 
     /// Puts a hosted Audio Unit instrument in the sampler's place, taking out whichever one played
     /// before it.
     pub fn set_plugin(&mut self, unit: Retained<AVAudioUnitMIDIInstrument>) {
+        self.envelope = None;
         self.drop_plugin();
         let _turn = LOADING.lock().unwrap();
         unsafe { self.engine.attachNode(&unit) };
@@ -408,9 +461,23 @@ impl Graph {
         status.latency_ms = device::latency_ms(self.device, frames);
     }
 
-    pub fn note_on(&self, note: u8, velocity: u8) {
-        let velocity = curved(velocity);
+    /// Plays the note and answers the output velocity it was played at, which is the velocity the
+    /// rest of the app works in. The remap happens here and only here, so a caller that needs the
+    /// output takes it from the return rather than mapping a second time.
+    pub fn note_on(&self, note: u8, velocity: u8) -> u8 {
+        let velocity = curved(velocity, self.velocity_min, self.velocity_max, self.velocity_curve);
         unsafe { self.target().startNote_withVelocity_onChannel(note, velocity, CHANNEL) };
+        velocity
+    }
+
+    /// The velocity remap: `min` and `max` are the output velocities the lightest and the hardest
+    /// strike land on, `curve` the exponent of the path between them. Nothing is reconnected and no
+    /// voice is flushed, so the user can move any of them while playing and hear the next strike
+    /// answer.
+    pub fn set_velocity_curve(&mut self, min: u32, max: u32, curve: f64) {
+        self.velocity_min = min.clamp(1, 127) as u8;
+        self.velocity_max = max.clamp(1, 127) as u8;
+        self.velocity_curve = if curve > 0.0 { curve } else { DEFAULT_CURVE };
     }
 
     pub fn note_off(&self, note: u8) {
@@ -480,6 +547,13 @@ impl Graph {
         }
     }
 
+    /// The keyboard volume, 0 to 100: a gain on the finished sound, set in place. Nothing is
+    /// reconnected, because any connection change flushes every voice the graph has sounding and
+    /// would cut a ringing note off at the moment the fader moved.
+    pub fn set_keyboard_volume(&self, percent: u32) {
+        unsafe { self.fader.setOutputVolume(percent.min(100) as f32 / 100.0) };
+    }
+
     /// One metronome click, at a volume of 0 to 100.
     pub fn click(&self, strong: bool, volume: u32) {
         let buffer = if strong { &self.strong } else { &self.weak };
@@ -490,17 +564,21 @@ impl Graph {
     }
 }
 
-/// The velocity the instrument hears, bent away from the keyboard's straight line so that a soft
-/// strike is soft and the loud end still reaches full. Only the sound is bent: the strike the
-/// webview grades carries the velocity the keyboard sent.
-// ponytail: the exponent is the whole feel knob. Higher makes soft playing softer and the
-// keyboard harder to fill out; 1.0 hands the keyboard's own response back.
-fn curved(velocity: u8) -> u8 {
-    const GAMMA: f64 = 1.6;
-    let bent = (127.0 * (f64::from(velocity) / 127.0).powf(GAMMA)).round() as u8;
-    // A note on at zero velocity is a note off to every instrument, so the softest strikes keep
-    // the quietest velocity there is rather than falling through the floor into silence.
-    if velocity > 0 { bent.max(1) } else { 0 }
+/// Input velocity to output velocity: velocity 1 lands on `min`, velocity 127 lands on `max`, and
+/// the exponent bends the path between them. Nothing is clamped, because every input already lands
+/// inside the two ends. Velocity 0 stays 0, a note on at zero velocity being a note off to every
+/// instrument.
+///
+/// This is the velocity the whole app works in, the instrument and the grade alike, not the sound
+/// alone. An exponent above 1 makes soft playing softer and the keyboard harder to fill out, below
+/// 1 the other way, and exactly 1 is a straight line between the two ends.
+fn curved(velocity: u8, min: u8, max: u8, exponent: f64) -> u8 {
+    if velocity == 0 {
+        return 0;
+    }
+    let (min, max) = (f64::from(min), f64::from(max));
+    let along = f64::from(velocity - 1) / 126.0;
+    (min + (max - min) * along.powf(exponent)).round() as u8
 }
 
 /// Hands the last reference to a hosted plugin to the main thread, which is the one thread a
@@ -746,6 +824,7 @@ pub fn status() -> Status {
         }
         Some(_) => Status { available: true, ..Status::default() },
     };
+    status.instrument = graph.instrument().unwrap_or_default().into();
     graph.describe_output(&mut status);
     status
 }
@@ -754,15 +833,35 @@ pub fn click(strong: bool, volume: u32) {
     with(|graph| graph.click(strong, volume));
 }
 
-/// One key of the MIDI keyboard, down or up.
-pub fn note(midi: u8, velocity: u8, on: bool) {
+pub fn set_keyboard_volume(percent: u32) {
+    with(|graph| graph.set_keyboard_volume(percent));
+}
+
+pub fn set_velocity_curve(min: u32, max: u32, curve: f64) {
+    with(|graph| graph.set_velocity_curve(min, max, curve));
+}
+
+pub fn envelope() -> Option<Envelope> {
+    with(|graph| graph.envelope()).flatten()
+}
+
+pub fn set_envelope(want: Envelope) {
+    with(|graph| graph.set_envelope(want));
+}
+
+/// One key of the MIDI keyboard, down or up. Answers the output velocity the note was played at, so
+/// the caller telling the webview about the strike reports the same number the instrument heard.
+/// A key coming up carries the velocity it arrived with: only a note on is remapped.
+pub fn note(midi: u8, velocity: u8, on: bool) -> u8 {
     with(|graph| {
         if on {
-            graph.note_on(midi, velocity);
+            graph.note_on(midi, velocity)
         } else {
             graph.note_off(midi);
+            velocity
         }
-    });
+    })
+    .unwrap_or(velocity)
 }
 
 /// The sustain pedal, as controller 64 sent it. Half travel and up is down, as every host reads it.
@@ -837,7 +936,25 @@ mod tests {
     /// Plays a note and lets it go again, answering how loud it was. Two instruments differ in
     /// that number, which is all a test needs to tell one from the other.
     fn note_peak(graph: &mut Graph) -> f32 {
+        struck(graph, 100)
+    }
+
+    /// The same, at a velocity of the test's choosing: what one strike comes out at once the
+    /// velocity remap has had it.
+    fn struck(graph: &mut Graph, velocity: u8) -> f32 {
+        graph.note_on(60, velocity);
+        let peak = graph.render_peak(LOOK).unwrap();
+        graph.release_all();
+        graph.render_peak(LOOK).unwrap();
+        peak
+    }
+
+    /// The note as it comes out at one fader position. A mixer ramps a volume change over the
+    /// render call that follows it, so the window read is the second one.
+    fn at_volume(graph: &mut Graph, percent: u32) -> f32 {
+        graph.set_keyboard_volume(percent);
         graph.note_on(60, 100);
+        graph.render_peak(LOOK).unwrap();
         let peak = graph.render_peak(LOOK).unwrap();
         graph.release_all();
         graph.render_peak(LOOK).unwrap();
@@ -861,6 +978,24 @@ mod tests {
     /// Renders one pass at a time and hands back the first one that made a sound.
     fn first_sounding_pass(graph: &mut Graph, passes: u32) -> Option<u32> {
         (0..passes).find(|_| graph.render_peak(PASS).unwrap() > 0.01)
+    }
+
+    /// The keyboard fader trims the finished sound: the same note played twice differs by exactly
+    /// what the fader was moved by, and a fader at zero makes no sound at all.
+    #[test]
+    fn the_fader_trims_the_note_and_zero_is_silence() {
+        let mut graph = offline();
+        let full = at_volume(&mut graph, 100);
+        assert!(full > 0.01, "the fixture sounds at all: {full}");
+
+        let quarter = at_volume(&mut graph, 25);
+        assert!(quarter < full / 2.0, "a fader pulled down is quieter: {quarter} against {full}");
+        assert!(
+            (quarter - full / 4.0).abs() < full / 50.0,
+            "and quieter by what the fader says: {quarter} against a quarter of {full}"
+        );
+
+        assert_eq!(at_volume(&mut graph, 0), 0.0, "a fader at zero is silence");
     }
 
     /// The one test that plays out of the real output device, in the order the app boots, so that
@@ -1007,16 +1142,80 @@ mod tests {
     }
 
     #[test]
-    fn the_velocity_curve_keeps_both_ends_and_pulls_the_middle_down() {
-        assert_eq!(curved(0), 0, "a note off stays a note off");
-        assert_eq!(curved(127), 127, "the hardest strike still reaches full");
-        assert!(curved(64) < 64, "a middling strike is quieter than the keyboard meant it");
+    fn the_velocity_remap_runs_from_the_minimum_to_the_maximum() {
+        assert_eq!(curved(0, 1, 127, 1.6), 0, "a note off stays a note off");
 
-        assert!((1..=127).all(|velocity| curved(velocity) > 0), "no strike is bent into silence");
-        assert!(
-            (1..=127).all(|velocity| curved(velocity) >= curved(velocity - 1)),
-            "harder is never quieter"
-        );
+        // Both ends are exact wherever they are put: velocity 1 is the minimum and velocity 127 is
+        // the maximum, whatever the exponent does between them.
+        for (min, max) in [(1, 127), (30, 90), (64, 64), (1, 40), (100, 127)] {
+            for curve in [0.5, 1.0, 1.6, 2.5] {
+                assert_eq!(curved(1, min, max, curve), min, "the lightest strike is the minimum");
+                assert_eq!(curved(127, min, max, curve), max, "the hardest is the maximum");
+            }
+        }
+
+        // Nothing is clamped: every input lands inside the two ends because the map put it there.
+        for each in 1..=127 {
+            assert!((30..=90).contains(&curved(each, 30, 90, 1.6)), "the whole range is remapped");
+        }
+
+        // The middle of the slider is the straight line, and either side bends off it.
+        assert_eq!(curved(64, 1, 127, 1.0), 64, "an exponent of one is the keyboard's reading");
+        assert!(curved(64, 1, 127, 2.0) < 64, "a soft curve puts the middle under the line");
+        assert!(curved(64, 1, 127, 0.5) > 64, "a hard curve puts it over");
+
+        // Raising the minimum lifts the light end and leaves the hard end where it was.
+        assert!(curved(1, 64, 127, 1.6) > curved(1, 1, 127, 1.6));
+        assert_eq!(curved(127, 64, 127, 1.6), curved(127, 1, 127, 1.6));
+
+        for curve in [0.5, 1.0, 1.6, 2.5] {
+            let out = |each| curved(each, 1, 127, curve);
+            assert!((1..=127).all(|each| out(each) > 0), "no strike is silenced");
+            assert!((1..=127).all(|each| out(each) >= out(each - 1)), "harder is never quieter");
+        }
+    }
+
+    /// The remap is applied once, inside `note_on`, and `note` answers with its result. A caller
+    /// that wants the output velocity takes it from there rather than mapping again, which is what
+    /// keeps the strike the webview grades from being bent twice.
+    #[test]
+    fn a_played_note_answers_the_velocity_it_was_played_at() {
+        let mut graph = offline();
+        graph.set_velocity_curve(40, 100, 1.0);
+
+        let out = graph.note_on(60, 64);
+        assert_eq!(out, curved(64, 40, 100, 1.0), "the note answers its own output velocity");
+        assert_ne!(out, 64, "and it is not the input, under a remap that moves it");
+        assert_ne!(curved(out, 40, 100, 1.0), out, "a second mapping would land somewhere else");
+
+        // A key coming up is not a note on, so nothing is remapped on the way out.
+        graph.note_off(60);
+        graph.release_all();
+    }
+
+    /// The remap is between the keyboard and the instrument, so it is the note that changes, not
+    /// the finished sound: what this hears is the sampler answering a different velocity.
+    #[test]
+    fn the_minimum_velocity_lifts_a_light_strike_and_leaves_a_hard_one() {
+        let mut graph = offline();
+
+        graph.set_velocity_curve(1, 127, 1.6);
+        let (light, hard) = (struck(&mut graph, 1), struck(&mut graph, 127));
+
+        graph.set_velocity_curve(76, 127, 1.6);
+        assert!(struck(&mut graph, 1) > light, "the lightest strike came up");
+        assert_eq!(struck(&mut graph, 127), hard, "a hard strike is where it was");
+    }
+
+    #[test]
+    fn a_soft_curve_makes_a_middling_strike_quieter_than_a_hard_one() {
+        let mut graph = offline();
+
+        graph.set_velocity_curve(1, 127, 2.5);
+        let soft = struck(&mut graph, 64);
+
+        graph.set_velocity_curve(1, 127, 0.5);
+        assert!(struck(&mut graph, 64) > soft, "the same strike is louder under a hard curve");
     }
 
     #[test]
@@ -1215,5 +1414,45 @@ mod tests {
 
         assert!(!graph.preview.playing());
         assert_eq!(graph.preview.seconds(), 0.0);
+    }
+
+    /// How long a note goes on sounding after the key comes up, to the nearest hundredth of a
+    /// second. A thousandth of full scale counts as silence.
+    fn release_ms(graph: &mut Graph) -> f64 {
+        const STEP: u32 = 441;
+        graph.note_on(60, 100);
+        graph.render_peak(LOOK).unwrap();
+        graph.note_off(60);
+        let mut steps = 0;
+        while steps < 300 && graph.render_peak(STEP).unwrap() > 0.001 {
+            steps += 1;
+        }
+        graph.release_all();
+        graph.render_peak(LOOK).unwrap();
+        f64::from(steps) * 10.0
+    }
+
+    #[test]
+    fn a_longer_release_keeps_a_note_sounding_after_the_key_has_come_up() {
+        let mut graph = offline();
+
+        // The fixture's SoundFont asks for a millisecond of release, and that is what is read back.
+        let brought = graph.envelope().expect("the sampler's own envelope");
+        assert!(brought.release < 0.01, "the file asked for {}", brought.release);
+        let short = release_ms(&mut graph);
+
+        graph.set_envelope(Envelope { release: 0.75, ..brought });
+        assert_eq!(graph.envelope().expect("the envelope set").release, 0.75);
+        let long = release_ms(&mut graph);
+        assert!(long > short + 100.0, "{long} ms against {short} ms");
+
+        // Changing an effect rewires the graph, which reads the instrument file in again. The
+        // envelope has to outlast that, or it would last only until the next change of anything.
+        effects::rewire(&graph).unwrap();
+        let after = release_ms(&mut graph);
+        assert!(after > short + 100.0, "the rewire left {after} ms");
+
+        // Disposing a sampler that has taken a whole state aborts inside CoreAudio.
+        std::mem::forget(graph);
     }
 }

@@ -1,9 +1,9 @@
-// The Audio dialog's Output section: the output device, the buffer size and the latency they cost.
+// The Sound tab's Output section: the output device, the buffer size and the latency they cost.
 // Both are global settings written on change and applied again at boot. The list follows the
 // hardware: the engine sends `audio-devices-changed` on every plug and unplug, and this reads it
 // again, so an interface appears and disappears without a restart.
 
-import type { AudioStatus } from '@/audio/dialog';
+import type { AudioStatus } from '@/audio/sound-tab';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { getSettingOr, setSetting } from '@/db/db';
 import { reasonOf } from '@/library/notice';
+import { rowId } from '@/lib/utils';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { ChevronDown } from 'lucide-react';
@@ -28,7 +29,7 @@ export interface OutputDevice {
 /** The buffer sizes the engine takes, smallest first. */
 const FRAME_CHOICES = [32, 64, 128, 256];
 
-export function OutputSection() {
+export function OutputSection({ marked }: { marked?: string | null }) {
   const [devices, setDevices] = useState<OutputDevice[]>([]);
   const [status, setStatus] = useState<AudioStatus | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
@@ -90,21 +91,25 @@ export function OutputSection() {
 
   // A device that is not connected is not in the list, and the picker names it nowhere. It reads as
   // the system default, where the sound is really going. The setting keeps the choice, so the name
-  // comes back with the device, and the dialog's own line is what says the engine had to move.
+  // comes back with the device, and the tab's own line is what says the engine had to move.
   const shown = devices.find((d) => d.id === chosen);
 
   return (
     <section className="flex flex-col gap-2">
       <h3 className="text-[13px] font-semibold">Output</h3>
 
-      <Row label="Device">
+      <Row
+        id="audio_output_device"
+        marked={marked === 'audio_output_device'}
+        label="Output device"
+      >
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
               variant="outline"
               size="sm"
               aria-label="Output device"
-              className="h-7 max-w-[220px] justify-between px-2 text-[12px] font-normal"
+              className="h-7 max-w-[190px] justify-between px-2 text-[12px] font-normal"
             >
               <span className="truncate">{shown?.name ?? 'System default'}</span>
               <ChevronDown className="size-3.5 opacity-60" />
@@ -128,7 +133,11 @@ export function OutputSection() {
         </DropdownMenu>
       </Row>
 
-      <Row label="Buffer">
+      <Row
+        id="audio_buffer_frames"
+        marked={marked === 'audio_buffer_frames'}
+        label="Buffer (frames)"
+      >
         <div className="border-edge flex flex-none border">
           {FRAME_CHOICES.map((choice) => (
             <button
@@ -160,9 +169,23 @@ function latencyLine(status: AudioStatus | null): string {
   return `${status.latency_ms.toFixed(1)} ms at ${(status.sample_rate / 1000).toFixed(1)} kHz`;
 }
 
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
+function Row({
+  id,
+  label,
+  marked,
+  children,
+}: {
+  id?: string;
+  label: string;
+  marked?: boolean;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="flex min-h-8 items-center justify-between gap-3 py-1 text-[12px]">
+    <div
+      id={id && rowId(id)}
+      data-marked={marked || undefined}
+      className={`flex min-h-8 items-center justify-between gap-3 py-1 text-[12px] ${marked ? 'bg-ink/8' : ''}`}
+    >
       <span className="flex-none">{label}</span>
       {children}
     </div>

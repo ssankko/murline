@@ -162,8 +162,6 @@ export class Engine {
   /** Played tick the play parks at when Idle, and returns to on restart. */
   private startTick = 0;
   private lastSoundingTick: number;
-  private sectionRange: Section | null = null;
-  private loop = false;
   /** Every Onset once in written order, built once: Loop over a Section swaps to it and back. */
   private linear: PlayStep[] | null = null;
 
@@ -219,6 +217,8 @@ export class Engine {
     this.states = this.notes.map(() => 'pending');
     this.resolved = this.notes.map(() => 0);
     this.beatGrid = beatGridOf(score, this.walk);
+    // A piece reopens in the Section and Loop it was left in, so they take force at once.
+    this.applyLoop();
   }
 
   /** What the clock and the matching run on: a performance keeps the settings it started at. */
@@ -407,7 +407,7 @@ export class Engine {
   restart(): void {
     // A restart lands on the Section only while Loop gives it force; a Section alone is inert, and
     // Loop over the whole piece leaves the start bar where the player put it.
-    const span = this.sectionRange ? this.loopSpan() : null;
+    const span = this.section ? this.loopSpan() : null;
     if (span) this.startTick = span.from;
     this.abort();
     // A restart asks for the piece afresh, so the notes read from the start point again at once.
@@ -432,18 +432,28 @@ export class Engine {
     else if (this.state !== 'running') this.startTick = to;
   }
 
-  /** The Section, whatever Loop says about it: the range the sheet and the lane tint. */
+  /**
+   * The Section, whatever Loop says about it: the range the sheet and the lane tint. It lives in
+   * the settings, so it is one of the things a piece is opened with and reopens in.
+   */
   get section(): Section | null {
-    return this.sectionRange;
+    const { sectionFrom, sectionTo } = this.settings;
+    return sectionFrom === null || sectionTo === null ? null : { from: sectionFrom, to: sectionTo };
+  }
+
+  private get loop(): boolean {
+    return this.settings.loop;
   }
 
   setSection(section: Section | null): void {
-    this.sectionRange = section ? clampSection(this.score.measures, section) : null;
+    const inside = section ? clampSection(this.score.measures, section) : null;
+    this.settings.sectionFrom = inside?.from ?? null;
+    this.settings.sectionTo = inside?.to ?? null;
     this.applyLoop();
   }
 
   setLoop(on: boolean): void {
-    this.loop = on;
+    this.settings.loop = on;
     this.applyLoop();
   }
 
@@ -454,10 +464,11 @@ export class Engine {
    */
   loopSpan(): LoopSpan | null {
     if (!this.loop || this.kind !== 'practice') return null;
+    const section = this.section;
     // A Section's lap runs from its opening bar line to the closing line of its last bar.
-    const first = this.sectionRange && this.score.measures[this.sectionRange.from];
-    const last = this.sectionRange && this.score.measures[this.sectionRange.to];
-    return this.sectionRange
+    const first = section && this.score.measures[section.from];
+    const last = section && this.score.measures[section.to];
+    return section
       ? { from: first?.startTick ?? 0, to: (last?.startTick ?? 0) + (last?.durationTicks ?? 0) }
       : { from: 0, to: this.endTick };
   }
@@ -468,7 +479,7 @@ export class Engine {
    */
   private applyLoop(): void {
     // Only a looping Section leaves the play order; Loop over the whole piece keeps its repeats.
-    const linear = this.loop && this.kind === 'practice' && this.sectionRange !== null;
+    const linear = this.loop && this.kind === 'practice' && this.section !== null;
     // On the linear walk a played tick is the same number as a sheet tick.
     const walk = linear
       ? (this.linear ??= this.score.onsets.map((onset, index) => ({ onsetIndex: index, tick: onset.tick })))

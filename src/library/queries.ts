@@ -22,15 +22,16 @@ export interface PieceRow {
   part_name: string | null;
   favorite: number;
   error: string | null;
-  /** Piece settings. NULL in any of them means the piece inherits the global default. */
+  /** Piece settings. NULL in any of them means the piece has never been given that one. */
   tempo_mode: string | null;
   tempo_value: number | null;
   metronome: number | null;
   count_in_bars: number | null;
   hands: string | null;
-  keyboard_preset: string | null;
-  keyboard_lo: number | null;
-  keyboard_hi: number | null;
+  mode: string | null;
+  loop: number | null;
+  section_from: number | null;
+  section_to: number | null;
   best_grade: number | null;
   last_played: number | null;
   practised_s: number | null;
@@ -103,9 +104,10 @@ export const PIECE_SETTING_COLUMNS = {
   metronome: 'metronome',
   countInBars: 'count_in_bars',
   hands: 'hands',
-  keyboardPreset: 'keyboard_preset',
-  keyboardLo: 'keyboard_lo',
-  keyboardHi: 'keyboard_hi',
+  mode: 'mode',
+  loop: 'loop',
+  sectionFrom: 'section_from',
+  sectionTo: 'section_to',
 } as const satisfies Record<string, keyof PieceRow>;
 
 /** The piece-setting columns of a `piece` row, the only part of it resolution reads. */
@@ -114,7 +116,7 @@ export type PieceSettingRow = Pick<
   (typeof PIECE_SETTING_COLUMNS)[keyof typeof PIECE_SETTING_COLUMNS]
 >;
 
-/** The piece settings as their columns; a column set to null makes the piece inherit again. */
+/** The piece settings as their columns; a column set to null unsets that setting again. */
 export type PieceSettingValues = Partial<PieceSettingRow>;
 
 /** The only columns the SET clause below may name. */

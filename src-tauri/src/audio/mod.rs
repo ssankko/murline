@@ -68,6 +68,9 @@ pub struct Status {
     /// Opaque id of the device the engine plays through now; null while it plays through none.
     pub device: Option<String>,
     pub device_name: String,
+    /// What the engine is playing through now; empty when nothing is loaded, which is one of the
+    /// reasons above. The mixer names it beside the device.
+    pub instrument: String,
     /// Why the device playing is not the one chosen; empty while the choice is honoured.
     pub fallback: String,
     pub buffer_frames: u32,
@@ -111,6 +114,17 @@ pub struct Slot {
     pub missing: bool,
 }
 
+/// How a sampler instrument's loudness answers a key: seconds to reach full loudness, seconds to
+/// fall from there, the fraction of full loudness a held note settles at, and seconds to fade once
+/// the key comes up. Only the sampler has one; a hosted plugin shapes its notes in its own window.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct Envelope {
+    pub attack: f64,
+    pub decay: f64,
+    pub sustain: f64,
+    pub release: f64,
+}
+
 /// One output device as the picker lists it. The system default is not a row here; the dialog
 /// offers it as the choice of no device at all.
 #[derive(Debug, Serialize)]
@@ -150,6 +164,24 @@ pub fn audio_status() -> Status {
 #[tauri::command]
 pub fn audio_click(strength: String, volume: u32) {
     engine::click(strength == "strong", volume);
+}
+
+/// The keyboard volume, 0 to 100: a gain after the effect chain, so it trims what the instrument
+/// path has finished making without changing what the instrument or the effects were given. A
+/// no-op where there is no engine, which is silent anyway.
+#[tauri::command]
+pub fn audio_set_keyboard_volume(percent: u32) {
+    engine::set_keyboard_volume(percent);
+}
+
+/// The velocity remap: input velocity to output velocity, `min` and `max` the output the lightest
+/// and the hardest strike land on and `curve` the exponent between them. It is applied ahead of the
+/// instrument, so the effects and the keyboard fader are untouched by it, and the Preview goes
+/// through it too. The same map is put on the strike the webview is told about, so a grade reads
+/// the output velocity. A no-op where there is no engine.
+#[tauri::command]
+pub fn audio_set_velocity_curve(min: u32, max: u32, curve: f64) {
+    engine::set_velocity_curve(min, max, curve);
 }
 
 /// Every Audio Unit effect installed on the machine, Apple's own included.
@@ -217,6 +249,21 @@ pub async fn audio_show_instrument(app: tauri::AppHandle) -> Result<Option<Strin
     engine::show_instrument(app).await
 }
 
+/// The envelope the loaded instrument answers a key with now. Null when a plugin is playing, which
+/// is how the webview knows to offer no envelope for it, and null where there is no engine.
+#[tauri::command]
+pub fn audio_envelope() -> Option<Envelope> {
+    engine::envelope()
+}
+
+/// Replaces it, and keeps it against the reloads that a change of effect or of instrument file
+/// brings. Off the main thread: the sampler takes about a second to accept one, though whatever is
+/// sounding plays on through the change.
+#[tauri::command(async)]
+pub fn audio_set_envelope(envelope: Envelope) {
+    engine::set_envelope(envelope);
+}
+
 /// The Preview's note list, in seconds at the score's own tempo. Replaces whatever was loaded.
 #[tauri::command]
 pub fn preview_load(notes: Vec<PreviewNote>) {
@@ -263,9 +310,14 @@ mod tests {
         assert!(!status.available);
         assert_eq!(status.reason, "No sound engine on this platform");
 
-        // The click is the one command that returns nothing: silence is the whole of its answer.
+        // The click and the keyboard volume return nothing: silence is the whole of their answer.
         stub::click(true, 70);
         stub::click(false, 0);
+        stub::set_keyboard_volume(100);
+        stub::set_keyboard_volume(0);
+        stub::set_velocity_curve(1, 127, 1.0);
+        stub::set_envelope(Envelope::default());
+        assert!(stub::envelope().is_none());
 
         assert!(stub::effects().is_empty());
         assert!(stub::chain().is_empty());

@@ -32,7 +32,7 @@ export interface Instrument {
 }
 
 /** Logic's piano, which the app plays until the user picks something else. */
-const DEFAULT_NAME = 'Concert Grand Piano';
+export const DEFAULT_NAME = 'Concert Grand Piano';
 
 function listInstruments(folder: string): Promise<Instrument[]> {
   return invoke<Instrument[]>('audio_instruments', { folder });

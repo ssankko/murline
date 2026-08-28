@@ -11,13 +11,21 @@
         color-scheme: light dark;
         background: light-dark(#f4f4f4, #202020);
       }
-      /* The boot screen paints before the stylesheet loads, so its whole look lives here. The
-         greys are the muted ink of src/index.css. */
+      /* The body holds no default margin, so the static log sits where React's copy lands. */
+      body {
+        margin: 0;
+      }
+      /* The muted ink the boot log writes with, the same pair src/index.css names. */
+      :root {
+        --muted: light-dark(#6e6e6e, #8f8f8f);
+      }
+      /* The boot screen paints before the stylesheet loads, so its whole look lives here. The log
+         hangs from an anchor above the middle and grows downward, so no line moves when one lands. */
       .boot {
         margin: 0;
-        padding: 24px;
+        padding: 42vh 24px 24px;
         font: 12px/20px ui-monospace, SFMono-Regular, Menlo, monospace;
-        color: light-dark(#6e6e6e, #8f8f8f);
+        color: var(--muted);
       }
       @keyframes boot-blink {
         50% {

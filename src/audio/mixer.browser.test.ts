@@ -113,6 +113,16 @@ test('the keyboard fader writes the setting and reaches the running engine', asy
   expect(sent).toContainEqual(['audio_set_keyboard_volume', { percent: 30 }]);
 });
 
+test('the keyboard fader goes to 200 and the metronome stops at 100', async () => {
+  await open();
+  expect(fader('Keyboard').max).toBe('200');
+  expect(fader('Metronome').max).toBe('100');
+
+  await userEvent.fill(fader('Keyboard'), '200');
+  expect(written).toContainEqual(['keyboard_volume', 200]);
+  expect(sent).toContainEqual(['audio_set_keyboard_volume', { percent: 200 }]);
+});
+
 test('the metronome fader is the click volume and touches the engine gain not at all', async () => {
   await open();
   await userEvent.fill(fader('Metronome'), '0');

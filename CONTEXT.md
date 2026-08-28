@@ -143,7 +143,7 @@ The popover behind the volume button that carries the keyboard volume and the me
 _Avoid_: Volume popover, levels, audio dialog
 
 **Keyboard volume**:
-How loud the whole keyboard sounds. It applies after the effect chain, so it trims the finished sound without changing how the instrument or the effects behave.
+How loud the whole keyboard sounds, 0 to 200 per cent with 100 the sound as the instrument makes it and 200 twice as loud. It applies after the effect chain, so it sets the finished sound without changing how the instrument or the effects behave.
 _Avoid_: Master volume, output gain, level
 
 **Envelope**:
@@ -151,7 +151,7 @@ How loud a note is over its own lifetime: the attack it comes in on, the decay d
 _Avoid_: ADSR (the four sliders, not the concept), amp envelope, volume envelope, contour
 
 **Velocity curve**:
-The remap from the velocity a key press sends to the velocity the app works in, set by a minimum, a maximum and the shape of the path between them. Velocity 1 lands on the minimum and velocity 127 on the maximum, so the whole of the keyboard's range is squeezed into the band rather than cut off at it. Calibrated by ear. The instrument is played at the output velocity and so is the Preview, and a grade reads the output velocity too. Distinct from the keyboard volume, which trims the finished sound rather than the velocity behind it.
+The remap from the velocity a key press sends to the velocity the app works in, set by a minimum, a maximum and the shape of the path between them. Velocity 1 lands on the minimum and velocity 127 on the maximum, so the whole of the keyboard's range is squeezed into the band rather than cut off at it. Calibrated by ear. The instrument is played at the output velocity and so is the Preview, and a grade reads the output velocity too. Distinct from the keyboard volume, which sets the finished sound rather than the velocity behind it.
 _Avoid_: Velocity sensitivity, dynamics curve, velocity clamp
 
 **Sounding**:

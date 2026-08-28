@@ -691,11 +691,12 @@ impl Graph {
         }
     }
 
-    /// The keyboard volume, 0 to 100: a gain on the finished sound, set in place. Nothing is
-    /// reconnected, because any connection change flushes every voice the graph has sounding and
-    /// would cut a ringing note off at the moment the fader moved.
+    /// The keyboard volume, 0 to 200: a gain on the finished sound, set in place, where 100 is
+    /// unity and anything above it amplifies. Nothing is reconnected, because any connection change
+    /// flushes every voice the graph has sounding and would cut a ringing note off at the moment
+    /// the fader moved.
     pub fn set_keyboard_volume(&self, percent: u32) {
-        unsafe { self.fader.setOutputVolume(percent.min(100) as f32 / 100.0) };
+        unsafe { self.fader.setOutputVolume(percent.min(200) as f32 / 100.0) };
     }
 
     /// One metronome click, at a volume of 0 to 100.
@@ -1256,10 +1257,11 @@ mod tests {
         graph.release_all();
     }
 
-    /// The keyboard fader trims the finished sound: the same note played twice differs by exactly
-    /// what the fader was moved by, and a fader at zero makes no sound at all.
+    /// The keyboard fader sets the finished sound: the same note played twice differs by exactly
+    /// what the fader was moved by, 100 is the sound untouched, 200 is twice as loud, and a fader
+    /// at zero makes no sound at all.
     #[test]
-    fn the_fader_trims_the_note_and_zero_is_silence() {
+    fn the_fader_sets_the_note_between_silence_and_twice_as_loud() {
         let mut graph = offline();
         let full = at_volume(&mut graph, 100);
         assert!(full > 0.01, "the fixture sounds at all: {full}");
@@ -1269,6 +1271,12 @@ mod tests {
         assert!(
             (quarter - full / 4.0).abs() < full / 50.0,
             "and quieter by what the fader says: {quarter} against a quarter of {full}"
+        );
+
+        let double = at_volume(&mut graph, 200);
+        assert!(
+            (double - full * 2.0).abs() < full / 50.0,
+            "a fader above 100 amplifies: {double} against twice {full}"
         );
 
         assert_eq!(at_volume(&mut graph, 0), 0.0, "a fader at zero is silence");

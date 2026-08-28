@@ -167,9 +167,10 @@ pub fn audio_click(strength: String, volume: u32) {
     engine::click(strength == "strong", volume);
 }
 
-/// The keyboard volume, 0 to 100: a gain after the effect chain, so it trims what the instrument
-/// path has finished making without changing what the instrument or the effects were given. A
-/// no-op where there is no engine, which is silent anyway.
+/// The keyboard volume, 0 to 200, where 100 is the sound untouched: a gain after the effect chain,
+/// so it sets how loud what the instrument path has finished making comes out without changing what
+/// the instrument or the effects were given. A no-op where there is no engine, which is silent
+/// anyway.
 #[tauri::command]
 pub fn audio_set_keyboard_volume(percent: u32) {
     engine::set_keyboard_volume(percent);

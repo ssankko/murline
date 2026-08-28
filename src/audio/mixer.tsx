@@ -18,9 +18,9 @@ function output(status: AudioStatus | null): string {
 
 /**
  * The volume button and its mixer. The keyboard fader is a gain in the sound engine after the
- * effect chain, so pulling it down quietens the finished sound and leaves the instrument and the
- * effects answering the hands exactly as they did. The metronome fader is the click's own volume
- * and shares nothing with it.
+ * effect chain, running from silence to twice the sound the instrument makes, and it leaves the
+ * instrument and the effects answering the hands exactly as they did. The metronome fader is the
+ * click's own volume and shares nothing with it.
  *
  * The button carries a badge whenever the engine cannot make sound, so a silent app says so from
  * the header bar without being opened.
@@ -89,6 +89,7 @@ export function Mixer({
       <PopoverContent side="bottom" align="end" className="flex w-64 flex-col gap-3 p-3">
         <Fader
           label="Keyboard"
+          max={200}
           value={values?.keyboard ?? 100}
           disabled={!values}
           onChange={writeKeyboard}
@@ -120,11 +121,14 @@ export function Mixer({
 
 function Fader({
   label,
+  max = 100,
   value,
   disabled,
   onChange,
 }: {
   label: string;
+  /** The top of the range. The keyboard fader goes past unity, the metronome's does not. */
+  max?: number;
   value: number;
   disabled: boolean;
   onChange: (value: number) => void;
@@ -136,14 +140,14 @@ function Fader({
         type="range"
         aria-label={label}
         min={0}
-        max={100}
+        max={max}
         step={1}
         value={value}
         disabled={disabled}
         onChange={(event) => onChange(Number(event.target.value))}
         className="accent-ink min-w-0 flex-1 disabled:opacity-30"
       />
-      <span className="text-muted-ink w-7 flex-none text-right text-[11px] tabular-nums">
+      <span className="text-muted-ink w-8 flex-none text-right text-[11px] tabular-nums">
         {value}
       </span>
     </label>

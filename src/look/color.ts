@@ -71,8 +71,8 @@ export const INK = {
 export const PAPER = ['#f4f4f4', '#202020'] as const;
 export const CURSOR = ['#c9922e', '#d9a83c'] as const;
 
-/** Picks the light or dark member of one of the constants above. */
-export function tone(pair: readonly [string, string], dark: boolean): string {
+/** Picks the light or dark member of one of the constants above, or of any other paper pair. */
+export function tone<T>(pair: readonly [T, T], dark: boolean): T {
   return dark ? pair[1] : pair[0];
 }
 
@@ -88,12 +88,28 @@ export function mix(from: string, to: string, t: number): string {
   return `#${channel(0)}${channel(1)}${channel(2)}`;
 }
 
+/** A `#rrggbb` carrying an alpha, which a gradient stop needs and `globalAlpha` cannot give. */
+export function withAlpha(hex: string, a: number): string {
+  const byte = Math.round(Math.min(Math.max(a, 0), 1) * 255);
+  return hex + byte.toString(16).padStart(2, '0');
+}
+
+/** How bright a colour is to the eye, on the WCAG scale the contrast ratio is read off. */
+export function luminance(hex: string): number {
+  const channel = (i: number) => {
+    const v = parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(0) + 0.7152 * channel(1) + 0.0722 * channel(2);
+}
+
+/** The luminance of a mid grey, where a fill stops carrying the light paper's ink. */
+const LABEL_FLIP = 0.275;
+
 /**
  * The ink a label printed straight on `fill` wears: the dark paper or the light one, whichever the
  * fill's luminance leaves readable.
  */
 export function labelInk(fill: string): string {
-  const channel = (i: number) => parseInt(fill.slice(1 + i * 2, 3 + i * 2), 16) / 255;
-  const luma = 0.2126 * channel(0) + 0.7152 * channel(1) + 0.0722 * channel(2);
-  return luma > 0.55 ? PAPER[1] : PAPER[0];
+  return luminance(fill) > LABEL_FLIP ? PAPER[1] : PAPER[0];
 }

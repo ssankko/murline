@@ -1,5 +1,4 @@
-import { PAPER, colorOf, mix, tone } from '@/look/color';
-import { toneWeight } from '@/score/harmony';
+import { PAPER, colorOf, luminance, mix, tone } from '@/look/color';
 import { TICKS_PER_QUARTER, type ChordEvent, type KeyChange, type Score } from '@/score/types';
 import { describe, expect, test } from 'vitest';
 import {
@@ -9,6 +8,7 @@ import {
   burnAt,
   chordsAt,
   chordsOf,
+  fifthName,
   glideLeft,
   jumpOf,
   laneKeysOf,
@@ -18,6 +18,7 @@ import {
   runShare,
   slotRect,
   throughWrap,
+  toneWeight,
   trackRadii,
   wheelAngle,
   wheelCornerR,
@@ -290,13 +291,6 @@ describe('a countdown glyph burning up on its beat', () => {
 });
 
 describe("the chord figure inside the wheel", () => {
-  /** The WCAG brightness of a `#rrggbb`, which is what the fill's alpha is chosen against. */
-  const luminance = (hex: string) =>
-    [0.2126, 0.7152, 0.0722].reduce((sum, weight, i) => {
-      const v = parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16) / 255;
-      return sum + weight * (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
-    }, 0);
-
   test.each([false, true])('the fill alpha stays inside its clamp on dark=%s', (dark) => {
     for (const pc of [...Array(12).keys()]) {
       expect(wheelFillAlpha(pc, dark)).toBeGreaterThanOrEqual(0.35);
@@ -335,6 +329,29 @@ describe("the chord figure inside the wheel", () => {
   });
 });
 
+describe('the letter a segment outside the key wears', () => {
+  test('a black key follows the signature of the key in force', () => {
+    expect([6, 1, 8, 3, 10].map((pc) => fifthName(pc, 4))).toEqual(['F♯', 'C♯', 'G♯', 'D♯', 'A♯']);
+    expect([6, 1, 8, 3, 10].map((pc) => fifthName(pc, -3))).toEqual(['G♭', 'D♭', 'A♭', 'E♭', 'B♭']);
+    // A key with no signature keeps one sharp on the way out and flats coming back.
+    expect([6, 1, 8, 3, 10].map((pc) => fifthName(pc, 0))).toEqual(['F♯', 'D♭', 'A♭', 'E♭', 'B♭']);
+  });
+
+  test('a white key wears its letter whatever the key', () => {
+    for (const sharps of [-5, 0, 5]) {
+      expect([0, 2, 4, 5, 7, 9, 11].map((pc) => fifthName(pc, sharps))).toEqual([
+        'C',
+        'D',
+        'E',
+        'F',
+        'G',
+        'A',
+        'B',
+      ]);
+    }
+  });
+});
+
 describe('the runner and its tracks', () => {
   test('the share of the chord spent runs 0 to 1 and holds at both ends', () => {
     expect(runShare(0, 0, 4 * Q)).toBe(0);
@@ -351,15 +368,17 @@ describe('the runner and its tracks', () => {
     expect(trackRadii(1)).toEqual([81, 87, 94]);
   });
 
-  test('a same-root move runs the runner round a loop outside its root', () => {
-    const up = wheelAngle(0);
-    // The loop sits outside the track and closes on itself: its far side stands two radii out and
-    // its near side comes back to the track.
-    const start = alongTrack(up, up, 87, 0);
-    expect(Math.hypot(...start)).toBeCloseTo(101);
-    expect(Math.hypot(...alongTrack(up, up, 87, 0.5))).toBeCloseTo(87);
-    expect(alongTrack(up, up, 87, 1)[0]).toBeCloseTo(start[0]);
-    expect(alongTrack(up, up, 87, 1)[1]).toBeCloseTo(start[1]);
+  // C stands at twelve o'clock, A at three, F one step anticlockwise of C.
+  test.each([0, 9, 5])('a same-root move runs the runner round a loop outside root %i', (pc) => {
+    const at = wheelAngle(pc);
+    const dot = [Math.cos(at) * 87, Math.sin(at) * 87];
+    // The loop opens and closes on the destination dot, under the root on the track, and stands
+    // two of its radii out at the half way point.
+    for (const share of [0, 1]) {
+      expect(alongTrack(at, at, 87, share)[0]).toBeCloseTo(dot[0]!);
+      expect(alongTrack(at, at, 87, share)[1]).toBeCloseTo(dot[1]!);
+    }
+    expect(Math.hypot(...alongTrack(at, at, 87, 0.5))).toBeCloseTo(101);
   });
 
   test('a move to another root runs the short way round', () => {

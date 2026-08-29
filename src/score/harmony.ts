@@ -136,18 +136,6 @@ export function analyzeHarmony(score: Score): ChordEvent[] {
   return score.chords.length > 0 ? fromSymbols(score) : segment(score);
 }
 
-/**
- * How much a chord tone counts in the wheel's figure, by its semitones above the root: the root
- * carries the chord, the third gives its quality, the seventh its colour, and the fifth and
- * anything else weigh the least.
- */
-export function toneWeight(interval: number): number {
-  const step = pitchClass(interval);
-  if (step === 0) return 1;
-  if (step === 3 || step === 4) return 0.75;
-  return step >= 9 ? 0.65 : 0.5;
-}
-
 /** Tonic pitch class of a key: the key signature's major tonic moved by the mode. */
 export function tonicOf(key: KeyAt): number {
   return pitchClass(key.sharps * 7 + (MODE_OFFSET[key.mode] ?? 0));

@@ -1,4 +1,16 @@
-import { DEFAULT_LANE_LOOK, GLIDE_MS, Lane, popAt, wheelAngle, type LaneLook } from '@/lane/lane';
+import {
+  BAND_IN,
+  BAND_MID,
+  BAND_OUT,
+  DEFAULT_LANE_LOOK,
+  GLIDE_MS,
+  Lane,
+  PANEL_INSET,
+  WHEEL_SIZE,
+  popAt,
+  wheelAngle,
+  type LaneLook,
+} from '@/lane/lane';
 import { KEYBOARD_H, keyLayout, type KeyLayout } from '@/lane/keyboard';
 import { PAPER, colorOf, tone } from '@/look/color';
 import { Engine } from '@/play/engine';
@@ -433,13 +445,19 @@ test('the Section band travels from the bars it had to the bars it takes', () =>
 
 /** The wheel's panel: a lane tall enough to hold it, and where it stands in one. */
 const WHEEL_HEIGHT = 600;
-const WHEEL_LEFT = WIDTH - 16 - 200;
-const WHEEL_TOP = 16;
+const WHEEL_LEFT = WIDTH - PANEL_INSET - WHEEL_SIZE;
+const WHEEL_TOP = PANEL_INSET;
+const WHEEL_MID = WHEEL_SIZE / 2;
 
 /** Every colour the wheel's panel carries, as `#rrggbb`. */
 function panelColours(ctx: CanvasRenderingContext2D): Set<string> {
   const dpr = window.devicePixelRatio || 1;
-  const { data } = ctx.getImageData(WHEEL_LEFT * dpr, WHEEL_TOP * dpr, 200 * dpr, 200 * dpr);
+  const { data } = ctx.getImageData(
+    WHEEL_LEFT * dpr,
+    WHEEL_TOP * dpr,
+    WHEEL_SIZE * dpr,
+    WHEEL_SIZE * dpr,
+  );
   const seen = new Set<string>();
   for (let i = 0; i < data.length; i += 4) {
     const hex = [data[i], data[i + 1], data[i + 2]].map((v) => v!.toString(16).padStart(2, '0'));
@@ -520,22 +538,22 @@ test('a key change cross-fades the band, and a seek snaps it', () => {
   lane.dispose();
 });
 
-/** Every colour one segment carries between two radii; the band itself runs from 54 to 78. */
+/** Every colour one segment carries between two radii, the band and a margin round it by default. */
 function segmentColours(
   ctx: CanvasRenderingContext2D,
   pc: number,
-  from = 49,
-  to = 88,
+  from = BAND_IN - 5,
+  to = BAND_OUT + 10,
 ): Set<string> {
   const dpr = window.devicePixelRatio || 1;
-  const side = 200 * dpr;
+  const side = WHEEL_SIZE * dpr;
   const { data } = ctx.getImageData(WHEEL_LEFT * dpr, WHEEL_TOP * dpr, side, side);
   const mid = wheelAngle(pc);
   const seen = new Set<string>();
   for (let y = 0; y < side; y++) {
     for (let x = 0; x < side; x++) {
-      const dx = x / dpr - 100;
-      const dy = y / dpr - 100;
+      const dx = x / dpr - WHEEL_MID;
+      const dy = y / dpr - WHEEL_MID;
       const r = Math.hypot(dx, dy);
       if (r < from || r > to) continue;
       const step = Math.atan2(dy, dx) - mid;
@@ -551,7 +569,11 @@ function segmentColours(
 /** The colour inside one segment, off the mid line its label holds and clear of its outline. */
 function segmentFace(ctx: CanvasRenderingContext2D, pc: number): string {
   const angle = wheelAngle(pc) + 0.16;
-  return hex(ctx, WHEEL_LEFT + 100 + Math.cos(angle) * 66, WHEEL_TOP + 100 + Math.sin(angle) * 66);
+  return hex(
+    ctx,
+    WHEEL_LEFT + WHEEL_MID + Math.cos(angle) * BAND_MID,
+    WHEEL_TOP + WHEEL_MID + Math.sin(angle) * BAND_MID,
+  );
 }
 
 /** Two bars of C major: the tonic, then a borrowed D flat whose root and A flat leave the key. */
@@ -596,7 +618,7 @@ test('a chord tone outside the key wears a dashed outline of its own and no face
   expect(segmentFace(ctx, 1)).toBe(segmentFace(ctx, 6));
   expect(root.has(colorOf(1, 'full', false))).toBe(true);
   // The outline stands outside the band, so the root still takes the size that means "now".
-  expect(segmentColours(ctx, 1, 79, 88).has(colorOf(1, 'full', false))).toBe(true);
+  expect(segmentColours(ctx, 1, BAND_OUT + 1, BAND_OUT + 10).has(colorOf(1, 'full', false))).toBe(true);
 
   // Its A flat wears the same outline at the band's own size, and no face either.
   const third = segmentColours(ctx, 8);

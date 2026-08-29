@@ -9,7 +9,6 @@ import {
   relativeOf,
   scaleOf,
   signatureOf,
-  toneWeight,
   tonicOf,
   type KeyAt,
 } from './harmony';
@@ -409,15 +408,5 @@ describe('a file with its own chord symbols', () => {
       [2, [2, 5, 9, 0]],
       [7, [7, 11, 2]],
     ]);
-  });
-});
-
-describe('the weight of a chord tone', () => {
-  test('the root leads, then the third, then the seventh, and the rest weigh alike', () => {
-    expect(toneWeight(0)).toBe(1);
-    expect([3, 4].map(toneWeight)).toEqual([0.75, 0.75]);
-    expect([9, 10, 11].map(toneWeight)).toEqual([0.65, 0.65, 0.65]);
-    expect([6, 7, 8].map(toneWeight)).toEqual([0.5, 0.5, 0.5]);
-    expect([1, 2, 5].map(toneWeight)).toEqual([0.5, 0.5, 0.5]);
   });
 });

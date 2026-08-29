@@ -21,21 +21,15 @@ import {
   colorOf,
   isBlackKey,
   labelInk,
+  luminance,
   mix,
   pitchClass,
   tone,
+  withAlpha,
   type Palette,
 } from '@/look/color';
 import { easeInOut, reducedMotion } from '@/look/motion';
-import {
-  C_MAJOR,
-  degreeOf,
-  keyTable,
-  scaleOf,
-  toneWeight,
-  tonicOf,
-  type KeyAt,
-} from '@/score/harmony';
+import { C_MAJOR, degreeOf, keyTable, scaleOf, tonicOf, type KeyAt } from '@/score/harmony';
 import type { Engine, LoopSpan, PlayEvent, SeekTarget, Snapshot } from '@/play/engine';
 import type { Section } from '@/play/section';
 import { isInactiveHand, type HandsSetting } from '@/play/settings';
@@ -208,7 +202,7 @@ const SPECK_GRAVITY = 200;
 const MAX_STEP_MS = 100;
 
 /** The harmony panel at the lane's top right: its inset from the corner, the gap between rows. */
-const PANEL_INSET = 16;
+export const PANEL_INSET = 16;
 const PANEL_GAP = 4;
 /** How long the panels take to move up a slot when the harmony advances. */
 const PANEL_SLIDE_MS = 250;
@@ -238,12 +232,12 @@ const BURN_COLLAPSE = 0.18;
 const BURN_SWELL = 0.3;
 
 /** The wheel, which stands where the chord panels would: its side and its corner. */
-const WHEEL_SIZE = 200;
+export const WHEEL_SIZE = 200;
 const WHEEL_ROUND = 16;
 /** The band, which is the scale in force, and the two lines of type it carries. */
-const BAND_IN = 54;
-const BAND_OUT = 78;
-const BAND_MID = (BAND_IN + BAND_OUT) / 2;
+export const BAND_IN = 54;
+export const BAND_OUT = 78;
+export const BAND_MID = (BAND_IN + BAND_OUT) / 2;
 const LETTER_DY = -5;
 const DEGREE_DY = 6;
 const LETTER_FONT = '700 10px system-ui, sans-serif';
@@ -755,6 +749,7 @@ export class Lane {
     ctx.beginPath();
     ctx.rect(0, 0, width, laneH);
     ctx.clip();
+    this.advanceRows(loop);
     this.drawHarmony(width, loop);
     this.drawWheel(width);
     ctx.restore();
@@ -1422,26 +1417,16 @@ export class Lane {
   };
 
   /**
-   * The chord sounding now and the two after it, each on its own panel at the top right. A panel
-   * counts the beats before its chord left of it: one glyph per beat, a capsule where a bar opens
-   * and a dot inside it, the leftmost the beat that ends first. Only the next chord counts from the
-   * clock; the one after it counts from the next chord, so that row stands still until the harmony
-   * advances, when every panel slides up one slot and the one on top leaves.
+   * The chord sounding now and the two after it, and how the row came by them: a chord taking over
+   * from the one that stood next slides, a first chord enters, any other lands in a cross-fade and
+   * a seek snaps. The panels and the wheel both draw from the row, so it is kept every frame.
    */
-  private drawHarmony(width: number, loop: LoopSpan | null): void {
+  private advanceRows(loop: LoopSpan | null): void {
     if (this.chords.length === 0) return;
-    // Past the wrap the panel reads the lap again, as the lane draws it again.
+    // Past the wrap the row reads the lap again, as the lane draws it again.
     const chords = loop
       ? throughWrap(this.chords, loop, (chord, by) => ({ ...chord, tick: chord.tick + by }))
       : this.chords;
-    const bars = loop
-      ? throughWrap(this.bars, loop, (bar, by) => ({
-          ...bar,
-          tick: bar.tick + by,
-          endTick: bar.endTick + by,
-        }))
-      : this.bars;
-
     const [current, ...ahead] = chordsAt(chords, this.playedTick);
     // How the row takes a new chord in force: the chord that stood next slides every panel up a
     // slot, the first panels of all rise into their slots fading in, a Loop toggle onto any other
@@ -1461,10 +1446,26 @@ export class Lane {
       }
     }
     this.shownRows = [current, ...ahead];
-    // The wheel reads the row above, so it is kept whether or not the panels are drawn.
-    if (this.look.harmony !== 'panels') return;
+  }
 
-    const [next, after] = ahead;
+  /**
+   * The chord sounding now and the two after it, each on its own panel at the top right. A panel
+   * counts the beats before its chord left of it: one glyph per beat, a capsule where a bar opens
+   * and a dot inside it, the leftmost the beat that ends first. Only the next chord counts from the
+   * clock; the one after it counts from the next chord, so that row stands still until the harmony
+   * advances, when every panel slides up one slot and the one on top leaves.
+   */
+  private drawHarmony(width: number, loop: LoopSpan | null): void {
+    if (this.look.harmony !== 'panels') return;
+    const bars = loop
+      ? throughWrap(this.bars, loop, (bar, by) => ({
+          ...bar,
+          tick: bar.tick + by,
+          endTick: bar.endTick + by,
+        }))
+      : this.bars;
+
+    const [current, next, after] = this.shownRows;
     const rows: { chord: LaneChord; slot: number; glyphs: BeatGlyph[] }[] = [];
     if (current) rows.push({ chord: current, slot: 0, glyphs: [] });
     if (next) {
@@ -1624,7 +1625,7 @@ export class Lane {
     }
     // Size means "now": the root of the chord in force covers its segment with a bigger one, which
     // grows in place past its mark while the root it takes over from eases back.
-    const grown = (pc: number, out: number, alpha: number) => {
+    const grown = (pc: number, out: number, alpha: number, swell = 0) => {
       const outer = ramp([BAND_OUT, BAND_OUT + RAISE_OUT + swell], out);
       segmentPath(ctx, wheelAngle(pc), ramp([BAND_IN, BAND_IN - RAISE_IN], out), outer);
       if (outside(pc)) {
@@ -1636,7 +1637,7 @@ export class Lane {
       ctx.fill();
     };
     if (gone !== undefined) grown(gone, 1 - easeInOut(arrive), 1 - swap);
-    if (root !== undefined) grown(root, easeOutBack(arrive), swap);
+    if (root !== undefined) grown(root, easeOutBack(arrive), swap, swell);
     for (const pc of FIFTHS) {
       const faced = (pc === root || pc === gone) && !outside(pc);
       this.wheelLabel(pc, this.wasScale, 1 - t, faced);
@@ -1669,21 +1670,14 @@ export class Lane {
       ctx.arc(...spoke(wheelAngle(pc), CORNER_R), OFF_DOT, 0, Math.PI * 2);
       ctx.fill();
     }
-    if (current) {
-      ctx.save();
-      const pop = 1 + HUB_POP * breathAt(since / PANEL_SLIDE_MS);
-      ctx.scale(pop, pop);
-      this.wheelHub(current);
-      ctx.restore();
-    }
+    if (current) this.wheelHub(current, 1 + HUB_POP * breathAt(since / PANEL_SLIDE_MS));
     ctx.restore();
   }
 
   /**
-   * The two tracks outside the band and the runner on the first of them. The runner stands at the
-   * share of the chord in force the clock has spent, so it meets the destination dot as the harmony
-   * advances. An arrival steps the tracks inward one place: the spent one draws back and fades out,
-   * the second takes the first's radius and weight, and a new second slides in from further out.
+   * The two tracks outside the band and the runner on the first of them, at the share of the chord
+   * in force the clock has spent, so it meets the destination dot as the harmony advances. An
+   * arrival steps the tracks inward one place and slides a new second in from further out.
    */
   private wheelRunner(arrive: number, since: number, gone: number | undefined): void {
     const [now, next, after] = this.shownRows;
@@ -1774,7 +1768,7 @@ export class Lane {
     ctx.clip();
     ctx.globalAlpha = alpha;
     const whole = [-WHEEL_SIZE / 2, -WHEEL_SIZE / 2, WHEEL_SIZE, WHEEL_SIZE] as const;
-    ctx.fillStyle = withAlpha(face, FILL_FLOOR[this.dark ? 1 : 0]);
+    ctx.fillStyle = withAlpha(face, tone(FILL_FLOOR, this.dark));
     ctx.fillRect(...whole);
     const peak = wheelFillAlpha(of.root, this.dark);
     for (const corner of corners) {
@@ -1808,17 +1802,24 @@ export class Lane {
     }
   }
 
-  /** The chord's two names at the centre, the absolute one haloed so the edges break around it. */
-  private wheelHub(of: ChordEvent): void {
+  /**
+   * The chord's two names at the centre, the absolute one haloed so the edges break around it. The
+   * name alone takes `pop`, about its own centre, so the degree line under it stands still.
+   */
+  private wheelHub(of: ChordEvent, pop: number): void {
     const ctx = this.ctx;
     ctx.globalAlpha = 1;
+    ctx.save();
+    ctx.translate(0, HUB_NAME.dy);
+    ctx.scale(pop, pop);
     ctx.font = `${CHORD_PANEL.weight} ${HUB_NAME.size}px system-ui, sans-serif`;
     ctx.strokeStyle = tone(HUB_HALO, this.dark);
     ctx.lineWidth = HUB_HALO_W;
     ctx.lineJoin = 'round';
-    ctx.strokeText(of.absolute, 0, HUB_NAME.dy);
+    ctx.strokeText(of.absolute, 0, 0);
     ctx.fillStyle = tone(NOW_LINE, this.dark);
-    ctx.fillText(of.absolute, 0, HUB_NAME.dy);
+    ctx.fillText(of.absolute, 0, 0);
+    ctx.restore();
     ctx.font = `${NEXT_PANEL.weight} ${HUB_DEGREE.size}px system-ui, sans-serif`;
     ctx.fillStyle = tone(INK.duration, this.dark);
     ctx.fillText(of.degree, 0, HUB_DEGREE.dy);
@@ -1839,7 +1840,7 @@ export class Lane {
     ctx.font = LETTER_FONT;
     if (degree < 0) {
       ctx.fillStyle = faced ? ink : tone(INK.scaffolding, this.dark);
-      ctx.fillText(FIFTH_NAMES[FIFTHS.indexOf(pitchClass(pc))]!, x, y);
+      ctx.fillText(fifthName(pc, of?.key.sharps ?? 0), x, y);
       return;
     }
     ctx.fillStyle = ink;
@@ -1864,7 +1865,7 @@ export class Lane {
     // The band holds the badge, however tall the two lines of type under it stand.
     const tall = Math.min((bottom - top) / 2, (BAND_OUT - BAND_IN) / 2 - 2);
     ctx.globalAlpha = alpha;
-    ctx.strokeStyle = mix(colorOf(pc, 'full', this.dark), '#ffffff', BADGE_TINT[this.dark ? 1 : 0]);
+    ctx.strokeStyle = mix(colorOf(pc, 'full', this.dark), '#ffffff', tone(BADGE_TINT, this.dark));
     ctx.lineWidth = BADGE_WIDTH;
     ctx.lineJoin = 'round';
     ctx.beginPath();
@@ -1944,8 +1945,16 @@ function blendLayout(from: KeyLayout, to: KeyLayout, t: number): KeyLayout {
 
 /** The twelve pitch classes a fifth apart, which is the order the wheel's segments run in. */
 const FIFTHS = [0, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10, 5];
-/** The letter a segment wears where the key in force spells no name for it. */
-const FIFTH_NAMES = ['C', 'G', 'D', 'A', 'E', 'B', 'F♯', 'D♭', 'A♭', 'E♭', 'B♭', 'F'];
+/**
+ * The letter a segment wears where the key in force spells no name for it: a black key follows the
+ * key's own signature, and a key with no signature takes F♯ on the sharp side and flats past it.
+ */
+export function fifthName(pc: number, sharps: number): string {
+  const name = NOTE_NAMES[pitchClass(pc)]!;
+  if (name.length === 1) return name;
+  const sharp = sharps > 0 || (sharps === 0 && pitchClass(pc) === 6);
+  return sharp ? `${name[0]}♯` : `${NOTE_NAMES[pitchClass(pc + 1)]}♭`;
+}
 
 /** Where a pitch class stands on the wheel: C at twelve o'clock, a fifth every 30 degrees. */
 export function wheelAngle(pc: number): number {
@@ -1982,7 +1991,9 @@ export function alongTrack(
   const step = shortWay(from, to);
   if (Math.abs(step) >= 0.01) return spoke(from + step * share, r);
   const [x, y] = spoke(from, r + TRACK_LOOP);
-  const round = -Math.PI / 2 + share * Math.PI * 2;
+  // The loop stands outside the root, so the track point under it is the share the runner opens
+  // and closes on: the near side of the loop, straight back toward the wheel's centre.
+  const round = from + Math.PI + share * Math.PI * 2;
   return [x + Math.cos(round) * TRACK_LOOP, y + Math.sin(round) * TRACK_LOOP] as const;
 }
 
@@ -2011,22 +2022,6 @@ function segmentPath(
   ctx.closePath();
 }
 
-/** A `#rrggbb` carrying an alpha, which a gradient stop needs and `globalAlpha` cannot give. */
-const withAlpha = (hex: string, a: number) =>
-  hex +
-  Math.round(clamp(a, 0, 1) * 255)
-    .toString(16)
-    .padStart(2, '0');
-
-/** How bright a colour is to the eye, on the WCAG scale the contrast ratio is read off. */
-function luminance(hex: string): number {
-  const channel = (i: number) => {
-    const v = parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16) / 255;
-    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
-  };
-  return 0.2126 * channel(0) + 0.7152 * channel(1) + 0.0722 * channel(2);
-}
-
 /**
  * How much of the root's colour the chord's fill takes at its densest corner: the least that still
  * stands off the paper by `FILL_CONTRAST`, so a pale hue is laid on thicker than a dark one.
@@ -2042,6 +2037,18 @@ export function wheelFillAlpha(root: number, dark: boolean): number {
     }
   }
   return ceiling;
+}
+
+/**
+ * How much a chord tone counts in the figure, by its semitones above the root: the root carries the
+ * chord, the third gives its quality, the seventh its colour, and the fifth and anything else weigh
+ * the least.
+ */
+export function toneWeight(interval: number): number {
+  const step = pitchClass(interval);
+  if (step === 0) return 1;
+  if (step === 3 || step === 4) return 0.75;
+  return step >= 9 ? 0.65 : 0.5;
 }
 
 /** How big a corner of the figure stands: the more its tone carries, the wider the dot. */
@@ -2230,12 +2237,7 @@ export function bounceAt(t: number): number {
  * The breath a count-in number takes as its beat is struck: up quickly and back down slowly, and
  * its own size outside its time.
  */
-export function popAt(t: number): number {
-  if (!(t > 0 && t < 1)) return 1;
-  const rising = t < COUNT_POP_RISE;
-  const at = rising ? t / COUNT_POP_RISE : (t - COUNT_POP_RISE) / (1 - COUNT_POP_RISE);
-  return 1 + COUNT_POP * (rising ? 1 - (1 - at) ** 3 : 1 - easeInOut(at));
-}
+export const popAt = (t: number) => 1 + COUNT_POP * swellAt(t, (at) => 1 - (1 - at) ** 3);
 
 /**
  * A countdown glyph burning up on its beat, from `left`, the share of its burn still to come: it
@@ -2285,10 +2287,13 @@ function easeOutBack(t: number): number {
 }
 
 /** One swell and settle over a pop's time: out past the mark, then back to nothing. */
-export function breathAt(t: number): number {
+export const breathAt = (t: number) => swellAt(t, easeOutBack);
+
+/** A swell out on `rise` and a settle back on the same slow curve, and nothing outside its time. */
+function swellAt(t: number, rise: (at: number) => number): number {
   if (!(t > 0 && t < 1)) return 0;
   return t < COUNT_POP_RISE
-    ? easeOutBack(t / COUNT_POP_RISE)
+    ? rise(t / COUNT_POP_RISE)
     : 1 - easeInOut((t - COUNT_POP_RISE) / (1 - COUNT_POP_RISE));
 }
 

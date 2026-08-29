@@ -218,8 +218,9 @@ describe('the letter a key spells a pitch class with', () => {
       [6, 1, 8, 3, 10].map((pc) => key.spell(pc, written));
     expect(spelled(D_MAJOR)).toEqual(['F♯', 'C♯', 'G♯', 'D♯', 'A♯']);
     expect(spelled(keyOf(-3, 0))).toEqual(['G♭', 'D♭', 'A♭', 'E♭', 'B♭']);
-    // A key with no signature spells sharps; a note the score writes flat is flat in any key.
-    expect(spelled(C_MAJOR)).toEqual(['F♯', 'C♯', 'G♯', 'D♯', 'A♯']);
+    // A key with no signature keeps one sharp on the way out and flats coming back; a note the
+    // score writes flat is flat in any key.
+    expect(spelled(C_MAJOR)).toEqual(['F♯', 'D♭', 'A♭', 'E♭', 'B♭']);
     expect(spelled(D_MAJOR, -1)).toEqual(['G♭', 'D♭', 'A♭', 'E♭', 'B♭']);
   });
 

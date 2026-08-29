@@ -160,7 +160,9 @@ function build(sharps: number, mode: number): Key {
       return sharp ? `♯${below + 1}` : `♭${above + 1}`;
     },
     spell(pc, written) {
-      const flat = written < 0 || (written === 0 && sharps < 0);
+      // With no signature and no written accidental, F♯ is the one sharp and the rest are flats,
+      // which is how the circle of fifths is read from C.
+      const flat = written < 0 || (written === 0 && (sharps < 0 || (sharps === 0 && pc !== 6)));
       return (flat ? FLAT_NAMES : SHARP_NAMES)[pc]!;
     },
   };

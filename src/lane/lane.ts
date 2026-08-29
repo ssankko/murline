@@ -1729,9 +1729,9 @@ export class Lane {
     const ctx = this.ctx;
     const face = colorOf(of.root, 'full', this.dark);
     const corners = of.tones
-      .map((pc) => ({
+      .map((pc, i) => ({
         pc,
-        weight: toneWeight(pc - of.root),
+        weight: toneWeight(i),
         point: spoke(wheelAngle(pc), CORNER_R),
       }))
       .sort((x, y) => FIFTHS.indexOf(pitchClass(x.pc)) - FIFTHS.indexOf(pitchClass(y.pc)));
@@ -2001,16 +2001,11 @@ export function wheelFillAlpha(root: number, dark: boolean): number {
 }
 
 /**
- * How much a chord tone counts in the figure, by its semitones above the root: the root carries the
- * chord, the third gives its quality, the seventh its colour, and the fifth and anything else weigh
- * the least.
+ * How much a chord tone counts in the figure, by its place in the chord's shape: the root carries
+ * the chord, the third gives its quality, the seventh its colour, and the fifth and anything else
+ * weigh the least.
  */
-export function toneWeight(interval: number): number {
-  const step = pitchClass(interval);
-  if (step === 0) return 1;
-  if (step === 3 || step === 4) return 0.75;
-  return step >= 9 ? 0.65 : 0.5;
-}
+export const toneWeight = (index: number): number => [1, 0.75, 0.5, 0.65][index] ?? 0.5;
 
 /** How big a corner of the figure stands: the more its tone carries, the wider the dot. */
 export const wheelCornerR = (weight: number) => 2.5 + 2.5 * weight;

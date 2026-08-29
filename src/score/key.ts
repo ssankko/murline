@@ -2,8 +2,8 @@
 // and everything a caller reads off it: its tonic, its scale, the spelled notes, its name, its
 // signature, its degree table and the keys related to it.
 
-import { SEVENTHS, TRIADS, type Shape } from './harmony';
 import { FLAT_NAMES, SHARP_NAMES, pitchClass } from './pitch';
+import { SEVENTHS, TRIADS, type Shape } from './shape';
 import type { Score } from './types';
 
 /** One scale degree of a key: what it is called and what it stacks into. */
@@ -126,7 +126,6 @@ function build(sharps: number, mode: number): Key {
   const majorLetter = (((sharps * 4) % 7) + 7) % 7;
   const letter = major ? majorLetter : (majorLetter + 5) % 7;
   const names = pcs.map((pc, i) => spellOn((letter + i) % 7, pc));
-  let table: KeyDegree[] | undefined;
   return {
     sharps,
     mode,
@@ -143,11 +142,7 @@ function build(sharps: number, mode: number): Key {
     get parallel() {
       return keyOf(sharps + (major ? -3 : 3), major ? 1 : 0);
     },
-    // Built on first read: its shapes come from harmony.ts, which imports this module, so neither
-    // needs the other while it loads.
-    get table() {
-      return (table ??= tableOf(scale, names, tonic));
-    },
+    table: tableOf(scale, names, tonic),
     has: (pc) => pcs.includes(pitchClass(pc)),
     degreeOf(pc, written) {
       const step = pitchClass(pc - tonic);

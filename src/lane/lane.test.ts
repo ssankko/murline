@@ -1,4 +1,5 @@
 import { PAPER, colorOf, luminance, mix, tone } from '@/look/color';
+import { MAJOR_TRIAD } from '@/score/shape';
 import { TICKS_PER_QUARTER, type ChordEvent } from '@/score/types';
 import { describe, expect, test } from 'vitest';
 import {
@@ -36,7 +37,16 @@ const BARS = [0, 1, 2].map((i) => ({
 
 function chord(onsetIndex: number, absolute: string): ChordEvent {
   const tick = onsetIndex * Q;
-  return { onsetIndex, tick, measureIndex: 0, absolute, degree: '1', root: 0, tones: [0, 4, 7] };
+  return {
+    onsetIndex,
+    tick,
+    measureIndex: 0,
+    absolute,
+    degree: '1',
+    root: 0,
+    shape: MAJOR_TRIAD,
+    tones: [0, 4, 7],
+  };
 }
 
 /** Six Onsets, one per quarter, with bar 1 played again after bar 2. */
@@ -286,10 +296,11 @@ describe("the chord figure inside the wheel", () => {
   });
 
   test('a corner grows with the weight its tone carries', () => {
+    // The places of a seventh chord's shape: root, third, fifth, seventh.
     expect(wheelCornerR(toneWeight(0))).toBe(5);
-    expect(wheelCornerR(toneWeight(4))).toBeCloseTo(4.375);
-    expect(wheelCornerR(toneWeight(10))).toBeCloseTo(4.125);
-    expect(wheelCornerR(toneWeight(7))).toBeCloseTo(3.75);
+    expect(wheelCornerR(toneWeight(1))).toBeCloseTo(4.375);
+    expect(wheelCornerR(toneWeight(3))).toBeCloseTo(4.125);
+    expect(wheelCornerR(toneWeight(2))).toBeCloseTo(3.75);
   });
 });
 

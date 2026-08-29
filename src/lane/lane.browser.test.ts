@@ -16,6 +16,7 @@ import { PAPER, colorOf, tone } from '@/look/color';
 import { Engine } from '@/play/engine';
 import { DEFAULT_PLAY_SETTINGS } from '@/play/settings';
 import { keyAt, keyOf } from '@/score/key';
+import { MAJOR_TRIAD } from '@/score/shape';
 import { TICKS_PER_QUARTER, type ChordEvent, type Note, type Score } from '@/score/types';
 import { expect, test, vi } from 'vitest';
 
@@ -609,6 +610,7 @@ function scoreBorrowing(): Score {
     absolute,
     degree,
     root: tones[0]!,
+    shape: MAJOR_TRIAD,
     tones,
   });
   score.harmony = [chord(0, 'C', '1', [0, 4, 7]), chord(1, 'D♭', '♭2', [1, 5, 8])];

@@ -2,6 +2,7 @@ import { AccidentalEnum, ChordSymbolEnum } from 'opensheetmusicdisplay';
 import { describe, expect, test } from 'vitest';
 import { analyzeHarmony } from './harmony';
 import { keyOf, type Key } from './key';
+import { MAJOR_TRIAD, MINOR_TRIAD } from './shape';
 import {
   TICKS_PER_QUARTER,
   type ChordEvent,
@@ -132,8 +133,28 @@ describe('the naming rules', () => {
 
   test('an event points at the Onset where the harmony changes', () => {
     expect(analyzeHarmony(scoreOf([[60, 64, 67], [62, 65, 69]]))).toEqual([
-      { onsetIndex: 0, tick: 0, measureIndex: 0, absolute: 'C', degree: '1', root: 0, tones: [0, 4, 7] },
-      { onsetIndex: 1, tick: BAR, measureIndex: 1, absolute: 'Dm', degree: '2m', root: 2, tones: [2, 5, 9] },
+      {
+        onsetIndex: 0,
+        tick: 0,
+        measureIndex: 0,
+        absolute: 'C',
+        degree: '1',
+        root: 0,
+        shape: MAJOR_TRIAD,
+        bass: undefined,
+        tones: [0, 4, 7],
+      },
+      {
+        onsetIndex: 1,
+        tick: BAR,
+        measureIndex: 1,
+        absolute: 'Dm',
+        degree: '2m',
+        root: 2,
+        shape: MINOR_TRIAD,
+        bass: undefined,
+        tones: [2, 5, 9],
+      },
     ]);
   });
 
@@ -186,6 +207,14 @@ describe('a file with its own chord symbols', () => {
     expect(names(analyzeHarmony(score))).toEqual(['Csus4 ?']);
     // No template, so the root stands alone.
     expect(analyzeHarmony(score)[0]!.tones).toEqual([0]);
+  });
+
+  test('a written symbol and the same chord found by the search read alike', () => {
+    // D flat major: OSMD prints the file's own text with an ASCII flat, the app spells a glyph.
+    const notes = [[61, 65, 68]];
+    const written = scoreOf(notes, C_MAJOR, [symbol(0, 'Db', 1, ChordSymbolEnum.major)]);
+    expect(names(analyzeHarmony(written))).toEqual(['D♭ ♭2']);
+    expect(names(analyzeHarmony(scoreOf(notes)))).toEqual(names(analyzeHarmony(written)));
   });
 
   test('the kind gives the tones, and a slash bass adds none', () => {

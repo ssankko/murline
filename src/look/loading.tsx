@@ -194,12 +194,14 @@ export function Loading({
 /**
  * The wait while a piece opens, over the content area of the play screen and the Preview: between
  * the 48 px top bar and the 22 px status bar, with the sheet host and the lane left standing under
- * it. It takes no pointer input, so the row is only ever drawn over them.
+ * it. It takes no pointer input, so the row is only ever drawn over them. The sheet under it is
+ * the thing waited for, so the row goes the moment the sheet is there, with no exit beat.
  */
 export function Opening({ on, name }: { on: boolean; name: string }) {
+  if (!on) return null;
   return (
     <div className="pointer-events-none absolute inset-x-0 top-12 bottom-[22px] flex items-center justify-center">
-      <Loading on={on} scale={OPENING} label={`Opening ${name}`} />
+      <Loading scale={OPENING} label={`Opening ${name}`} />
     </div>
   );
 }

@@ -274,7 +274,7 @@ export function Library({
         <div className="border-edge-soft flex w-[340px] flex-none flex-col border-r">
           {/* No folder at all reads the same as one that has gone: there is nothing to list. */}
           {(!folder || folderGone) && (
-            <div className="border-edge-soft flex items-center gap-2 border-y px-4 py-2 text-[12px]">
+            <div className="border-edge-soft flex items-center gap-2 border-b px-4 py-2 text-[12px]">
               <p className="min-w-0">
                 Library folder not found
                 <span className="text-muted-ink"> {folder}</span>

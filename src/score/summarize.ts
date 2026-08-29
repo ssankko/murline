@@ -1,23 +1,8 @@
 // The index: the handful of facts the library page shows, taken from a built Score and stored in
 // the `piece` row so the page never opens a file.
 
+import { keyAt, modeName, type KeyMode } from './key';
 import { playedSeconds, ScoreError, type Score } from './types';
-
-/** OSMD's `KeyEnum` in the order of its members. */
-const KEY_MODES = [
-  'major',
-  'minor',
-  'none',
-  'dorian',
-  'phrygian',
-  'lydian',
-  'mixolydian',
-  'aeolian',
-  'ionian',
-  'locrian',
-] as const;
-
-export type KeyMode = (typeof KEY_MODES)[number];
 
 /** What OSMD titles a sheet that names no work: a Blob carries no file name to fall back on. */
 const NO_TITLE = 'Untitled Score';
@@ -56,7 +41,8 @@ export function summarize(score: Score, fileName: string): PieceIndex {
     throw new ScoreError('No notes in the first part', `${fileName} has nothing to play`);
   }
 
-  const key = score.keys[0];
+  // The key the piece opens in, which the library filters on.
+  const key = keyAt(score, 0);
   const title = score.title.trim();
   return {
     title: (title === NO_TITLE ? '' : title) || baseName(fileName),
@@ -67,8 +53,8 @@ export function summarize(score: Score, fileName: string): PieceIndex {
     midiHi,
     hasTempo: score.hasTempo,
     constantTempo: score.constantTempo,
-    keySharps: key?.sharps ?? 0,
-    keyMode: KEY_MODES[key?.mode ?? 0] ?? 'major',
+    keySharps: key.sharps,
+    keyMode: modeName(key.mode),
     partCount: score.partCount,
     partName: score.partName.trim() || 'Part 1',
   };

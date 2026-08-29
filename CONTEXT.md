@@ -116,6 +116,10 @@ _Avoid_: Hint note, shadow note
 The part of the play screen that names the chord sounding at the cursor and the next two chords, each in absolute form ("G7/B") and relative to the key as scale degrees ("5⁷/7").
 _Avoid_: Chord track, roman numerals
 
+**Key**:
+The key in force at a point of the score, read from the key signature: the sharps or flats it carries and its mode. A score with no signature is read in C major.
+_Avoid_: Scale (the scale is the key's notes), tonality, key signature (the written sign of it)
+
 **Wheel**:
 The circle-of-fifths panel in the falling notes, the wheel of fifths in full, shown in place of the harmony display when the harmony setting names it. Its band is the scale: twelve segments a fifth apart with C at the top, the seven of the key in force faced in their pitch colours and the other five hollow, the tonic in a badge, and the root of the chord sounding now on a segment that stands off the band. Inside it the figure is the chord, a polygon through its tones, and the hub is the chord's name at the centre. Outside it the runner travels its tracks, one arc per move, to reach the next root as the harmony advances.
 _Avoid_: Dial, circle, chart, mouse wheel (the pointer's wheel, never this panel)

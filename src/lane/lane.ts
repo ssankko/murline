@@ -10,26 +10,24 @@ import {
   drawKeyboard,
   keyLayout,
   keyRange,
-  type Key,
+  type PianoKey,
   type KeyLayout,
 } from '@/lane/keyboard';
 import { clamp } from '@/lib/utils';
 import {
   INK,
-  NOTE_NAMES,
   PAPER,
   colorOf,
-  isBlackKey,
   labelInk,
   luminance,
   mix,
-  pitchClass,
   tone,
   withAlpha,
   type Palette,
 } from '@/look/color';
 import { easeInOut, reducedMotion } from '@/look/motion';
-import { C_MAJOR, degreeOf, keyTable, scaleOf, tonicOf, type KeyAt } from '@/score/harmony';
+import { C_MAJOR, type Key } from '@/score/key';
+import { FIFTHS, SHARP_NAMES, isBlackKey, pitchClass } from '@/score/pitch';
 import type { Engine, LoopSpan, PlayEvent, SeekTarget, Snapshot } from '@/play/engine';
 import type { Section } from '@/play/section';
 import { isInactiveHand, type HandsSetting } from '@/play/settings';
@@ -345,13 +343,6 @@ interface LaneJump {
   label: string;
 }
 
-/** The key in force, its scale as pitch classes, and how the key spells each of them. */
-interface LaneScale {
-  key: KeyAt;
-  pcs: number[];
-  names: string[];
-}
-
 /** A chord of the harmony in played time: a repeated bar names its chords again. */
 export interface LaneChord {
   tick: number;
@@ -384,8 +375,6 @@ export class Lane {
   onSeek: ((target: SeekTarget) => void) | null = null;
   /** Where the lane says a pinch has changed its look, once the pinch has stood still. */
   onLook: ((look: Partial<LaneLook>) => void) | null = null;
-  /** Where the lane says which key the clock stands in, at every change of it. */
-  onKey: ((key: KeyAt | null) => void) | null = null;
 
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
@@ -396,12 +385,10 @@ export class Lane {
   private bars: LaneBar[];
   private jumps: LaneJump[];
   private chords: LaneChord[];
-  /** The key changes of the play in played time. */
-  private laneKeys: KeyAt[];
   /** The key in force at the clock, re-read when the key changes. */
-  private scale: LaneScale | null = null;
+  private scale: Key | null = null;
   /** The key the wheel cross-fades from, and when it set off; a seek and reduced motion snap. */
-  private wasScale: LaneScale | null = null;
+  private wasScale: Key | null = null;
   private keyAt = -Infinity;
   /** The dimmed face of each of the keyboard's two base greys, mixed once and kept. */
   private readonly dimmed = new Map<string, string>();
@@ -519,7 +506,6 @@ export class Lane {
     this.bars = barsOf(engine.score, this.walk);
     this.jumps = jumpsOf(engine.score, this.walk);
     this.chords = chordsOf(engine.score.harmony, this.walk);
-    this.laneKeys = laneKeysOf(engine.score, this.bars);
     this.hands = engine.settings.hands;
     this.handsBefore = this.hands;
     this.lastResets = engine.resets;
@@ -630,11 +616,12 @@ export class Lane {
   }
 
   /**
-   * One frame. Nothing is kept between frames but the effects still playing out. `now` is the
-   * engine's wall clock, not the raw animation clock: the age of every mark is read against
-   * `resolvedAt`, which the engine stamps from the strike that settled the note.
+   * One frame, drawn in the key the play screen hands in. Nothing is kept between frames but the
+   * effects still playing out. `now` is the engine's wall clock, not the raw animation clock: the
+   * age of every mark is read against `resolvedAt`, which the engine stamps from the strike that
+   * settled the note.
    */
-  frame(snap: Snapshot, windowTicks: number, now: number): void {
+  frame(snap: Snapshot, key: Key, windowTicks: number, now: number): void {
     this.now = now;
     this.playedTick = snap.playedTick;
     this.reduced = reducedMotion();
@@ -725,10 +712,9 @@ export class Lane {
       this.bars = barsOf(this.engine.score, this.walk);
       this.jumps = jumpsOf(this.engine.score, this.walk);
       this.chords = chordsOf(this.engine.score.harmony, this.walk);
-      this.laneKeys = laneKeysOf(this.engine.score, this.bars);
       this.walkAt = now;
     }
-    this.readScale();
+    this.readScale(key);
 
     const loop = this.engine.loopSpan();
     ctx.save();
@@ -1148,7 +1134,7 @@ export class Lane {
         // to hold it whole grows a tab in its own fill around the name, so the name is never
         // shrunk and never left off.
         if (this.look.names) {
-          const name = NOTE_NAMES[pitchClass(note.midi)]!;
+          const name = SHARP_NAMES[pitchClass(note.midi)]!;
           ctx.font = NAME_FONT;
           const need = ctx.measureText(name).width + NAME_PAD * 2;
           if (need > width || height < NAME_MIN_H) {
@@ -1320,7 +1306,7 @@ export class Lane {
    * wears a lighter cast of its pitch, or the full tier on dark paper, so it reads over the block
    * of the same colour it rises from.
    */
-  private trickle(key: Key, laneH: number): void {
+  private trickle(key: PianoKey, laneH: number): void {
     const color = this.dark
       ? colorOf(key.midi, 'full', true)
       : mix(colorOf(key.midi, 'muted', false), '#ffffff', 0.5);
@@ -1378,7 +1364,7 @@ export class Lane {
     let face = base;
     // A key outside the scale in force rests dimmed while the marks are on; every strike and press
     // below paints its own face over it, so the marks only show what the key does when left alone.
-    if (this.look.scaleMarks && this.scale && !this.scale.pcs.includes(pitchClass(midi))) {
+    if (this.look.scaleMarks && this.scale && !this.scale.has(midi)) {
       let dim = this.dimmed.get(base);
       if (!dim) this.dimmed.set(base, (dim = mix(base, tone(SCALE_DIM, this.dark), SCALE_DIM_T)));
       face = dim;
@@ -1582,7 +1568,7 @@ export class Lane {
     ctx.textBaseline = 'middle';
 
     const t = clamp((this.now - this.keyAt) / PANEL_SLIDE_MS, 0, 1);
-    const lit = (of: LaneScale | null, pc: number) => (of?.pcs.includes(pc) ? 1 : 0);
+    const lit = (of: Key | null, pc: number) => (of?.has(pc) ? 1 : 0);
     // Only a chord taking over from another moves the wheel; a cross-fade, a first chord and a
     // seek lay it out where it belongs.
     const since = this.change === 'slide' ? this.now - this.changeAt : Infinity;
@@ -1596,7 +1582,7 @@ export class Lane {
     const leaving = swap < 1 ? this.leaving[0]?.chord.event : undefined;
     // A chord tone the key does not hold reaches outside the scale: it takes no face, and its
     // segment is outlined in its own colour instead, dashed, on the fade the figure keeps.
-    const outside = (pc: number) => this.scale !== null && !this.scale.pcs.includes(pc);
+    const outside = (pc: number) => this.scale !== null && !this.scale.has(pc);
     const borrowed = (pc: number) =>
       outside(pc)
         ? (current?.tones.includes(pc) ? swap : 0) + (leaving?.tones.includes(pc) ? 1 - swap : 0)
@@ -1743,9 +1729,9 @@ export class Lane {
     const ctx = this.ctx;
     const face = colorOf(of.root, 'full', this.dark);
     const corners = of.tones
-      .map((pc) => ({
+      .map((pc, i) => ({
         pc,
-        weight: toneWeight(pc - of.root),
+        weight: toneWeight(i),
         point: spoke(wheelAngle(pc), CORNER_R),
       }))
       .sort((x, y) => FIFTHS.indexOf(pitchClass(x.pc)) - FIFTHS.indexOf(pitchClass(y.pc)));
@@ -1826,11 +1812,12 @@ export class Lane {
   }
 
   /**
-   * One segment's letter, with its degree under it where the key holds the pitch class. A `faced`
-   * segment wears the face of the chord in force, so its letter is read against that face and not
-   * against the chrome a hollow segment leaves bare.
+   * One segment's letter, with its degree under it where the key holds the pitch class; the key
+   * outside its own notes spells by its signature, and C major stands in where none is in force. A
+   * `faced` segment wears the face of the chord in force, so its letter is read against that face
+   * and not against the chrome a hollow segment leaves bare.
    */
-  private wheelLabel(pc: number, of: LaneScale | null, alpha: number, faced: boolean): void {
+  private wheelLabel(pc: number, of: Key | null, alpha: number, faced: boolean): void {
     if (alpha <= 0.01) return;
     const ctx = this.ctx;
     const [x, y] = spoke(wheelAngle(pc), BAND_MID);
@@ -1840,25 +1827,25 @@ export class Lane {
     ctx.font = LETTER_FONT;
     if (degree < 0) {
       ctx.fillStyle = faced ? ink : tone(INK.scaffolding, this.dark);
-      ctx.fillText(fifthName(pc, of?.key.sharps ?? 0), x, y);
+      ctx.fillText((of ?? C_MAJOR).spell(pc, 0), x, y);
       return;
     }
     ctx.fillStyle = ink;
     ctx.fillText(of!.names[degree]!, x, y + LETTER_DY);
     ctx.font = DEGREE_FONT;
-    ctx.fillText(degreeOf(pc, of!.key, 0), x, y + DEGREE_DY);
+    ctx.fillText(String(degree + 1), x, y + DEGREE_DY);
   }
 
   /** The key's tonic, marked by a box round its label in a light tint of its own hue. */
-  private wheelBadge(of: LaneScale | null, alpha: number): void {
+  private wheelBadge(of: Key | null, alpha: number): void {
     if (!of || alpha <= 0.01) return;
     const ctx = this.ctx;
-    const pc = of.pcs[0]!;
+    const pc = of.tonic;
     const [x, y] = spoke(wheelAngle(pc), BAND_MID);
     ctx.font = LETTER_FONT;
     const letter = ctx.measureText(of.names[0]!);
     ctx.font = DEGREE_FONT;
-    const degree = ctx.measureText(degreeOf(pc, of.key, 0));
+    const degree = ctx.measureText('1');
     const half = Math.max(letter.width, degree.width) / 2 + BADGE_PAD;
     const top = y + LETTER_DY - letter.actualBoundingBoxAscent - BADGE_PAD;
     const bottom = y + DEGREE_DY + degree.actualBoundingBoxDescent + BADGE_PAD;
@@ -1874,29 +1861,16 @@ export class Lane {
   }
 
   /**
-   * The key in force at the clock, its pitch classes and the letter it spells each of them with,
-   * for the readout, the key faces and the wheel. The entries of `laneKeys` outlive a frame, so the
-   * same one found again is the same key.
+   * The key the frame was handed, for the key faces and the wheel. A key is one object per
+   * signature and mode, so the same key handed in again changes nothing.
    */
-  private readScale(): void {
-    const key = this.laneKeys.findLast((k) => k.tick <= this.playedTick);
-    if (key === this.scale?.key) return;
+  private readScale(key: Key): void {
+    if (key === this.scale) return;
     // A key the play ran into cross-fades on the wheel; a seek may land anywhere, so the key it
     // lands in stands at once.
     this.wasScale = this.scale;
     this.keyAt = this.jumpedAt === this.now || this.reduced ? -Infinity : this.now;
-    if (!key) {
-      this.scale = null;
-      this.onKey?.(null);
-      return;
-    }
-    const tonic = tonicOf(key);
-    this.scale = {
-      key,
-      pcs: scaleOf(key).map((step) => pitchClass(tonic + step)),
-      names: keyTable(key).map((degree) => degree.note),
-    };
-    this.onKey?.(key);
+    this.scale = key;
   }
 
   /** The panel over the keys, which fades in on a notice and out again once it goes. */
@@ -1941,19 +1915,6 @@ function blendLayout(from: KeyLayout, to: KeyLayout, t: number): KeyLayout {
     return { ...key, x: ramp([was.x, key.x], t), w: ramp([was.w, key.w], t) };
   });
   return { keys, byMidi: new Map(keys.map((key) => [key.midi, key])), width: to.width };
-}
-
-/** The twelve pitch classes a fifth apart, which is the order the wheel's segments run in. */
-const FIFTHS = [0, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10, 5];
-/**
- * The letter a segment wears where the key in force spells no name for it: a black key follows the
- * key's own signature, and a key with no signature takes F♯ on the sharp side and flats past it.
- */
-export function fifthName(pc: number, sharps: number): string {
-  const name = NOTE_NAMES[pitchClass(pc)]!;
-  if (name.length === 1) return name;
-  const sharp = sharps > 0 || (sharps === 0 && pitchClass(pc) === 6);
-  return sharp ? `${name[0]}♯` : `${NOTE_NAMES[pitchClass(pc + 1)]}♭`;
 }
 
 /** Where a pitch class stands on the wheel: C at twelve o'clock, a fifth every 30 degrees. */
@@ -2040,16 +2001,11 @@ export function wheelFillAlpha(root: number, dark: boolean): number {
 }
 
 /**
- * How much a chord tone counts in the figure, by its semitones above the root: the root carries the
- * chord, the third gives its quality, the seventh its colour, and the fifth and anything else weigh
- * the least.
+ * How much a chord tone counts in the figure, by its place in the chord's shape: the root carries
+ * the chord, the third gives its quality, the seventh its colour, and the fifth and anything else
+ * weigh the least.
  */
-export function toneWeight(interval: number): number {
-  const step = pitchClass(interval);
-  if (step === 0) return 1;
-  if (step === 3 || step === 4) return 0.75;
-  return step >= 9 ? 0.65 : 0.5;
-}
+export const toneWeight = (index: number): number => [1, 0.75, 0.5, 0.65][index] ?? 0.5;
 
 /** How big a corner of the figure stands: the more its tone carries, the wider the dot. */
 export const wheelCornerR = (weight: number) => 2.5 + 2.5 * weight;
@@ -2127,26 +2083,6 @@ export function chordsOf(harmony: ChordEvent[], walk: PlayStep[]): LaneChord[] {
     if (event) chords.push({ tick: step.tick, event });
   }
   return chords;
-}
-
-/**
- * Every key change of the play in played time, one entry where the key a bar carries differs from
- * the one before it. A key change under a repeat re-marks the keyboard on each pass, and a bar
- * before the first written change still takes the piece's first key. A piece with no key signature
- * is read in C major, as the harmony reads it.
- */
-export function laneKeysOf(score: Score, bars: LaneBar[]): KeyAt[] {
-  const first = bars[0];
-  if (score.keys.length === 0) return first ? [{ ...C_MAJOR, tick: first.tick }] : [];
-  const keys: KeyAt[] = [];
-  let held: { sharps: number; mode: number } | null = null;
-  for (const bar of bars) {
-    const change = score.keys.findLast((k) => k.measureIndex <= bar.measure) ?? score.keys[0]!;
-    if (held && change.sharps === held.sharps && change.mode === held.mode) continue;
-    keys.push({ tick: bar.tick, sharps: change.sharps, mode: change.mode });
-    held = change;
-  }
-  return keys;
 }
 
 /** The chord in force at a played tick and the two after it; the first is missing before them all. */

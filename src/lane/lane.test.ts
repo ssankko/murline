@@ -1,5 +1,6 @@
 import { PAPER, colorOf, luminance, mix, tone } from '@/look/color';
-import { TICKS_PER_QUARTER, type ChordEvent, type KeyChange, type Score } from '@/score/types';
+import { MAJOR_TRIAD } from '@/score/shape';
+import { TICKS_PER_QUARTER, type ChordEvent } from '@/score/types';
 import { describe, expect, test } from 'vitest';
 import {
   alongTrack,
@@ -8,10 +9,8 @@ import {
   burnAt,
   chordsAt,
   chordsOf,
-  fifthName,
   glideLeft,
   jumpOf,
-  laneKeysOf,
   lerpRect,
   popAt,
   pulseAt,
@@ -38,7 +37,16 @@ const BARS = [0, 1, 2].map((i) => ({
 
 function chord(onsetIndex: number, absolute: string): ChordEvent {
   const tick = onsetIndex * Q;
-  return { onsetIndex, tick, measureIndex: 0, absolute, degree: '1', root: 0, tones: [0, 4, 7] };
+  return {
+    onsetIndex,
+    tick,
+    measureIndex: 0,
+    absolute,
+    degree: '1',
+    root: 0,
+    shape: MAJOR_TRIAD,
+    tones: [0, 4, 7],
+  };
 }
 
 /** Six Onsets, one per quarter, with bar 1 played again after bar 2. */
@@ -77,40 +85,6 @@ describe('the harmony in played time', () => {
       tick: each.tick + by,
     }));
     expect(lap.map((each) => each.tick)).toEqual([0, 3 * Q, 6 * Q, 9 * Q]);
-  });
-});
-
-describe('the key in force in played time', () => {
-  const scoreOf = (keys: KeyChange[]): Score => ({ keys }) as Score;
-
-  test('a key change lands on the bar it opens', () => {
-    const keys: KeyChange[] = [
-      { measureIndex: 0, sharps: 2, mode: 0 },
-      { measureIndex: 1, sharps: -3, mode: 0 },
-    ];
-    expect(laneKeysOf(scoreOf(keys), BARS)).toEqual([
-      { tick: 0, sharps: 2, mode: 0 },
-      { tick: 3 * Q, sharps: -3, mode: 0 },
-    ]);
-  });
-
-  test('a repeated bar carries its key again on the next pass', () => {
-    const keys: KeyChange[] = [
-      { measureIndex: 0, sharps: 2, mode: 0 },
-      { measureIndex: 2, sharps: -3, mode: 0 },
-    ];
-    const lap = BARS.map((bar) => ({ ...bar, tick: bar.tick + 9 * Q }));
-    const marks = laneKeysOf(scoreOf(keys), [...BARS, ...lap]).map((key) => [key.tick, key.sharps]);
-    expect(marks).toEqual([
-      [0, 2],
-      [6 * Q, -3],
-      [9 * Q, 2],
-      [15 * Q, -3],
-    ]);
-  });
-
-  test('a piece with no key signatures stands in C major', () => {
-    expect(laneKeysOf(scoreOf([]), BARS)).toEqual([{ tick: 0, sharps: 0, mode: 0 }]);
   });
 });
 
@@ -322,33 +296,11 @@ describe("the chord figure inside the wheel", () => {
   });
 
   test('a corner grows with the weight its tone carries', () => {
+    // The places of a seventh chord's shape: root, third, fifth, seventh.
     expect(wheelCornerR(toneWeight(0))).toBe(5);
-    expect(wheelCornerR(toneWeight(4))).toBeCloseTo(4.375);
-    expect(wheelCornerR(toneWeight(10))).toBeCloseTo(4.125);
-    expect(wheelCornerR(toneWeight(7))).toBeCloseTo(3.75);
-  });
-});
-
-describe('the letter a segment outside the key wears', () => {
-  test('a black key follows the signature of the key in force', () => {
-    expect([6, 1, 8, 3, 10].map((pc) => fifthName(pc, 4))).toEqual(['F♯', 'C♯', 'G♯', 'D♯', 'A♯']);
-    expect([6, 1, 8, 3, 10].map((pc) => fifthName(pc, -3))).toEqual(['G♭', 'D♭', 'A♭', 'E♭', 'B♭']);
-    // A key with no signature keeps one sharp on the way out and flats coming back.
-    expect([6, 1, 8, 3, 10].map((pc) => fifthName(pc, 0))).toEqual(['F♯', 'D♭', 'A♭', 'E♭', 'B♭']);
-  });
-
-  test('a white key wears its letter whatever the key', () => {
-    for (const sharps of [-5, 0, 5]) {
-      expect([0, 2, 4, 5, 7, 9, 11].map((pc) => fifthName(pc, sharps))).toEqual([
-        'C',
-        'D',
-        'E',
-        'F',
-        'G',
-        'A',
-        'B',
-      ]);
-    }
+    expect(wheelCornerR(toneWeight(1))).toBeCloseTo(4.375);
+    expect(wheelCornerR(toneWeight(3))).toBeCloseTo(4.125);
+    expect(wheelCornerR(toneWeight(2))).toBeCloseTo(3.75);
   });
 });
 

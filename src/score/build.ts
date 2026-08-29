@@ -9,7 +9,7 @@ import {
   type Note as OsmdNote,
   type Staff as OsmdStaff,
 } from 'opensheetmusicdisplay';
-import { pitchClass } from '@/look/color';
+import { pitchClass } from './pitch';
 import {
   ticksOf,
   type ChordSymbol,

@@ -20,7 +20,7 @@ async function score(fileName: string): Promise<Score> {
 const BACH = [
   'C', 'Dm7/C', 'G7/B', 'C', 'Am/C', 'D7/C', 'G/B', 'C',
   'Am7', 'D7', 'G', 'G°7', 'Dm/F', 'F°7', 'C/E', 'F',
-  'Dm7', 'G7', 'C', 'C7', 'F', 'F#°7', 'Ab°7', 'G7',
+  'Dm7', 'G7', 'C', 'C7', 'F', 'F♯°7', 'A♭°7', 'G7',
   'C/G', 'G7', 'Aø7/G', 'C/G', 'G7', 'C7', 'F/C', 'Dm7/C',
   'C',
 ];

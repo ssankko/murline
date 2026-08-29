@@ -3,53 +3,30 @@
 // against the key in force ("5⁷/7"). A file that writes its own `<harmony>` symbols is not analysed
 // at all; the symbols are the harmony.
 
-import { NOTE_NAMES, pitchClass } from '@/look/color';
 import { AccidentalEnum, ChordSymbolEnum } from 'opensheetmusicdisplay';
 import { beatOf } from './beat';
+import { keyAt, type Key, type KeyAt } from './key';
+import { pitchClass } from './pitch';
+import {
+  AUGMENTED,
+  DIMINISHED,
+  DIMINISHED_7,
+  DOMINANT_7,
+  HALF_DIMINISHED_7,
+  MAJOR_7,
+  MAJOR_TRIAD,
+  MINOR_7,
+  MINOR_TRIAD,
+  type Shape,
+} from './shape';
 import {
   TICKS_PER_QUARTER,
   type ChordEvent,
-  type ChordSymbol,
   type Measure,
   type Note,
   type Onset,
   type Score,
 } from './types';
-
-/** The key in force from a sheet tick on: sharps positive, flats negative, mode is OSMD's KeyEnum. */
-export interface KeyAt {
-  tick: number;
-  sharps: number;
-  mode: number;
-}
-
-const FLAT_NAMES = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
-
-interface Shape {
-  /** Suffix of the absolute name. */
-  abs: string;
-  /** Suffix of the degree name. */
-  rel: string;
-  /** Semitones above the root. */
-  steps: number[];
-}
-
-const MAJOR_TRIAD: Shape = { abs: '', rel: '', steps: [0, 4, 7] };
-const MINOR_TRIAD: Shape = { abs: 'm', rel: 'm', steps: [0, 3, 7] };
-const DIMINISHED: Shape = { abs: '°', rel: '°', steps: [0, 3, 6] };
-const AUGMENTED: Shape = { abs: '+', rel: '+', steps: [0, 4, 8] };
-const DOMINANT_7: Shape = { abs: '7', rel: '⁷', steps: [0, 4, 7, 10] };
-const MAJOR_7: Shape = { abs: 'M7', rel: 'M⁷', steps: [0, 4, 7, 11] };
-const MINOR_7: Shape = { abs: 'm7', rel: 'm⁷', steps: [0, 3, 7, 10] };
-const HALF_DIMINISHED_7: Shape = { abs: 'ø7', rel: 'ø⁷', steps: [0, 3, 6, 10] };
-const DIMINISHED_7: Shape = { abs: '°7', rel: '°⁷', steps: [0, 3, 6, 9] };
-// The two sevenths only the harmonic minor stacks: on its tonic and on its mediant.
-const MINOR_MAJOR_7: Shape = { abs: 'mM7', rel: 'mM⁷', steps: [0, 3, 7, 11] };
-const AUGMENTED_MAJOR_7: Shape = {
-  abs: '+M7',
-  rel: '+M⁷',
-  steps: [0, 4, 8, 11],
-};
 
 // Pardo's six templates plus the minor seventh, in the order of how often each labels a chord in
 // his corpus, and the cost of picking each one: a fifth of the log2 ratio of its share to the major
@@ -87,43 +64,6 @@ const CHANGE = { bar: 0, beat: 1, off: 3 };
 /** A segment runs at most two bars, so one name never covers a phrase. */
 const SEGMENT_BARS = 2;
 
-const MAJOR_SCALE = [0, 2, 4, 5, 7, 9, 11];
-const HARMONIC_MINOR = [0, 2, 3, 5, 7, 8, 11];
-/** The note letters, the pitch class each one is natural at, and the accidentals from -2 to 2. */
-const LETTERS = 'CDEFGAB';
-const LETTER_PCS = [0, 2, 4, 5, 7, 9, 11];
-const ACCIDENTALS = ['♭♭', '♭', '', '♯', '♯♯'];
-/** The letters a key signature takes its sharps on, in order; flats take them in reverse. */
-const SIGNATURE_ORDER = [3, 0, 4, 1, 5, 2, 6];
-/** The triads a scale degree can stack into. */
-const TRIADS = [MAJOR_TRIAD, MINOR_TRIAD, DIMINISHED, AUGMENTED];
-/** The sevenths a scale degree can stack into, over the major scale and the harmonic minor. */
-const SEVENTHS = [
-  MAJOR_7,
-  MINOR_7,
-  DOMINANT_7,
-  HALF_DIMINISHED_7,
-  DIMINISHED_7,
-  MINOR_MAJOR_7,
-  AUGMENTED_MAJOR_7,
-];
-/** What each scale degree does in the key. */
-const ROLES = [
-  'tonic',
-  'supertonic',
-  'mediant',
-  'subdominant',
-  'dominant',
-  'submediant',
-  'leading tone',
-];
-// Semitones from the key signature's major tonic to the mode's tonic, indexed by OSMD's KeyEnum.
-const MODE_OFFSET = [0, 9, 0, 2, 4, 5, 7, 9, 0, 11];
-const MAJOR_MODES = new Set([0, 2, 8]);
-
-/** The key a piece with no key signature is read in. */
-export const C_MAJOR: KeyAt = { tick: 0, sharps: 0, mode: 0 };
-
 const WHOLE_NOTE = 4 * TICKS_PER_QUARTER;
 
 const pitchClasses = (notes: Note[]) => new Set(notes.map((n) => pitchClass(n.midi)));
@@ -134,127 +74,6 @@ const pitchClasses = (notes: Note[]) => new Set(notes.map((n) => pitchClass(n.mi
  */
 export function analyzeHarmony(score: Score): ChordEvent[] {
   return score.chords.length > 0 ? fromSymbols(score) : segment(score);
-}
-
-/** Tonic pitch class of a key: the key signature's major tonic moved by the mode. */
-export function tonicOf(key: KeyAt): number {
-  return pitchClass(key.sharps * 7 + (MODE_OFFSET[key.mode] ?? 0));
-}
-
-/** Major, or harmonic minor for every mode that is not a major one. */
-export const scaleOf = (key: KeyAt) => (MAJOR_MODES.has(key.mode) ? MAJOR_SCALE : HARMONIC_MINOR);
-
-const inScale = (p: number, key: KeyAt) => scaleOf(key).includes(pitchClass(p - tonicOf(key)));
-
-/**
- * Scale degree of a pitch class in the key: "5", "♭7", "♯4". `written` is the note's own accidental,
- * 1 for a sharp, -1 for a flat, 0 for none or a natural.
- */
-export function degreeOf(p: number, key: KeyAt, written: number): string {
-  const scale = scaleOf(key);
-  const step = pitchClass(p - tonicOf(key));
-  const own = scale.indexOf(step);
-  if (own >= 0) return String(own + 1);
-  const below = scale.indexOf(pitchClass(step - 1));
-  const above = scale.indexOf(pitchClass(step + 1));
-  // Both neighbours a semitone away: a written sharp raises the lower degree, a written flat lowers
-  // the upper one, and a natural undoes the key signature's own accidental.
-  const sharp = below >= 0 && (above < 0 || (written === 0 ? key.sharps < 0 : written > 0));
-  return sharp ? `♯${below + 1}` : `♭${above + 1}`;
-}
-
-/** Note name of a pitch class: flats when the note or the key is written with them. */
-function spell(p: number, key: KeyAt, written: number): string {
-  const flat = written < 0 || (written === 0 && key.sharps < 0);
-  return (flat ? FLAT_NAMES : NOTE_NAMES)[p]!;
-}
-
-/** Letter index of a key's tonic: four letters up per sharp, five more for a minor key. */
-function letterOf(key: KeyAt): number {
-  const major = (((key.sharps * 4) % 7) + 7) % 7;
-  return MAJOR_MODES.has(key.mode) ? major : (major + 5) % 7;
-}
-
-/**
- * A pitch class written on one letter: the accidental is how far the pitch stands from the letter's
- * natural, so B on the letter C reads "C♭" and G♯ on the letter G reads "G♯".
- */
-function spellOn(letter: number, p: number): string {
-  const away = ((pitchClass(p - LETTER_PCS[letter]!) + 6) % 12) - 6;
-  return LETTERS[letter]! + (ACCIDENTALS[away + 2] ?? '');
-}
-
-/** Full name of a key, spelled by letter: "D major", "F♯ minor", "C♭ major". */
-export function keyName(key: KeyAt): string {
-  return `${spellOn(letterOf(key), tonicOf(key))} ${MAJOR_MODES.has(key.mode) ? 'major' : 'minor'}`;
-}
-
-/** One scale degree of a key: what it is called and what it stacks into. */
-export interface KeyDegree {
-  degree: number;
-  note: string;
-  /** The note as semitones from C, for its colour. */
-  pitch: number;
-  role: string;
-  triad: string;
-  /** The triad's notes, spelled by letter: "D F♯ A". */
-  notes: string;
-  seventh: string;
-}
-
-/** The seven notes of the key's scale, one letter each. */
-function spelledScale(key: KeyAt): string[] {
-  const tonic = tonicOf(key);
-  const letter = letterOf(key);
-  return scaleOf(key).map((step, i) => spellOn((letter + i) % 7, pitchClass(tonic + step)));
-}
-
-/**
- * The key laid out one entry per scale degree. The chords come from stacking the scale degrees i,
- * i+2, i+4 and i+6 and matching the semitones above the root against the shapes.
- */
-export function keyTable(key: KeyAt): KeyDegree[] {
-  const scale = scaleOf(key);
-  const names = spelledScale(key);
-  const tonic = tonicOf(key);
-  return names.map((note, i) => {
-    const stack = [2, 4, 6].map((n) => pitchClass(scale[(i + n) % 7]! - scale[i]!));
-    const match = (shapes: Shape[], size: number) =>
-      shapes.find((each) => each.steps.slice(1, size).every((step, k) => step === stack[k]));
-    const triad = match(TRIADS, 3) ?? MAJOR_TRIAD;
-    const seventh = match(SEVENTHS, 4) ?? MAJOR_7;
-    return {
-      degree: i + 1,
-      note,
-      pitch: tonic + scale[i]!,
-      role: ROLES[i]!,
-      triad: note + triad.abs,
-      notes: [0, 2, 4].map((n) => names[(i + n) % 7]!).join(' '),
-      seventh: note + seventh.abs,
-    };
-  });
-}
-
-/** How many sharps or flats the key signature holds, and which notes they fall on, in order. */
-export function signatureOf(key: KeyAt): { count: number; notes: string[] } {
-  const count = Math.abs(key.sharps);
-  const order = key.sharps < 0 ? [...SIGNATURE_ORDER].reverse() : SIGNATURE_ORDER;
-  const sign = key.sharps < 0 ? '♭' : '♯';
-  return {
-    count,
-    notes: order.slice(0, count).map((letter) => LETTERS[letter]! + sign),
-  };
-}
-
-/** The key sharing this one's signature: the relative minor of a major key, or the other way. */
-export function relativeOf(key: KeyAt): KeyAt {
-  return { ...key, mode: MAJOR_MODES.has(key.mode) ? 1 : 0 };
-}
-
-/** The key on this one's tonic in the other mode: a minor key signs three sharps fewer. */
-export function parallelOf(key: KeyAt): KeyAt {
-  const major = MAJOR_MODES.has(key.mode);
-  return { ...key, sharps: key.sharps + (major ? -3 : 3), mode: major ? 1 : 0 };
 }
 
 /** Sharps and flats of any depth fold to one sign; naturals and none are 0. */
@@ -306,14 +125,13 @@ function scoreSegment(weight: number[], off: number[], total: number): Candidate
   return best!;
 }
 
-/** The key in force at each key change, in sheet ticks. */
+/** The key in force at each key change, in sheet ticks; a piece that writes none opens in C major. */
 function keysOf(score: Score): KeyAt[] {
-  const keys = score.keys.map((k) => ({
+  if (score.keys.length === 0) return [{ tick: 0, key: keyAt(score, 0) }];
+  return score.keys.map((k) => ({
     tick: score.measures[k.measureIndex]?.startTick ?? 0,
-    sharps: k.sharps,
-    mode: k.mode,
+    key: keyAt(score, k.measureIndex),
   }));
-  return keys.length > 0 ? keys : [C_MAJOR];
 }
 
 /** Every beat start of the whole piece; a compound meter beats in dotted quarters. */
@@ -443,7 +261,7 @@ function segment(score: Score): ChordEvent[] {
   let k = 0;
   for (const [i, j] of cuts) {
     while (k + 1 < keys.length && keys[k + 1]!.tick <= ticks[i]!) k++;
-    const named = nameSegment(sounding.slice(i, j), label[j]!, keys[k]!);
+    const named = nameSegment(sounding.slice(i, j), label[j]!, keys[k]!.key);
     const last = events[events.length - 1];
     if (!named || (last && last.absolute === named.absolute && last.degree === named.degree)) {
       continue;
@@ -459,18 +277,53 @@ function segment(score: Score): ChordEvent[] {
 }
 
 /**
- * The name of one segment. A diminished triad, or a half-diminished seventh on a chromatic root,
+ * A chord as its two names are read off it: the root it stands on, the shape it fills, a bass the
+ * name prints after a slash, and the accidentals the score writes on that root and that bass.
+ */
+interface Chord {
+  root: number;
+  shape: Shape;
+  bass?: number;
+  /** 1 for a sharp, -1 for a flat, 0 for none or a natural. */
+  written?: [root: number, bass: number];
+}
+
+/** The one place a chord's names are spelled: as a musician writes it, and against the key. */
+function chordName(chord: Chord, key: Key): { absolute: string; degree: string } {
+  const { root, shape, bass, written = [0, 0] } = chord;
+  return {
+    absolute:
+      key.spell(root, written[0]) +
+      shape.abs +
+      (bass === undefined ? '' : `/${key.spell(bass, written[1])}`),
+    degree:
+      shape.rel === undefined
+        ? UNNAMEABLE_DEGREE
+        : key.degreeOf(root, written[0]) +
+          shape.rel +
+          (bass === undefined ? '' : `/${key.degreeOf(bass, written[1])}`),
+  };
+}
+
+/** Everything a chord event holds except where in the piece it stands. */
+type NamedChord = Omit<ChordEvent, 'onsetIndex' | 'tick' | 'measureIndex'>;
+
+/** A chord with its names and its pitch classes, the root first, then rising above it. */
+function named(chord: Chord, key: Key): NamedChord {
+  const { root, shape, bass } = chord;
+  const tones = shape.steps.map((st) => pitchClass(root + st));
+  return { root, shape, bass, tones, ...chordName(chord, key) };
+}
+
+/**
+ * The chord of one segment. A diminished triad, or a half-diminished seventh on a chromatic root,
  * reads as the dominant seventh a major third below when that root is a degree of the key. A
  * diminished seventh is symmetric, so it is spelled from its bass. A bass that is the lowest pitch
  * class of every unit and a chord tone other than the root makes a slash name. A segment of one
  * pitch class, or of octave doublings only, is a line and not a harmony, so it carries the last
  * name.
  */
-function nameSegment(
-  units: Note[][],
-  label: Candidate,
-  key: KeyAt,
-): { absolute: string; degree: string; root: number; tones: number[] } | undefined {
+function nameSegment(units: Note[][], label: Candidate, key: Key): NamedChord | undefined {
   const notes = [...new Set(units.flat())];
   const line =
     pitchClasses(notes).size < 2 || units.every((u) => u.length >= 2 && pitchClasses(u).size === 1);
@@ -478,38 +331,34 @@ function nameSegment(
 
   let { root, shape } = label;
   if (
-    (shape === DIMINISHED || (shape === HALF_DIMINISHED_7 && !inScale(root, key))) &&
-    inScale(pitchClass(root - 4), key)
+    (shape === DIMINISHED || (shape === HALF_DIMINISHED_7 && !key.has(root))) &&
+    key.has(pitchClass(root - 4))
   ) {
     root = pitchClass(root - 4);
     shape = DOMINANT_7;
   }
   // The bass is held when every unit has the same lowest pitch class, restruck or not.
   const lowestOf = (unit: Note[]) => pitchClass(Math.min(...unit.map((x) => x.midi)));
-  const bass = lowestOf(units[0]!);
-  const held = units.every((u) => lowestOf(u) === bass);
-  if (shape === DIMINISHED_7 && held && shape.steps.some((st) => pitchClass(root + st) === bass)) {
-    root = bass;
+  const lowest = lowestOf(units[0]!);
+  const held = units.every((u) => lowestOf(u) === lowest);
+  if (shape === DIMINISHED_7 && held && shape.steps.some((st) => pitchClass(root + st) === lowest)) {
+    root = lowest;
   }
 
   const tones = shape.steps.map((st) => pitchClass(root + st));
-  const slash = bass !== root && tones.includes(bass) && held;
-  const written = (p: number) => {
-    const note = notes.find((x) => pitchClass(x.midi) === p);
+  const accidentalAt = (pc: number) => {
+    const note = notes.find((x) => pitchClass(x.midi) === pc);
     return note ? accidentalOf(note) : 0;
   };
-  return {
-    absolute:
-      spell(root, key, written(root)) +
-      shape.abs +
-      (slash ? `/${spell(bass, key, written(bass))}` : ''),
-    degree:
-      degreeOf(root, key, written(root)) +
-      shape.rel +
-      (slash ? `/${degreeOf(bass, key, written(bass))}` : ''),
-    root,
-    tones,
-  };
+  return named(
+    {
+      root,
+      shape,
+      bass: lowest !== root && tones.includes(lowest) && held ? lowest : undefined,
+      written: [accidentalAt(root), accidentalAt(lowest)],
+    },
+    key,
+  );
 }
 
 // The template every `<harmony>` kind with a base quality stands on, for its degree suffix and its
@@ -542,51 +391,40 @@ const KIND_SHAPE = new Map<ChordSymbolEnum, Shape>([
 
 const UNNAMEABLE_DEGREE = '?';
 
+/** The file's own suffix: the chord text without the root it opens with and without a slash bass. */
+const suffixOf = (text: string) => text.split('/')[0]!.replace(/^[A-G][#b♯♭]*/, '');
+
 /**
- * The harmony of a file that writes its own chord symbols. The absolute name is the symbol as it is
- * printed; the degree name comes from its root, kind and bass against the key in force.
+ * The harmony of a file that writes its own chord symbols. The file's suffix names the chord, so a
+ * ninth stays a ninth, and the root and the bass are spelled by the key in force.
  */
 function fromSymbols(score: Score): ChordEvent[] {
   const keys = keysOf(score);
   const events: ChordEvent[] = [];
   for (const symbol of score.chords) {
-    const key = keys.findLast((k) => k.tick <= symbol.tick) ?? C_MAJOR;
-    const shape = KIND_SHAPE.get(symbol.kind);
-    const named = {
-      absolute: symbol.text,
-      degree: degreeOfSymbol(symbol, key),
-      root: symbol.root,
-      // A kind that names no template stands on its root alone, and a slash bass is a tone only
-      // where the template already holds it.
-      tones: (shape?.steps ?? [0]).map((st) => pitchClass(symbol.root + st)),
-    };
+    // A symbol written before the first change stands in the piece's first key.
+    const key = keys.findLast((k) => k.tick <= symbol.tick)?.key ?? keys[0]!.key;
+    const template = KIND_SHAPE.get(symbol.kind);
+    // A kind that names no template stands on its root alone and reads no degree.
+    const body = named(
+      {
+        root: symbol.root,
+        shape: { abs: suffixOf(symbol.text), rel: template?.rel, steps: template?.steps ?? [0] },
+        bass: symbol.bass === symbol.root ? undefined : symbol.bass,
+      },
+      key,
+    );
     const last = events[events.length - 1];
-    if (last && last.absolute === named.absolute && last.degree === named.degree) continue;
+    if (last && last.absolute === body.absolute && last.degree === body.degree) continue;
     // The symbol is written over the note it starts on, so it belongs to the next Onset.
     const found = score.onsets.findIndex((o) => o.tick >= symbol.tick);
     const at = found === -1 ? score.onsets.length - 1 : found;
     const onset = score.onsets[at];
     if (!onset) continue;
-    const event = {
-      onsetIndex: at,
-      tick: onset.tick,
-      measureIndex: onset.measureIndex,
-      ...named,
-    };
+    const event = { onsetIndex: at, tick: onset.tick, measureIndex: onset.measureIndex, ...body };
     // Two symbols over one Onset are one beat, and the later one is what is heard there.
     if (last && last.onsetIndex === at) events[events.length - 1] = event;
     else events.push(event);
   }
   return events;
-}
-
-/** A written symbol has no accidental of its own, so the key alone decides its spelling. */
-function degreeOfSymbol(symbol: ChordSymbol, key: KeyAt): string {
-  const shape = KIND_SHAPE.get(symbol.kind);
-  if (!shape) return UNNAMEABLE_DEGREE;
-  const slash =
-    symbol.bass !== undefined && symbol.bass !== symbol.root
-      ? `/${degreeOf(symbol.bass, key, 0)}`
-      : '';
-  return degreeOf(symbol.root, key, 0) + shape.rel + slash;
 }

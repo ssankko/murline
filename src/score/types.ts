@@ -3,6 +3,7 @@
 // back to the drawn sheet.
 
 import type { Note as OsmdNote } from 'opensheetmusicdisplay';
+import type { Shape } from './shape';
 
 /** Time unit of the whole app. A quarter note is 960 ticks, so triplets and 64ths stay integers. */
 export const TICKS_PER_QUARTER = 960;
@@ -106,6 +107,10 @@ export interface ChordEvent {
   degree: string;
   /** Pitch class of the root. */
   root: number;
+  /** The shape the chord was matched to, carrying the suffix both names wear. */
+  shape: Shape;
+  /** Pitch class of the bass the names print after a slash; undefined where the root is in it. */
+  bass?: number;
   /** Pitch classes of the chord, the root first, then rising by interval above it. */
   tones: number[];
 }

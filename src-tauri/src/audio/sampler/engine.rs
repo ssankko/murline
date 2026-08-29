@@ -406,9 +406,16 @@ impl Sampler {
     fn note_on(&mut self, note: u8, velocity: u8) {
         self.struck[note as usize] = velocity;
         let rate = self.rate;
-        // A re-strike lets the ringing voice fall away rather than silencing it.
-        for v in self.sounding().filter(|v| v.note == note && damped(v.role)) {
-            v.release(rate);
+        // A re-strike lets the ringing voice fall away rather than silencing it, and takes out
+        // the one already falling: under the new strike a third generation of the key is not
+        // heard, so a key repeated fast holds two voices a layer, not one per strike.
+        for v in self.voices.iter_mut().filter(|v| v.active && !v.retired && v.note == note) {
+            match v.stage {
+                _ if !damped(v.role) => {}
+                Stage::Release => v.cut(rate),
+                Stage::Cut => {}
+                _ => v.release(rate),
+            }
         }
         self.start(note, velocity, Role::Sustain);
         if self.pedal {
@@ -465,21 +472,26 @@ impl Sampler {
         if role == Role::Sustain { 1.0 } else { self.levels[role as usize] }
     }
 
-    /// Sounds every zone that answers this key, this velocity and this role. An EXS layers them:
-    /// Studio Grand holds its three mic sets as three zones over the same key, and a piano whose
-    /// groups split the keyboard has one. A role at level 0 starts nothing.
+    /// Sounds every zone that answers this key, this velocity and this role, looking only at the
+    /// zones the instrument's index lists under the key. An EXS layers them: Studio Grand holds
+    /// its three mic sets as three zones over the same key, and a piano whose groups split the
+    /// keyboard has one. A role at level 0 starts nothing.
     fn start(&mut self, note: u8, velocity: u8, role: Role) {
         if velocity == 0 || self.level(role) == 0.0 {
             return;
         }
+        // A key makes one noise at a time: a new one-shot on the key takes the place of the last.
+        if !damped(role) {
+            let rate = self.rate;
+            for v in self.sounding().filter(|v| v.note == note && v.role == role) {
+                v.cut(rate);
+            }
+        }
         // The instrument is held for the whole of this, so nothing here borrows the engine.
         let Some(instrument) = self.instrument.clone() else { return };
-        for index in 0..instrument.zones.len() {
+        for &index in instrument.keyed(note) {
             let zone = &instrument.zones[index];
-            if zone.role == role
-                && (zone.key_lo..=zone.key_hi).contains(&note)
-                && (zone.vel_lo..=zone.vel_hi).contains(&velocity)
-            {
+            if zone.role == role && (zone.vel_lo..=zone.vel_hi).contains(&velocity) {
                 self.sound(&instrument, index, note, velocity, role);
             }
         }
@@ -705,6 +717,29 @@ mod tests {
     }
 
     #[test]
+    fn a_key_repeated_fast_holds_two_voices_a_layer_and_one_noise_a_role() {
+        let (mut s, _dead) = sampler(64);
+        s.apply(Command::Envelope(Envelope { attack: 0.0, decay: 0.0, sustain: 1.0, release: 2.0 }));
+        s.apply(Command::Load(every_role()));
+        for _ in 0..8 {
+            s.apply(Command::NoteOn { note: 60, velocity: 64 });
+            // Longer than the cut fade, so what the strike took out is gone before the next.
+            render(&mut s, 0.01);
+        }
+        assert_eq!(playing(&s, Role::Sustain), vec![60, 60], "one sounding, one releasing");
+        for _ in 0..8 {
+            s.apply(Command::NoteOff { note: 60 });
+            render(&mut s, 0.01);
+            s.apply(Command::NoteOn { note: 60, velocity: 64 });
+            render(&mut s, 0.01);
+        }
+        assert_eq!(playing(&s, Role::Sustain), vec![60], "a let-go voice gives way to the strike");
+        assert_eq!(playing(&s, Role::Release), vec![60], "one damper noise");
+        assert_eq!(playing(&s, Role::KeyOff), vec![60], "one key-off noise");
+        assert_eq!(s.active(), 3);
+    }
+
+    #[test]
     fn the_pedal_holds_a_note_off_until_it_comes_up() {
         let (mut s, _dead) = sampler(8);
         s.apply(Command::Envelope(Envelope { attack: 0.0, decay: 0.0, sustain: 1.0, release: 0.1 }));
@@ -794,12 +829,12 @@ mod tests {
             loop_: None,
         };
         let head = (0..head_frames).flat_map(frame).collect();
-        let instrument = Instrument {
-            zones: vec![zone],
-            samples: vec![Sample { rate: RATE, frames, data: None }],
-            heads: vec![head],
-            stream: Some(Arc::new(Stream::new(16, 1 << 16))),
-        };
+        let instrument = Instrument::new(
+            vec![zone],
+            vec![Sample { rate: RATE, frames, data: None }],
+            vec![head],
+            Some(Arc::new(Stream::new(16, 1 << 16))),
+        );
         (Arc::new(instrument), frame)
     }
 
@@ -1063,6 +1098,200 @@ mod tests {
         assert_eq!(playing(&s, Role::Sustain).len(), 2, "the layers of one key both sound");
         // And they mix: one alone reaches half of this.
         assert!(peak(&render(&mut s, 0.1)) > 0.7, "the two layers add up");
+    }
+
+    /// One zone per key at its own root, in three layers, as a piano is laid out; 300 voices
+    /// over the 100 keys.
+    fn layered(frames: usize) -> Vec<Zone> {
+        (21..121)
+            .flat_map(|key| {
+                (0..3).map(move |_| Zone {
+                    role: Role::Sustain,
+                    key_lo: key,
+                    key_hi: key,
+                    vel_lo: 0,
+                    vel_hi: 127,
+                    root: key,
+                    tune_cents: 0,
+                    gain_db: 0.0,
+                    sample: 0,
+                    start: 0,
+                    end: frames,
+                    loop_: None,
+                })
+            })
+            .collect()
+    }
+
+    fn sine(seconds: f64) -> Vec<i16> {
+        (0..(RATE * seconds) as usize)
+            .flat_map(|i| {
+                let v = ((std::f64::consts::TAU * 220.0 * i as f64 / RATE).sin() * 32000.0) as i16;
+                [v, v]
+            })
+            .collect()
+    }
+
+    /// What a 64-frame render costs with every voice sounding, which is what the status bar
+    /// shows as the render load.
+    fn time(s: &mut Sampler, label: &str) {
+        const BUFFER: usize = 64;
+        let (mut l, mut r) = ([0.0f32; BUFFER], [0.0f32; BUFFER]);
+        let passes = 200;
+        let started = std::time::Instant::now();
+        for _ in 0..passes {
+            s.render(&mut l, &mut r);
+        }
+        let per = started.elapsed().as_secs_f64() / passes as f64;
+        println!(
+            "{label}: {} voices, {:.0} us per {BUFFER}-frame render, {:.0}% load, \
+             {:.0} ns per voice-frame",
+            s.active(),
+            per * 1e6,
+            per / (BUFFER as f64 / RATE) * 100.0,
+            per / s.active().max(1) as f64 / BUFFER as f64 * 1e9
+        );
+    }
+
+    /// Run it and read the numbers: `cargo test -- --ignored --nocapture render_cost`.
+    #[test]
+    #[ignore = "prints timings"]
+    fn render_cost_of_300_memory_voices() {
+        let data = sine(10.0);
+        let (mut s, _dead) = sampler(512);
+        let samples = vec![Sample::memory(RATE, data)];
+        s.apply(Command::Load(Arc::new(Instrument::memory(layered(samples[0].frames), samples))));
+        for note in 21..121 {
+            s.apply(Command::NoteOn { note, velocity: 100 });
+        }
+        time(&mut s, "memory");
+    }
+
+    #[test]
+    #[ignore = "prints timings"]
+    fn render_cost_of_300_streamed_voices() {
+        let frames = (RATE * 10.0) as usize;
+        let zones = layered(frames);
+        let heads = vec![sine(crate::audio::sampler::HEAD); zones.len()];
+        let instrument = Arc::new(Instrument::new(
+            zones,
+            vec![Sample { rate: RATE, frames, data: None }],
+            heads,
+            Some(Arc::new(Stream::new(1024, 1 << 16))),
+        ));
+        // A reader that serves every voice the same sine a chunk at a time, as the disk one does.
+        let watch = Arc::downgrade(instrument.stream.as_ref().unwrap());
+        std::thread::spawn(move || {
+            let chunk = sine(8192.0 / RATE);
+            let mut jobs: Vec<Fill> = Vec::new();
+            while let Some(stream) = watch.upgrade() {
+                while let Some(fill) = stream.order() {
+                    if stream.open(&fill) {
+                        jobs.push(fill);
+                    }
+                }
+                let mut worked = false;
+                for fill in jobs.iter_mut() {
+                    if stream.stale(fill) || fill.from >= fill.to || stream.room(fill.slot) < 8192 {
+                        continue;
+                    }
+                    fill.from += stream.feed(fill, &chunk);
+                    worked = true;
+                }
+                if !worked {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            }
+        });
+        let (mut s, _dead) = sampler(512);
+        s.apply(Command::Load(instrument.clone()));
+        for note in 21..121 {
+            s.apply(Command::NoteOn { note, velocity: 100 });
+        }
+        // Past the head, so the voices read their rings.
+        for _ in 0..(RATE * 0.3) as usize / 64 {
+            render(&mut s, 64.0 / RATE);
+            std::thread::sleep(std::time::Duration::from_micros(1400));
+        }
+        time(&mut s, "streamed");
+        assert_eq!(instrument.stream.as_ref().unwrap().underruns(), 0);
+    }
+
+    /// A Concert Grand's layout: one zone per key per velocity band, in the roles a key and the
+    /// pedal start, about 1200 of them over one short sine.
+    fn concert_grand() -> Arc<Instrument> {
+        let data = sine(0.05);
+        let frames = data.len() / 2;
+        let mut zones = Vec::new();
+        let layout =
+            [(Role::Sustain, 8u8), (Role::Release, 2), (Role::KeyOff, 2), (Role::Sympathetic, 2)];
+        for key in 21..109u8 {
+            for (role, bands) in layout {
+                let width = 128 / bands;
+                for band in 0..bands {
+                    zones.push(Zone {
+                        role,
+                        key_lo: key,
+                        key_hi: key,
+                        vel_lo: band * width,
+                        vel_hi: band * width + width - 1,
+                        root: key,
+                        tune_cents: 0,
+                        gain_db: 0.0,
+                        sample: 0,
+                        start: 0,
+                        end: frames,
+                        loop_: None,
+                    });
+                }
+            }
+        }
+        Arc::new(Instrument::memory(zones, vec![Sample::memory(RATE, data)]))
+    }
+
+    /// The middle of the runs, so one cold pass does not read as the cost.
+    fn median(mut times: Vec<f64>) -> f64 {
+        times.sort_by(f64::total_cmp);
+        times[times.len() / 2]
+    }
+
+    /// What the two worst key events cost over a Concert-Grand-sized instrument: the pedal coming
+    /// up under 88 held keys, which starts a damper noise per key, and plain playing.
+    #[test]
+    #[ignore = "prints timings"]
+    fn key_cost_over_1200_zones() {
+        let instrument = concert_grand();
+        println!("{} zones", instrument.zones.len());
+        let pedal = (0..9)
+            .map(|_| {
+                let (mut s, _dead) = sampler(512);
+                s.apply(Command::Load(instrument.clone()));
+                s.apply(Command::Sustain(true));
+                for note in 21..109u8 {
+                    s.apply(Command::NoteOn { note, velocity: 100 });
+                    s.apply(Command::NoteOff { note });
+                }
+                let started = std::time::Instant::now();
+                s.apply(Command::Sustain(false));
+                started.elapsed().as_secs_f64() * 1e6
+            })
+            .collect();
+        println!("pedal up over 88 held keys: {:.0} us", median(pedal));
+
+        let played = (0..9)
+            .map(|_| {
+                let (mut s, _dead) = sampler(512);
+                s.apply(Command::Load(instrument.clone()));
+                let started = std::time::Instant::now();
+                for i in 0..1000u32 {
+                    let note = 21 + (i % 88) as u8;
+                    s.apply(Command::NoteOn { note, velocity: 100 });
+                    s.apply(Command::NoteOff { note });
+                }
+                started.elapsed().as_secs_f64() * 1e6
+            })
+            .collect();
+        println!("1000 note on/off pairs: {:.0} us", median(played));
     }
 
     #[test]

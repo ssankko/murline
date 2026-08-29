@@ -70,7 +70,7 @@ fn build(zones: Vec<Zone>, files: &[SampleRef], slots: usize) -> Result<Instrume
         .name("sample reader".into())
         .spawn(move || serve(watch, readers))
         .map_err(|e| format!("the sample reader would not start: {e}"))?;
-    Ok(Instrument { zones, samples, heads, stream: Some(stream) })
+    Ok(Instrument::new(zones, samples, heads, Some(stream)))
 }
 
 /// The reader thread. It serves every voice waiting on it a chunk at a time, round after round, so

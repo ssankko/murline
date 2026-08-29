@@ -1,27 +1,27 @@
-// The Sound tab's Output section: the output device, the buffer size, the voices the engine may
-// hold sounding at once, and the latency the buffer costs. All three choices are global settings
+// The Sound tab's Output section: the output device, the buffer size, the sample rate, the voices
+// the engine may hold sounding at once, and the latency the buffer costs. Every choice is a global setting
 // written on change and applied again at boot. The device list follows the hardware: the engine
 // sends `audio-devices-changed` on every plug and unplug, and this reads it again, so an interface
 // appears and disappears without a restart.
 
-import { restoreInstrument } from '@/audio/instrument';
-import { restoreRoles } from '@/audio/roles';
-import type { AudioStatus } from '@/audio/sound-tab';
-import { Button } from '@/components/ui/button';
+import { restoreInstrument } from "@/audio/instrument";
+import { restoreRoles } from "@/audio/roles";
+import type { AudioStatus } from "@/audio/sound-tab";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { getSettingOr, readSettings, setSetting } from '@/db/db';
-import { reasonOf } from '@/library/notice';
-import { rowId } from '@/lib/utils';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
-import { ChevronDown } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+} from "@/components/ui/dropdown-menu";
+import { getSettingOr, readSettings, setSetting } from "@/db/db";
+import { reasonOf } from "@/library/notice";
+import { rowId } from "@/lib/utils";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { ChevronDown } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 
 /** One device the engine can play through: an opaque id and the name to show. */
 export interface OutputDevice {
@@ -32,6 +32,9 @@ export interface OutputDevice {
 /** The buffer sizes the engine takes, smallest first. */
 const FRAME_CHOICES = [32, 64, 128, 256];
 
+/** The sample rates the engine renders at, in Hz. Each voice costs in proportion. */
+const RATE_CHOICES = [44100, 48000, 88200, 96000];
+
 /** The voice limits the engine takes. 512 voices cost 256 MB of streaming buffers for an EXS. */
 const VOICE_CHOICES = [128, 256, 512];
 
@@ -40,39 +43,44 @@ export function OutputSection({ marked }: { marked?: string | null }) {
   const [status, setStatus] = useState<AudioStatus | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
   const [frames, setFrames] = useState(64);
+  const [rate, setRate] = useState(44100);
   const [voices, setVoices] = useState(128);
   /** What went wrong with the last change, shown until the next one works. */
-  const [failure, setFailure] = useState('');
+  const [failure, setFailure] = useState("");
 
   const readEngine = useCallback(async () => {
     const [list, answer] = await Promise.all([
-      invoke<OutputDevice[]>('audio_output_devices'),
-      invoke<AudioStatus>('audio_status'),
+      invoke<OutputDevice[]>("audio_output_devices"),
+      invoke<AudioStatus>("audio_status"),
     ]);
     setDevices(list);
     setStatus(answer);
   }, []);
 
   useEffect(() => {
-    void getSettingOr('audio_output_device').then(setChosen);
-    void getSettingOr('audio_buffer_frames').then(setFrames);
-    void getSettingOr('audio_voices').then(setVoices);
+    void getSettingOr("audio_output_device").then(setChosen);
+    void getSettingOr("audio_buffer_frames").then(setFrames);
+    void getSettingOr("audio_sample_rate").then(setRate);
+    void getSettingOr("audio_voices").then(setVoices);
   }, []);
 
   useEffect(() => {
     void readEngine();
-    const listening = listen('audio-devices-changed', () => void readEngine());
+    const listening = listen("audio-devices-changed", () => void readEngine());
     return () => {
       void listening.then((stop) => stop());
     };
   }, [readEngine]);
 
   /** Writes the setting, applies it to the engine, and reads back what the device now reports. */
-  const change = async (write: () => Promise<void>, apply: () => Promise<unknown>) => {
+  const change = async (
+    write: () => Promise<void>,
+    apply: () => Promise<unknown>,
+  ) => {
     await write();
     try {
       await apply();
-      setFailure('');
+      setFailure("");
     } catch (error) {
       setFailure(reasonOf(error));
     }
@@ -83,28 +91,44 @@ export function OutputSection({ marked }: { marked?: string | null }) {
     change(
       async () => {
         setChosen(id);
-        await setSetting('audio_output_device', id);
+        await setSetting("audio_output_device", id);
       },
-      () => invoke('audio_set_output_device', { id }),
+      () => invoke("audio_set_output_device", { id }),
     );
 
   const chooseFrames = (choice: number) =>
     change(
       async () => {
         setFrames(choice);
-        await setSetting('audio_buffer_frames', choice);
+        await setSetting("audio_buffer_frames", choice);
       },
-      () => invoke('audio_set_buffer_frames', { frames: choice }),
+      () => invoke("audio_set_buffer_frames", { frames: choice }),
+    );
+
+  const chooseRate = (choice: number) =>
+    change(
+      async () => {
+        setRate(choice);
+        await setSetting("audio_sample_rate", choice);
+      },
+      async () => {
+        await invoke("audio_set_sample_rate", { rate: choice });
+        // The voice engine is built anew at the rate, so the instrument goes in again, and the
+        // envelope and the levels ride back in on the restore.
+        const settings = await readSettings();
+        await restoreInstrument(settings);
+        await restoreRoles(settings.instrument_id);
+      },
     );
 
   const chooseVoices = (choice: number) =>
     change(
       async () => {
         setVoices(choice);
-        await setSetting('audio_voices', choice);
+        await setSetting("audio_voices", choice);
       },
       async () => {
-        await invoke('audio_set_voices', { count: choice });
+        await invoke("audio_set_voices", { count: choice });
         // A sampled instrument's streaming rings are allocated with it, two slots per voice, so it
         // is read again at the new count; the envelope and the levels ride back in on the restore.
         const settings = await readSettings();
@@ -124,7 +148,7 @@ export function OutputSection({ marked }: { marked?: string | null }) {
 
       <Row
         id="audio_output_device"
-        marked={marked === 'audio_output_device'}
+        marked={marked === "audio_output_device"}
         label="Output device"
       >
         <DropdownMenu>
@@ -135,20 +159,26 @@ export function OutputSection({ marked }: { marked?: string | null }) {
               aria-label="Output device"
               className="h-7 max-w-[190px] justify-between px-2 text-[12px] font-normal"
             >
-              <span className="truncate">{shown?.name ?? 'System default'}</span>
+              <span className="truncate">
+                {shown?.name ?? "System default"}
+              </span>
               <ChevronDown className="size-3.5 opacity-60" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="max-w-[280px]">
             <DropdownMenuRadioGroup
-              value={shown?.id ?? ''}
+              value={shown?.id ?? ""}
               onValueChange={(id) => void chooseDevice(id || null)}
             >
               <DropdownMenuRadioItem value="" className="text-[13px]">
                 System default
               </DropdownMenuRadioItem>
               {devices.map((device) => (
-                <DropdownMenuRadioItem key={device.id} value={device.id} className="text-[13px]">
+                <DropdownMenuRadioItem
+                  key={device.id}
+                  value={device.id}
+                  className="text-[13px]"
+                >
                   <span className="truncate">{device.name}</span>
                 </DropdownMenuRadioItem>
               ))}
@@ -159,7 +189,7 @@ export function OutputSection({ marked }: { marked?: string | null }) {
 
       <Row
         id="audio_buffer_frames"
-        marked={marked === 'audio_buffer_frames'}
+        marked={marked === "audio_buffer_frames"}
         label="Buffer (frames)"
       >
         <Segmented
@@ -169,7 +199,24 @@ export function OutputSection({ marked }: { marked?: string | null }) {
         />
       </Row>
 
-      <Row id="audio_voices" marked={marked === 'audio_voices'} label="Voices">
+      <Row
+        id="audio_sample_rate"
+        marked={marked === "audio_sample_rate"}
+        label="Sample rate (Hz)"
+      >
+        <div className="flex items-center gap-3">
+          <Segmented
+            choices={RATE_CHOICES}
+            chosen={rate}
+            onPick={(choice) => void chooseRate(choice)}
+          />
+          <span className="text-muted-ink text-[12px] tabular-nums">
+            {recordedLine(status)}
+          </span>
+        </div>
+      </Row>
+
+      <Row id="audio_voices" marked={marked === "audio_voices"} label="Voices">
         <Segmented
           choices={VOICE_CHOICES}
           chosen={voices}
@@ -178,7 +225,9 @@ export function OutputSection({ marked }: { marked?: string | null }) {
       </Row>
 
       <Row label="Latency">
-        <span className="text-muted-ink text-[12px] tabular-nums">{latencyLine(status)}</span>
+        <span className="text-muted-ink text-[12px] tabular-nums">
+          {latencyLine(status)}
+        </span>
       </Row>
 
       {failure && <p className="text-muted-ink text-[12px]">{failure}</p>}
@@ -186,9 +235,18 @@ export function OutputSection({ marked }: { marked?: string | null }) {
   );
 }
 
-/** What the device reports the buffer costs, at the rate it runs, which the app never sets. */
+/** The rate the loaded file was recorded at, which is the one that plays it without resampling;
+ * a plugin renders at whatever rate it is given. */
+export function recordedLine(status: AudioStatus | null): string {
+  if (!status?.instrument) return "";
+  if (!status.instrument_rate) return "plugin: any rate";
+  return `recorded at ${(status.instrument_rate / 1000).toFixed(1)} kHz`;
+}
+
+/** What the device reports the buffer costs, at the rate it runs: the one chosen above when the
+ * device took it, else its own. */
 function latencyLine(status: AudioStatus | null): string {
-  if (!status?.latency_ms) return '—';
+  if (!status?.latency_ms) return "—";
   return `${status.latency_ms.toFixed(1)} ms at ${(status.sample_rate / 1000).toFixed(1)} kHz`;
 }
 
@@ -210,7 +268,7 @@ function Segmented({
           aria-pressed={chosen === choice}
           onClick={() => onPick(choice)}
           className={`h-6 px-2 text-[11.5px] font-medium tabular-nums transition-colors duration-150 ${
-            chosen === choice ? 'bg-ink text-paper' : 'hover:bg-ink/8'
+            chosen === choice ? "bg-ink text-paper" : "hover:bg-ink/8"
           }`}
         >
           {choice}
@@ -235,7 +293,7 @@ function Row({
     <div
       id={id && rowId(id)}
       data-marked={marked || undefined}
-      className={`flex min-h-8 items-center justify-between gap-3 py-1 text-[12px] ${marked ? 'bg-ink/8' : ''}`}
+      className={`flex min-h-8 items-center justify-between gap-3 py-1 text-[12px] ${marked ? "bg-ink/8" : ""}`}
     >
       <span className="flex-none">{label}</span>
       {children}

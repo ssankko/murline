@@ -93,6 +93,9 @@ pub struct Status {
     pub fallback: String,
     pub buffer_frames: u32,
     pub sample_rate: f64,
+    /// The rate the loaded instrument's samples were recorded at, which the engine plays them as
+    /// they are at; 0 for a plugin, which renders at any rate, and while nothing is loaded.
+    pub instrument_rate: f64,
     /// What the device reports the buffer costs: its own latency, the safety offset, the stream
     /// and the buffer itself, at the rate the device runs.
     pub latency_ms: f64,
@@ -259,6 +262,14 @@ pub fn audio_set_buffer_frames(frames: u32) -> Result<(), String> {
     engine::set_buffer_frames(frames)
 }
 
+/// 44100, 48000, 88200 or 96000 Hz, for the voice engine and, where it agrees, the device.
+/// Everything sounding stops and the instrument goes with the old rate, so the webview loads it
+/// again.
+#[tauri::command]
+pub fn audio_set_sample_rate(rate: u32) -> Result<(), String> {
+    engine::set_sample_rate(rate)
+}
+
 /// How many voices the engine may hold sounding at once: 128, 256 or 512. Everything sounding
 /// stops. The streaming buffers of a file instrument are allocated with it, two ring slots per
 /// voice, so the webview loads the instrument again for the new count to reach them.
@@ -377,6 +388,7 @@ mod tests {
         assert!(stub::output_devices().is_empty());
         assert!(stub::set_output_device(Some("anything".into())).is_err());
         assert!(stub::set_buffer_frames(64).is_err());
+        assert!(stub::set_sample_rate(48000).is_err());
         assert!(stub::set_voices(256).is_err());
 
         assert!(stub::instruments("/instruments").is_empty());

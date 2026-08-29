@@ -84,12 +84,37 @@ pub struct Instrument {
     /// The rings the streamed zones read from. The reader thread holds a weak reference to this,
     /// so dropping the instrument is what stops it.
     pub stream: Option<Arc<Stream>>,
+    /// The zones each of the 128 keys answers with, indexed by key. A strike reads only its own
+    /// key's list, which is a handful of zones out of the thousand a piano has.
+    keyed: Vec<Vec<usize>>,
 }
 
 impl Instrument {
+    /// Everything a load has made, with the per-key index built here so the audio thread never
+    /// has to look for the zones a key answers with.
+    pub fn new(
+        zones: Vec<Zone>,
+        samples: Vec<Sample>,
+        heads: Vec<Vec<i16>>,
+        stream: Option<Arc<Stream>>,
+    ) -> Self {
+        let mut keyed = vec![Vec::new(); 128];
+        for (index, zone) in zones.iter().enumerate() {
+            for key in zone.key_lo..=zone.key_hi.min(127) {
+                keyed[key as usize].push(index);
+            }
+        }
+        Self { zones, samples, heads, stream, keyed }
+    }
+
     /// An instrument whose samples are all in memory and so needs no reader.
     pub fn memory(zones: Vec<Zone>, samples: Vec<Sample>) -> Self {
-        Self { zones, samples, heads: Vec::new(), stream: None }
+        Self::new(zones, samples, Vec::new(), None)
+    }
+
+    /// The zones this key answers with, in the order they are listed.
+    pub fn keyed(&self, key: u8) -> &[usize] {
+        self.keyed.get(key as usize).map_or(&[], Vec::as_slice)
     }
 }
 

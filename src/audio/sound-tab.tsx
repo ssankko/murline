@@ -2,18 +2,18 @@
 // files of their own; this file holds the tab, the sections the status bar's sound popover shares
 // with it, the status line, and the reader that fills it.
 
-import { EffectsSection } from '@/audio/effects';
-import { EnvelopeSection } from '@/audio/envelope';
-import { InstrumentSection } from '@/audio/instrument';
-import { OutputSection } from '@/audio/output';
-import { RolesSection, type Role } from '@/audio/roles';
-import { sounded, type Sounding } from '@/audio/sounding';
-import { VelocitySection } from '@/audio/velocity';
-import { getSettingOr } from '@/db/db';
-import { useMidiStatus } from '@/midi/use-midi-status';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
-import { useEffect, useState } from 'react';
+import { EffectsSection } from "@/audio/effects";
+import { EnvelopeSection } from "@/audio/envelope";
+import { InstrumentSection } from "@/audio/instrument";
+import { OutputSection } from "@/audio/output";
+import { RolesSection, type Role } from "@/audio/roles";
+import { sounded, type Sounding } from "@/audio/sounding";
+import { VelocitySection } from "@/audio/velocity";
+import { getSettingOr } from "@/db/db";
+import { useMidiStatus } from "@/midi/use-midi-status";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { useEffect, useState } from "react";
 
 /** What the engine answers about itself: whether sound can come out, and why not when it cannot. */
 export interface AudioStatus {
@@ -28,6 +28,8 @@ export interface AudioStatus {
   fallback: string;
   buffer_frames: number;
   sample_rate: number;
+  /** The rate the loaded instrument's samples were recorded at; 0 for a plugin or nothing. */
+  instrument_rate: number;
   /** What the device reports the buffer costs, in milliseconds. */
   latency_ms: number;
   /** The roles beyond the tone the loaded instrument offers; empty for a plugin or a plain file. */
@@ -37,13 +39,14 @@ export interface AudioStatus {
 /** A status with nothing in it, which is what an engine that cannot even be asked answers. */
 export const NO_STATUS: AudioStatus = {
   available: false,
-  reason: '',
+  reason: "",
   device: null,
-  device_name: '',
-  instrument: '',
-  fallback: '',
+  device_name: "",
+  instrument: "",
+  fallback: "",
   buffer_frames: 0,
   sample_rate: 0,
+  instrument_rate: 0,
   latency_ms: 0,
   roles: [],
 };
@@ -52,7 +55,7 @@ export const NO_STATUS: AudioStatus = {
  * had to go when the chosen device was not there. Never both, because silence is the bigger thing
  * to say and a fallen-back engine is still playing. */
 function trouble(status: AudioStatus | null): string {
-  if (!status) return '';
+  if (!status) return "";
   return status.available ? status.fallback : status.reason;
 }
 
@@ -67,13 +70,14 @@ export function useAudioStatus(round = 0): AudioStatus | null {
   useEffect(() => {
     let live = true;
     const read = () =>
-      invoke<AudioStatus>('audio_status').then(
+      invoke<AudioStatus>("audio_status").then(
         (answer) => live && setStatus(answer),
-        (error: unknown) => live && setStatus({ ...NO_STATUS, reason: String(error) }),
+        (error: unknown) =>
+          live && setStatus({ ...NO_STATUS, reason: String(error) }),
       );
     void read();
     // Unplugging the chosen device is the other way the answer changes while nothing is touched.
-    const listening = listen('audio-devices-changed', () => void read());
+    const listening = listen("audio-devices-changed", () => void read());
     return () => {
       live = false;
       void listening.then((stop) => stop());
@@ -110,7 +114,10 @@ export function SoundControls({
   // is playing.
   useEffect(() => {
     let live = true;
-    getSettingOr('instrument_id').then((id) => live && setInstrument(id), console.error);
+    getSettingOr("instrument_id").then(
+      (id) => live && setInstrument(id),
+      console.error,
+    );
     return () => {
       live = false;
     };
@@ -157,8 +164,13 @@ export function SoundTab({ marked }: { marked?: string | null }) {
   return (
     <div className="flex min-w-0 flex-col gap-7">
       <OutputSection marked={marked} />
-      <SoundControls marked={marked} onChanged={() => setRound((round) => round + 1)} />
-      {trouble(status) && <p className="text-muted-ink text-[12px]">{trouble(status)}</p>}
+      <SoundControls
+        marked={marked}
+        onChanged={() => setRound((round) => round + 1)}
+      />
+      {trouble(status) && (
+        <p className="text-muted-ink text-[12px]">{trouble(status)}</p>
+      )}
     </div>
   );
 }
@@ -174,7 +186,10 @@ const DYING = 1;
  * two plots let go of it together rather than the touch plot holding a dot the envelope has
  * already finished with. `dieAfter` is how the envelope section says what its release is now.
  */
-function useSounding(): { keys: Sounding[]; dieAfter: (seconds: number) => void } {
+function useSounding(): {
+  keys: Sounding[];
+  dieAfter: (seconds: number) => void;
+} {
   const [keys, setKeys] = useState<Sounding[]>([]);
   const [dying, setDying] = useState(DYING);
 
@@ -183,7 +198,10 @@ function useSounding(): { keys: Sounding[]; dieAfter: (seconds: number) => void 
     setKeys((all) => sounded(all, event, at));
     if (event.on) return;
     setTimeout(
-      () => setKeys((all) => all.filter((one) => one.midi !== event.midi || one.on)),
+      () =>
+        setKeys((all) =>
+          all.filter((one) => one.midi !== event.midi || one.on),
+        ),
       dying * 1000,
     );
   });

@@ -1,18 +1,23 @@
-import type { EffectSlot } from '@/audio/effects';
-import type { Envelope } from '@/audio/envelope';
-import type { Role } from '@/audio/roles';
-import { DEFAULT_LANE_LOOK, DEFAULT_SPLIT, type LaneHarmony, type LaneLook } from '@/lane/lane';
-import type { SortOrder } from '@/library/queries';
-import type { Theme } from '@/look/use-dark';
+import type { EffectSlot } from "@/audio/effects";
+import type { Envelope } from "@/audio/envelope";
+import type { Role } from "@/audio/roles";
+import {
+  DEFAULT_LANE_LOOK,
+  DEFAULT_SPLIT,
+  type LaneHarmony,
+  type LaneLook,
+} from "@/lane/lane";
+import type { SortOrder } from "@/library/queries";
+import type { Theme } from "@/look/use-dark";
 import {
   DEFAULT_PLAY_SETTINGS,
   type InactiveHandVelocity,
   type KeyboardPreset,
   type PlaySettings,
-} from '@/play/settings';
-import type { SettingsTab } from '@/screens/settings';
-import { DEFAULT_SPACING } from '@/sheet/sheet';
-import Database from '@tauri-apps/plugin-sql';
+} from "@/play/settings";
+import type { SettingsTab } from "@/screens/settings";
+import { DEFAULT_SPACING } from "@/sheet/sheet";
+import Database from "@tauri-apps/plugin-sql";
 
 /** Global settings, one row each in `setting`, stored as JSON. NULL means never written. */
 export type Settings = {
@@ -87,6 +92,10 @@ export type Settings = {
   audio_output_device: string | null;
   /** Frames the output device runs per buffer: 32, 64, 128 or 256. Smaller is lower latency. */
   audio_buffer_frames: number;
+  /** The rate the sound engine renders at, in Hz: 44100, 48000, 88200 or 96000. The device is
+   * asked to run at it too. Every voice costs in proportion, so 96000 is twice the render load
+   * of 48000. */
+  audio_sample_rate: number;
   /** Voices the sound engine may hold sounding at once: 128, 256 or 512. Twice the count in
    * streaming ring slots is allocated with a sampled instrument, at 256 KB each, so 512 voices
    * cost 256 MB of buffers for an EXS. */
@@ -144,37 +153,37 @@ export type Settings = {
 
 /** The global knobs a running play reads, and the field of `PlaySettings` each one lands in. */
 export const ENGINE_KNOBS = {
-  grade_timing_flat_ms: 'timingFlatMs',
-  grade_timing_zero_ms: 'timingZeroMs',
-  grade_velocity_flat: 'velocityFlat',
-  grade_velocity_zero: 'velocityZero',
-  grade_release_flat_lo: 'releaseFlatLo',
-  grade_release_flat_hi: 'releaseFlatHi',
-  grade_release_zero_lo: 'releaseZeroLo',
-  grade_release_zero_hi: 'releaseZeroHi',
-  grade_weight_timing: 'weightTiming',
-  grade_weight_velocity: 'weightVelocity',
-  grade_weight_release: 'weightRelease',
-  matching_window_ms: 'matchingWindowMs',
-  togetherness_ms: 'togethernessMs',
-  play_inactive_hand: 'inactiveHandSounds',
-  play_inactive_hand_velocity: 'inactiveHandVelocity',
-  play_inactive_hand_level: 'inactiveHandLevel',
-  keyboard_preset: 'keyboardPreset',
-  keyboard_lo: 'keyboardLo',
-  keyboard_hi: 'keyboardHi',
+  grade_timing_flat_ms: "timingFlatMs",
+  grade_timing_zero_ms: "timingZeroMs",
+  grade_velocity_flat: "velocityFlat",
+  grade_velocity_zero: "velocityZero",
+  grade_release_flat_lo: "releaseFlatLo",
+  grade_release_flat_hi: "releaseFlatHi",
+  grade_release_zero_lo: "releaseZeroLo",
+  grade_release_zero_hi: "releaseZeroHi",
+  grade_weight_timing: "weightTiming",
+  grade_weight_velocity: "weightVelocity",
+  grade_weight_release: "weightRelease",
+  matching_window_ms: "matchingWindowMs",
+  togetherness_ms: "togethernessMs",
+  play_inactive_hand: "inactiveHandSounds",
+  play_inactive_hand_velocity: "inactiveHandVelocity",
+  play_inactive_hand_level: "inactiveHandLevel",
+  keyboard_preset: "keyboardPreset",
+  keyboard_lo: "keyboardLo",
+  keyboard_hi: "keyboardHi",
 } as const satisfies Record<string, keyof PlaySettings>;
 
 /** The same for the lane's look, which the next frame reads out of the live object. */
 export const LANE_KNOBS = {
-  lane_lookahead: 'lookaheadBeats',
-  lane_note_width: 'noteWidthPct',
-  lane_gap: 'gapPx',
-  keyboard_labels: 'keyLabels',
-  lane_harmony: 'harmony',
-  lane_colour: 'colour',
-  lane_names: 'names',
-  keyboard_scale_marks: 'scaleMarks',
+  lane_lookahead: "lookaheadBeats",
+  lane_note_width: "noteWidthPct",
+  lane_gap: "gapPx",
+  keyboard_labels: "keyLabels",
+  lane_harmony: "harmony",
+  lane_colour: "colour",
+  lane_names: "names",
+  keyboard_scale_marks: "scaleMarks",
 } as const satisfies Record<string, keyof LaneLook>;
 
 /** One block of `SETTING_DEFAULTS`: each key takes the built-in default of the field it names. */
@@ -193,22 +202,25 @@ export function knobValues<M extends Partial<Record<keyof Settings, string>>>(
   knobs: M,
 ): { [K in keyof M as M[K] & string]: Settings[K & keyof Settings] } {
   return Object.fromEntries(
-    Object.entries(knobs).map(([key, field]) => [field, settings[key as keyof Settings]]),
+    Object.entries(knobs).map(([key, field]) => [
+      field,
+      settings[key as keyof Settings],
+    ]),
   ) as { [K in keyof M as M[K] & string]: Settings[K & keyof Settings] };
 }
 
 /** What every setting holds until the user writes it, and what "Reset group" writes back. */
 export const SETTING_DEFAULTS: Settings = {
-  library_folder: '',
-  pdmx_folder: '',
+  library_folder: "",
+  pdmx_folder: "",
   onboarding_done: false,
-  library_sort: 'title',
+  library_sort: "title",
   library_selected: null,
-  settings_tab: 'sound',
+  settings_tab: "sound",
   settings_scroll: 0,
   midi_device: null,
   midi_hidden: [],
-  theme: 'system',
+  theme: "system",
   sheet_split: DEFAULT_SPLIT,
   sheet_proportional: false,
   sheet_spacing: DEFAULT_SPACING,
@@ -222,12 +234,13 @@ export const SETTING_DEFAULTS: Settings = {
   velocity_curve: 1,
   audio_output_device: null,
   audio_buffer_frames: 64,
+  audio_sample_rate: 44100,
   audio_voices: 128,
   instrument_id: null,
   instrument_state: null,
   instrument_envelopes: {},
   instrument_roles: {},
-  instruments_folder: '',
+  instruments_folder: "",
   ...knobDefaults(DEFAULT_LANE_LOOK, LANE_KNOBS),
   ...knobDefaults(DEFAULT_PLAY_SETTINGS, ENGINE_KNOBS),
 };
@@ -239,18 +252,21 @@ let opening: Promise<Database> | undefined;
  * forgotten, so the next call opens again and a transient failure is one the user can retry.
  */
 export function getDb(): Promise<Database> {
-  opening ??= Database.load('sqlite:piano.db').catch((error: unknown) => {
+  opening ??= Database.load("sqlite:piano.db").catch((error: unknown) => {
     opening = undefined;
     throw error;
   });
   return opening;
 }
 
-export async function getSetting<K extends keyof Settings>(key: K): Promise<Settings[K] | null> {
+export async function getSetting<K extends keyof Settings>(
+  key: K,
+): Promise<Settings[K] | null> {
   const db = await getDb();
-  const rows = await db.select<{ value: string }[]>('SELECT value FROM setting WHERE key = $1', [
-    key,
-  ]);
+  const rows = await db.select<{ value: string }[]>(
+    "SELECT value FROM setting WHERE key = $1",
+    [key],
+  );
   return rows.length ? (JSON.parse(rows[0]!.value) as Settings[K]) : null;
 }
 
@@ -260,7 +276,7 @@ export async function setSetting<K extends keyof Settings>(
 ): Promise<void> {
   const db = await getDb();
   await db.execute(
-    'INSERT INTO setting (key, value) VALUES ($1, $2) ON CONFLICT(key) DO UPDATE SET value = $2',
+    "INSERT INTO setting (key, value) VALUES ($1, $2) ON CONFLICT(key) DO UPDATE SET value = $2",
     [key, JSON.stringify(value)],
   );
 }
@@ -281,14 +297,17 @@ export async function getSettingOr<K extends keyof Settings>(
 export async function readSettings(): Promise<Settings> {
   try {
     const db = await getDb();
-    const rows = await db.select<{ key: string; value: string }[]>('SELECT key, value FROM setting');
+    const rows = await db.select<{ key: string; value: string }[]>(
+      "SELECT key, value FROM setting",
+    );
     // A value of another type than its default is from an older shape of the setting, so the
     // default stands in for it; a null default accepts anything.
     const written = rows
       .map((row) => [row.key, JSON.parse(row.value) as unknown] as const)
       .filter(([key, value]) => {
         // A `KeyboardPreset` is a name or a count of keys, so both types are its own.
-        if (key === 'keyboard_preset') return typeof value === 'string' || typeof value === 'number';
+        if (key === "keyboard_preset")
+          return typeof value === "string" || typeof value === "number";
         const fallback = SETTING_DEFAULTS[key as keyof Settings];
         return fallback == null || typeof value === typeof fallback;
       });

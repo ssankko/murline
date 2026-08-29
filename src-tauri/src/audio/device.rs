@@ -212,6 +212,27 @@ pub fn set_buffer_frames(device: DeviceId, frames: u32) -> Result<(), String> {
     }
 }
 
+/// Asks the device to run at `rate`. The change is the system's, so every app playing through
+/// the device hears it, and a device that cannot run at the rate refuses.
+pub fn set_sample_rate(device: DeviceId, rate: f64) -> Result<(), String> {
+    let mut at = address(kAudioDevicePropertyNominalSampleRate, WHOLE);
+    let status = unsafe {
+        AudioObjectSetPropertyData(
+            device,
+            NonNull::from(&mut at),
+            0,
+            null(),
+            size_of::<f64>() as u32,
+            NonNull::from(&rate).cast(),
+        )
+    };
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(format!("The device refused a rate of {rate} Hz (status {status})"))
+    }
+}
+
 /// What the device says it costs to get a rendered frame out of the speaker, in milliseconds: the
 /// four frame counts CoreAudio reports, at the rate the device runs.
 pub fn latency_ms(device: DeviceId, frames: u32) -> f64 {

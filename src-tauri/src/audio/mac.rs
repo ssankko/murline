@@ -42,14 +42,16 @@ use std::path::Path;
 use std::ptr::{NonNull, from_ref};
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};
-use std::sync::mpsc::{Receiver, Sender, SyncSender, TrySendError, channel, sync_channel};
+use std::sync::mpsc::{Receiver, Sender, TrySendError, channel, sync_channel};
 use std::sync::{Arc, Mutex, Once, Weak};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-/// The sample rate the click blips are built at. The device runs at whatever it runs at; the mixer
-/// converts, and a metronome tick is far too short for the difference to be audible.
+/// The sample rate the graph starts at, until the setting moves it to one of `RATE_CHOICES`.
 const RATE: f64 = 44100.0;
+/// The sample rates the dialog offers, which the voice engine renders at and the device is asked
+/// to run at. Every voice costs the engine in proportion: 96 kHz is twice the render load of 48.
+pub const RATE_CHOICES: [u32; 4] = [44100, 48000, 88200, 96000];
 /// Length of one click, short enough to read as a tick and not as a pitch.
 const CLICK_MS: f64 = 30.0;
 /// The weak click's pitch, and the strong one a fifth above it so the bar line stands out.
@@ -186,6 +188,10 @@ pub struct Graph {
     /// full scale and clip there.
     limiter: Retained<AVAudioUnitEffect>,
     format: Retained<AVAudioFormat>,
+    /// The rate the voice engine renders at, which is the format's.
+    rate: f64,
+    /// The rate the loaded file's samples were recorded at; 0 for a plugin or nothing.
+    instrument_rate: f64,
     strong: Retained<AVAudioPCMBuffer>,
     weak: Retained<AVAudioPCMBuffer>,
     /// The effects between the instrument and the mixer, in the order they play.
@@ -231,9 +237,7 @@ impl Graph {
     /// or offline rendering next, because the choice cannot be made after the start.
     pub fn build() -> Result<Self, String> {
         unsafe {
-            let format =
-                AVAudioFormat::initStandardFormatWithSampleRate_channels(AVAudioFormat::alloc(), RATE, 2)
-                    .ok_or("Stereo audio at 44.1 kHz is not available")?;
+            let format = stereo(RATE)?;
             let engine = AVAudioEngine::new();
             let clicker = AVAudioPlayerNode::new();
             let fader = AVAudioMixerNode::new();
@@ -245,13 +249,6 @@ impl Graph {
                     kAudioUnitManufacturer_Apple,
                 ),
             );
-            let (commands, orders) = channel();
-            // Four slots, filled here so the render block's hand-back allocates nothing.
-            let (dead, graveyard) = sync_channel(4);
-            let (previews, operations) = channel();
-            // Two slots hold a note list handed back and the one behind it, which is more than a
-            // user swapping pieces can fill before the next operation drains them.
-            let (finished, played) = sync_channel(2);
             let preview = Arc::new(Shared {
                 seconds: AtomicU64::new(0),
                 playing: AtomicBool::new(false),
@@ -259,15 +256,8 @@ impl Graph {
                 notes: Ring::new(PREVIEW_RING),
             });
             let meters = Arc::new(Meters::default());
-            let source = source_node(
-                &format,
-                orders,
-                dead,
-                operations,
-                finished,
-                preview.clone(),
-                meters.clone(),
-            );
+            let Wired { source, commands, graveyard, previews, played } =
+                source_node(&format, RATE, preview.clone(), meters.clone());
             engine.attachNode(&source);
             engine.attachNode(&clicker);
             engine.attachNode(&fader);
@@ -280,9 +270,11 @@ impl Graph {
             engine.connect_to_format(&limiter, &mixer, Some(&format));
             engine.connect_to_format(&clicker, &mixer, Some(&format));
             Ok(Graph {
-                strong: blip(&format, STRONG_HZ, STRONG_PEAK)?,
-                weak: blip(&format, WEAK_HZ, WEAK_PEAK)?,
+                strong: blip(&format, RATE, STRONG_HZ, STRONG_PEAK)?,
+                weak: blip(&format, RATE, WEAK_HZ, WEAK_PEAK)?,
                 format,
+                rate: RATE,
+                instrument_rate: 0.0,
                 engine,
                 source,
                 commands,
@@ -438,6 +430,7 @@ impl Graph {
         self.file = true;
         self.preview.file.store(true, Relaxed);
         self.envelope = Some(FILE_ENVELOPE);
+        self.instrument_rate = instrument.samples.first().map_or(0.0, |sample| sample.rate);
         self.roles = [
             sampler::Role::Release,
             sampler::Role::KeyOff,
@@ -462,6 +455,7 @@ impl Graph {
         self.file = false;
         self.preview.file.store(false, Relaxed);
         self.roles.clear();
+        self.instrument_rate = 0.0;
         self.send(Command::Unload);
         self.bury();
     }
@@ -613,6 +607,55 @@ impl Graph {
         }
         self.voices = count;
         self.send(Command::MaxVoices(count));
+        Ok(())
+    }
+
+    /// Moves the voice engine to `rate`, one of `RATE_CHOICES`. Its node renders at the rate it
+    /// was built with, so a new one takes its place: everything sounding stops, the instrument
+    /// leaves with the old node and the caller loads it again, and the Preview forgets its notes.
+    /// The device is asked to run at the rate too, so nothing is resampled on the way out; one
+    /// that will not keeps its own, and the mixer converts.
+    pub fn set_sample_rate(&mut self, rate: u32) -> Result<(), String> {
+        if !RATE_CHOICES.contains(&rate) {
+            return Err(format!("{rate} Hz is not one of 44100, 48000, 88200 and 96000"));
+        }
+        if f64::from(rate) == self.rate {
+            return Ok(());
+        }
+        self.release_all();
+        unsafe { self.engine.stop() };
+        self.rewire_at(f64::from(rate))?;
+        let _ = device::set_sample_rate(self.device, f64::from(rate));
+        self.start()
+    }
+
+    /// Builds the voice engine's node at `rate` in the old one's place, with the graph stopped,
+    /// and connects the way to the mixer again in the new format.
+    fn rewire_at(&mut self, rate: f64) -> Result<(), String> {
+        let format = stereo(rate)?;
+        self.unload_exs();
+        let _turn = LOADING.lock().unwrap();
+        let Wired { source, commands, graveyard, previews, played } =
+            source_node(&format, rate, self.preview.clone(), self.meters.clone());
+        unsafe {
+            self.engine.detachNode(&self.source);
+            self.engine.attachNode(&source);
+            let mixer = self.engine.mainMixerNode();
+            self.engine.connect_to_format(&self.fader, &self.limiter, Some(&format));
+            self.engine.connect_to_format(&self.limiter, &mixer, Some(&format));
+            self.engine.connect_to_format(&self.clicker, &mixer, Some(&format));
+        }
+        self.strong = blip(&format, rate, STRONG_HZ, STRONG_PEAK)?;
+        self.weak = blip(&format, rate, WEAK_HZ, WEAK_PEAK)?;
+        self.source = source;
+        self.commands = commands;
+        self.graveyard = graveyard;
+        self.previews = previews;
+        self.played = played;
+        self.format = format;
+        self.rate = rate;
+        self.send(Command::MaxVoices(self.voices));
+        effects::rewire(self);
         Ok(())
     }
 
@@ -830,20 +873,26 @@ fn sound_bank(path: &Path) -> bool {
 ///
 /// Deriving the Preview's clock from the frames rendered here is what keeps it on the audio clock,
 /// so a note lands in the buffer its time falls in whatever the host thread is doing.
+///
+/// `preview` and `meters` are the reporter's too, so they carry over from one node to the next.
 fn source_node(
     format: &AVAudioFormat,
-    orders: Receiver<Command>,
-    dead: SyncSender<Arc<sampler::Instrument>>,
-    operations: Receiver<Preview>,
-    played: SyncSender<Vec<PreviewNote>>,
+    rate: f64,
     preview: Arc<Shared>,
     meters: Arc<Meters>,
-) -> Retained<AVAudioSourceNode> {
-    let voices = RefCell::new(Sampler::new(RATE, DEFAULT_VOICES, dead));
+) -> Wired {
+    let (commands, orders) = channel();
+    // Four slots, filled here so the render block's hand-back allocates nothing.
+    let (dead, graveyard) = sync_channel(4);
+    let (previews, operations) = channel();
+    // Two slots hold a note list handed back and the one behind it, which is more than a user
+    // swapping pieces can fill before the next operation drains them.
+    let (finished, played) = sync_channel::<Vec<PreviewNote>>(2);
+    let voices = RefCell::new(Sampler::new(rate, DEFAULT_VOICES, dead));
     let scheduler = RefCell::new(Scheduler::default());
     let events = RefCell::new(Vec::with_capacity(HELD));
     let render = RcBlock::new(
-        move |_silence: NonNull<Bool>,
+        move |silence: NonNull<Bool>,
               _when: NonNull<AudioTimeStamp>,
               frames: AVAudioFrameCount,
               output: NonNull<AudioBufferList>| {
@@ -879,14 +928,14 @@ fn source_node(
                 // freed elsewhere, or is leaked until the next drain when every slot is taken.
                 if !old.is_empty()
                     && let Err(TrySendError::Full(kept) | TrySendError::Disconnected(kept)) =
-                        played.try_send(old)
+                        finished.try_send(old)
                 {
                     std::mem::forget(kept);
                 }
             }
 
             let mut events = events.borrow_mut();
-            scheduler.pump(frames, RATE, &mut events);
+            scheduler.pump(frames, rate, &mut events);
             let file = preview.file.load(Relaxed);
             for event in events.iter() {
                 if file {
@@ -924,28 +973,58 @@ fn source_node(
                     std::slice::from_raw_parts_mut(right.mData.cast(), frames),
                 );
             }
+            // Told it was given silence, an effect down the chain may skip the cycle; a reverb
+            // asked to render silence a thousand times a second otherwise costs the same idle as
+            // sounding.
+            let active = voices.active();
+            if active == 0 {
+                unsafe { silence.write(Bool::YES) };
+            }
             // The render load: what this call cost against the time its own buffer will play for.
             // Two relaxed stores and a clock read, so the block still allocates nothing and waits
             // on nothing.
-            let playing_for = f64::from(frames) / RATE;
+            let playing_for = f64::from(frames) / rate;
             let share = entered.elapsed().as_secs_f64() / playing_for * 100.0;
             meters.load.store(share as u32, Relaxed);
-            meters.voices.store(voices.active() as u32, Relaxed);
+            meters.voices.store(active as u32, Relaxed);
             0
         },
     );
-    unsafe {
+    let source = unsafe {
         AVAudioSourceNode::initWithFormat_renderBlock(
             AVAudioSourceNode::alloc(),
             format,
             RcBlock::as_ptr(&render),
         )
+    };
+    Wired { source, commands, graveyard, previews, played }
+}
+
+/// The voice engine's node and the graph's ends of the channels into its render block.
+struct Wired {
+    source: Retained<AVAudioSourceNode>,
+    commands: Sender<Command>,
+    graveyard: Receiver<Arc<sampler::Instrument>>,
+    previews: Sender<Preview>,
+    played: Receiver<Vec<PreviewNote>>,
+}
+
+/// Non-interleaved float stereo at `rate`, the format every connection in the graph is made in.
+fn stereo(rate: f64) -> Result<Retained<AVAudioFormat>, String> {
+    unsafe {
+        AVAudioFormat::initStandardFormatWithSampleRate_channels(AVAudioFormat::alloc(), rate, 2)
     }
+    .ok_or_else(|| format!("Stereo audio at {rate} Hz is not available"))
 }
 
 /// One click as a buffer of samples: a sine falling to silence, because a square end would pop.
-fn blip(format: &AVAudioFormat, hz: f64, peak: f32) -> Result<Retained<AVAudioPCMBuffer>, String> {
-    let frames = (RATE * CLICK_MS / 1000.0) as u32;
+fn blip(
+    format: &AVAudioFormat,
+    rate: f64,
+    hz: f64,
+    peak: f32,
+) -> Result<Retained<AVAudioPCMBuffer>, String> {
+    let frames = (rate * CLICK_MS / 1000.0) as u32;
     unsafe {
         let buffer =
             AVAudioPCMBuffer::initWithPCMFormat_frameCapacity(AVAudioPCMBuffer::alloc(), format, frames)
@@ -953,7 +1032,7 @@ fn blip(format: &AVAudioFormat, hz: f64, peak: f32) -> Result<Retained<AVAudioPC
         buffer.setFrameLength(frames);
         let channels = buffer.floatChannelData();
         for frame in 0..frames as usize {
-            let at = frame as f64 / RATE;
+            let at = frame as f64 / rate;
             let fall = (-at / (CLICK_MS / 1000.0 / 5.0)).exp() as f32;
             let sample = peak * fall * (2.0 * std::f64::consts::PI * hz * at).sin() as f32;
             for channel in 0..format.channelCount() as usize {
@@ -1098,6 +1177,7 @@ fn watch_configuration(engine: &AVAudioEngine) {
 fn report_forever() {
     let mut told = Instant::now() - PROGRESS;
     let mut metered = Instant::now() - LOAD;
+    let mut reported = None;
     let mut was_playing = false;
     let mut notes = [Event::default(); PREVIEW_BATCH];
     loop {
@@ -1123,8 +1203,10 @@ fn report_forever() {
             sleep(IDLE);
             continue;
         };
-        if metered.elapsed() >= LOAD {
+        // Only a change is told: an idle engine then wakes the webview for nothing.
+        if metered.elapsed() >= LOAD && reported != Some((voices, limit, share)) {
             metered = Instant::now();
+            reported = Some((voices, limit, share));
             load(voices, limit, share);
         }
         // The end of the piece is told at once, so the play button comes back without a wait.
@@ -1174,6 +1256,7 @@ pub fn status() -> Status {
         Some(_) => Status { available: true, ..Status::default() },
     };
     status.instrument = graph.instrument().unwrap_or_default().into();
+    status.instrument_rate = graph.instrument_rate;
     status.roles.clone_from(&graph.roles);
     graph.describe_output(&mut status);
     status
@@ -1243,6 +1326,10 @@ pub fn set_buffer_frames(frames: u32) -> Result<(), String> {
 
 pub fn set_voices(count: usize) -> Result<(), String> {
     with_graph(|graph| graph.set_voices(count))
+}
+
+pub fn set_sample_rate(rate: u32) -> Result<(), String> {
+    with_graph(|graph| graph.set_sample_rate(rate))
 }
 
 fn with_graph(run: impl FnOnce(&mut Graph) -> Result<(), String>) -> Result<(), String> {
@@ -2229,5 +2316,140 @@ mod tests {
         effects::rewire(&graph);
         let after = release_ms(&mut graph);
         assert!(after > short + 100.0, "the rewire left {after} ms");
+    }
+}
+
+#[cfg(test)]
+mod idle {
+    use super::*;
+
+    /// Prints what each thread of this process cost over eight seconds while the graph plays
+    /// silence on the real output device at 64 frames: `cargo test -- --ignored --nocapture idle::`.
+    fn probe(label: &str, grand: bool, reverb: bool) {
+        let mut graph = Graph::build().unwrap();
+        graph.start().unwrap();
+        graph.adopt();
+        graph.set_buffer(32).unwrap();
+        if reverb {
+            let slot = serde_json::from_str(r#"{"id":"aumf:FR2p:FabF","name":"Pro-R 2"}"#).unwrap();
+            let chain = effects::apply(&mut graph, vec![slot]);
+            assert!(chain.iter().all(|slot| !slot.missing), "Pro-R 2 is installed");
+        }
+        if grand {
+            let path = std::path::PathBuf::from(std::env::var("HOME").unwrap()).join(
+                "Music/Logic Pro Library.bundle/Plug-In Settings/Sampler/z_Internal/Studio Piano/\
+                 Concert Grand Piano.exs",
+            );
+            graph.load_file(&path).unwrap();
+        }
+        let threads = || {
+            let out = std::process::Command::new("ps")
+                .args(["-M", "-o", "pid", "-p", &std::process::id().to_string()])
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).to_string()
+        };
+        std::thread::sleep(Duration::from_secs(2));
+        let before = threads();
+        std::thread::sleep(Duration::from_secs(8));
+        let after = threads();
+        println!(
+            "--- {label}, {} frames\n{before}\n{after}",
+            device::buffer_frames(graph.device)
+        );
+    }
+
+    #[test]
+    #[ignore = "plays through the real output device"]
+    fn an_empty_graph() {
+        probe("empty graph", false, false);
+    }
+
+    #[test]
+    #[ignore = "needs the Logic sample library"]
+    fn a_graph_with_the_concert_grand() {
+        probe("concert grand loaded", true, false);
+    }
+
+    #[test]
+    #[ignore = "needs FabFilter Pro-R 2"]
+    fn a_graph_with_a_reverb() {
+        probe("Pro-R 2 in the chain", false, true);
+    }
+}
+
+#[cfg(test)]
+mod rate {
+    use super::*;
+
+    const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/sine.sf2");
+
+    /// Zero crossings a second in the fixture's middle C, rendered offline at `rate`: the pitch
+    /// as a number, which stays put when the engine honours the rate it was moved to.
+    fn crossings_per_second_at(rate: f64) -> f64 {
+        let mut graph = Graph::build().unwrap();
+        graph.rewire_at(rate).unwrap();
+        graph.load_file(Path::new(FIXTURE)).unwrap();
+        graph.start_offline(4096).unwrap();
+        graph.note_on(60, 100);
+        let out = graph.render_frames(8192).unwrap();
+        let crossings = out.windows(2).filter(|w| (w[0] < 0.0) != (w[1] < 0.0)).count();
+        crossings as f64 / (out.len() as f64 / rate)
+    }
+
+    #[test]
+    fn the_status_names_the_rate_a_file_was_recorded_at() {
+        let mut graph = Graph::build().unwrap();
+        assert_eq!(graph.instrument_rate, 0.0, "nothing loaded");
+        graph.load_file(Path::new(FIXTURE)).unwrap();
+        assert!(graph.instrument_rate > 0.0, "{}", graph.instrument_rate);
+        graph.unload_exs();
+        assert_eq!(graph.instrument_rate, 0.0);
+    }
+
+    #[test]
+    fn a_rate_off_the_list_is_refused() {
+        let mut graph = Graph::build().unwrap();
+        assert!(graph.set_sample_rate(22050).is_err());
+    }
+
+    #[test]
+    fn the_voice_engine_keeps_the_pitch_at_the_rate_it_was_moved_to() {
+        let (base, moved) = (crossings_per_second_at(RATE), crossings_per_second_at(96000.0));
+        assert!(base > 100.0, "{base} crossings a second: the fixture sounds");
+        assert!((moved - base).abs() <= base * 0.05, "{moved} against {base}");
+    }
+}
+
+#[cfg(test)]
+mod silence {
+    use super::*;
+
+    const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/sine.sf2");
+
+    /// The source tells the chain its buffer is silent once no voice sounds; an effect with a tail
+    /// keeps rendering it all the same, so a reverb rings on after the last voice has died.
+    #[test]
+    fn a_reverb_rings_on_after_the_last_voice_dies() {
+        let mut graph = Graph::build().unwrap();
+        graph.load_file(Path::new(FIXTURE)).unwrap();
+        let slot = serde_json::from_str(r#"{"id":"aufx:mrev:appl","name":"Reverb"}"#).unwrap();
+        let chain = effects::apply(&mut graph, vec![slot]);
+        assert!(chain.iter().all(|slot| !slot.missing), "Apple's reverb is installed");
+        graph.start_offline(4096).unwrap();
+        graph.note_on(60, 100);
+        graph.render_peak(8192).unwrap();
+        graph.release_all();
+        // Renders until the voice has died, which is when the source starts flagging silence.
+        let mut passes = 0;
+        while graph.meters.voices.load(Relaxed) > 0 {
+            graph.render_peak(4096).unwrap();
+            passes += 1;
+            assert!(passes < 100, "the voice never died");
+        }
+        let tail = graph.render_peak(8192).unwrap();
+        let later = graph.render_peak(8192).unwrap();
+        assert!(tail > 1e-3, "the tail after the voice died peaks at {tail}");
+        assert!(later > 0.0 && later < tail, "and dies away: {later} after {tail}");
     }
 }

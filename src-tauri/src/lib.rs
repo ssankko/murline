@@ -109,6 +109,7 @@ pub fn run() {
             audio::audio_output_devices,
             audio::audio_set_output_device,
             audio::audio_set_buffer_frames,
+            audio::audio_set_sample_rate,
             audio::audio_set_voices,
             audio::audio_instruments,
             audio::audio_load_instrument,

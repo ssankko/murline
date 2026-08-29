@@ -57,6 +57,10 @@ pub fn set_buffer_frames(_frames: u32) -> Result<(), String> {
     Err(PLATFORM.into())
 }
 
+pub fn set_sample_rate(_rate: u32) -> Result<(), String> {
+    Err(PLATFORM.into())
+}
+
 pub fn set_voices(_count: usize) -> Result<(), String> {
     Err(PLATFORM.into())
 }

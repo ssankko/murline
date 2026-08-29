@@ -90,6 +90,16 @@ export async function listPieces(sort: SortOrder = 'title'): Promise<PieceRow[]>
 }
 
 /**
+ * Whether the list pane's search field keeps a row: its title or its composer holds the query as a
+ * case-insensitive substring. An empty or blank query keeps every row.
+ */
+export function matches(row: Pick<PieceRow, 'title' | 'composer'>, query: string): boolean {
+  const needle = query.trim().toLowerCase();
+  if (needle === '') return true;
+  return [row.title, row.composer].some((field) => field?.toLowerCase().includes(needle));
+}
+
+/**
  * The path of every piece whose file is in the folder, whatever the list pane is filtered to. The
  * finder reads it to know which of its rows are already downloaded.
  */

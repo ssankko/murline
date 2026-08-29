@@ -23,7 +23,8 @@ Reading a piece's file once to produce its summary for the library page (title, 
 _Avoid_: Caching, scanning, import (import is the act of adding the file; indexing is what follows)
 
 **Library**:
-The set of pieces the app has imported, with per-piece favorites, history and settings.
+The set of pieces the app has imported, with per-piece favorites, history and settings. The list
+pane has a search field over its rows, matching title and composer; it lasts for the session alone.
 _Avoid_: Collection, catalogue
 
 **Score finder**:

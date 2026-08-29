@@ -28,6 +28,7 @@ import {
   allPiecePaths,
   deletePiece,
   listPieces,
+  matches,
   setFavorite,
   type PieceRow,
   type SortOrder,
@@ -43,7 +44,7 @@ import { SettingsPanel } from '@/screens/settings';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open } from '@tauri-apps/plugin-dialog';
-import { ArrowUpDown, SlidersHorizontal } from 'lucide-react';
+import { ArrowUpDown, Search, SlidersHorizontal } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 const SORTS: [SortOrder, string][] = [
@@ -73,6 +74,8 @@ export function Library({
   const [pieces, setPieces] = useState<PieceRow[]>([]);
   const [selected, setSelected] = useState<string | null>(opened ?? null);
   const [sort, setSort] = useState<SortOrder>(SETTING_DEFAULTS.library_sort);
+  /** What the search field holds. It lives for the session alone and is never stored. */
+  const [query, setQuery] = useState('');
   /** Whether the stored sort and selection have arrived; the list waits on them. */
   const [restored, setRestored] = useState(false);
   const [folderGone, setFolderGone] = useState(false);
@@ -154,6 +157,9 @@ export function Library({
     setPieces(await listPieces(sort));
   }
 
+  const sortLabel = `Sort: ${SORTS.find(([key]) => key === sort)![1]}`;
+  /** The rows the search field leaves. The detail pane reads `pieces`, so a hidden row stays picked. */
+  const shown = pieces.filter((row) => matches(row, query));
   const piece = pieces.find((p) => p.path === selected) ?? pieces[0];
 
   /** The text outlives its notice by one collapse, so the bar has words to show as it closes. */
@@ -232,26 +238,6 @@ export function Library({
           data-tauri-drag-region
         >
           <h1 className="pointer-events-none mr-1 text-[15px] font-semibold">Library</h1>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="text-muted-ink text-[12px]">
-                <ArrowUpDown className="size-3.5" />
-                {SORTS.find(([key]) => key === sort)![1]}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              <DropdownMenuRadioGroup
-                value={sort}
-                onValueChange={(value) => setSort(value as SortOrder)}
-              >
-                {SORTS.map(([key, label]) => (
-                  <DropdownMenuRadioItem key={key} value={key} className="text-[13px]">
-                    {label}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
 
           <div className="ml-auto flex items-center gap-2.5">
             <MidiLight open={midiOpen} onOpenChange={setMidiOpen} />
@@ -272,6 +258,42 @@ export function Library({
 
       <div className="flex min-h-0 flex-1">
         <div className="border-edge-soft flex w-[340px] flex-none flex-col border-r">
+          <div className="bg-chrome border-edge-soft flex h-8 flex-none items-center gap-2 border-b pr-1 pl-3">
+            <Search className="text-muted-ink size-3.5 flex-none" />
+            <input
+              type="search"
+              value={query}
+              aria-label="Search library"
+              placeholder="Search"
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => event.key === 'Escape' && setQuery('')}
+              className="placeholder:text-muted-ink min-w-0 flex-1 bg-transparent text-[12px] outline-none"
+            />
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  aria-label={sortLabel}
+                  title={sortLabel}
+                  className="hover:bg-ink/8 flex size-6 flex-none items-center justify-center rounded transition-colors duration-150"
+                >
+                  <ArrowUpDown className="size-3.5" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuRadioGroup
+                  value={sort}
+                  onValueChange={(value) => setSort(value as SortOrder)}
+                >
+                  {SORTS.map(([key, label]) => (
+                    <DropdownMenuRadioItem key={key} value={key} className="text-[13px]">
+                      {label}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
           {/* No folder at all reads the same as one that has gone: there is nothing to list. */}
           {(!folder || folderGone) && (
             <div className="border-edge-soft flex items-center gap-2 border-b px-4 py-2 text-[12px]">
@@ -305,7 +327,7 @@ export function Library({
           </Collapse>
 
           <div ref={list} className="flex-1 overflow-y-auto">
-            {pieces.map((row) => (
+            {shown.map((row) => (
               <Row
                 key={row.path}
                 row={row}
@@ -316,6 +338,11 @@ export function Library({
             ))}
             {pieces.length === 0 && (
               <p className="text-muted-ink px-4 py-6 text-center text-[12px]">No pieces yet.</p>
+            )}
+            {pieces.length > 0 && shown.length === 0 && (
+              <p className="text-muted-ink px-4 py-6 text-center text-[12px]">
+                Nothing matches “{query.trim()}”.
+              </p>
             )}
           </div>
 

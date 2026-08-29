@@ -298,7 +298,7 @@ const SEARCH_ROWS: {
   {
     id: 'keyboard_scale_marks',
     tab: 'look',
-    label: 'Dim keys off the scale',
+    label: 'Mark keys off the scale',
     group: 'Falling notes',
     words: ['out of scale', 'scale marks', 'scale keyboard', 'restrict'],
   },
@@ -878,7 +878,7 @@ export function SettingsPanel({
                       <Row
                         id="keyboard_scale_marks"
                         marked={marked === 'keyboard_scale_marks'}
-                        label="Dim keys off the scale"
+                        label="Mark keys off the scale"
                       >
                         <Toggle
                           value={values.keyboard_scale_marks}

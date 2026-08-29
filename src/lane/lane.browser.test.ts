@@ -388,19 +388,18 @@ function scoreInD(): Score {
   return score;
 }
 
-test('the marks dim the keys outside the scale in force', () => {
+test('the marks ghost the keys outside the scale in force', () => {
   const laneH = HEIGHT - KEYBOARD_H;
   const { engine, lane, ctx } = mount({ score: scoreInD() });
-  lane.frame(
-    engine.snapshot(),
-    inForce(engine),
-    engine.windowTicks,
-    performance.timeOrigin + performance.now(),
-  );
+  const wall = performance.timeOrigin + performance.now();
+  lane.frame(engine.snapshot(), inForce(engine), engine.windowTicks, wall);
   // Middle C is off the D major scale, D is its tonic: the resting faces say so. The samples sit
   // where the white faces show, clear of the black keys standing over their seams.
   expect(hex(ctx, keyX(lane, 60) + 20, laneH + 40)).toBe('#dedede');
   expect(hex(ctx, keyX(lane, 62) + 28, laneH + 40)).toBe('#dedede');
+  // No marks without the setting: the top edge of middle C carries no dotted border.
+  const bare = keyX(lane, 60);
+  expect(dotInk(ctx, bare + 2, bare + 18, laneH)).toBe(0);
   lane.dispose();
 
   const marks = mount({ score: scoreInD(), look: { scaleMarks: true } });
@@ -410,10 +409,46 @@ test('the marks dim the keys outside the scale in force', () => {
     marks.engine.windowTicks,
     performance.timeOrigin + performance.now(),
   );
-  expect(hex(marks.ctx, keyX(marks.lane, 60) + 20, laneH + 40)).toBe('#afafaf');
+  // The marked key washes toward the paper, and the quiet dots run along its top edge.
+  expect(hex(marks.ctx, keyX(marks.lane, 60) + 20, laneH + 40)).toBe('#eaeaea');
   expect(hex(marks.ctx, keyX(marks.lane, 62) + 28, laneH + 40)).toBe('#dedede');
+  const marked = keyX(marks.lane, 60);
+  expect(dotInk(marks.ctx, marked + 2, marked + 18, laneH)).toBeGreaterThan(0);
+  // A strike takes its key back: D sharp struck wrong wears the grey face, and no border.
+  marks.engine.strike({ midi: 63, velocity: 100, time: performance.timeOrigin + performance.now(), on: true });
+  marks.lane.frame(
+    marks.engine.snapshot(),
+    inForce(marks.engine),
+    marks.engine.windowTicks,
+    performance.timeOrigin + performance.now(),
+  );
+  expect(hex(marks.ctx, keyX(marks.lane, 63) + 14, laneH + 40)).not.toBe('#eaeaea');
+  const struck = keyX(marks.lane, 63);
+  expect(dotInk(marks.ctx, struck + 2, struck + 18, laneH)).toBe(0);
   marks.lane.dispose();
 });
+
+/**
+ * How many pixels along a key's top edge wear the marks' neutral quiet ink. The wrong-strike face
+ * counts itself out: it is as dark as the dots but carries a tint, and the dots do not.
+ */
+function dotInk(
+  ctx: CanvasRenderingContext2D,
+  from: number,
+  to: number,
+  top: number,
+): number {
+  const dpr = window.devicePixelRatio || 1;
+  let count = 0;
+  for (let x = Math.ceil(from * dpr); x <= to * dpr; x++) {
+    for (let y = Math.round((top + 2) * dpr); y <= Math.round((top + 4) * dpr); y++) {
+      const [r, g, b] = ctx.getImageData(x, y, 1, 1).data;
+      const level = Math.min(r!, g!, b!);
+      if (level >= 150 && level <= 200 && r! - b! < 8) count++;
+    }
+  }
+  return count;
+}
 
 /** How much ink a column of the lane carries, which grows with the Section band over it. */
 function ink(ctx: CanvasRenderingContext2D, x: number, laneH: number): number {

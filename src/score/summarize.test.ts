@@ -1,4 +1,5 @@
 import { expect, test } from 'vitest';
+import { modeOf } from './key';
 import { summarize } from './summarize';
 import { ScoreError, TICKS_PER_QUARTER, type Note, type Onset, type Score } from './types';
 
@@ -73,6 +74,15 @@ test('the index carries every fact the piece row stores', () => {
     partCount: 3,
     partName: 'Part 1',
   });
+});
+
+test('a dorian score indexes as dorian and reads back as its own mode', () => {
+  const score = scoreOf([[note(60, 0)]]);
+  score.keys = [{ measureIndex: 0, sharps: -1, mode: 3 }];
+  const index = summarize(score, 'x.musicxml');
+
+  expect(index.keyMode).toBe('dorian');
+  expect(modeOf(index.keyMode)).toBe(3);
 });
 
 test('the title and composer of the file win over the file name', () => {

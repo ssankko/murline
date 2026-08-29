@@ -1,4 +1,5 @@
 import { PAPER, colorOf, luminance, mix, tone } from '@/look/color';
+import { keyOf } from '@/score/key';
 import { TICKS_PER_QUARTER, type ChordEvent, type KeyChange, type Score } from '@/score/types';
 import { describe, expect, test } from 'vitest';
 import {
@@ -89,8 +90,8 @@ describe('the key in force in played time', () => {
       { measureIndex: 1, sharps: -3, mode: 0 },
     ];
     expect(laneKeysOf(scoreOf(keys), BARS)).toEqual([
-      { tick: 0, sharps: 2, mode: 0 },
-      { tick: 3 * Q, sharps: -3, mode: 0 },
+      { tick: 0, key: keyOf(2, 0) },
+      { tick: 3 * Q, key: keyOf(-3, 0) },
     ]);
   });
 
@@ -100,7 +101,7 @@ describe('the key in force in played time', () => {
       { measureIndex: 2, sharps: -3, mode: 0 },
     ];
     const lap = BARS.map((bar) => ({ ...bar, tick: bar.tick + 9 * Q }));
-    const marks = laneKeysOf(scoreOf(keys), [...BARS, ...lap]).map((key) => [key.tick, key.sharps]);
+    const marks = laneKeysOf(scoreOf(keys), [...BARS, ...lap]).map((at) => [at.tick, at.key.sharps]);
     expect(marks).toEqual([
       [0, 2],
       [6 * Q, -3],
@@ -110,7 +111,7 @@ describe('the key in force in played time', () => {
   });
 
   test('a piece with no key signatures stands in C major', () => {
-    expect(laneKeysOf(scoreOf([]), BARS)).toEqual([{ tick: 0, sharps: 0, mode: 0 }]);
+    expect(laneKeysOf(scoreOf([]), BARS)).toEqual([{ tick: 0, key: keyOf(0, 0) }]);
   });
 });
 

@@ -9,7 +9,7 @@ import { splitError } from '@/library/scan';
 import { colorOf, noteName } from '@/look/color';
 import { useDark } from '@/look/use-dark';
 import { tempoLabel } from '@/play/settings';
-import { keyName, tonicOf, type KeyAt } from '@/score/harmony';
+import { keyOf, modeOf, type Key } from '@/score/key';
 import { RangeStrip } from '@/screens/range-strip';
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
@@ -31,8 +31,8 @@ export function Detail({
   onPreview: (path: string) => void;
 }) {
   const broken = !!piece.error;
-  const key = keyOf(piece);
-  const tonic = key && tonicOf(key);
+  const key = pieceKey(piece);
+  const tonic = key && key.tonic;
   const fullPath = folder ? pathOf(folder, piece.path) : piece.path;
   return (
     <div className="flex-1 overflow-y-auto px-12 py-10">
@@ -211,7 +211,7 @@ function day(at: number | null): string {
 }
 
 /** Muted label over value: what the piece is, before it is opened. */
-function Facts({ piece, keyAt }: { piece: PieceRow; keyAt: KeyAt | null }) {
+function Facts({ piece, keyAt }: { piece: PieceRow; keyAt: Key | null }) {
   const facts: [string, React.ReactNode][] = [
     ['Bars', piece.measure_count],
     ['Length', piece.duration_s === null ? null : duration(piece.duration_s)],
@@ -224,8 +224,8 @@ function Facts({ piece, keyAt }: { piece: PieceRow; keyAt: KeyAt | null }) {
     [
       'Key',
       <span key="key" className="flex items-center gap-1.5">
-        {keyAt && <TonicDot midi={60 + tonicOf(keyAt)} />}
-        {keyAt && keyName(keyAt)}
+        {keyAt && <TonicDot midi={60 + keyAt.tonic} />}
+        {keyAt?.name}
       </span>,
     ],
     ['Tempo', tempoText(piece)],
@@ -254,10 +254,10 @@ function TonicDot({ midi }: { midi: number }) {
   );
 }
 
-/** The key of the index, in the form the harmony works in; a piece never indexed has none. */
-function keyOf(piece: PieceRow): KeyAt | null {
-  if (piece.key_sharps === null) return null;
-  return { tick: 0, sharps: piece.key_sharps, mode: piece.key_mode === 'minor' ? 1 : 0 };
+/** The key of the index; a piece never indexed has none. */
+function pieceKey(piece: PieceRow): Key | null {
+  if (piece.key_sharps === null || piece.key_mode === null) return null;
+  return keyOf(piece.key_sharps, modeOf(piece.key_mode));
 }
 
 /** The index stores whether the piece has one tempo, not which; the number lives in the Score. */

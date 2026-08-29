@@ -15,7 +15,7 @@ import { KEYBOARD_H, keyLayout, type KeyLayout } from '@/lane/keyboard';
 import { PAPER, colorOf, tone } from '@/look/color';
 import { Engine } from '@/play/engine';
 import { DEFAULT_PLAY_SETTINGS } from '@/play/settings';
-import type { KeyAt } from '@/score/harmony';
+import { keyOf, type Key } from '@/score/key';
 import { TICKS_PER_QUARTER, type ChordEvent, type Note, type Score } from '@/score/types';
 import { expect, test, vi } from 'vitest';
 
@@ -377,12 +377,12 @@ function scoreInD(): Score {
 
 test('the key in force is reported once, and again only when it changes', () => {
   const { engine, lane } = mount({ score: scoreInD() });
-  const seen: (KeyAt | null)[] = [];
+  const seen: (Key | null)[] = [];
   lane.onKey = (key) => seen.push(key);
   const wall = performance.timeOrigin + performance.now();
   lane.frame(engine.snapshot(), engine.windowTicks, wall);
   lane.frame(engine.snapshot(), engine.windowTicks, wall + 16);
-  expect(seen).toEqual([{ tick: 0, sharps: 2, mode: 0 }]);
+  expect(seen).toEqual([keyOf(2, 0)]);
   lane.dispose();
 });
 

@@ -5,14 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { colorOf } from '@/look/color';
 import { useDark } from '@/look/use-dark';
 import { TEMPO_RANGE, tempoLabel, type TempoMode } from '@/play/settings';
-import {
-  keyName,
-  keyTable,
-  parallelOf,
-  relativeOf,
-  signatureOf,
-  type KeyAt,
-} from '@/score/harmony';
+import type { Key } from '@/score/key';
 import { Music2 } from 'lucide-react';
 
 /** One size and one stroke for every icon in the bar. */
@@ -100,20 +93,18 @@ const PRIMARY = new Set([1, 4, 5]);
  * and function over its triad, the triad's notes and its seventh chord, under the key's signature,
  * relative and parallel. Nothing is drawn until a score names a key.
  */
-export function KeyPopover({ at }: { at: KeyAt | null }) {
+export function KeyPopover({ at }: { at: Key | null }) {
   const dark = useDark();
   if (!at) return null;
-  const name = keyName(at);
-  const { count, notes } = signatureOf(at);
+  const { name, table } = at;
+  const { count, sign, notes } = at.signature;
   const signature =
     count === 0
       ? 'no sharps or flats'
-      : `${count} ${notes[0]!.endsWith('♯') ? 'sharp' : 'flat'}${count > 1 ? 's' : ''}: ${notes.join(' ')}`;
-  const minor = name.endsWith('minor');
-  const footer = `${signature} · relative ${keyName(relativeOf(at))} · parallel ${keyName(
-    parallelOf(at),
-  )}${minor ? ' · harmonic minor' : ''}`;
-  const table = keyTable(at);
+      : `${count} ${sign === '♯' ? 'sharp' : 'flat'}${count > 1 ? 's' : ''}: ${notes.join(' ')}`;
+  const footer = `${signature} · relative ${at.relative.name} · parallel ${at.parallel.name}${
+    at.major ? '' : ' · harmonic minor'
+  }`;
   return (
     <Popover>
       <PopoverTrigger asChild>

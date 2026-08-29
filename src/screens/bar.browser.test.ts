@@ -1,4 +1,5 @@
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { keyOf, type Key } from '@/score/key';
 import { KeyPopover } from '@/screens/bar';
 import { userEvent } from 'vitest/browser';
 import { createElement } from 'react';
@@ -16,7 +17,7 @@ afterEach(() => {
 });
 
 /** Mounts the readout for one key under the provider the bar's buttons need. */
-async function mount(at: { tick: number; sharps: number; mode: number } | null): Promise<void> {
+async function mount(at: Key | null): Promise<void> {
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
@@ -27,7 +28,7 @@ async function mount(at: { tick: number; sharps: number; mode: number } | null):
 const trigger = () => document.querySelector<HTMLButtonElement>('button[aria-label^="Key"]');
 
 test('the readout names the key and opens on its table of degrees', async () => {
-  await mount({ tick: 0, sharps: 2, mode: 0 });
+  await mount(keyOf(2, 0));
   const button = trigger()!;
   expect(button.textContent).toContain('D major');
 

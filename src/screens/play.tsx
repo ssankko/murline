@@ -44,7 +44,7 @@ import {
 } from '@/play/settings';
 import { clampSection, savedSection, sectionLabel, type Section } from '@/play/section';
 import { useFrameLoop } from '@/play/use-frame-loop';
-import type { KeyAt } from '@/score/harmony';
+import type { Key } from '@/score/key';
 import { bpmAt, ScoreError, type Measure } from '@/score/types';
 import { Button } from '@/components/ui/button';
 import { Mixer } from '@/audio/mixer';
@@ -116,7 +116,7 @@ export function PlayScreen({
   const [loop, setLoop] = useState(false);
   const [measures, setMeasures] = useState<Measure[]>([]);
   /** The key the clock stands in, as the lane reads it out of the score in played time. */
-  const [key, setKey] = useState<KeyAt | null>(null);
+  const [key, setKey] = useState<Key | null>(null);
 
   /** What a pinch on the sheet is choosing while it lasts, which the panel over the paper shows. */
   const [pinch, setPinch] = useState<Pinch | null>(null);

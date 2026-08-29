@@ -24,7 +24,7 @@ const BLACK_DROP = PRESS_DROP / 3;
 const PRESS_FACE = 0.02;
 const PRESS_STRIP = 0.06;
 
-export interface Key {
+export interface PianoKey {
   midi: number;
   x: number;
   w: number;
@@ -32,8 +32,8 @@ export interface Key {
 }
 
 export interface KeyLayout {
-  keys: Key[];
-  byMidi: Map<number, Key>;
+  keys: PianoKey[];
+  byMidi: Map<number, PianoKey>;
   width: number;
 }
 
@@ -43,7 +43,7 @@ export function keyLayout(lo: number, hi: number, width: number): KeyLayout {
   for (let midi = lo; midi <= hi; midi++) if (!isBlackKey(midi)) whites++;
   const whiteW = width / Math.max(whites, 1);
   const blackW = whiteW * 0.6;
-  const keys: Key[] = [];
+  const keys: PianoKey[] = [];
   let placed = 0;
   for (let midi = lo; midi <= hi; midi++) {
     if (isBlackKey(midi)) {

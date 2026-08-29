@@ -13,6 +13,8 @@ const BEATS = 4;
 const MARK = 4;
 const TALL = 8;
 const STEP = 6;
+/** How many times the lane's size the row is drawn on the screens while a piece opens. */
+const OPENING = 3;
 /**
  * A mark burning out on its beat: the share of the beat the whole burn takes, the share of the
  * burn its collapse takes, and how far it swells before it goes.
@@ -37,10 +39,12 @@ const WIDTH = (BEATS - 1) * STEP + MARK;
 
 /**
  * One mark's whole life, in fractions of the row's cycle: born at the left, a step right on each
- * beat after it, then the burn that takes it off the right end.
+ * beat after it, then the burn that takes it off the right end. The steps are in the real pixels
+ * of a row drawn `size` times the lane's, so a large row is drawn sharp rather than blown up.
  */
-function life(): Keyframe[] {
+function life(size: number): Keyframe[] {
   const at = (beats: number) => beats / BEATS;
+  const pace = STEP * size;
   const frames: Keyframe[] = [
     { offset: 0, transform: 'translateX(0px) scale(0)', opacity: 0, easing: ELASTIC },
     { offset: at(BIRTH), transform: 'translateX(0px) scale(1)', opacity: REST },
@@ -49,13 +53,13 @@ function life(): Keyframe[] {
     frames.push(
       {
         offset: at(step),
-        transform: `translateX(${(step - 1) * STEP}px) scale(1)`,
+        transform: `translateX(${(step - 1) * pace}px) scale(1)`,
         easing: ELASTIC,
       },
-      { offset: at(step + TRAVEL), transform: `translateX(${step * STEP}px) scale(1)` },
+      { offset: at(step + TRAVEL), transform: `translateX(${step * pace}px) scale(1)` },
     );
   }
-  const end = `translateX(${(BEATS - 1) * STEP}px)`;
+  const end = `translateX(${(BEATS - 1) * pace}px)`;
   frames.push(
     { offset: at(BEATS - BURN), transform: `${end} scale(1)`, opacity: REST },
     { offset: at(BEATS - BURN * 0.6), transform: `${end} scale(1.1)`, opacity: DIP },
@@ -69,7 +73,7 @@ function life(): Keyframe[] {
  * The exit, run on a beat: every mark leaves to the right from wherever the beat left it, on the
  * same overshoot the row travels on. The beat is stopped once its last places are read off it.
  */
-function leave(marks: HTMLElement[], beat: Animation[]): Animation[] {
+function leave(marks: HTMLElement[], beat: Animation[], size: number): Animation[] {
   const stands = marks.map((mark) => {
     const style = getComputedStyle(mark);
     const { m41: x, m11: scale } = new DOMMatrixReadOnly(style.transform);
@@ -81,7 +85,7 @@ function leave(marks: HTMLElement[], beat: Animation[]): Animation[] {
     return mark.animate(
       [
         { transform: `translateX(${x}px) scale(${scale})`, opacity },
-        { transform: `translateX(${x + EXIT}px) scale(${scale})`, opacity: 0 },
+        { transform: `translateX(${x + EXIT * size}px) scale(${scale})`, opacity: 0 },
       ],
       { duration: EXIT_MS, easing: ELASTIC, fill: 'forwards' },
     );
@@ -101,7 +105,7 @@ export function Loading({
 }: {
   on?: boolean;
   label?: string;
-  /** How much larger than the lane's own countdown the row is drawn, marks and label together. */
+  /** How many times the lane's own countdown the row is drawn, in real pixels. */
   scale?: number;
 }) {
   const row = useRef<HTMLSpanElement>(null);
@@ -124,13 +128,13 @@ export function Loading({
     if (!drawn || !on || reducedMotion()) return;
     for (const animation of running.current) animation.cancel();
     running.current = marks().map((mark, beat) =>
-      mark.animate(life(), {
+      mark.animate(life(scale), {
         duration: BEAT_MS * BEATS,
         iterations: Infinity,
         delay: -beat * BEAT_MS,
       }),
     );
-  }, [drawn, on]);
+  }, [drawn, on, scale]);
 
   useEffect(() => {
     if (on || !drawn) return;
@@ -141,13 +145,13 @@ export function Loading({
     // The beat the row is on says how much of this one is left, which is what it runs out first.
     const played = Number(running.current[0]?.currentTime ?? 0);
     const timer = setTimeout(() => {
-      running.current = leave(marks(), running.current);
+      running.current = leave(marks(), running.current, scale);
       const last = running.current[0];
       if (last) last.onfinish = () => setDrawn(false);
       else setDrawn(false);
     }, BEAT_MS - (played % BEAT_MS));
     return () => clearTimeout(timer);
-  }, [on, drawn]);
+  }, [on, drawn, scale]);
 
   if (!drawn) return null;
 
@@ -159,9 +163,8 @@ export function Loading({
       style={{
         position: 'relative',
         display: 'inline-block',
-        width: WIDTH,
-        height: TALL,
-        transform: `scale(${scale})`,
+        width: WIDTH * scale,
+        height: TALL * scale,
       }}
     >
       {Array.from({ length: BEATS }, (_, beat) => (
@@ -175,11 +178,11 @@ export function Loading({
             position: 'absolute',
             insetBlock: 0,
             marginBlock: 'auto',
-            borderRadius: MARK,
-            width: MARK,
-            height: beat === 0 ? TALL : MARK,
+            borderRadius: MARK * scale,
+            width: MARK * scale,
+            height: (beat === 0 ? TALL : MARK) * scale,
             opacity: REST,
-            transform: `translateX(${beat * STEP}px)`,
+            transform: `translateX(${beat * STEP * scale}px)`,
           }}
         />
       ))}
@@ -196,7 +199,7 @@ export function Loading({
 export function Opening({ on, name }: { on: boolean; name: string }) {
   return (
     <div className="pointer-events-none absolute inset-x-0 top-12 bottom-[22px] flex items-center justify-center">
-      <Loading on={on} scale={3} label={`Opening ${name}`} />
+      <Loading on={on} scale={OPENING} label={`Opening ${name}`} />
     </div>
   );
 }

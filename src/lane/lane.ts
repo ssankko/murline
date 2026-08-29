@@ -256,6 +256,9 @@ const RAISE_OUT = 6;
 const RAISE_IN = 3;
 /** How much further out the segment swells as the chord arrives, so the crest clears the runner. */
 const RAISE_SWELL = 3;
+/** A chord tone the key does not hold wears no face, only its own colour dashed round its edge. */
+const OUTSIDE_W = 1.5;
+const OUTSIDE_DASH = [4, 3];
 /**
  * Outside the band: where track 1 settles, the step out to track 2, and how far track 1 draws back
  * as it is spent. A same-root move has no arc, so it draws a loop of `TRACK_LOOP` outside its root.
@@ -1559,7 +1562,8 @@ export class Lane {
   /**
    * The wheel: the twelve pitch classes a fifth apart with C at the top, the seven of the key in
    * force faced in their own colours and the other five hollow, the tonic in a badge, and the root
-   * of the chord sounding now on a segment that stands off the band.
+   * of the chord sounding now on a segment that stands off the band. A chord tone from outside the
+   * key stays hollow and takes its own colour as a dashed outline.
    */
   private drawWheel(width: number): void {
     if (this.look.harmony !== 'wheel') return;
@@ -1578,37 +1582,62 @@ export class Lane {
 
     const t = clamp((this.now - this.keyAt) / PANEL_SLIDE_MS, 0, 1);
     const lit = (of: LaneScale | null, pc: number) => (of?.pcs.includes(pc) ? 1 : 0);
-    for (const pc of FIFTHS) {
-      segmentPath(ctx, wheelAngle(pc), BAND_IN, BAND_OUT);
-      ctx.globalAlpha = 0.5;
-      ctx.strokeStyle = tone(LANE_BAR, this.dark);
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      ctx.globalAlpha = ramp([lit(this.wasScale, pc), lit(this.scale, pc)], t);
-      ctx.fillStyle = colorOf(pc, 'muted', this.dark);
-      ctx.fill();
-    }
     // Only a chord taking over from another moves the wheel; a cross-fade, a first chord and a
     // seek lay it out where it belongs.
     const since = this.change === 'slide' ? this.now - this.changeAt : Infinity;
     const arrive = clamp(since / PANEL_SLIDE_MS, 0, 1);
     const swell = RAISE_SWELL * breathAt(since / PANEL_SLIDE_MS);
-    // Size means "now": the root of the chord in force covers its segment with a bigger one, which
-    // grows in place past its mark while the root it takes over from eases back.
     const current = this.shownRows[0]?.event;
     const root = current?.root;
     const gone = arrive < 1 ? this.leaving[0]?.chord.event.root : undefined;
-    const grown = (pc: number, out: number) => {
+    // The chord the wheel leaves behind fades out where it stands as the one in force fades in.
+    const swap = this.reduced ? 1 : clamp((this.now - this.changeAt) / FIGURE_FADE_MS, 0, 1);
+    const leaving = swap < 1 ? this.leaving[0]?.chord.event : undefined;
+    // A chord tone the key does not hold reaches outside the scale: it takes no face, and its
+    // segment is outlined in its own colour instead, dashed, on the fade the figure keeps.
+    const outside = (pc: number) => this.scale !== null && !this.scale.pcs.includes(pc);
+    const borrowed = (pc: number) =>
+      outside(pc)
+        ? (current?.tones.includes(pc) ? swap : 0) + (leaving?.tones.includes(pc) ? 1 - swap : 0)
+        : 0;
+    const dashed = (pc: number, alpha: number) => {
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = colorOf(pc, 'full', this.dark);
+      ctx.lineWidth = OUTSIDE_W;
+      ctx.setLineDash(OUTSIDE_DASH);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    };
+    for (const pc of FIFTHS) {
+      segmentPath(ctx, wheelAngle(pc), BAND_IN, BAND_OUT);
+      // A raised root carries its own outline at its own size, so the band leaves it alone here.
+      const mark = pc === root || pc === gone ? 0 : borrowed(pc);
+      ctx.globalAlpha = 0.5 * (1 - mark);
+      ctx.strokeStyle = tone(LANE_BAR, this.dark);
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      if (mark > 0) dashed(pc, mark);
+      ctx.globalAlpha = ramp([lit(this.wasScale, pc), lit(this.scale, pc)], t);
+      ctx.fillStyle = colorOf(pc, 'muted', this.dark);
+      ctx.fill();
+    }
+    // Size means "now": the root of the chord in force covers its segment with a bigger one, which
+    // grows in place past its mark while the root it takes over from eases back.
+    const grown = (pc: number, out: number, alpha: number) => {
       const outer = ramp([BAND_OUT, BAND_OUT + RAISE_OUT + swell], out);
       segmentPath(ctx, wheelAngle(pc), ramp([BAND_IN, BAND_IN - RAISE_IN], out), outer);
+      if (outside(pc)) {
+        dashed(pc, alpha);
+        return;
+      }
       ctx.globalAlpha = 1;
       ctx.fillStyle = colorOf(pc, 'full', this.dark);
       ctx.fill();
     };
-    if (gone !== undefined) grown(gone, 1 - easeInOut(arrive));
-    if (root !== undefined) grown(root, easeOutBack(arrive));
+    if (gone !== undefined) grown(gone, 1 - easeInOut(arrive), 1 - swap);
+    if (root !== undefined) grown(root, easeOutBack(arrive), swap);
     for (const pc of FIFTHS) {
-      const faced = pc === root || pc === gone;
+      const faced = (pc === root || pc === gone) && !outside(pc);
       this.wheelLabel(pc, this.wasScale, 1 - t, faced);
       this.wheelLabel(pc, this.scale, t, faced);
     }
@@ -1626,9 +1655,7 @@ export class Lane {
     }
     const eased = easeInOut(clamp((this.now - this.liftAt) / LIFT_MS, 0, 1));
     const lift = whole ? eased : 1 - eased;
-    // The figure the chord before it left behind fades out where it stands as this one fades in.
-    const swap = this.reduced ? 1 : clamp((this.now - this.changeAt) / FIGURE_FADE_MS, 0, 1);
-    if (swap < 1) this.wheelFigure(this.leaving[0]?.chord.event, held, lift, 1 - swap);
+    if (leaving) this.wheelFigure(leaving, held, lift, 1 - swap);
     this.wheelFigure(current, held, lift, swap);
 
     // A held note the chord does not name sits off the figure, on a hollow segment when it is out
@@ -1798,8 +1825,8 @@ export class Lane {
 
   /**
    * One segment's letter, with its degree under it where the key holds the pitch class. A `faced`
-   * segment carries the chord in force, so its letter is read against a face and not against the
-   * chrome a hollow segment leaves bare.
+   * segment wears the face of the chord in force, so its letter is read against that face and not
+   * against the chrome a hollow segment leaves bare.
    */
   private wheelLabel(pc: number, of: LaneScale | null, alpha: number, faced: boolean): void {
     if (alpha <= 0.01) return;

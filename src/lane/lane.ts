@@ -1610,13 +1610,14 @@ export class Lane {
     };
     for (const pc of FIFTHS) {
       segmentPath(ctx, wheelAngle(pc), BAND_IN, BAND_OUT);
-      // A raised root carries its own outline at its own size, so the band leaves it alone here.
-      const mark = pc === root || pc === gone ? 0 : borrowed(pc);
+      // A borrowed tone takes the hairline away; a raised root carries its dash at its own size
+      // below, so here only the hairline goes and the segment stands with one outline.
+      const mark = borrowed(pc);
       ctx.globalAlpha = 0.5 * (1 - mark);
       ctx.strokeStyle = tone(LANE_BAR, this.dark);
       ctx.lineWidth = 1;
       ctx.stroke();
-      if (mark > 0) dashed(pc, mark);
+      if (mark > 0 && pc !== root && pc !== gone) dashed(pc, mark);
       ctx.globalAlpha = ramp([lit(this.wasScale, pc), lit(this.scale, pc)], t);
       ctx.fillStyle = colorOf(pc, 'muted', this.dark);
       ctx.fill();

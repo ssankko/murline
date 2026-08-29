@@ -73,16 +73,22 @@ test('the settings shortcut stands back for a text field and for an open dialog'
 /** The event handlers the bar subscribed with, so a test can be the engine. */
 const emit = new Map<string, (event: { payload: unknown }) => void>();
 
+/** What `audio_status` answers, which one test moves to see the latency cell hold one line. */
+let latencyMs = 12;
+
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: async (command: string) => {
-    if (command === 'audio_status') return PLAYING;
+    if (command === 'audio_status') return { ...PLAYING, latency_ms: latencyMs };
     if (command === 'audio_chain') return [{ id: 'reverb', name: 'AUMatrixReverb' }];
     if (command === 'midi_status') return { devices: ['Roland'], ports: [], pinned: null };
     if (command === 'midi_listen') return null;
-    // What the mixer's instrument picker and effect chain ask for once it is opened.
-    if (command === 'audio_instruments') return [];
+    // What the sound popover's sections ask for once it is opened.
+    if (command === 'audio_instruments')
+      return [{ id: 'grand', name: 'Concert Grand Piano', kind: 'file', loaded: true, reason: '' }];
     if (command === 'audio_effects') return [];
     if (command === 'audio_set_chain') return [];
+    if (command === 'audio_envelope')
+      return { attack: 0.01, decay: 0.2, sustain: 0.8, release: 0.4 };
     throw new Error(`unexpected command ${command}`);
   },
 }));
@@ -99,8 +105,11 @@ vi.mock('@/db/db', () => ({
     keyboard_volume: 100,
     click_volume: 50,
     instruments_folder: '/instruments',
-    instrument_id: null,
+    instrument_id: 'grand',
     instrument_state: null,
+    velocity_min: 1,
+    velocity_max: 127,
+    velocity_curve: 0,
   }),
   getSetting: async () => null,
   getSettingOr: async () => [],
@@ -119,6 +128,7 @@ afterEach(() => {
   host = null;
   opened = 0;
   sound = 0;
+  latencyMs = 12;
 });
 
 /** The screen around the bar, which is what holds the two popovers open or shut. */
@@ -152,15 +162,19 @@ function num(at: number): Element {
   return host!.querySelectorAll('.tabular-nums')[at]!;
 }
 
-test('the bar names what is listened to and what is playing, and the sound cell asks for the Sound tab', async () => {
+/** How many line boxes an element's text takes: one client rect per line. */
+function lines(element: Element): number {
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  return range.getClientRects().length;
+}
+
+test('the bar names what is listened to and what is playing', async () => {
   await mount();
 
   expect(cell('MIDI devices').textContent).toBe('Roland');
   expect(cell('Sound').textContent).toBe('Concert Grand Piano → AUMatrixReverb');
   expect(cell('MIDI devices').querySelector('[data-dot]')!.getAttribute('data-dot')).toBe('on');
-
-  await userEvent.click(cell('Sound'));
-  expect(sound).toBe(1);
 
   // The cell is a popover trigger inside its tooltip trigger, so the click has to reach through
   // both. Radix portals the popover out of the host.
@@ -168,7 +182,25 @@ test('the bar names what is listened to and what is playing, and the sound cell 
   await vi.waitFor(() => expect(document.body.textContent).toContain('Listening to Roland'));
 });
 
-test('the volume pair reads the two settings and opens the mixer', async () => {
+test('the sound cell opens the sound popover, which carries the Sound tab controls', async () => {
+  await mount();
+
+  await userEvent.click(cell('Sound'));
+  await vi.waitFor(() =>
+    expect(document.querySelector('button[aria-label="Instrument"]')!.textContent).toContain(
+      'Concert Grand Piano',
+    ),
+  );
+  const shown = document.body.textContent!;
+  expect(shown).toContain('Touch');
+  expect(shown).toContain('Envelope');
+  expect(shown).toContain('Effect chain');
+  // The instruments folder belongs to the Sound tab alone, which the link at the foot reaches.
+  expect(shown).not.toContain('Instruments folder');
+  expect(sound).toBe(0);
+});
+
+test('the volume pair reads the two settings and opens the faders', async () => {
   await mount();
   await vi.waitFor(() => expect(num(0).textContent).toBe('100'));
   expect(num(1).textContent).toBe('50');
@@ -178,6 +210,14 @@ test('the volume pair reads the two settings and opens the mixer', async () => {
   await vi.waitFor(() =>
     expect(document.querySelector('input[aria-label="Keyboard"]')).toBeTruthy(),
   );
+  expect(document.querySelector('button[aria-label="Instrument"]')).toBeNull();
+});
+
+test('a three-digit latency stays on the one line the bar is high', async () => {
+  latencyMs = 161;
+  await mount();
+  await vi.waitFor(() => expect(num(2).textContent).toBe('161 ms'));
+  expect(lines(num(2))).toBe(1);
 });
 
 test('the meters stand at a dash until the engine reports, and the load reddens past 80', async () => {

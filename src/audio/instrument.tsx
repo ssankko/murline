@@ -59,9 +59,12 @@ export async function restoreInstrument(settings: Settings): Promise<string | nu
 
 export function InstrumentSection({
   marked,
+  folder: showFolder = true,
   onChanged,
 }: {
   marked?: string | null;
+  /** The instruments folder row, which the status bar's sound popover leaves out. */
+  folder?: boolean;
   onChanged?: () => void;
 }) {
   const [all, setAll] = useState<Instrument[]>([]);
@@ -199,31 +202,33 @@ export function InstrumentSection({
 
       {failure && <p className="text-muted-ink text-[12px]">{failure}</p>}
 
-      <div
-        id={rowId('instruments_folder')}
-        data-marked={marked === 'instruments_folder' || undefined}
-        className={`flex min-h-8 items-center justify-between gap-3 py-1 text-[12px] ${marked === 'instruments_folder' ? 'bg-ink/8' : ''}`}
-      >
-        <span className="flex flex-col gap-0.5">
-          Instruments folder
-          <span className="text-muted-ink text-[11px] leading-snug">
-            Every .sf2 and .exs file in it is listed above.
+      {showFolder && (
+        <div
+          id={rowId('instruments_folder')}
+          data-marked={marked === 'instruments_folder' || undefined}
+          className={`flex min-h-8 items-center justify-between gap-3 py-1 text-[12px] ${marked === 'instruments_folder' ? 'bg-ink/8' : ''}`}
+        >
+          <span className="flex flex-col gap-0.5">
+            Instruments folder
+            <span className="text-muted-ink text-[11px] leading-snug">
+              Every .sf2 and .exs file in it is listed above.
+            </span>
           </span>
-        </span>
-        <div className="flex min-w-0 items-center gap-2">
-          <code className="text-muted-ink truncate text-[11.5px] select-text">
-            {folder || 'not set'}
-          </code>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 flex-none"
-            onClick={() => void chooseFolder()}
-          >
-            Choose…
-          </Button>
+          <div className="flex min-w-0 items-center gap-2">
+            <code className="text-muted-ink truncate text-[11.5px] select-text">
+              {folder || 'not set'}
+            </code>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 flex-none"
+              onClick={() => void chooseFolder()}
+            >
+              Choose…
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
     </section>
   );
 }

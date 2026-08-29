@@ -172,6 +172,20 @@ export function Library({
       ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, [piece?.path]);
 
+  // ⌘F is the webview's own find without this, and that find bar reaches nothing the list draws.
+  const search = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const dialog = document.querySelector('[role="dialog"][data-state="open"]') !== null;
+      if (!findsPieces(event, dialog)) return;
+      event.preventDefault();
+      search.current?.focus();
+      search.current?.select();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   /** Asks Replace, Keep both or Cancel and waits for the click. */
   function askClash(fileName: string): Promise<ClashChoice> {
     return new Promise((resolve) =>
@@ -238,23 +252,26 @@ export function Library({
 
       <div className="flex min-h-0 flex-1">
         <div className="border-edge-soft flex w-[340px] flex-none flex-col border-r">
-          <div className="bg-chrome border-edge-soft flex h-8 flex-none items-center gap-2 border-b pr-1 pl-3">
-            <Search className="text-muted-ink size-3.5 flex-none" />
-            <input
-              type="search"
-              value={query}
-              aria-label="Search library"
-              placeholder="Search"
-              onChange={(event) => setQuery(event.target.value)}
-              onKeyDown={(event) => event.key === 'Escape' && setQuery('')}
-              className="placeholder:text-muted-ink min-w-0 flex-1 bg-transparent text-[12px] outline-none"
-            />
+          <div className="border-edge-soft flex h-10 flex-none items-center gap-2 border-b px-3">
+            <div className="bg-chrome/60 focus-within:ring-edge flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 focus-within:ring-1">
+              <Search className="text-muted-ink size-3.5 flex-none" />
+              <input
+                ref={search}
+                type="search"
+                value={query}
+                aria-label="Search library"
+                placeholder="Search"
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => event.key === 'Escape' && setQuery('')}
+                className="placeholder:text-muted-ink min-w-0 flex-1 bg-transparent text-[13px] outline-none"
+              />
+            </div>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
                   aria-label={sortLabel}
                   title={sortLabel}
-                  className="hover:bg-ink/8 flex size-6 flex-none items-center justify-center rounded transition-colors duration-150"
+                  className="hover:bg-ink/8 flex size-7 flex-none items-center justify-center rounded-md transition-colors duration-150"
                 >
                   <ArrowUpDown className="size-3.5" />
                 </button>
@@ -437,6 +454,14 @@ export function Library({
       )}
     </div>
   );
+}
+
+/**
+ * Whether a key press is the shortcut that reaches the search field. A dialog over the screen owns
+ * every key while it stands, the field included.
+ */
+export function findsPieces(event: KeyboardEvent, dialogOpen: boolean): boolean {
+  return event.metaKey && event.key === 'f' && !dialogOpen;
 }
 
 /** A name already in the folder, waiting on the user's answer. */

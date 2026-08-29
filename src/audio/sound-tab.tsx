@@ -1,6 +1,6 @@
-// The settings panel's Sound tab: the one global place for the sound engine. Its three sections
-// live in files of their own; this file holds the tab, the status line, and the reader that fills
-// it.
+// The settings panel's Sound tab: the one global place for the sound engine. Its sections live in
+// files of their own; this file holds the tab, the sections the status bar's sound popover shares
+// with it, the status line, and the reader that fills it.
 
 import { EffectsSection } from '@/audio/effects';
 import { EnvelopeSection } from '@/audio/envelope';
@@ -84,18 +84,30 @@ export function useAudioStatus(round = 0): AudioStatus | null {
 }
 
 /**
- * The sound engine's own settings, under the panel's Sound tab. `marked` is the row a search
- * result jumped to, handed down so each section can mark its own.
+ * What makes and shapes the sound: the instrument, its roles, the touch, the envelope and the
+ * effect chain. Shared whole by the Sound tab and the status bar's sound popover. The sections come
+ * out as a fragment, so whichever holds them sets the space between them. `marked` is the row a
+ * search result jumped to, handed down so each section can mark its own.
  */
-export function SoundTab({ marked }: { marked?: string | null }) {
-  // A section that changed something the status line reads asks for this to go round again.
+export function SoundControls({
+  marked,
+  folder = true,
+  onChanged,
+}: {
+  marked?: string | null;
+  /** The instruments folder row, which the sound popover leaves out. */
+  folder?: boolean;
+  /** A new instrument, for whatever reads the sound line outside these sections. */
+  onChanged?: () => void;
+}) {
+  // A section that changed something another one reads asks for this to go round again.
   const [round, setRound] = useState(0);
   const status = useAudioStatus(round);
   const [instrument, setInstrument] = useState<string | null>(null);
   const sounding = useSounding();
 
-  // The envelope and the roles are kept under the instrument's id, so the tab has to know which
-  // one is playing.
+  // The envelope and the roles are kept under the instrument's id, so this has to know which one
+  // is playing.
   useEffect(() => {
     let live = true;
     getSettingOr('instrument_id').then((id) => live && setInstrument(id), console.error);
@@ -105,9 +117,15 @@ export function SoundTab({ marked }: { marked?: string | null }) {
   }, [round]);
 
   return (
-    <div className="flex min-w-0 flex-col gap-7">
-      <OutputSection marked={marked} />
-      <InstrumentSection marked={marked} onChanged={() => setRound((round) => round + 1)} />
+    <>
+      <InstrumentSection
+        marked={marked}
+        folder={folder}
+        onChanged={() => {
+          setRound((round) => round + 1);
+          onChanged?.();
+        }}
+      />
       <RolesSection roles={status?.roles} instrument={instrument} round={round} />
       <VelocitySection marked={marked} sounding={sounding.keys} />
       <EnvelopeSection
@@ -118,6 +136,23 @@ export function SoundTab({ marked }: { marked?: string | null }) {
         round={round}
       />
       <EffectsSection marked={marked} />
+    </>
+  );
+}
+
+/**
+ * The sound engine's own settings, under the panel's Sound tab: where the sound goes out, what
+ * makes it, and the one line saying what is wrong with it.
+ */
+export function SoundTab({ marked }: { marked?: string | null }) {
+  // The trouble line follows the instrument, which only the sections below can change.
+  const [round, setRound] = useState(0);
+  const status = useAudioStatus(round);
+
+  return (
+    <div className="flex min-w-0 flex-col gap-7">
+      <OutputSection marked={marked} />
+      <SoundControls marked={marked} onChanged={() => setRound((round) => round + 1)} />
       {trouble(status) && <p className="text-muted-ink text-[12px]">{trouble(status)}</p>}
     </div>
   );

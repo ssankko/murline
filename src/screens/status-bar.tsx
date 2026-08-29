@@ -4,7 +4,7 @@
 // engine costs.
 
 import type { EffectSlot } from '@/audio/effects';
-import { Mixer } from '@/audio/mixer';
+import { Mixer, SoundPopover } from '@/audio/mixer';
 import { NO_STATUS, type AudioStatus } from '@/audio/sound-tab';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { readSettings } from '@/db/db';
@@ -91,7 +91,7 @@ export function StatusBar({
   mixerOpen: boolean;
   onMixerOpen: (open: boolean) => void;
   onOpenSettings: () => void;
-  /** The Sound tab at the instrument row, which the sound cell and the mixer both ask for. */
+  /** The Sound tab at the instrument row, which the link in either popover asks for. */
   onSoundSettings: () => void;
   onGlobalChange?: (...change: SettingChange) => void;
 }) {
@@ -102,9 +102,11 @@ export function StatusBar({
   });
   const [meter, setMeter] = useState<Meter | null>(null);
   const [volumes, setVolumes] = useState<{ keyboard: number; click: number } | null>(null);
+  /** The sound popover hangs off the sound cell and nothing else reaches it, so the bar holds it. */
+  const [soundOpen, setSoundOpen] = useState(false);
 
   // A new instrument and an edited chain raise no event, so the line is read again on a timer as
-  // well as at every change of the device list. The mixer's own changes ask for a read at once.
+  // well as at every change of the device list. The sound popover asks for a read at once.
   // ponytail: polling stands in for the `audio-changed` event the engine does not send.
   const reread = useRef(() => {});
   useEffect(() => {
@@ -197,16 +199,26 @@ export function StatusBar({
           <TooltipContent side="top">{midiLabel}</TooltipContent>
         </Tooltip>
 
-        <Tip text={sound}>
-          <Cell label="Sound" dot={audioDot(status)} text={sound} onClick={onSoundSettings} />
-        </Tip>
+        <Tooltip>
+          <SoundPopover
+            open={soundOpen}
+            onOpenChange={setSoundOpen}
+            onSoundSettings={onSoundSettings}
+            onChanged={() => reread.current()}
+            trigger={
+              <TooltipTrigger asChild>
+                <Cell label="Sound" dot={audioDot(status)} text={sound} />
+              </TooltipTrigger>
+            }
+          />
+          <TooltipContent side="top">{sound}</TooltipContent>
+        </Tooltip>
 
-        <div className="text-muted-ink ml-auto flex flex-none items-center gap-2">
+        <div className="text-muted-ink ml-auto flex flex-none items-center gap-2 whitespace-nowrap">
           <Mixer
             open={mixerOpen}
             onOpenChange={onMixerOpen}
             onSoundSettings={onSoundSettings}
-            onChanged={() => reread.current()}
             onGlobalChange={(...change) => {
               const [key, value] = change;
               if (key === 'keyboard_volume') {
@@ -224,7 +236,7 @@ export function StatusBar({
                 <Tip text="Keyboard volume">
                   <span className="flex items-center gap-1">
                     <Piano {...ICON} />
-                    <span className="w-[3ch] text-right tabular-nums">
+                    <span className="min-w-[3ch] tabular-nums">
                       {volumes ? volumes.keyboard : '—'}
                     </span>
                   </span>
@@ -232,7 +244,7 @@ export function StatusBar({
                 <Tip text="Metronome volume">
                   <span className="flex items-center gap-1">
                     <Metronome {...ICON} />
-                    <span className="w-[3ch] text-right tabular-nums">
+                    <span className="min-w-[3ch] tabular-nums">
                       {volumes ? volumes.click : '—'}
                     </span>
                   </span>
@@ -244,7 +256,7 @@ export function StatusBar({
           <Tip text={latencyLabel(status)}>
             <span className="flex items-center gap-1">
               <Gauge {...ICON} />
-              <span className="w-[5ch] text-right tabular-nums">
+              <span className="min-w-[6ch] tabular-nums">
                 {latency === null ? '—' : `${latency} ms`}
               </span>
             </span>
@@ -253,7 +265,7 @@ export function StatusBar({
           <Tip text="Voices sounding, of the most the engine holds">
             <span className="flex items-center gap-1">
               <AudioLines {...ICON} />
-              <span className="w-[7ch] text-right tabular-nums">
+              <span className="min-w-[7ch] tabular-nums">
                 {shown ? `${shown.voices} / ${shown.limit}` : '—'}
               </span>
             </span>
@@ -263,7 +275,7 @@ export function StatusBar({
             <span className="flex items-center gap-1">
               <Cpu {...ICON} />
               <span
-                className={`w-[5ch] text-right tabular-nums ${shown && shown.load > HOT ? 'text-red-600 dark:text-red-400' : ''}`}
+                className={`min-w-[5ch] tabular-nums ${shown && shown.load > HOT ? 'text-red-600 dark:text-red-400' : ''}`}
               >
                 {shown ? `${shown.load} %` : '—'}
               </span>

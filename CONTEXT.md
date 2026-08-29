@@ -24,7 +24,8 @@ _Avoid_: Caching, scanning, import (import is the act of adding the file; indexi
 
 **Library**:
 The set of pieces the app has imported, with per-piece favorites, history and settings. The list
-pane has a search field over its rows, matching title and composer; it lasts for the session alone.
+pane has a search field over its rows, matching title and composer; ⌘F reaches it and Escape clears
+it, and what it holds lasts for the session alone.
 _Avoid_: Collection, catalogue
 
 **Score finder**:
@@ -52,7 +53,7 @@ The modal holding every global setting, grouped into Sound, Look, Playing and Li
 _Avoid_: Settings dialog, preferences, options
 
 **Status bar**:
-The last row of the library, Preview and play screens, one line of small text high. At the far left the solid cog into the settings panel, then the MIDI cell, which hangs the MIDI popover, and the sound cell, which opens the settings panel on the Sound tab at the instrument row. At the right the keyboard and metronome volumes, which together are the mixer's button, then the output latency, the voices sounding of the most the engine holds, and the render load. Every number sits in a box wide enough for its longest reading, so a digit more or less moves nothing. The boot and onboarding screens have none.
+The last row of the library, Preview and play screens, one line of small text high. At the far left the solid cog into the settings panel, then the MIDI cell, which hangs the MIDI popover, and the sound cell, which hangs the sound popover. At the right the keyboard and metronome volumes, which together are the mixer's button, then the output latency, the voices sounding of the most the engine holds, and the render load. Every number stands beside its icon in a box of least width, so a digit more or less moves nothing. The boot and onboarding screens have none.
 _Avoid_: Footer, status line, taskbar
 
 **Loading indicator**:
@@ -164,8 +165,12 @@ The ordered list of Audio Unit effects between the instrument and the output. Ea
 _Avoid_: FX chain, rack, inserts, effects bus
 
 **Mixer**:
-The popover behind the status bar's two volume cells. It carries the keyboard volume and the metronome's, the instrument picker and the effect chain, names the output device and instrument in force, and holds the link into the rest of the Sound tab.
+The popover behind the status bar's two volume cells. It carries the keyboard volume and the metronome's, names the output device and instrument in force, and holds the link into the Sound tab. The settings panel's search opens it too.
 _Avoid_: Volume popover, levels, audio dialog
+
+**Sound popover**:
+The popover behind the status bar's sound cell. It carries what the Sound tab says about the sound itself: the instrument picker, the roles, the touch, the envelope and the effect chain. The instruments folder and the output device are left to the tab, one link away at its foot. Only the sound cell opens it.
+_Avoid_: Instrument popover, sound dialog
 
 **Keyboard volume**:
 How loud the whole keyboard sounds, 0 to 200 per cent with 100 the sound as the instrument makes it and 200 twice as loud. It applies after the effect chain, so it sets the finished sound without changing how the instrument or the effects behave. A peak limiter behind it holds the sound inside full scale, so a loud instrument turned up past 100 does not clip at the device.

@@ -255,6 +255,26 @@ const SEGMENT_GAP = 0.022;
 /** How far the segment of the chord sounding now stands off the band, out and in. */
 const RAISE_OUT = 6;
 const RAISE_IN = 3;
+/** How much further out the segment swells as the chord arrives, so the crest clears the runner. */
+const RAISE_SWELL = 3;
+/**
+ * Outside the band: where track 1 settles, the step out to track 2, and how far track 1 draws back
+ * as it is spent. A same-root move has no arc, so it draws a loop of `TRACK_LOOP` outside its root.
+ */
+const TRACK_1 = BAND_OUT + 9;
+const TRACK_STEP = 7;
+const TRACK_BACK = 6;
+const TRACK_LOOP = 7;
+/** A track's weight and alpha as track 1 and as track 2, and the dot the destination wears. */
+const TRACK_W = [1, 1.5] as const;
+const TRACK_ALPHA = [0.18, 0.5] as const;
+const DEST_R = 3;
+/** The runner: one size for the whole travel, the size its arrival swells it to, and for how long. */
+const RUN_R = 4;
+const RUN_POP = 6.5;
+const RUN_POP_MS = 220;
+/** How far the hub's names scale past themselves as the chord arrives. */
+const HUB_POP = 0.08;
 /** The tonic's badge: the box it keeps round its label, and how far its own hue is lightened. */
 const BADGE_PAD = 4;
 const BADGE_ROUND = 4;
@@ -1570,21 +1590,33 @@ export class Lane {
       ctx.fillStyle = colorOf(pc, 'muted', this.dark);
       ctx.fill();
     }
-    // Size means "now": the root of the chord in force covers its segment with a bigger one.
+    // Only a chord taking over from another moves the wheel; a cross-fade, a first chord and a
+    // seek lay it out where it belongs.
+    const since = this.change === 'slide' ? this.now - this.changeAt : Infinity;
+    const arrive = clamp(since / PANEL_SLIDE_MS, 0, 1);
+    const swell = RAISE_SWELL * breathAt(since / PANEL_SLIDE_MS);
+    // Size means "now": the root of the chord in force covers its segment with a bigger one, which
+    // grows in place past its mark while the root it takes over from eases back.
     const current = this.shownRows[0]?.event;
     const root = current?.root;
-    if (root !== undefined) {
-      segmentPath(ctx, wheelAngle(root), BAND_IN - RAISE_IN, BAND_OUT + RAISE_OUT);
+    const gone = arrive < 1 ? this.leaving[0]?.chord.event.root : undefined;
+    const grown = (pc: number, out: number) => {
+      const outer = ramp([BAND_OUT, BAND_OUT + RAISE_OUT + swell], out);
+      segmentPath(ctx, wheelAngle(pc), ramp([BAND_IN, BAND_IN - RAISE_IN], out), outer);
       ctx.globalAlpha = 1;
-      ctx.fillStyle = colorOf(root, 'full', this.dark);
+      ctx.fillStyle = colorOf(pc, 'full', this.dark);
       ctx.fill();
-    }
+    };
+    if (gone !== undefined) grown(gone, 1 - easeInOut(arrive));
+    if (root !== undefined) grown(root, easeOutBack(arrive));
     for (const pc of FIFTHS) {
-      this.wheelLabel(pc, this.wasScale, 1 - t, pc === root);
-      this.wheelLabel(pc, this.scale, t, pc === root);
+      const faced = pc === root || pc === gone;
+      this.wheelLabel(pc, this.wasScale, 1 - t, faced);
+      this.wheelLabel(pc, this.scale, t, faced);
     }
     this.wheelBadge(this.wasScale, 1 - t);
     this.wheelBadge(this.scale, t);
+    this.wheelRunner(arrive, since, gone);
 
     const held = new Set<number>();
     for (const [midi, press] of this.presses) if (press.down) held.add(pitchClass(midi));
@@ -1611,8 +1643,69 @@ export class Lane {
       ctx.arc(...spoke(wheelAngle(pc), CORNER_R), OFF_DOT, 0, Math.PI * 2);
       ctx.fill();
     }
-    if (current) this.wheelHub(current);
+    if (current) {
+      ctx.save();
+      const pop = 1 + HUB_POP * breathAt(since / PANEL_SLIDE_MS);
+      ctx.scale(pop, pop);
+      this.wheelHub(current);
+      ctx.restore();
+    }
     ctx.restore();
+  }
+
+  /**
+   * The two tracks outside the band and the runner on the first of them. The runner stands at the
+   * share of the chord in force the clock has spent, so it meets the destination dot as the harmony
+   * advances. An arrival steps the tracks inward one place: the spent one draws back and fades out,
+   * the second takes the first's radius and weight, and a new second slides in from further out.
+   */
+  private wheelRunner(arrive: number, since: number, gone: number | undefined): void {
+    const [now, next, after] = this.shownRows;
+    if (!now) return;
+    const ctx = this.ctx;
+    const [spent, r1, r2] = trackRadii(arrive);
+    const slide = easeInOut(arrive);
+    const a = wheelAngle(now.event.root);
+    const back = 0.5 * (1 - arrive);
+    if (gone !== undefined) this.wheelTrack(wheelAngle(gone), a, spent, back, TRACK_W[1]);
+    const b = next && wheelAngle(next.event.root);
+    if (b !== undefined) {
+      this.wheelTrack(a, b, r1, ramp(TRACK_ALPHA, slide), ramp(TRACK_W, slide));
+      if (after) {
+        const c = wheelAngle(after.event.root);
+        this.wheelTrack(b, c, r2, ramp([0, TRACK_ALPHA[0]], slide), TRACK_W[0]);
+      }
+      // Where the runner is going, which the runner covers as it lands.
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = tone(INK.scaffolding, this.dark);
+      ctx.beginPath();
+      ctx.arc(...spoke(b, r1), DEST_R, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // The runner holds track 1's settled radius, so the sliding tracks pass under it and never
+    // carry it, and its swell is a change of radius about the spot it already stands on.
+    const popping = since < RUN_POP_MS;
+    const share = popping || !next ? 0 : runShare(this.playedTick, now.tick, next.tick);
+    const spot = b === undefined ? spoke(a, TRACK_1) : alongTrack(a, b, TRACK_1, share);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = tone(NOW_LINE, this.dark);
+    ctx.beginPath();
+    ctx.arc(...spot, ramp([RUN_R, RUN_POP], breathAt(since / RUN_POP_MS)), 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  /** One track: an arc the short way round outside the band, or a loop where the roots are one. */
+  private wheelTrack(from: number, to: number, r: number, alpha: number, width: number): void {
+    if (alpha <= 0.01) return;
+    const ctx = this.ctx;
+    const step = shortWay(from, to);
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = tone(NOW_LINE, this.dark);
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    if (Math.abs(step) < 0.01) ctx.arc(...spoke(from, r + TRACK_LOOP), TRACK_LOOP, 0, Math.PI * 2);
+    else ctx.arc(0, 0, r, from, to, step < 0);
+    ctx.stroke();
   }
 
   /**
@@ -1835,6 +1928,37 @@ export function wheelAngle(pc: number): number {
 
 /** A point of the wheel, from its centre. */
 const spoke = (angle: number, r: number) => [Math.cos(angle) * r, Math.sin(angle) * r] as const;
+
+/** The short way round from one angle to another, signed. */
+const shortWay = (from: number, to: number) => ((to - from + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+
+/** How far through the chord in force the clock stands, which is where its runner stands too. */
+export const runShare = (at: number, from: number, to: number) =>
+  to > from ? clamp((at - from) / (to - from), 0, 1) : 0;
+
+/** The spent track, track 1 and track 2, `t` through an arrival that steps them all inward. */
+export function trackRadii(t: number): [number, number, number] {
+  const slide = easeInOut(t);
+  return [
+    ramp([TRACK_1, TRACK_1 - TRACK_BACK], slide),
+    ramp([TRACK_1 + TRACK_STEP, TRACK_1], slide),
+    ramp([TRACK_1 + TRACK_STEP * 2, TRACK_1 + TRACK_STEP], slide),
+  ];
+}
+
+/** Where a share of the way along a track stands, the loop of a same-root move included. */
+export function alongTrack(
+  from: number,
+  to: number,
+  r: number,
+  share: number,
+): readonly [number, number] {
+  const step = shortWay(from, to);
+  if (Math.abs(step) >= 0.01) return spoke(from + step * share, r);
+  const [x, y] = spoke(from, r + TRACK_LOOP);
+  const round = -Math.PI / 2 + share * Math.PI * 2;
+  return [x + Math.cos(round) * TRACK_LOOP, y + Math.sin(round) * TRACK_LOOP] as const;
+}
 
 /**
  * One segment of the band about the wheel's centre, its four corners filleted, so it reads as a
@@ -2132,6 +2256,14 @@ export function glideLeft(t: number): number {
 /** Fast out with a small overshoot, so a key settles under a finger with a bounce. */
 function easeOutBack(t: number): number {
   return 1 + 2.70158 * (t - 1) ** 3 + 1.70158 * (t - 1) ** 2;
+}
+
+/** One swell and settle over a pop's time: out past the mark, then back to nothing. */
+export function breathAt(t: number): number {
+  if (!(t > 0 && t < 1)) return 0;
+  return t < COUNT_POP_RISE
+    ? easeOutBack(t / COUNT_POP_RISE)
+    : 1 - easeInOut((t - COUNT_POP_RISE) / (1 - COUNT_POP_RISE));
 }
 
 /** The same slow ends, each carried a little past its mark, so the panels swing into their slots. */

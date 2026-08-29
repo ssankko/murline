@@ -3,6 +3,7 @@ import { toneWeight } from '@/score/harmony';
 import { TICKS_PER_QUARTER, type ChordEvent, type KeyChange, type Score } from '@/score/types';
 import { describe, expect, test } from 'vitest';
 import {
+  alongTrack,
   beatsBefore,
   bounceAt,
   burnAt,
@@ -14,8 +15,10 @@ import {
   lerpRect,
   popAt,
   pulseAt,
+  runShare,
   slotRect,
   throughWrap,
+  trackRadii,
   wheelAngle,
   wheelCornerR,
   wheelFillAlpha,
@@ -329,5 +332,41 @@ describe("the chord figure inside the wheel", () => {
     expect(wheelCornerR(toneWeight(4))).toBeCloseTo(4.375);
     expect(wheelCornerR(toneWeight(10))).toBeCloseTo(4.125);
     expect(wheelCornerR(toneWeight(7))).toBeCloseTo(3.75);
+  });
+});
+
+describe('the runner and its tracks', () => {
+  test('the share of the chord spent runs 0 to 1 and holds at both ends', () => {
+    expect(runShare(0, 0, 4 * Q)).toBe(0);
+    expect(runShare(2 * Q, 0, 4 * Q)).toBe(0.5);
+    expect(runShare(4 * Q, 0, 4 * Q)).toBe(1);
+    // A chord of no length has nowhere to run, and the clock outside the chord clamps.
+    expect(runShare(Q, 0, 0)).toBe(0);
+    expect(runShare(9 * Q, 0, 4 * Q)).toBe(1);
+  });
+
+  test('the tracks step one place inward over an arrival', () => {
+    expect(trackRadii(0)).toEqual([87, 94, 101]);
+    expect(trackRadii(0.5)).toEqual([84, 90.5, 97.5]);
+    expect(trackRadii(1)).toEqual([81, 87, 94]);
+  });
+
+  test('a same-root move runs the runner round a loop outside its root', () => {
+    const up = wheelAngle(0);
+    // The loop sits outside the track and closes on itself: its far side stands two radii out and
+    // its near side comes back to the track.
+    const start = alongTrack(up, up, 87, 0);
+    expect(Math.hypot(...start)).toBeCloseTo(101);
+    expect(Math.hypot(...alongTrack(up, up, 87, 0.5))).toBeCloseTo(87);
+    expect(alongTrack(up, up, 87, 1)[0]).toBeCloseTo(start[0]);
+    expect(alongTrack(up, up, 87, 1)[1]).toBeCloseTo(start[1]);
+  });
+
+  test('a move to another root runs the short way round', () => {
+    // F is one step anticlockwise of C, so its runner leaves the top going left.
+    const [x, y] = alongTrack(wheelAngle(0), wheelAngle(5), 87, 0.5);
+    expect(x).toBeLessThan(0);
+    expect(y).toBeLessThan(0);
+    expect(Math.hypot(x, y)).toBeCloseTo(87);
   });
 });

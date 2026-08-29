@@ -1,14 +1,14 @@
 <!-- Dark twin of icon.svg: the same keyboard at the dark tones of src/lane/keyboard.ts,
      swatches lifted by the dark-mode DARK_LIFT of src/look/color.ts. -->
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <rect x="48" y="109" width="132.7" height="300" rx="16" fill="#343434"/>
-  <rect x="186.7" y="109" width="132.7" height="300" rx="16" fill="#343434"/>
-  <rect x="325.3" y="109" width="132.7" height="300" rx="16" fill="#343434"/>
-  <path d="M157.1 103 H218.3 Q228.3 103 228.3 113 V277 Q228.3 289 216.3 289 H157.1 Q145.1 289 145.1 277 V113 Q145.1 103 157.1 103 Z" fill="#4c4c4c"/>
-  <path d="M295.7 103 H356.9 Q366.9 103 366.9 113 V277 Q366.9 289 354.9 289 H295.7 Q283.7 289 283.7 277 V113 Q283.7 103 295.7 103 Z" fill="#4c4c4c"/>
-  <rect x="87.4" y="315.7" width="54" height="54" rx="15" fill="#d6625c"/>
-  <rect x="226" y="315.7" width="54" height="54" rx="15" fill="#d6a95c"/>
-  <rect x="364.7" y="315.7" width="54" height="54" rx="15" fill="#bed65c"/>
-  <rect x="167.2" y="227.9" width="39" height="39" rx="11" fill="#996348"/>
-  <rect x="305.8" y="227.9" width="39" height="39" rx="11" fill="#999248"/>
+  <rect x="16" y="83" width="156" height="352" rx="18.7" fill="#343434"/>
+  <rect x="178" y="83" width="156" height="352" rx="18.7" fill="#343434"/>
+  <rect x="340" y="83" width="156" height="352" rx="18.7" fill="#343434"/>
+  <path d="M141.1 77 H214.9 Q226.6 77 226.6 88.7 V281 Q226.6 295 212.6 295 H141.1 Q129.4 295 129.4 281 V88.7 Q129.4 77 141.1 77 Z" fill="#4c4c4c"/>
+  <path d="M303.1 77 H376.9 Q388.6 77 388.6 88.7 V281 Q388.6 295 374.6 295 H303.1 Q291.4 295 291.4 281 V88.7 Q291.4 77 303.1 77 Z" fill="#4c4c4c"/>
+  <rect x="62.4" y="325.4" width="63.2" height="63.2" rx="17.6" fill="#d6625c"/>
+  <rect x="224.4" y="325.4" width="63.2" height="63.2" rx="17.6" fill="#d6a95c"/>
+  <rect x="386.4" y="325.4" width="63.2" height="63.2" rx="17.6" fill="#bed65c"/>
+  <rect x="155.2" y="223.6" width="45.7" height="45.7" rx="12.9" fill="#996348"/>
+  <rect x="317.2" y="223.6" width="45.7" height="45.7" rx="12.9" fill="#999248"/>
 </svg>

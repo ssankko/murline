@@ -1,0 +1,18 @@
+<!-- Source for the generated icon set: `pnpm tauri icon src-tauri/icons/icon-app.svg`. The dark
+     keyboard sits on the app's dark paper drawn as the macOS icon squircle (824 of 1024, radius
+     198, transparent margins, like the system's own icons) with the keys run out to its edge. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect x="100" y="100" width="824" height="824" rx="198" fill="#202020"/>
+  <g transform="translate(512 512) scale(1.45) translate(-256 -256)">
+    <rect x="16" y="83" width="156" height="352" rx="18.7" fill="#343434"/>
+    <rect x="178" y="83" width="156" height="352" rx="18.7" fill="#343434"/>
+    <rect x="340" y="83" width="156" height="352" rx="18.7" fill="#343434"/>
+    <path d="M141.1 77 H214.9 Q226.6 77 226.6 88.7 V281 Q226.6 295 212.6 295 H141.1 Q129.4 295 129.4 281 V88.7 Q129.4 77 141.1 77 Z" fill="#4c4c4c"/>
+    <path d="M303.1 77 H376.9 Q388.6 77 388.6 88.7 V281 Q388.6 295 374.6 295 H303.1 Q291.4 295 291.4 281 V88.7 Q291.4 77 303.1 77 Z" fill="#4c4c4c"/>
+    <rect x="62.4" y="325.4" width="63.2" height="63.2" rx="17.6" fill="#d6625c"/>
+    <rect x="224.4" y="325.4" width="63.2" height="63.2" rx="17.6" fill="#d6a95c"/>
+    <rect x="386.4" y="325.4" width="63.2" height="63.2" rx="17.6" fill="#bed65c"/>
+    <rect x="155.2" y="223.6" width="45.7" height="45.7" rx="12.9" fill="#996348"/>
+    <rect x="317.2" y="223.6" width="45.7" height="45.7" rx="12.9" fill="#999248"/>
+  </g>
+</svg>

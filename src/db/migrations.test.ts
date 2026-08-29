@@ -218,6 +218,42 @@ describe('0004, the velocity curve becomes a remap', () => {
   });
 });
 
+describe('0006, the piece remembers where it was left', () => {
+  /** Before 0006: a piece with its practice setup, and nowhere to hold the place it was left at. */
+  function practiceSetupDatabase(db: DatabaseSync): void {
+    db.prepare(
+      `INSERT INTO piece (path, mtime, size, imported_at, favorite, tempo_mode, tempo_value,
+                          metronome, count_in_bars, hands, mode, loop, section_from, section_to)
+       VALUES ('Bach.musicxml', 1, 2, 3, 1, 'bpm', 96, 1, 2, 'left', 'wait', 1, 4, 7)`,
+    ).run();
+  }
+
+  it('gives the piece somewhere to hold the played tick it was left at', () => {
+    expect(columns(migrate(5, practiceSetupDatabase), 'piece')).toContain('position_tick');
+  });
+
+  it('leaves a piece practised before it with no place and every setting it had', () => {
+    const db = migrate(5, practiceSetupDatabase);
+    // NULL is what opens the piece at its start.
+    expect(db.prepare('SELECT * FROM piece').get()).toMatchObject({
+      path: 'Bach.musicxml',
+      tempo_value: 96,
+      hands: 'left',
+      mode: 'wait',
+      loop: 1,
+      section_from: 4,
+      section_to: 7,
+      position_tick: null,
+    });
+  });
+
+  it('runs on a database that was never opened before', () => {
+    const db = migrate(5);
+    expect(db.prepare('SELECT * FROM piece').all()).toEqual([]);
+    expect(columns(db, 'piece')).toContain('position_tick');
+  });
+});
+
 it('gives every piece setting a column to be written to', () => {
   // A setting named in the map but never added to the SQL takes every UPDATE down with it, and the
   // screen would look right until the piece was reopened.

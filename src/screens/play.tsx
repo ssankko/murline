@@ -16,6 +16,7 @@ import {
   getPiece,
   insertPerformance,
   insertPlay,
+  updatePiecePosition,
   updatePieceSettings,
   type PieceSettingValues,
 } from '@/library/queries';
@@ -205,6 +206,13 @@ export function PlayScreen({
         setSplit(clamp(globals.sheet_split, SPLIT_MIN, SPLIT_MAX));
         setOneStaff(sheet.score.staffCount < 2);
         show(opening, kept);
+        // The piece reopens where it was left. The seek runs with the Section and Loop already in
+        // force, so a place inside the lap wins and one outside it is pulled to the lap's start.
+        // A file that lost the bars it named leaves a tick past the end, which is no place to open.
+        const at = row?.position_tick;
+        if (intent === 'practice' && typeof at === 'number' && at < engine.endTick) {
+          engine.seek({ tick: at });
+        }
         setClickVolume(globals.click_volume);
         setWritten({
           bpm: sheet.score.hasTempo ? Math.round(bpmAt(sheet.score, 0)) : 120,
@@ -223,7 +231,9 @@ export function PlayScreen({
     return () => {
       live = false;
       mounted.current = false;
-      // Leaving the screen is a stop, so the practice it ends is stored on the way out.
+      // Leaving the screen is a stop, so the practice it ends and the place it ends at are both
+      // stored on the way out.
+      void savePosition();
       engineRef.current?.abort();
       void savePractice();
       sheetRef.current?.dispose();
@@ -239,6 +249,7 @@ export function PlayScreen({
   // under way reaches the database before it goes.
   useEffect(() => {
     const listening = getCurrentWindow().onCloseRequested(async () => {
+      await savePosition();
       engineRef.current?.abort();
       await savePractice();
     });
@@ -273,6 +284,19 @@ export function PlayScreen({
     const done = engineRef.current?.takePractice();
     if (!done) return;
     await insertPlay(path, 'practice', done.startedAt, done.seconds).catch(console.error);
+  }
+
+  /**
+   * Where the cursor stands now, so the piece reopens there. Read before the abort that takes the
+   * clock back to the start point. A performance leaves no place behind, as it writes no setting.
+   */
+  async function savePosition(): Promise<void> {
+    const engine = engineRef.current;
+    if (!engine || engine.kind === 'performance') return;
+    // A count-in stands before the tick it leads to, and that tick is where the user was.
+    const { state: at, playedTick, countInTo } = engine.snapshot();
+    const tick = Math.round(at === 'counting-in' ? countInTo : playedTick);
+    await updatePiecePosition(path, tick).catch(console.error);
   }
 
   /** A complete performance leaves a row, and the card that says what it earned. */

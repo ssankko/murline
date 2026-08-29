@@ -32,6 +32,8 @@ export interface PieceRow {
   loop: number | null;
   section_from: number | null;
   section_to: number | null;
+  /** Played tick the practice was left at, which is where the piece reopens. NULL is its start. */
+  position_tick: number | null;
   best_grade: number | null;
   last_played: number | null;
   practised_s: number | null;
@@ -135,6 +137,15 @@ export async function updatePieceSettings(
     path,
     ...columns.map((column) => values[column] ?? null),
   ]);
+}
+
+/**
+ * Stores where the play screen left the cursor, in played ticks. It is state of the piece rather
+ * than a setting: no control shows it and no play reads it out of its settings.
+ */
+export async function updatePiecePosition(path: string, tick: number): Promise<void> {
+  const db = await getDb();
+  await db.execute('UPDATE piece SET position_tick = $2 WHERE path = $1', [path, tick]);
 }
 
 /** The one thing the library writes about a piece. */

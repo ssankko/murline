@@ -1733,6 +1733,27 @@ describe('Section and Loop', () => {
     expect(where(play).measureIndex).toBe(0);
   });
 
+  test('a seek to a tick inside the lap stands, and the play starts there', () => {
+    const play = engine(scoreOf(4));
+    play.setSection({ from: 1, to: 2 });
+    play.setLoop(true);
+    // The Loop parked the idle cursor on the Section's opening line; the tick is a beat past it.
+    play.seek({ tick: BAR + TICKS_PER_QUARTER });
+    expect(play.snapshot().playedTick).toBe(BAR + TICKS_PER_QUARTER);
+
+    play.start();
+    expect(play.snapshot().playedTick).toBe(BAR + TICKS_PER_QUARTER);
+  });
+
+  test('a seek to a tick outside the lap is pulled back to its start by the Loop', () => {
+    const play = engine(scoreOf(4));
+    play.seek({ tick: 3 * BAR });
+    play.setSection({ from: 1, to: 2 });
+    play.setLoop(true);
+
+    expect(play.snapshot().playedTick).toBe(BAR);
+  });
+
   // A score with no Onset gives an empty walk, so the swap has no written moment to replay onto.
   test('a walk swap over a score with no Onset leaves the clock at the start', () => {
     const play = engine(scoreOf(0));

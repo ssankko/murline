@@ -47,6 +47,12 @@ fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0005_no_velocity_offset.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 6,
+            description: "piece position",
+            sql: include_str!("../migrations/0006_piece_position.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

@@ -61,7 +61,7 @@ One session of the user playing a piece, from the press of play to the moment th
 _Avoid_: Session, run, attempt
 
 **Practice**:
-A play in Flow or Wait mode in which the user may pause, seek, loop and change any setting at any time. Never graded.
+A play in Flow or Wait mode in which the user may pause, seek, loop and change any setting at any time. Never graded. The place it was left at is kept with the piece, so the piece reopens there rather than at bar one.
 _Avoid_: Practice run, practice mode, rehearsal
 
 **Performance**:

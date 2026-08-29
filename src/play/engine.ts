@@ -117,6 +117,8 @@ export interface Snapshot {
   playedTick: number;
   /** Index into `walk`, which names both the Onset and the pass it belongs to. */
   stepIndex: number;
+  /** The measure the clock stands in, which names the key in force. */
+  measureIndex: number;
   /** Played tick the count-in leads to; only `counting-in` gives it meaning. */
   countInTo: number;
   /** Wait mode: the clock stands still at `stepIndex` until the player satisfies its Onset. */
@@ -315,6 +317,7 @@ export class Engine {
       kind: this.kind,
       playedTick: this.tick,
       stepIndex: this.stepAt(this.tick),
+      measureIndex: this.barAt(this.tick)?.measure.index ?? 0,
       countInTo: this.countInTo,
       stopped: this.stopStep !== null,
     };

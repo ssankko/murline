@@ -181,6 +181,17 @@ describe('the played tick against the score', () => {
     expect(where(play)).toEqual({ onsetIndex: 2, measureIndex: 0 });
   });
 
+  test('names the measure the clock stands in, which is where the key is read', () => {
+    const play = engine(scoreOf(3));
+    play.start();
+    expect(play.snapshot().measureIndex).toBe(0);
+    // A bar of 4/4 at 60 bpm takes four seconds, so the clock opens bar 2 here.
+    play.advance(4000);
+    expect(play.snapshot().measureIndex).toBe(1);
+    play.seek({ measure: 2 });
+    expect(play.snapshot().measureIndex).toBe(2);
+  });
+
   test('before the jump the same played tick names the first pass', () => {
     const play = engine(withRepeat());
     play.start();

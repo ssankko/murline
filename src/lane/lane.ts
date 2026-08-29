@@ -26,7 +26,7 @@ import {
   type Palette,
 } from '@/look/color';
 import { easeInOut, reducedMotion } from '@/look/motion';
-import { C_MAJOR, keyOf, type Key, type KeyAt } from '@/score/key';
+import { C_MAJOR, type Key } from '@/score/key';
 import { FIFTHS, SHARP_NAMES, isBlackKey, pitchClass } from '@/score/pitch';
 import type { Engine, LoopSpan, PlayEvent, SeekTarget, Snapshot } from '@/play/engine';
 import type { Section } from '@/play/section';
@@ -375,8 +375,6 @@ export class Lane {
   onSeek: ((target: SeekTarget) => void) | null = null;
   /** Where the lane says a pinch has changed its look, once the pinch has stood still. */
   onLook: ((look: Partial<LaneLook>) => void) | null = null;
-  /** Where the lane says which key the clock stands in, at every change of it. */
-  onKey: ((key: Key | null) => void) | null = null;
 
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
@@ -387,8 +385,6 @@ export class Lane {
   private bars: LaneBar[];
   private jumps: LaneJump[];
   private chords: LaneChord[];
-  /** The key changes of the play in played time. */
-  private laneKeys: KeyAt[];
   /** The key in force at the clock, re-read when the key changes. */
   private scale: Key | null = null;
   /** The key the wheel cross-fades from, and when it set off; a seek and reduced motion snap. */
@@ -510,7 +506,6 @@ export class Lane {
     this.bars = barsOf(engine.score, this.walk);
     this.jumps = jumpsOf(engine.score, this.walk);
     this.chords = chordsOf(engine.score.harmony, this.walk);
-    this.laneKeys = laneKeysOf(engine.score, this.bars);
     this.hands = engine.settings.hands;
     this.handsBefore = this.hands;
     this.lastResets = engine.resets;
@@ -621,11 +616,12 @@ export class Lane {
   }
 
   /**
-   * One frame. Nothing is kept between frames but the effects still playing out. `now` is the
-   * engine's wall clock, not the raw animation clock: the age of every mark is read against
-   * `resolvedAt`, which the engine stamps from the strike that settled the note.
+   * One frame, drawn in the key the play screen hands in. Nothing is kept between frames but the
+   * effects still playing out. `now` is the engine's wall clock, not the raw animation clock: the
+   * age of every mark is read against `resolvedAt`, which the engine stamps from the strike that
+   * settled the note.
    */
-  frame(snap: Snapshot, windowTicks: number, now: number): void {
+  frame(snap: Snapshot, key: Key, windowTicks: number, now: number): void {
     this.now = now;
     this.playedTick = snap.playedTick;
     this.reduced = reducedMotion();
@@ -716,10 +712,9 @@ export class Lane {
       this.bars = barsOf(this.engine.score, this.walk);
       this.jumps = jumpsOf(this.engine.score, this.walk);
       this.chords = chordsOf(this.engine.score.harmony, this.walk);
-      this.laneKeys = laneKeysOf(this.engine.score, this.bars);
       this.walkAt = now;
     }
-    this.readScale();
+    this.readScale(key);
 
     const loop = this.engine.loopSpan();
     ctx.save();
@@ -1866,18 +1861,16 @@ export class Lane {
   }
 
   /**
-   * The key in force at the clock, for the readout, the key faces and the wheel. A key is one
-   * object however often it is found, so the same key found again changes nothing.
+   * The key the frame was handed, for the key faces and the wheel. A key is one object per
+   * signature and mode, so the same key handed in again changes nothing.
    */
-  private readScale(): void {
-    const key = this.laneKeys.findLast((k) => k.tick <= this.playedTick)?.key ?? null;
+  private readScale(key: Key): void {
     if (key === this.scale) return;
     // A key the play ran into cross-fades on the wheel; a seek may land anywhere, so the key it
     // lands in stands at once.
     this.wasScale = this.scale;
     this.keyAt = this.jumpedAt === this.now || this.reduced ? -Infinity : this.now;
     this.scale = key;
-    this.onKey?.(key);
   }
 
   /** The panel over the keys, which fades in on a notice and out again once it goes. */
@@ -2095,27 +2088,6 @@ export function chordsOf(harmony: ChordEvent[], walk: PlayStep[]): LaneChord[] {
     if (event) chords.push({ tick: step.tick, event });
   }
   return chords;
-}
-
-/**
- * Every key change of the play in played time, one entry where the key a bar carries differs from
- * the one before it. A key change under a repeat re-marks the keyboard on each pass, and a bar
- * before the first written change still takes the piece's first key. A piece with no key signature
- * is read in C major, as the harmony reads it.
- */
-export function laneKeysOf(score: Score, bars: LaneBar[]): KeyAt[] {
-  const first = bars[0];
-  if (score.keys.length === 0) return first ? [{ tick: first.tick, key: C_MAJOR }] : [];
-  const keys: KeyAt[] = [];
-  let held: Key | null = null;
-  for (const bar of bars) {
-    const change = score.keys.findLast((k) => k.measureIndex <= bar.measure) ?? score.keys[0]!;
-    const key = keyOf(change.sharps, change.mode);
-    if (key === held) continue;
-    keys.push({ tick: bar.tick, key });
-    held = key;
-  }
-  return keys;
 }
 
 /** The chord in force at a played tick and the two after it; the first is missing before them all. */

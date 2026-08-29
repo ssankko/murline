@@ -44,7 +44,7 @@ import {
 } from '@/play/settings';
 import { clampSection, savedSection, sectionLabel, type Section } from '@/play/section';
 import { useFrameLoop } from '@/play/use-frame-loop';
-import type { Key } from '@/score/key';
+import { keyAt, type Key } from '@/score/key';
 import { bpmAt, ScoreError, type Measure } from '@/score/types';
 import { Button } from '@/components/ui/button';
 import { Mixer } from '@/audio/mixer';
@@ -115,7 +115,7 @@ export function PlayScreen({
   const [section, setSection] = useState<Section | null>(null);
   const [loop, setLoop] = useState(false);
   const [measures, setMeasures] = useState<Measure[]>([]);
-  /** The key the clock stands in, as the lane reads it out of the score in played time. */
+  /** The key the clock stands in, read from the measure the play stands in. */
   const [key, setKey] = useState<Key | null>(null);
 
   /** What a pinch on the sheet is choosing while it lasts, which the panel over the paper shows. */
@@ -198,7 +198,6 @@ export function PlayScreen({
         const lane = knobValues(globals, LANE_KNOBS);
         laneRef.current = new Lane(canvasRef.current!, engine, lane, darkRef.current);
         laneRef.current.onSeek = (target) => engine.seek(target);
-        laneRef.current.onKey = setKey;
         // A pinch has already scaled the lane; this only writes down the beats it settled on.
         laneRef.current.onLook = ({ lookaheadBeats }) => {
           if (lookaheadBeats !== undefined) changeLook('lane_lookahead', lookaheadBeats);
@@ -411,7 +410,9 @@ export function PlayScreen({
     sheet.project(engine, snapshot.playedTick);
     sheet.frame(snapshot, engine.windowTicks, now);
     lane.notice = midi.devices.length === 0 ? 'no MIDI device' : null;
-    lane.frame(snapshot, engine.windowTicks, wall);
+    const inForce = keyAt(engine.score, snapshot.measureIndex);
+    lane.frame(snapshot, inForce, engine.windowTicks, wall);
+    if (inForce !== key) setKey(inForce);
     if (snapshot.state !== state) {
       setState(snapshot.state);
       // The card belongs to the run that ended; anything that moves the play again takes it away.

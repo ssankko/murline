@@ -1,0 +1,17 @@
+<!-- App icon draft: the lane's keyboard, C4 to E4, drawn with the geometry and palette of
+     src/lane/keyboard.ts and the swatches of src/look/color.ts, as a free-floating object. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- White keys, rounded all round, one hairline of air between neighbours -->
+  <rect x="48" y="109" width="132.7" height="300" rx="16" fill="#dedede"/>
+  <rect x="186.7" y="109" width="132.7" height="300" rx="16" fill="#dedede"/>
+  <rect x="325.3" y="109" width="132.7" height="300" rx="16" fill="#dedede"/>
+  <!-- Black keys, 0.6 white wide, centred on the seams, standing 6px proud, 62% tall -->
+  <path d="M157.1 103 H218.3 Q228.3 103 228.3 113 V277 Q228.3 289 216.3 289 H157.1 Q145.1 289 145.1 277 V113 Q145.1 103 157.1 103 Z" fill="#c3c3c3"/>
+  <path d="M295.7 103 H356.9 Q366.9 103 366.9 113 V277 Q366.9 289 354.9 289 H295.7 Q283.7 289 283.7 277 V113 Q283.7 103 295.7 103 Z" fill="#c3c3c3"/>
+  <!-- Swatches in the pitch colour, padding equal on left, right and bottom of the key -->
+  <rect x="87.4" y="315.7" width="54" height="54" rx="15" fill="#cc3b33"/>
+  <rect x="226" y="315.7" width="54" height="54" rx="15" fill="#94cc33"/>
+  <rect x="364.7" y="315.7" width="54" height="54" rx="15" fill="#adcc33"/>
+  <rect x="167.2" y="227.9" width="39" height="39" rx="11" fill="#764c37"/>
+  <rect x="305.8" y="227.9" width="39" height="39" rx="11" fill="#767137"/>
+</svg>

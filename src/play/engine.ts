@@ -63,8 +63,13 @@ export interface PlayEvent {
 /** One written note laid out in played time: what falls in the lane and what a strike may match. */
 export interface PlayNote {
   midi: number;
-  /** Played tick of the Onset it starts at, so a repeated bar carries it again later. */
+  /**
+   * Played tick the strike is expected at. It is the Onset's own tick for every note but one of a
+   * rolled chord, which stands `ROLL_STEP` later per note before it in the roll.
+   */
   tick: number;
+  /** Played tick of the Onset it starts at, so a repeated bar carries it again later. */
+  onsetTick: number;
   durationTicks: number;
   hand: Hand;
   grace: boolean;
@@ -131,6 +136,12 @@ interface Beat {
   strong: boolean;
 }
 
+/**
+ * How far apart the notes of a rolled chord are expected: a 32nd, 62.5 ms at 120 BPM. The player
+ * strikes a roll bottom to top rather than together, so each note gets its own moment.
+ */
+export const ROLL_STEP = TICKS_PER_QUARTER / 8;
+
 /** A held key whose strike matched nothing, so it blocks every Onset until it comes up. */
 const BLOCKING = -1;
 /** A held key that matched no note and blocks nothing: taken in silence, or struck before motion. */
@@ -177,6 +188,8 @@ export class Engine {
   private pending: PlayEvent[] = [];
   /** First note whose matching window is still open; everything before it is settled. */
   private closed = 0;
+  /** The widest a roll of this walk pushes a note past its Onset, in ticks; 0 without a roll. */
+  private rollSpan = 0;
   private readonly wait = new WaitState();
   /** Wait mode: the walk step the cursor waits at, or null while it glides. */
   private stopStep: number | null = null;
@@ -215,6 +228,7 @@ export class Engine {
     this.settings = settings;
     this.walk = score.playOrder;
     this.notes = playNotesOf(score, this.walk);
+    this.rollSpan = rollSpanOf(this.notes);
     this.lastSoundingTick = lastSoundingOf(this.notes);
     this.states = this.notes.map(() => 'pending');
     this.resolved = this.notes.map(() => 0);
@@ -501,6 +515,7 @@ export class Engine {
     const startAt = this.writtenAt(this.startTick);
     this.walk = walk;
     this.notes = playNotesOf(this.score, walk);
+    this.rollSpan = rollSpanOf(this.notes);
     this.states = this.notes.map(() => 'pending');
     this.resolved = this.notes.map(() => 0);
     this.version++;
@@ -883,9 +898,10 @@ export class Engine {
   private nearest(midi: number, at: number, window: number, expected: boolean): number {
     let best = -1;
     let bestDistance = Infinity;
-    for (let i = this.firstNoteFrom(at - window); i < this.notes.length; i++) {
+    // A rolled note stands past its Onset, so the scan opens a whole roll span before the window.
+    for (let i = this.firstNoteFrom(at - window - this.rollSpan); i < this.notes.length; i++) {
       const note = this.notes[i]!;
-      if (note.tick > at + window) break;
+      if (note.onsetTick > at + window) break;
       if (note.midi !== midi || this.isExpected(note) !== expected) continue;
       if (expected && this.states[i] !== 'pending') continue;
       const distance = Math.abs(note.tick - at);
@@ -918,9 +934,12 @@ export class Engine {
     }
   }
 
-  /** The first note at or after a played tick. `notes` is in played order. */
+  /**
+   * The first note whose Onset stands at or after a played tick. `notes` runs in Onset order, which
+   * a roll's own offsets do not disturb.
+   */
   private firstNoteFrom(tick: number): number {
-    return firstWhere(this.notes.length, (i) => this.notes[i]!.tick >= tick);
+    return firstWhere(this.notes.length, (i) => this.notes[i]!.onsetTick >= tick);
   }
 
   /** Sheet tick of the played tick: the same bar played twice reads the same written moment. */
@@ -1021,9 +1040,8 @@ export class Engine {
   private settleWait(): void {
     const { blocked } = this;
     for (const step of this.wait.open()) {
-      if (!this.wait.settle(step, this.requiredOf(step), this.settings.togethernessMs, blocked)) {
-        continue;
-      }
+      const together = this.settings.togethernessMs + this.rollMsOf(step);
+      if (!this.wait.settle(step, this.requiredOf(step), together, blocked)) continue;
       if (this.stopStep === step) this.stopStep = null;
     }
   }
@@ -1065,6 +1083,21 @@ export class Engine {
     return -1;
   }
 
+  /**
+   * How much longer than a plain chord an Onset may be spread over, in milliseconds: the span its
+   * roll asks for at the tempo in force. 0 for an Onset carrying no roll.
+   */
+  private rollMsOf(step: number): number {
+    const [from, to] = this.noteRange(step);
+    if (to <= from) return 0;
+    let span = 0;
+    for (let i = from; i < to; i++) {
+      const note = this.notes[i]!;
+      span = Math.max(span, note.tick - note.onsetTick);
+    }
+    return span / this.ticksPerMs(this.notes[from]!.onsetTick);
+  }
+
   /** What an Onset asks for: the pitches of its strikeable notes of the active hand, graces aside. */
   private requiredOf(step: number): number[] {
     const [from, to] = this.noteRange(step);
@@ -1092,10 +1125,8 @@ export class Engine {
   private noteRange(step: number): [number, number] {
     const tick = this.walk[step]?.tick;
     if (tick === undefined) return [0, 0];
-    const from = this.firstNoteFrom(tick);
-    let to = from;
-    while (to < this.notes.length && this.notes[to]!.tick === tick) to++;
-    return [from, to];
+    const next = this.walk[step + 1]?.tick ?? Infinity;
+    return [this.firstNoteFrom(tick), this.firstNoteFrom(next)];
   }
 }
 
@@ -1107,10 +1138,13 @@ export class Engine {
 function playNotesOf(score: Score, walk: PlayStep[]): PlayNote[] {
   const notes: PlayNote[] = [];
   for (const step of walk) {
-    for (const note of score.onsets[step.onsetIndex]?.notes ?? []) {
+    const onset = score.onsets[step.onsetIndex]?.notes ?? [];
+    const ranks = rollRanks(onset);
+    for (const note of onset) {
       notes.push({
         midi: note.midi,
-        tick: step.tick,
+        tick: step.tick + (ranks.get(note) ?? 0) * ROLL_STEP,
+        onsetTick: step.tick,
         durationTicks: note.durationTicks,
         hand: note.hand,
         grace: note.grace,
@@ -1121,6 +1155,26 @@ function playNotesOf(score: Score, walk: PlayStep[]): PlayNote[] {
     }
   }
   return notes;
+}
+
+/**
+ * Where each note of a rolled chord stands in its roll, counting from 0. A roll runs bottom to top,
+ * a roll down top to bottom, over every note of the Onset that carries the same mark, so the two
+ * hands of one chord roll as one even though the sheet marks each staff on its own.
+ */
+function rollRanks(onset: readonly Note[]): Map<Note, number> {
+  const ranks = new Map<Note, number>();
+  for (const dir of ['up', 'down'] as const) {
+    const rolled = onset.filter((note) => note.arpeggio === dir);
+    rolled.sort((a, b) => (dir === 'up' ? a.midi - b.midi : b.midi - a.midi));
+    rolled.forEach((note, rank) => ranks.set(note, rank));
+  }
+  return ranks;
+}
+
+/** The widest a roll pushes a note past its Onset over the whole walk. */
+function rollSpanOf(notes: PlayNote[]): number {
+  return notes.reduce((span, note) => Math.max(span, note.tick - note.onsetTick), 0);
 }
 
 /**

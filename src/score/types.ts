@@ -34,6 +34,8 @@ export interface Note {
   /** Ideal MIDI velocity from the dynamics marks, 80 where the score has none. */
   velocity: number;
   measureIndex: number;
+  /** The roll of the chord the note is written in, from its arpeggiate mark; absent for a plain chord. */
+  arpeggio?: 'up' | 'down';
   /** The OSMD note, the identity that finds this note's SVG after any render. */
   source: OsmdNote;
 }

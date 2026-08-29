@@ -2,6 +2,7 @@
 // played timeline, and three short passes over the source measures add tempo, key and chords.
 
 import {
+  ArpeggioType,
   ChordSymbolContainer,
   MusicPartManagerIterator,
   type KeyInstruction,
@@ -80,6 +81,7 @@ export function buildScore(sheet: MusicSheet): Score {
             strikeable: !tiedFrom,
             velocity: velocityAt(dynamics[staff], tick),
             measureIndex,
+            arpeggio: rollOf(source),
             source,
           });
         }
@@ -128,6 +130,13 @@ export function buildScore(sheet: MusicSheet): Score {
 /** Cue notes and notes the file hides are printed nowhere and played by nobody. */
 function playable(note: OsmdNote): boolean {
   return !note.isRest() && !note.IsCueNote && note.PrintObject !== false && !!note.Pitch;
+}
+
+/** An arpeggiate mark rolls down only when it says so; one without a direction rolls up. */
+function rollOf(note: OsmdNote): 'up' | 'down' | undefined {
+  const type = note.Arpeggio?.type;
+  if (type === undefined) return undefined;
+  return type === ArpeggioType.ROLL_DOWN || type === ArpeggioType.BRUSH_DOWN ? 'down' : 'up';
 }
 
 /** A tie sounds as one note, so its whole chain lands on the note that starts it. */

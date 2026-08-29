@@ -7,6 +7,7 @@ function notes(...spec: [number, PlayNote['hand']][]): PlayNote[] {
   return spec.map(([midi, hand]) => ({
     midi,
     tick: 0,
+    onsetTick: 0,
     durationTicks: 960,
     hand,
     grace: false,

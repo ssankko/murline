@@ -1,7 +1,7 @@
 import { DEFAULT_PLAY_SETTINGS, type PlaySettings } from '@/play/settings';
 import { TICKS_PER_QUARTER, type Measure, type Note, type Onset, type Score } from '@/score/types';
 import { describe, expect, test } from 'vitest';
-import { Engine } from './engine';
+import { Engine, ROLL_STEP } from './engine';
 
 const BAR = 4 * TICKS_PER_QUARTER;
 
@@ -1761,5 +1761,63 @@ describe('Section and Loop', () => {
     play.setSection({ from: 0, to: 0 });
     play.setLoop(true);
     expect(play.snapshot().playedTick).toBe(0);
+  });
+});
+
+describe('a rolled chord', () => {
+  /** Four pitches as one Onset, rolled or plain. */
+  function chord(rolled: boolean) {
+    return [60, 64, 67, 72].map((midi) => ({
+      midi,
+      ...(rolled ? { arpeggio: 'up' as const } : {}),
+    }));
+  }
+
+  /** One note of the roll per 125 ms, which is `ROLL_STEP` at the 60 BPM of these Scores. */
+  const ROLL_MS = ROLL_STEP / (TICKS_PER_QUARTER / BEAT_MS);
+
+  /** The roll struck bottom to top from a moment, one note per `ROLL_MS`. */
+  function roll(play: Engine, from: number, moving: boolean): void {
+    [60, 64, 67, 72].forEach((midi, rank) => {
+      if (moving && rank > 0) play.advance(ROLL_MS);
+      down(play, midi, from + rank * ROLL_MS);
+    });
+  }
+
+  test('a Wait mode stop takes a roll spread wider than the togetherness window', () => {
+    const play = waiting([{ tick: TICKS_PER_QUARTER, notes: chord(true) }]);
+    play.advance(2 * BEAT_MS);
+    roll(play, 2 * BEAT_MS, false);
+
+    expect(play.snapshot().stopped).toBe(false);
+  });
+
+  test('the same strikes on a plain chord leave the stop standing', () => {
+    const play = waiting([{ tick: TICKS_PER_QUARTER, notes: chord(false) }]);
+    play.advance(2 * BEAT_MS);
+    roll(play, 2 * BEAT_MS, false);
+
+    expect(play.snapshot().stopped).toBe(true);
+  });
+
+  test('a Performance grades a roll played at that spread as on time', () => {
+    const play = engine(scoreFrom([{ tick: 0, notes: chord(true) }]));
+    play.arm();
+    play.start();
+    roll(play, 0, true);
+    play.advance(2 * BEAT_MS);
+
+    expect(play.takePerformance()?.grade).toMatchObject({ matched: 4, extras: 0, meanTiming: 100 });
+  });
+
+  test('a Performance of the same strikes on a plain chord grades worse', () => {
+    const play = engine(scoreFrom([{ tick: 0, notes: chord(false) }]));
+    play.arm();
+    play.start();
+    roll(play, 0, true);
+    play.advance(2 * BEAT_MS);
+
+    // The last notes of the spread fall outside the matching window: missed, and struck as extras.
+    expect(play.takePerformance()?.grade).toMatchObject({ matched: 2, extras: 2 });
   });
 });

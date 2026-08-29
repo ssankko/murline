@@ -10,7 +10,7 @@ export interface Play {
   /** Bumped on every write to a note state, so a reader knows its projection is stale. */
   version: number;
   /** Every written note in played order, a repeated bar once per pass. */
-  notes: readonly { note: Note; tick: number }[];
+  notes: readonly { note: Note; tick: number; onsetTick: number }[];
   noteState(index: number): NoteState;
 }
 
@@ -20,17 +20,17 @@ export interface Play {
  * ever struck. A head the projection names is one the play has reached; every other head is pending.
  */
 export function projectStates(
-  notes: readonly { note: Note; tick: number }[],
+  notes: readonly { note: Note; tick: number; onsetTick: number }[],
   stateOf: (index: number) => NoteState,
   playedTick: number,
 ): Map<OsmdNote, NoteState> {
   const states = new Map<OsmdNote, NoteState>();
   for (let i = 0; i < notes.length; i++) {
-    const { note, tick } = notes[i]!;
-    // The notes run in played order, so the clock cuts the list and a later pass overwrites an
-    // earlier one.
-    if (tick > playedTick) break;
-    if (note.tiedFrom) continue;
+    const { note, tick, onsetTick } = notes[i]!;
+    // The notes run in Onset order, so the clock cuts the list and a later pass overwrites an
+    // earlier one; a rolled note stands past its Onset and waits for its own moment.
+    if (onsetTick > playedTick) break;
+    if (tick > playedTick || note.tiedFrom) continue;
     const state = stateOf(i);
     for (const head of chainOf(note.source)) states.set(head, state);
   }

@@ -730,7 +730,7 @@ function snapshot(playedTick: number, over: Partial<Snapshot> = {}): Snapshot {
 function play(notes: readonly Note[], stateOf: (index: number) => NoteState, version: number): Play {
   return {
     version,
-    notes: notes.map((note) => ({ note, tick: note.onsetTick })),
+    notes: notes.map((note) => ({ note, tick: note.onsetTick, onsetTick: note.onsetTick })),
     noteState: stateOf,
   };
 }

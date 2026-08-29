@@ -343,9 +343,15 @@ describe('the naming rules', () => {
 
   test('an event points at the Onset where the harmony changes', () => {
     expect(analyzeHarmony(scoreOf([[60, 64, 67], [62, 65, 69]]))).toEqual([
-      { onsetIndex: 0, tick: 0, measureIndex: 0, absolute: 'C', degree: '1' },
-      { onsetIndex: 1, tick: BAR, measureIndex: 1, absolute: 'Dm', degree: '2m' },
+      { onsetIndex: 0, tick: 0, measureIndex: 0, absolute: 'C', degree: '1', root: 0, tones: [0, 4, 7] },
+      { onsetIndex: 1, tick: BAR, measureIndex: 1, absolute: 'Dm', degree: '2m', root: 2, tones: [2, 5, 9] },
     ]);
+  });
+
+  test('an event carries its tones from the template, the root first', () => {
+    const events = analyzeHarmony(scoreOf([[55, 59, 62, 65]]));
+    expect(names(events)).toEqual(['G7 5⁷']);
+    expect(events[0]!.tones).toEqual([7, 11, 2, 5]);
   });
 });
 
@@ -389,5 +395,18 @@ describe('a file with its own chord symbols', () => {
       [symbol(0, 'Csus4', 0, ChordSymbolEnum.suspendedfourth)],
     );
     expect(names(analyzeHarmony(score))).toEqual(['Csus4 ?']);
+    // No template, so the root stands alone.
+    expect(analyzeHarmony(score)[0]!.tones).toEqual([0]);
+  });
+
+  test('the kind gives the tones, and a slash bass adds none', () => {
+    const score = scoreOf([[62, 65, 69], [67, 71, 74]], C_MAJOR, [
+      symbol(0, 'Dm7', 2, ChordSymbolEnum.minorseventh),
+      symbol(BAR, 'G/D', 7, ChordSymbolEnum.major, 2),
+    ]);
+    expect(analyzeHarmony(score).map((e) => [e.root, e.tones])).toEqual([
+      [2, [2, 5, 9, 0]],
+      [7, [7, 11, 2]],
+    ]);
   });
 });

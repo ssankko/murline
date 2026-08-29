@@ -1,7 +1,7 @@
 import type { EffectSlot } from '@/audio/effects';
 import type { Envelope } from '@/audio/envelope';
 import type { Role } from '@/audio/roles';
-import { DEFAULT_LANE_LOOK, DEFAULT_SPLIT, type LaneLook } from '@/lane/lane';
+import { DEFAULT_LANE_LOOK, DEFAULT_SPLIT, type LaneHarmony, type LaneLook } from '@/lane/lane';
 import type { Theme } from '@/look/use-dark';
 import { DEFAULT_PLAY_SETTINGS, type KeyboardPreset, type PlaySettings } from '@/play/settings';
 import { DEFAULT_SPACING } from '@/sheet/sheet';
@@ -41,7 +41,7 @@ export type Settings = {
 
   sheet_harmony: boolean;
   sheet_colour: boolean;
-  lane_harmony: boolean;
+  lane_harmony: LaneHarmony;
   lane_colour: boolean;
   /** Whether each falling block carries the name of its note. */
   lane_names: boolean;
@@ -250,7 +250,14 @@ export async function readSettings(): Promise<Settings> {
   try {
     const db = await getDb();
     const rows = await db.select<{ key: string; value: string }[]>('SELECT key, value FROM setting');
-    const written = rows.map((row) => [row.key, JSON.parse(row.value) as unknown]);
+    // A value of another type than its default is from an older shape of the setting, so the
+    // default stands in for it; a null default accepts anything.
+    const written = rows
+      .map((row) => [row.key, JSON.parse(row.value) as unknown] as const)
+      .filter(([key, value]) => {
+        const fallback = SETTING_DEFAULTS[key as keyof Settings];
+        return fallback == null || typeof value === typeof fallback;
+      });
     return { ...SETTING_DEFAULTS, ...Object.fromEntries(written) } as Settings;
   } catch {
     return { ...SETTING_DEFAULTS };

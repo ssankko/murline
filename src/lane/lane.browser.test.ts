@@ -1,10 +1,22 @@
-import { DEFAULT_LANE_LOOK, GLIDE_MS, Lane, popAt, type LaneLook } from '@/lane/lane';
+import {
+  BAND_IN,
+  BAND_MID,
+  BAND_OUT,
+  DEFAULT_LANE_LOOK,
+  GLIDE_MS,
+  Lane,
+  PANEL_INSET,
+  WHEEL_SIZE,
+  popAt,
+  wheelAngle,
+  type LaneLook,
+} from '@/lane/lane';
 import { KEYBOARD_H, keyLayout, type KeyLayout } from '@/lane/keyboard';
 import { PAPER, colorOf, tone } from '@/look/color';
 import { Engine } from '@/play/engine';
 import { DEFAULT_PLAY_SETTINGS } from '@/play/settings';
 import type { KeyAt } from '@/score/harmony';
-import { TICKS_PER_QUARTER, type Note, type Score } from '@/score/types';
+import { TICKS_PER_QUARTER, type ChordEvent, type Note, type Score } from '@/score/types';
 import { expect, test, vi } from 'vitest';
 
 const BAR = 4 * TICKS_PER_QUARTER;
@@ -428,6 +440,193 @@ test('the Section band travels from the bars it had to the bars it takes', () =>
   const three = ink(ctx, bare, laneH);
   expect(midway).toBeGreaterThan(one);
   expect(midway).toBeLessThan(three);
+  lane.dispose();
+});
+
+/** The wheel's panel: a lane tall enough to hold it, and where it stands in one. */
+const WHEEL_HEIGHT = 600;
+const WHEEL_LEFT = WIDTH - PANEL_INSET - WHEEL_SIZE;
+const WHEEL_TOP = PANEL_INSET;
+const WHEEL_MID = WHEEL_SIZE / 2;
+
+/** Every colour the wheel's panel carries, as `#rrggbb`. */
+function panelColours(ctx: CanvasRenderingContext2D): Set<string> {
+  const dpr = window.devicePixelRatio || 1;
+  const { data } = ctx.getImageData(
+    WHEEL_LEFT * dpr,
+    WHEEL_TOP * dpr,
+    WHEEL_SIZE * dpr,
+    WHEEL_SIZE * dpr,
+  );
+  const seen = new Set<string>();
+  for (let i = 0; i < data.length; i += 4) {
+    const hex = [data[i], data[i + 1], data[i + 2]].map((v) => v!.toString(16).padStart(2, '0'));
+    seen.add(`#${hex.join('')}`);
+  }
+  return seen;
+}
+
+/** The pitch classes of C major but for C, which every note of the test piece already wears. */
+const IN_C = [2, 4, 5, 7, 9, 11];
+
+test('the wheel faces the scale in force, and covers nothing while the setting names the panels', () => {
+  const wall = performance.timeOrigin + performance.now();
+  const on = mount({ height: WHEEL_HEIGHT, look: { harmony: 'wheel' } });
+  // The first key of all fades in, so the band stands whole a slide after the frame it opens on.
+  on.lane.frame(on.engine.snapshot(), on.engine.windowTicks, wall);
+  on.lane.frame(on.engine.snapshot(), on.engine.windowTicks, wall + 250);
+  const colours = panelColours(on.ctx);
+  for (const pc of IN_C) expect(colours.has(colorOf(pc, 'muted', false))).toBe(true);
+  // A pitch class off the scale is hollow, so its face stands nowhere in the panel.
+  expect(colours.has(colorOf(6, 'muted', false))).toBe(false);
+  on.lane.dispose();
+
+  const off = mount({ height: WHEEL_HEIGHT });
+  off.lane.frame(off.engine.snapshot(), off.engine.windowTicks, wall);
+  off.lane.frame(off.engine.snapshot(), off.engine.windowTicks, wall + 250);
+  const bare = panelColours(off.ctx);
+  for (const pc of IN_C) expect(bare.has(colorOf(pc, 'muted', false))).toBe(false);
+  off.lane.dispose();
+});
+
+/** Three bars that turn from C major to D major at bar 2 and to E flat major at bar 3. */
+function scoreTurning(): Score {
+  const score = scoreOf(3);
+  score.keys = [
+    { measureIndex: 0, sharps: 0, mode: 0 },
+    { measureIndex: 1, sharps: 2, mode: 0 },
+    { measureIndex: 2, sharps: -3, mode: 0 },
+  ];
+  score.tempoMap = [{ tick: 0, bpm: 480 }];
+  return score;
+}
+
+test('a key change cross-fades the band, and a seek snaps it', () => {
+  const { engine, lane, ctx } = mount({
+    score: scoreTurning(),
+    height: WHEEL_HEIGHT,
+    look: { harmony: 'wheel' },
+  });
+  const wall = performance.timeOrigin + performance.now();
+  const frame = (at: number) => lane.frame(engine.snapshot(), engine.windowTicks, wall + at);
+  // F sharp belongs to D major alone, and B flat to E flat major alone.
+  const sharp = colorOf(6, 'muted', false);
+  const flat = colorOf(10, 'muted', false);
+  frame(0);
+  expect(panelColours(ctx).has(sharp)).toBe(false);
+
+  // The clock runs into bar 2 in frames of a sixtieth of a second, which is motion and no jump.
+  let at = 0;
+  while (engine.snapshot().playedTick < BAR) {
+    engine.advance(16);
+    at += 16;
+    frame(at);
+  }
+  // The new face takes the whole slide to come up, so it stands nowhere until the end of one.
+  expect(panelColours(ctx).has(sharp)).toBe(false);
+  frame(at + 125);
+  expect(panelColours(ctx).has(sharp)).toBe(false);
+  frame(at + 250);
+  expect(panelColours(ctx).has(sharp)).toBe(true);
+
+  // A seek may land anywhere, so the key it lands in stands in the frame it lands on.
+  engine.seek({ measure: 2 });
+  frame(at + 251);
+  const landed = panelColours(ctx);
+  expect(landed.has(flat)).toBe(true);
+  expect(landed.has(sharp)).toBe(false);
+  lane.dispose();
+});
+
+/** Every colour one segment carries between two radii, the band and a margin round it by default. */
+function segmentColours(
+  ctx: CanvasRenderingContext2D,
+  pc: number,
+  from = BAND_IN - 5,
+  to = BAND_OUT + 10,
+): Set<string> {
+  const dpr = window.devicePixelRatio || 1;
+  const side = WHEEL_SIZE * dpr;
+  const { data } = ctx.getImageData(WHEEL_LEFT * dpr, WHEEL_TOP * dpr, side, side);
+  const mid = wheelAngle(pc);
+  const seen = new Set<string>();
+  for (let y = 0; y < side; y++) {
+    for (let x = 0; x < side; x++) {
+      const dx = x / dpr - WHEEL_MID;
+      const dy = y / dpr - WHEEL_MID;
+      const r = Math.hypot(dx, dy);
+      if (r < from || r > to) continue;
+      const step = Math.atan2(dy, dx) - mid;
+      if (Math.abs(Math.atan2(Math.sin(step), Math.cos(step))) > Math.PI / 12) continue;
+      const i = (y * side + x) * 4;
+      const hex = [data[i], data[i + 1], data[i + 2]].map((v) => v!.toString(16).padStart(2, '0'));
+      seen.add(`#${hex.join('')}`);
+    }
+  }
+  return seen;
+}
+
+/** The colour inside one segment, off the mid line its label holds and clear of its outline. */
+function segmentFace(ctx: CanvasRenderingContext2D, pc: number): string {
+  const angle = wheelAngle(pc) + 0.16;
+  return hex(
+    ctx,
+    WHEEL_LEFT + WHEEL_MID + Math.cos(angle) * BAND_MID,
+    WHEEL_TOP + WHEEL_MID + Math.sin(angle) * BAND_MID,
+  );
+}
+
+/** Two bars of C major: the tonic, then a borrowed D flat whose root and A flat leave the key. */
+function scoreBorrowing(): Score {
+  const score = scoreOf(2);
+  score.keys = [{ measureIndex: 0, sharps: 0, mode: 0 }];
+  const chord = (bar: number, absolute: string, degree: string, tones: number[]): ChordEvent => ({
+    onsetIndex: bar * 4,
+    tick: bar * BAR,
+    measureIndex: bar,
+    absolute,
+    degree,
+    root: tones[0]!,
+    tones,
+  });
+  score.harmony = [chord(0, 'C', '1', [0, 4, 7]), chord(1, 'D♭', '♭2', [1, 5, 8])];
+  return score;
+}
+
+test('a chord tone outside the key wears a dashed outline of its own and no face', () => {
+  const { engine, lane, ctx } = mount({
+    score: scoreBorrowing(),
+    height: WHEEL_HEIGHT,
+    look: { harmony: 'wheel' },
+  });
+  const wall = performance.timeOrigin + performance.now();
+  const settle = (at: number) => {
+    for (const step of [0, 300, 600]) {
+      lane.frame(engine.snapshot(), engine.windowTicks, wall + at + step);
+    }
+  };
+  // The tonic chord first: a root the key holds keeps the face size means "now" is painted in.
+  settle(0);
+  expect(segmentFace(ctx, 0)).toBe(colorOf(0, 'full', false));
+
+  // The borrowed chord: its root stands raised with no face of either tier, only its own colour.
+  engine.seek({ measure: 1 });
+  settle(1000);
+  const root = segmentColours(ctx, 1);
+  expect(root.has(colorOf(1, 'muted', false))).toBe(false);
+  // Nothing but the chrome an untouched hollow segment leaves stands under the outline.
+  expect(segmentFace(ctx, 1)).toBe(segmentFace(ctx, 6));
+  expect(root.has(colorOf(1, 'full', false))).toBe(true);
+  // The outline stands outside the band, so the root still takes the size that means "now".
+  expect(segmentColours(ctx, 1, BAND_OUT + 1, BAND_OUT + 10).has(colorOf(1, 'full', false))).toBe(true);
+
+  // Its A flat wears the same outline at the band's own size, and no face either.
+  const third = segmentColours(ctx, 8);
+  expect(third.has(colorOf(8, 'muted', false))).toBe(false);
+  expect(third.has(colorOf(8, 'full', false))).toBe(true);
+  expect(segmentColours(ctx, 8, 79, 88).has(colorOf(8, 'full', false))).toBe(false);
+  // Its F belongs to the key, so that segment stands as it always does.
+  expect(segmentColours(ctx, 5).has(colorOf(5, 'muted', false))).toBe(true);
   lane.dispose();
 });
 

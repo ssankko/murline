@@ -1,19 +1,28 @@
+import { PAPER, colorOf, luminance, mix, tone } from '@/look/color';
 import { TICKS_PER_QUARTER, type ChordEvent, type KeyChange, type Score } from '@/score/types';
 import { describe, expect, test } from 'vitest';
 import {
+  alongTrack,
   beatsBefore,
   bounceAt,
   burnAt,
   chordsAt,
   chordsOf,
+  fifthName,
   glideLeft,
   jumpOf,
   laneKeysOf,
   lerpRect,
   popAt,
   pulseAt,
+  runShare,
   slotRect,
   throughWrap,
+  toneWeight,
+  trackRadii,
+  wheelAngle,
+  wheelCornerR,
+  wheelFillAlpha,
   zoomLookahead,
 } from './lane';
 
@@ -28,7 +37,8 @@ const BARS = [0, 1, 2].map((i) => ({
 }));
 
 function chord(onsetIndex: number, absolute: string): ChordEvent {
-  return { onsetIndex, tick: onsetIndex * Q, measureIndex: 0, absolute, degree: '1' };
+  const tick = onsetIndex * Q;
+  return { onsetIndex, tick, measureIndex: 0, absolute, degree: '1', root: 0, tones: [0, 4, 7] };
 }
 
 /** Six Onsets, one per quarter, with bar 1 played again after bar 2. */
@@ -149,6 +159,21 @@ test('a panel between two slots starts at the one and ends at the other', () => 
   expect(lerpRect(from, to, 1)).toEqual(to);
 });
 
+describe('the wheel of fifths', () => {
+  test('stands C at twelve o\'clock and steps a fifth every 30 degrees', () => {
+    const step = Math.PI / 6;
+    // Twelve fifths up from C name every pitch class once and close the circle.
+    for (let i = 0; i < 12; i++) {
+      expect(wheelAngle(7 * i)).toBeCloseTo(-Math.PI / 2 + i * step, 10);
+    }
+  });
+
+  test('reads a pitch class in any octave, and both ways round', () => {
+    expect(wheelAngle(60)).toBe(wheelAngle(0));
+    expect(wheelAngle(-5)).toBe(wheelAngle(7));
+  });
+});
+
 describe('the pulse at the now-line', () => {
   // The beat is a quarter, so the pulse runs out 12 % of a quarter after each beat.
   const rise = 0.12 * Q;
@@ -262,5 +287,105 @@ describe('a countdown glyph burning up on its beat', () => {
     expect(burnAt(0.8).scale).toBeLessThan(burnAt(0.5).scale);
     expect(burnAt(0.8).heat).toBeLessThan(burnAt(0.5).heat);
     expect(burnAt(0.5).alpha).toBe(1);
+  });
+});
+
+describe("the chord figure inside the wheel", () => {
+  test.each([false, true])('the fill alpha stays inside its clamp on dark=%s', (dark) => {
+    for (const pc of [...Array(12).keys()]) {
+      expect(wheelFillAlpha(pc, dark)).toBeGreaterThanOrEqual(0.35);
+      expect(wheelFillAlpha(pc, dark)).toBeLessThanOrEqual(0.5);
+    }
+  });
+
+  test.each([false, true])('the fill is the least alpha off the paper, dark=%s', (dark) => {
+    const contrast = (pc: number, alpha: number) => {
+      const paper = luminance(tone(PAPER, dark));
+      const on = luminance(mix(tone(PAPER, dark), colorOf(pc, 'full', dark), alpha));
+      return (Math.max(paper, on) + 0.05) / (Math.min(paper, on) + 0.05);
+    };
+    for (const pc of [...Array(12).keys()]) {
+      const alpha = wheelFillAlpha(pc, dark);
+      expect(alpha === 0.5 || contrast(pc, alpha) >= 1.6).toBe(true);
+      // One hundredth less would not carry, unless the clamp already holds it at its floor.
+      expect(alpha === 0.35 || contrast(pc, alpha - 0.01) < 1.6).toBe(true);
+    }
+  });
+
+  test('the table turns over with the paper: a hue light paper swallows, dark paper shows', () => {
+    // E reads over dark paper on its own and needs the fill thickened over light paper; G♯ is the
+    // other way about.
+    expect(wheelFillAlpha(4, false)).toBe(0.5);
+    expect(wheelFillAlpha(4, true)).toBe(0.35);
+    expect(wheelFillAlpha(8, false)).toBe(0.35);
+    expect(wheelFillAlpha(8, true)).toBe(0.5);
+  });
+
+  test('a corner grows with the weight its tone carries', () => {
+    expect(wheelCornerR(toneWeight(0))).toBe(5);
+    expect(wheelCornerR(toneWeight(4))).toBeCloseTo(4.375);
+    expect(wheelCornerR(toneWeight(10))).toBeCloseTo(4.125);
+    expect(wheelCornerR(toneWeight(7))).toBeCloseTo(3.75);
+  });
+});
+
+describe('the letter a segment outside the key wears', () => {
+  test('a black key follows the signature of the key in force', () => {
+    expect([6, 1, 8, 3, 10].map((pc) => fifthName(pc, 4))).toEqual(['F♯', 'C♯', 'G♯', 'D♯', 'A♯']);
+    expect([6, 1, 8, 3, 10].map((pc) => fifthName(pc, -3))).toEqual(['G♭', 'D♭', 'A♭', 'E♭', 'B♭']);
+    // A key with no signature keeps one sharp on the way out and flats coming back.
+    expect([6, 1, 8, 3, 10].map((pc) => fifthName(pc, 0))).toEqual(['F♯', 'D♭', 'A♭', 'E♭', 'B♭']);
+  });
+
+  test('a white key wears its letter whatever the key', () => {
+    for (const sharps of [-5, 0, 5]) {
+      expect([0, 2, 4, 5, 7, 9, 11].map((pc) => fifthName(pc, sharps))).toEqual([
+        'C',
+        'D',
+        'E',
+        'F',
+        'G',
+        'A',
+        'B',
+      ]);
+    }
+  });
+});
+
+describe('the runner and its tracks', () => {
+  test('the share of the chord spent runs 0 to 1 and holds at both ends', () => {
+    expect(runShare(0, 0, 4 * Q)).toBe(0);
+    expect(runShare(2 * Q, 0, 4 * Q)).toBe(0.5);
+    expect(runShare(4 * Q, 0, 4 * Q)).toBe(1);
+    // A chord of no length has nowhere to run, and the clock outside the chord clamps.
+    expect(runShare(Q, 0, 0)).toBe(0);
+    expect(runShare(9 * Q, 0, 4 * Q)).toBe(1);
+  });
+
+  test('the tracks step one place inward over an arrival', () => {
+    expect(trackRadii(0)).toEqual([87, 94, 101]);
+    expect(trackRadii(0.5)).toEqual([84, 90.5, 97.5]);
+    expect(trackRadii(1)).toEqual([81, 87, 94]);
+  });
+
+  // C stands at twelve o'clock, A at three, F one step anticlockwise of C.
+  test.each([0, 9, 5])('a same-root move runs the runner round a loop outside root %i', (pc) => {
+    const at = wheelAngle(pc);
+    const dot = [Math.cos(at) * 87, Math.sin(at) * 87];
+    // The loop opens and closes on the destination dot, under the root on the track, and stands
+    // two of its radii out at the half way point.
+    for (const share of [0, 1]) {
+      expect(alongTrack(at, at, 87, share)[0]).toBeCloseTo(dot[0]!);
+      expect(alongTrack(at, at, 87, share)[1]).toBeCloseTo(dot[1]!);
+    }
+    expect(Math.hypot(...alongTrack(at, at, 87, 0.5))).toBeCloseTo(101);
+  });
+
+  test('a move to another root runs the short way round', () => {
+    // F is one step anticlockwise of C, so its runner leaves the top going left.
+    const [x, y] = alongTrack(wheelAngle(0), wheelAngle(5), 87, 0.5);
+    expect(x).toBeLessThan(0);
+    expect(y).toBeLessThan(0);
+    expect(Math.hypot(x, y)).toBeCloseTo(87);
   });
 });

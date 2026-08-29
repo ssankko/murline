@@ -470,7 +470,7 @@ function nameSegment(
   units: Note[][],
   label: Candidate,
   key: KeyAt,
-): { absolute: string; degree: string } | undefined {
+): { absolute: string; degree: string; root: number; tones: number[] } | undefined {
   const notes = [...new Set(units.flat())];
   const line =
     pitchClasses(notes).size < 2 || units.every((u) => u.length >= 2 && pitchClasses(u).size === 1);
@@ -507,34 +507,37 @@ function nameSegment(
       degreeOf(root, key, written(root)) +
       shape.rel +
       (slash ? `/${degreeOf(bass, key, written(bass))}` : ''),
+    root,
+    tones,
   };
 }
 
-// The degree suffix of every `<harmony>` kind that has a base quality among the templates. A ninth,
-// an eleventh and a thirteenth read as the seventh they are built on. Every other kind reads "?":
-// the sus kinds, the added-note kinds (the sixths) and the augmented sixths name no template.
-const KIND_SUFFIX = new Map<ChordSymbolEnum, string>([
-  [ChordSymbolEnum.major, MAJOR_TRIAD.rel],
-  [ChordSymbolEnum.minor, MINOR_TRIAD.rel],
-  [ChordSymbolEnum.augmented, AUGMENTED.rel],
-  [ChordSymbolEnum.diminished, DIMINISHED.rel],
-  [ChordSymbolEnum.dominant, DOMINANT_7.rel],
-  [ChordSymbolEnum.majorseventh, MAJOR_7.rel],
-  [ChordSymbolEnum.minorseventh, MINOR_7.rel],
-  [ChordSymbolEnum.diminishedseventh, DIMINISHED_7.rel],
-  [ChordSymbolEnum.augmentedseventh, AUGMENTED.rel],
-  [ChordSymbolEnum.halfdiminished, HALF_DIMINISHED_7.rel],
-  [ChordSymbolEnum.majorminor, MINOR_TRIAD.rel],
-  [ChordSymbolEnum.dominantninth, DOMINANT_7.rel],
-  [ChordSymbolEnum.majorninth, MAJOR_7.rel],
-  [ChordSymbolEnum.minorninth, MINOR_7.rel],
-  [ChordSymbolEnum.dominant11th, DOMINANT_7.rel],
-  [ChordSymbolEnum.major11th, MAJOR_7.rel],
-  [ChordSymbolEnum.minor11th, MINOR_7.rel],
-  [ChordSymbolEnum.dominant13th, DOMINANT_7.rel],
-  [ChordSymbolEnum.major13th, MAJOR_7.rel],
-  [ChordSymbolEnum.minor13th, MINOR_7.rel],
-  [ChordSymbolEnum.Neapolitan, MAJOR_TRIAD.rel],
+// The template every `<harmony>` kind with a base quality stands on, for its degree suffix and its
+// tones. A ninth, an eleventh and a thirteenth stand on the seventh they are built on. Every other
+// kind reads "?": the sus kinds, the added-note kinds (the sixths) and the augmented sixths name no
+// template.
+const KIND_SHAPE = new Map<ChordSymbolEnum, Shape>([
+  [ChordSymbolEnum.major, MAJOR_TRIAD],
+  [ChordSymbolEnum.minor, MINOR_TRIAD],
+  [ChordSymbolEnum.augmented, AUGMENTED],
+  [ChordSymbolEnum.diminished, DIMINISHED],
+  [ChordSymbolEnum.dominant, DOMINANT_7],
+  [ChordSymbolEnum.majorseventh, MAJOR_7],
+  [ChordSymbolEnum.minorseventh, MINOR_7],
+  [ChordSymbolEnum.diminishedseventh, DIMINISHED_7],
+  [ChordSymbolEnum.augmentedseventh, AUGMENTED],
+  [ChordSymbolEnum.halfdiminished, HALF_DIMINISHED_7],
+  [ChordSymbolEnum.majorminor, MINOR_TRIAD],
+  [ChordSymbolEnum.dominantninth, DOMINANT_7],
+  [ChordSymbolEnum.majorninth, MAJOR_7],
+  [ChordSymbolEnum.minorninth, MINOR_7],
+  [ChordSymbolEnum.dominant11th, DOMINANT_7],
+  [ChordSymbolEnum.major11th, MAJOR_7],
+  [ChordSymbolEnum.minor11th, MINOR_7],
+  [ChordSymbolEnum.dominant13th, DOMINANT_7],
+  [ChordSymbolEnum.major13th, MAJOR_7],
+  [ChordSymbolEnum.minor13th, MINOR_7],
+  [ChordSymbolEnum.Neapolitan, MAJOR_TRIAD],
 ]);
 
 const UNNAMEABLE_DEGREE = '?';
@@ -548,9 +551,14 @@ function fromSymbols(score: Score): ChordEvent[] {
   const events: ChordEvent[] = [];
   for (const symbol of score.chords) {
     const key = keys.findLast((k) => k.tick <= symbol.tick) ?? C_MAJOR;
+    const shape = KIND_SHAPE.get(symbol.kind);
     const named = {
       absolute: symbol.text,
       degree: degreeOfSymbol(symbol, key),
+      root: symbol.root,
+      // A kind that names no template stands on its root alone, and a slash bass is a tone only
+      // where the template already holds it.
+      tones: (shape?.steps ?? [0]).map((st) => pitchClass(symbol.root + st)),
     };
     const last = events[events.length - 1];
     if (last && last.absolute === named.absolute && last.degree === named.degree) continue;
@@ -574,11 +582,11 @@ function fromSymbols(score: Score): ChordEvent[] {
 
 /** A written symbol has no accidental of its own, so the key alone decides its spelling. */
 function degreeOfSymbol(symbol: ChordSymbol, key: KeyAt): string {
-  const suffix = KIND_SUFFIX.get(symbol.kind);
-  if (suffix === undefined) return UNNAMEABLE_DEGREE;
+  const shape = KIND_SHAPE.get(symbol.kind);
+  if (!shape) return UNNAMEABLE_DEGREE;
   const slash =
     symbol.bass !== undefined && symbol.bass !== symbol.root
       ? `/${degreeOf(symbol.bass, key, 0)}`
       : '';
-  return degreeOf(symbol.root, key, 0) + suffix + slash;
+  return degreeOf(symbol.root, key, 0) + shape.rel + slash;
 }

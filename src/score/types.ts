@@ -104,6 +104,10 @@ export interface ChordEvent {
   measureIndex: number;
   absolute: string;
   degree: string;
+  /** Pitch class of the root. */
+  root: number;
+  /** Pitch classes of the chord, the root first, then rising by interval above it. */
+  tones: number[];
 }
 
 export interface Score {

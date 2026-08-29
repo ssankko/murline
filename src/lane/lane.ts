@@ -1,9 +1,9 @@
 // The falling lane and the keyboard under it, on one 2D canvas so both share the x axis. Time in
 // the lane is played time, the clock the engine keeps: a repeated passage falls again as new notes
 // behind a dashed divider. The lane draws from `view`, the tick at the keyboard line, which rides
-// the clock until a seek or the wheel takes it off and a glide brings it back, so the notes always
-// roll to a new place instead of jumping there. Everything here is drawing; the play itself lives
-// in src/play/engine.ts.
+// the clock until a seek or the mouse wheel takes it off and a glide brings it back, so the notes
+// always roll to a new place instead of jumping there. Everything here is drawing; the play itself
+// lives in src/play/engine.ts.
 
 import {
   KEYBOARD_H,
@@ -21,13 +21,15 @@ import {
   colorOf,
   isBlackKey,
   labelInk,
+  luminance,
   mix,
   pitchClass,
   tone,
+  withAlpha,
   type Palette,
 } from '@/look/color';
 import { easeInOut, reducedMotion } from '@/look/motion';
-import { C_MAJOR, scaleOf, tonicOf, type KeyAt } from '@/score/harmony';
+import { C_MAJOR, degreeOf, keyTable, scaleOf, tonicOf, type KeyAt } from '@/score/harmony';
 import type { Engine, LoopSpan, PlayEvent, SeekTarget, Snapshot } from '@/play/engine';
 import type { Section } from '@/play/section';
 import { isInactiveHand, type HandsSetting } from '@/play/settings';
@@ -35,14 +37,16 @@ import { barsOfWalk, beatOf } from '@/score/beat';
 import { TICKS_PER_QUARTER, type ChordEvent, type PlayStep, type Score } from '@/score/types';
 
 /** Look knobs, all global settings the Look tab writes to. */
+export type LaneHarmony = 'panels' | 'wheel' | 'off';
+
 export interface LaneLook {
   lookaheadBeats: number;
   /** Width of a block as a percent of its key. */
   noteWidthPct: number;
   gapPx: number;
   keyLabels: boolean;
-  /** Whether the harmony panels are drawn. */
-  harmony: boolean;
+  /** How the harmony shows at the lane's top right: as the chord panels, as the wheel, or not at all. */
+  harmony: LaneHarmony;
   /** Whether the keys outside the scale in force wear a dimmed face. */
   scaleMarks: boolean;
   /** Whether a block wears the pitch colour of its note, against one neutral ink for every note. */
@@ -56,7 +60,7 @@ export const DEFAULT_LANE_LOOK: LaneLook = {
   noteWidthPct: 80,
   gapPx: 2,
   keyLabels: true,
-  harmony: true,
+  harmony: 'panels',
   scaleMarks: false,
   colour: true,
   names: false,
@@ -95,7 +99,7 @@ const NOW_LINE = ['#141414', '#ffffff'] as const;
  * to cross to a tick that was clicked.
  */
 export const GLIDE_MS = 300;
-/** While the play runs the wheel detaches the view, and it rolls back this long after the last one. */
+/** While the play runs the mouse wheel detaches the view, and it rolls back this long after it. */
 const DETACH_MS = 2000;
 /** How long a count-in line takes to fade out once its beat is spent. */
 const COUNT_FADE_MS = 120;
@@ -198,7 +202,7 @@ const SPECK_GRAVITY = 200;
 const MAX_STEP_MS = 100;
 
 /** The harmony panel at the lane's top right: its inset from the corner, the gap between rows. */
-const PANEL_INSET = 16;
+export const PANEL_INSET = 16;
 const PANEL_GAP = 4;
 /** How long the panels take to move up a slot when the harmony advances. */
 const PANEL_SLIDE_MS = 250;
@@ -226,6 +230,77 @@ const LOOKAHEAD = 16;
 const BURN_SHARE = 0.25;
 const BURN_COLLAPSE = 0.18;
 const BURN_SWELL = 0.3;
+
+/** The wheel, which stands where the chord panels would: its side and its corner. */
+export const WHEEL_SIZE = 200;
+const WHEEL_ROUND = 16;
+/** The band, which is the scale in force, and the two lines of type it carries. */
+export const BAND_IN = 54;
+export const BAND_OUT = 78;
+export const BAND_MID = (BAND_IN + BAND_OUT) / 2;
+const LETTER_DY = -5;
+const DEGREE_DY = 6;
+const LETTER_FONT = '700 10px system-ui, sans-serif';
+const DEGREE_FONT = '600 9px system-ui, sans-serif';
+/** A segment's filleted corners, and the paper gap it keeps from its neighbours, in radians. */
+const SEGMENT_ROUND = 3;
+const SEGMENT_GAP = 0.022;
+/** How far the segment of the chord sounding now stands off the band, out and in. */
+const RAISE_OUT = 6;
+const RAISE_IN = 3;
+/** How much further out the segment swells as the chord arrives, so the crest clears the runner. */
+const RAISE_SWELL = 3;
+/** A chord tone the key does not hold wears no face, only its own colour dashed round its edge. */
+const OUTSIDE_W = 1.5;
+const OUTSIDE_DASH = [4, 3];
+/**
+ * Outside the band: where track 1 settles, the step out to track 2, and how far track 1 draws back
+ * as it is spent. A same-root move has no arc, so it draws a loop of `TRACK_LOOP` outside its root.
+ */
+const TRACK_1 = BAND_OUT + 9;
+const TRACK_STEP = 7;
+const TRACK_BACK = 6;
+const TRACK_LOOP = 7;
+/** A track's weight and alpha as track 1 and as track 2, and the dot the destination wears. */
+const TRACK_W = [1, 1.5] as const;
+const TRACK_ALPHA = [0.18, 0.5] as const;
+const DEST_R = 3;
+/** The runner: one size for the whole travel, the size its arrival swells it to, and for how long. */
+const RUN_R = 4;
+const RUN_POP = 6.5;
+const RUN_POP_MS = 220;
+/** How far the hub's names scale past themselves as the chord arrives. */
+const HUB_POP = 0.08;
+/** The tonic's badge: the box it keeps round its label, and how far its own hue is lightened. */
+const BADGE_PAD = 4;
+const BADGE_ROUND = 4;
+const BADGE_WIDTH = 2;
+const BADGE_TINT = [0.45, 0.35] as const;
+/** Inside the band: how far out the chord's corners stand, and the ring an unheld tone wears. */
+const CORNER_R = BAND_IN - 9;
+const CORNER_RING = 1.5;
+/** The figure's edges, at rest and while every tone is held, and how long the lift takes. */
+const EDGE_W = [1.25, 1.75] as const;
+const LIFT_MS = 120;
+/** A held key the chord does not name, as a dot on its own segment. */
+const OFF_DOT = 4;
+/**
+ * The chord's fill, all in the root's hue: the floor it keeps over the whole shape, the contrast a
+ * corner's pool holds against the paper and the alphas it may reach for it, and how far a pool
+ * carries as a share of the figure's longest edge.
+ */
+const FILL_FLOOR = [0.08, 0.12] as const;
+const FILL_CONTRAST = 1.6;
+const FILL_ALPHA = [0.35, 0.5] as const;
+const FILL_REACH = 0.55;
+/** How long one figure takes to give way to the next. */
+const FIGURE_FADE_MS = 150;
+/** The hub: the chord's name over the centre, its degree under it, and the halo the name wears. */
+const HUB_NAME = { size: 22, dy: -7 };
+const HUB_DEGREE = { size: 13, dy: 11 };
+const HUB_HALO_W = 6;
+/** The panel's chrome with its alpha spent on the paper, so the halo hides the edges under it. */
+const HUB_HALO = ['#ebebeb', '#181818'] as const;
 
 /** One ring or splash playing out at a key. A miss leaves no mark on the keys. */
 interface Effect {
@@ -270,6 +345,13 @@ interface LaneJump {
   label: string;
 }
 
+/** The key in force, its scale as pitch classes, and how the key spells each of them. */
+interface LaneScale {
+  key: KeyAt;
+  pcs: number[];
+  names: string[];
+}
+
 /** A chord of the harmony in played time: a repeated bar names its chords again. */
 export interface LaneChord {
   tick: number;
@@ -309,15 +391,18 @@ export class Lane {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly engine: Engine;
   private readonly resize: ResizeObserver;
-  /** Takes the wheel and click listeners off the canvas again. */
+  /** Takes the mouse wheel and click listeners off the canvas again. */
   private readonly listeners = new AbortController();
   private bars: LaneBar[];
   private jumps: LaneJump[];
   private chords: LaneChord[];
   /** The key changes of the play in played time. */
   private laneKeys: KeyAt[];
-  /** The key in force at the clock and its pitch classes, re-read when the key changes. */
-  private scale: { key: KeyAt; pcs: number[] } | null = null;
+  /** The key in force at the clock, re-read when the key changes. */
+  private scale: LaneScale | null = null;
+  /** The key the wheel cross-fades from, and when it set off; a seek and reduced motion snap. */
+  private wasScale: LaneScale | null = null;
+  private keyAt = -Infinity;
   /** The dimmed face of each of the keyboard's two base greys, mixed once and kept. */
   private readonly dimmed = new Map<string, string>();
   /** The walk the bars and the dividers were read from; Loop swaps it for the linear one. */
@@ -350,7 +435,9 @@ export class Lane {
   /** The offset the glide runs from and the wall time it began; `-Infinity` while none runs. */
   private glideFrom = 0;
   private glideAt = -Infinity;
-  /** Wall time of the last wheel or click, which the detach window is measured from. */
+  /** Wall time of the frame the clock last jumped in, which is what a seek is spotted by. */
+  private jumpedAt = -Infinity;
+  /** Wall time of the last mouse wheel or click, which the detach window is measured from. */
   private scrolledAt = -Infinity;
   /** Wall time of the last WebKit gesture event, and the scale it carried; 0 between pinches. */
   private gestureAt = -Infinity;
@@ -411,6 +498,9 @@ export class Lane {
   private change: 'slide' | 'enter' | 'fade' = 'slide';
   private changeAt = -Infinity;
   private leaving: { chord: LaneChord; slot: number }[] = [];
+  /** Whether every tone of the chord in force is held, and when that last turned over. */
+  private lifted = false;
+  private liftAt = -Infinity;
   /** When the walk last changed, which is what tells a Loop toggle from a seek. */
   private walkAt = -Infinity;
   /**
@@ -441,7 +531,8 @@ export class Lane {
     this.shownLayout = this.layout;
     this.resize = new ResizeObserver(() => this.measure());
     this.resize.observe(canvas);
-    // The canvas never scrolls itself, so the wheel is the lane's own: it moves the view in ticks.
+    // The canvas never scrolls itself, so the mouse wheel is the lane's own: it moves the view in
+    // ticks.
     canvas.addEventListener(
       'wheel',
       (event) => {
@@ -453,7 +544,7 @@ export class Lane {
           if (since >= GESTURE_MS) this.zoom(event.deltaY);
           return;
         }
-        // Wheel up looks ahead: the view goes later in the play, so the blocks travel down the lane.
+        // Up looks ahead: the view goes later in the play, so the blocks travel down the lane.
         if (this.pxPerTick > 0) this.moveView(-event.deltaY / this.pxPerTick);
       },
       { passive: false, signal: this.listeners.signal },
@@ -476,8 +567,8 @@ export class Lane {
         { passive: false, signal: this.listeners.signal },
       );
     }
-    // A click seeks to the step nearest where it landed and leaves the view standing, as a wheel
-    // does. The keyboard under the lane is not time, so a click on it asks for nothing.
+    // A click seeks to the step nearest where it landed and leaves the view standing, as a mouse
+    // wheel does. The keyboard under the lane is not time, so a click on it asks for nothing.
     canvas.addEventListener(
       'click',
       (event) => {
@@ -658,7 +749,9 @@ export class Lane {
     ctx.beginPath();
     ctx.rect(0, 0, width, laneH);
     ctx.clip();
+    this.advanceRows(loop);
     this.drawHarmony(width, loop);
+    this.drawWheel(width);
     ctx.restore();
     this.drawSplashes(laneH);
     this.drawRings(laneH, pxPerTick);
@@ -692,6 +785,7 @@ export class Lane {
     this.lastResets = engine.resets;
     this.lastWraps = engine.wraps;
     const jump = jumpOf(sinceTick, snap.playedTick, reach, reset, wrapped);
+    if (jump !== 0) this.jumpedAt = this.now;
     this.offset += jump;
 
     const running = snap.state === 'running' || snap.state === 'counting-in';
@@ -700,7 +794,7 @@ export class Lane {
     const settled = this.glideAt === -Infinity;
     const detached = settled && running && this.now - this.scrolledAt >= DETACH_MS;
     if (reset && this.holdView) {
-      // A click seek wants the notes left where they are, so the view detaches as a wheel
+      // A click seek wants the notes left where they are, so the view detaches as a mouse wheel
       // leaves it and rides the clock again only after the detach window. The now-line marks the
       // clock, so it holds where it stood and travels to the tick that was clicked instead.
       this.holdView = false;
@@ -727,7 +821,7 @@ export class Lane {
 
   /**
    * Moves the view by ticks and holds it there, which cancels the glide. It stops a bar under the
-   * first bar line of the play and at the last one, so the wheel never scrolls into nothing.
+   * first bar line of the play and at the last one, so the mouse wheel never scrolls into nothing.
    */
   private moveView(by: number): void {
     const first = this.bars[0];
@@ -1323,26 +1417,16 @@ export class Lane {
   };
 
   /**
-   * The chord sounding now and the two after it, each on its own panel at the top right. A panel
-   * counts the beats before its chord left of it: one glyph per beat, a capsule where a bar opens
-   * and a dot inside it, the leftmost the beat that ends first. Only the next chord counts from the
-   * clock; the one after it counts from the next chord, so that row stands still until the harmony
-   * advances, when every panel slides up one slot and the one on top leaves.
+   * The chord sounding now and the two after it, and how the row came by them: a chord taking over
+   * from the one that stood next slides, a first chord enters, any other lands in a cross-fade and
+   * a seek snaps. The panels and the wheel both draw from the row, so it is kept every frame.
    */
-  private drawHarmony(width: number, loop: LoopSpan | null): void {
-    if (this.chords.length === 0 || !this.look.harmony) return;
-    // Past the wrap the panel reads the lap again, as the lane draws it again.
+  private advanceRows(loop: LoopSpan | null): void {
+    if (this.chords.length === 0) return;
+    // Past the wrap the row reads the lap again, as the lane draws it again.
     const chords = loop
       ? throughWrap(this.chords, loop, (chord, by) => ({ ...chord, tick: chord.tick + by }))
       : this.chords;
-    const bars = loop
-      ? throughWrap(this.bars, loop, (bar, by) => ({
-          ...bar,
-          tick: bar.tick + by,
-          endTick: bar.endTick + by,
-        }))
-      : this.bars;
-
     const [current, ...ahead] = chordsAt(chords, this.playedTick);
     // How the row takes a new chord in force: the chord that stood next slides every panel up a
     // slot, the first panels of all rise into their slots fading in, a Loop toggle onto any other
@@ -1362,8 +1446,26 @@ export class Lane {
       }
     }
     this.shownRows = [current, ...ahead];
+  }
 
-    const [next, after] = ahead;
+  /**
+   * The chord sounding now and the two after it, each on its own panel at the top right. A panel
+   * counts the beats before its chord left of it: one glyph per beat, a capsule where a bar opens
+   * and a dot inside it, the leftmost the beat that ends first. Only the next chord counts from the
+   * clock; the one after it counts from the next chord, so that row stands still until the harmony
+   * advances, when every panel slides up one slot and the one on top leaves.
+   */
+  private drawHarmony(width: number, loop: LoopSpan | null): void {
+    if (this.look.harmony !== 'panels') return;
+    const bars = loop
+      ? throughWrap(this.bars, loop, (bar, by) => ({
+          ...bar,
+          tick: bar.tick + by,
+          endTick: bar.endTick + by,
+        }))
+      : this.bars;
+
+    const [current, next, after] = this.shownRows;
     const rows: { chord: LaneChord; slot: number; glyphs: BeatGlyph[] }[] = [];
     if (current) rows.push({ chord: current, slot: 0, glyphs: [] });
     if (next) {
@@ -1459,19 +1561,341 @@ export class Lane {
   }
 
   /**
-   * The key in force at the clock and its pitch classes, for the readout and the key faces. The
-   * entries of `laneKeys` outlive a frame, so the same one found again is the same key.
+   * The wheel: the twelve pitch classes a fifth apart with C at the top, the seven of the key in
+   * force faced in their own colours and the other five hollow, the tonic in a badge, and the root
+   * of the chord sounding now on a segment that stands off the band. A chord tone from outside the
+   * key stays hollow and takes its own colour as a dashed outline.
+   */
+  private drawWheel(width: number): void {
+    if (this.look.harmony !== 'wheel') return;
+    const ctx = this.ctx;
+    const left = width - PANEL_INSET - WHEEL_SIZE;
+    const top = PANEL_INSET;
+    ctx.save();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = tone(PANEL_FILL, this.dark);
+    ctx.beginPath();
+    ctx.roundRect(left, top, WHEEL_SIZE, WHEEL_SIZE, WHEEL_ROUND);
+    ctx.fill();
+    ctx.translate(left + WHEEL_SIZE / 2, top + WHEEL_SIZE / 2);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    const t = clamp((this.now - this.keyAt) / PANEL_SLIDE_MS, 0, 1);
+    const lit = (of: LaneScale | null, pc: number) => (of?.pcs.includes(pc) ? 1 : 0);
+    // Only a chord taking over from another moves the wheel; a cross-fade, a first chord and a
+    // seek lay it out where it belongs.
+    const since = this.change === 'slide' ? this.now - this.changeAt : Infinity;
+    const arrive = clamp(since / PANEL_SLIDE_MS, 0, 1);
+    const swell = RAISE_SWELL * breathAt(since / PANEL_SLIDE_MS);
+    const current = this.shownRows[0]?.event;
+    const root = current?.root;
+    const gone = arrive < 1 ? this.leaving[0]?.chord.event.root : undefined;
+    // The chord the wheel leaves behind fades out where it stands as the one in force fades in.
+    const swap = this.reduced ? 1 : clamp((this.now - this.changeAt) / FIGURE_FADE_MS, 0, 1);
+    const leaving = swap < 1 ? this.leaving[0]?.chord.event : undefined;
+    // A chord tone the key does not hold reaches outside the scale: it takes no face, and its
+    // segment is outlined in its own colour instead, dashed, on the fade the figure keeps.
+    const outside = (pc: number) => this.scale !== null && !this.scale.pcs.includes(pc);
+    const borrowed = (pc: number) =>
+      outside(pc)
+        ? (current?.tones.includes(pc) ? swap : 0) + (leaving?.tones.includes(pc) ? 1 - swap : 0)
+        : 0;
+    const dashed = (pc: number, alpha: number) => {
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = colorOf(pc, 'full', this.dark);
+      ctx.lineWidth = OUTSIDE_W;
+      ctx.setLineDash(OUTSIDE_DASH);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    };
+    for (const pc of FIFTHS) {
+      segmentPath(ctx, wheelAngle(pc), BAND_IN, BAND_OUT);
+      // A borrowed tone takes the hairline away; a raised root carries its dash at its own size
+      // below, so here only the hairline goes and the segment stands with one outline.
+      const mark = borrowed(pc);
+      ctx.globalAlpha = 0.5 * (1 - mark);
+      ctx.strokeStyle = tone(LANE_BAR, this.dark);
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      if (mark > 0 && pc !== root && pc !== gone) dashed(pc, mark);
+      ctx.globalAlpha = ramp([lit(this.wasScale, pc), lit(this.scale, pc)], t);
+      ctx.fillStyle = colorOf(pc, 'muted', this.dark);
+      ctx.fill();
+    }
+    // Size means "now": the root of the chord in force covers its segment with a bigger one, which
+    // grows in place past its mark while the root it takes over from eases back.
+    const grown = (pc: number, out: number, alpha: number, swell = 0) => {
+      const outer = ramp([BAND_OUT, BAND_OUT + RAISE_OUT + swell], out);
+      segmentPath(ctx, wheelAngle(pc), ramp([BAND_IN, BAND_IN - RAISE_IN], out), outer);
+      if (outside(pc)) {
+        dashed(pc, alpha);
+        return;
+      }
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = colorOf(pc, 'full', this.dark);
+      ctx.fill();
+    };
+    if (gone !== undefined) grown(gone, 1 - easeInOut(arrive), 1 - swap);
+    if (root !== undefined) grown(root, easeOutBack(arrive), swap, swell);
+    for (const pc of FIFTHS) {
+      const faced = (pc === root || pc === gone) && !outside(pc);
+      this.wheelLabel(pc, this.wasScale, 1 - t, faced);
+      this.wheelLabel(pc, this.scale, t, faced);
+    }
+    this.wheelBadge(this.wasScale, 1 - t);
+    this.wheelBadge(this.scale, t);
+    this.wheelRunner(arrive, since, gone);
+
+    const held = new Set<number>();
+    for (const [midi, press] of this.presses) if (press.down) held.add(pitchClass(midi));
+    // A chord whole under the hands firms its edges up, and loses them again as a finger leaves.
+    const whole = (current?.tones.length ?? 0) > 0 && current!.tones.every((pc) => held.has(pc));
+    if (whole !== this.lifted) {
+      this.lifted = whole;
+      this.liftAt = this.reduced ? -Infinity : this.now;
+    }
+    const eased = easeInOut(clamp((this.now - this.liftAt) / LIFT_MS, 0, 1));
+    const lift = whole ? eased : 1 - eased;
+    if (leaving) this.wheelFigure(leaving, held, lift, 1 - swap);
+    this.wheelFigure(current, held, lift, swap);
+
+    // A held note the chord does not name sits off the figure, on a hollow segment when it is out
+    // of the key as well.
+    ctx.globalAlpha = 1;
+    for (const pc of held) {
+      if (current?.tones.includes(pc)) continue;
+      ctx.fillStyle = colorOf(pc, 'full', this.dark);
+      ctx.beginPath();
+      ctx.arc(...spoke(wheelAngle(pc), CORNER_R), OFF_DOT, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (current) this.wheelHub(current, 1 + HUB_POP * breathAt(since / PANEL_SLIDE_MS));
+    ctx.restore();
+  }
+
+  /**
+   * The two tracks outside the band and the runner on the first of them, at the share of the chord
+   * in force the clock has spent, so it meets the destination dot as the harmony advances. An
+   * arrival steps the tracks inward one place and slides a new second in from further out.
+   */
+  private wheelRunner(arrive: number, since: number, gone: number | undefined): void {
+    const [now, next, after] = this.shownRows;
+    if (!now) return;
+    const ctx = this.ctx;
+    const [spent, r1, r2] = trackRadii(arrive);
+    const slide = easeInOut(arrive);
+    const a = wheelAngle(now.event.root);
+    const back = 0.5 * (1 - arrive);
+    if (gone !== undefined) this.wheelTrack(wheelAngle(gone), a, spent, back, TRACK_W[1]);
+    const b = next && wheelAngle(next.event.root);
+    if (b !== undefined) {
+      this.wheelTrack(a, b, r1, ramp(TRACK_ALPHA, slide), ramp(TRACK_W, slide));
+      if (after) {
+        const c = wheelAngle(after.event.root);
+        this.wheelTrack(b, c, r2, ramp([0, TRACK_ALPHA[0]], slide), TRACK_W[0]);
+      }
+      // Where the runner is going, which the runner covers as it lands.
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = tone(INK.scaffolding, this.dark);
+      ctx.beginPath();
+      ctx.arc(...spoke(b, r1), DEST_R, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // The runner holds track 1's settled radius, so the sliding tracks pass under it and never
+    // carry it, and its swell is a change of radius about the spot it already stands on.
+    const popping = since < RUN_POP_MS;
+    const share = popping || !next ? 0 : runShare(this.playedTick, now.tick, next.tick);
+    const spot = b === undefined ? spoke(a, TRACK_1) : alongTrack(a, b, TRACK_1, share);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = tone(NOW_LINE, this.dark);
+    ctx.beginPath();
+    ctx.arc(...spot, ramp([RUN_R, RUN_POP], breathAt(since / RUN_POP_MS)), 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  /** One track: an arc the short way round outside the band, or a loop where the roots are one. */
+  private wheelTrack(from: number, to: number, r: number, alpha: number, width: number): void {
+    if (alpha <= 0.01) return;
+    const ctx = this.ctx;
+    const step = shortWay(from, to);
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = tone(NOW_LINE, this.dark);
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    if (Math.abs(step) < 0.01) ctx.arc(...spoke(from, r + TRACK_LOOP), TRACK_LOOP, 0, Math.PI * 2);
+    else ctx.arc(0, 0, r, from, to, step < 0);
+    ctx.stroke();
+  }
+
+  /**
+   * The chord as one figure inside the band, painted in the root's colour alone: a floor of fill
+   * over the whole shape with a pool of opacity at every corner, so the root's end reads solid and
+   * the fifth's end light. A corner is a dot while its tone is held and a ring while it is not.
+   */
+  private wheelFigure(
+    of: ChordEvent | undefined,
+    held: Set<number>,
+    lift: number,
+    alpha: number,
+  ): void {
+    if (!of || of.tones.length === 0 || alpha <= 0.01) return;
+    const ctx = this.ctx;
+    const face = colorOf(of.root, 'full', this.dark);
+    const corners = of.tones
+      .map((pc) => ({
+        pc,
+        weight: toneWeight(pc - of.root),
+        point: spoke(wheelAngle(pc), CORNER_R),
+      }))
+      .sort((x, y) => FIFTHS.indexOf(pitchClass(x.pc)) - FIFTHS.indexOf(pitchClass(y.pc)));
+    const outline = () => {
+      ctx.beginPath();
+      corners.forEach(({ point }, i) => (i === 0 ? ctx.moveTo(...point) : ctx.lineTo(...point)));
+      ctx.closePath();
+    };
+    const reach =
+      FILL_REACH *
+      Math.max(
+        ...corners.map((one, i) => {
+          const next = corners[(i + 1) % corners.length]!;
+          return Math.hypot(next.point[0] - one.point[0], next.point[1] - one.point[1]);
+        }),
+      );
+
+    ctx.save();
+    outline();
+    ctx.clip();
+    ctx.globalAlpha = alpha;
+    const whole = [-WHEEL_SIZE / 2, -WHEEL_SIZE / 2, WHEEL_SIZE, WHEEL_SIZE] as const;
+    ctx.fillStyle = withAlpha(face, tone(FILL_FLOOR, this.dark));
+    ctx.fillRect(...whole);
+    const peak = wheelFillAlpha(of.root, this.dark);
+    for (const corner of corners) {
+      const pool = ctx.createRadialGradient(...corner.point, 0, ...corner.point, reach);
+      pool.addColorStop(0, withAlpha(face, peak * corner.weight));
+      pool.addColorStop(1, withAlpha(face, 0));
+      ctx.fillStyle = pool;
+      ctx.fillRect(...whole);
+    }
+    ctx.restore();
+
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = face;
+    ctx.lineWidth = ramp(EDGE_W, lift);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    outline();
+    ctx.stroke();
+
+    for (const corner of corners) {
+      ctx.beginPath();
+      ctx.arc(...corner.point, wheelCornerR(corner.weight), 0, Math.PI * 2);
+      if (held.has(corner.pc)) {
+        ctx.fillStyle = colorOf(corner.pc, 'full', this.dark);
+        ctx.fill();
+      } else {
+        ctx.strokeStyle = colorOf(corner.pc, 'full', this.dark);
+        ctx.lineWidth = CORNER_RING;
+        ctx.stroke();
+      }
+    }
+  }
+
+  /**
+   * The chord's two names at the centre, the absolute one haloed so the edges break around it. The
+   * name alone takes `pop`, about its own centre, so the degree line under it stands still.
+   */
+  private wheelHub(of: ChordEvent, pop: number): void {
+    const ctx = this.ctx;
+    ctx.globalAlpha = 1;
+    ctx.save();
+    ctx.translate(0, HUB_NAME.dy);
+    ctx.scale(pop, pop);
+    ctx.font = `${CHORD_PANEL.weight} ${HUB_NAME.size}px system-ui, sans-serif`;
+    ctx.strokeStyle = tone(HUB_HALO, this.dark);
+    ctx.lineWidth = HUB_HALO_W;
+    ctx.lineJoin = 'round';
+    ctx.strokeText(of.absolute, 0, 0);
+    ctx.fillStyle = tone(NOW_LINE, this.dark);
+    ctx.fillText(of.absolute, 0, 0);
+    ctx.restore();
+    ctx.font = `${NEXT_PANEL.weight} ${HUB_DEGREE.size}px system-ui, sans-serif`;
+    ctx.fillStyle = tone(INK.duration, this.dark);
+    ctx.fillText(of.degree, 0, HUB_DEGREE.dy);
+  }
+
+  /**
+   * One segment's letter, with its degree under it where the key holds the pitch class. A `faced`
+   * segment wears the face of the chord in force, so its letter is read against that face and not
+   * against the chrome a hollow segment leaves bare.
+   */
+  private wheelLabel(pc: number, of: LaneScale | null, alpha: number, faced: boolean): void {
+    if (alpha <= 0.01) return;
+    const ctx = this.ctx;
+    const [x, y] = spoke(wheelAngle(pc), BAND_MID);
+    const degree = of ? of.pcs.indexOf(pc) : -1;
+    const ink = labelInk(colorOf(pc, faced ? 'full' : 'muted', this.dark));
+    ctx.globalAlpha = alpha;
+    ctx.font = LETTER_FONT;
+    if (degree < 0) {
+      ctx.fillStyle = faced ? ink : tone(INK.scaffolding, this.dark);
+      ctx.fillText(fifthName(pc, of?.key.sharps ?? 0), x, y);
+      return;
+    }
+    ctx.fillStyle = ink;
+    ctx.fillText(of!.names[degree]!, x, y + LETTER_DY);
+    ctx.font = DEGREE_FONT;
+    ctx.fillText(degreeOf(pc, of!.key, 0), x, y + DEGREE_DY);
+  }
+
+  /** The key's tonic, marked by a box round its label in a light tint of its own hue. */
+  private wheelBadge(of: LaneScale | null, alpha: number): void {
+    if (!of || alpha <= 0.01) return;
+    const ctx = this.ctx;
+    const pc = of.pcs[0]!;
+    const [x, y] = spoke(wheelAngle(pc), BAND_MID);
+    ctx.font = LETTER_FONT;
+    const letter = ctx.measureText(of.names[0]!);
+    ctx.font = DEGREE_FONT;
+    const degree = ctx.measureText(degreeOf(pc, of.key, 0));
+    const half = Math.max(letter.width, degree.width) / 2 + BADGE_PAD;
+    const top = y + LETTER_DY - letter.actualBoundingBoxAscent - BADGE_PAD;
+    const bottom = y + DEGREE_DY + degree.actualBoundingBoxDescent + BADGE_PAD;
+    // The band holds the badge, however tall the two lines of type under it stand.
+    const tall = Math.min((bottom - top) / 2, (BAND_OUT - BAND_IN) / 2 - 2);
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = mix(colorOf(pc, 'full', this.dark), '#ffffff', tone(BADGE_TINT, this.dark));
+    ctx.lineWidth = BADGE_WIDTH;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.roundRect(x - half, (top + bottom) / 2 - tall, half * 2, tall * 2, BADGE_ROUND);
+    ctx.stroke();
+  }
+
+  /**
+   * The key in force at the clock, its pitch classes and the letter it spells each of them with,
+   * for the readout, the key faces and the wheel. The entries of `laneKeys` outlive a frame, so the
+   * same one found again is the same key.
    */
   private readScale(): void {
     const key = this.laneKeys.findLast((k) => k.tick <= this.playedTick);
     if (key === this.scale?.key) return;
+    // A key the play ran into cross-fades on the wheel; a seek may land anywhere, so the key it
+    // lands in stands at once.
+    this.wasScale = this.scale;
+    this.keyAt = this.jumpedAt === this.now || this.reduced ? -Infinity : this.now;
     if (!key) {
       this.scale = null;
       this.onKey?.(null);
       return;
     }
     const tonic = tonicOf(key);
-    this.scale = { key, pcs: scaleOf(key).map((step) => pitchClass(tonic + step)) };
+    this.scale = {
+      key,
+      pcs: scaleOf(key).map((step) => pitchClass(tonic + step)),
+      names: keyTable(key).map((degree) => degree.note),
+    };
     this.onKey?.(key);
   }
 
@@ -1518,6 +1942,117 @@ function blendLayout(from: KeyLayout, to: KeyLayout, t: number): KeyLayout {
   });
   return { keys, byMidi: new Map(keys.map((key) => [key.midi, key])), width: to.width };
 }
+
+/** The twelve pitch classes a fifth apart, which is the order the wheel's segments run in. */
+const FIFTHS = [0, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10, 5];
+/**
+ * The letter a segment wears where the key in force spells no name for it: a black key follows the
+ * key's own signature, and a key with no signature takes F♯ on the sharp side and flats past it.
+ */
+export function fifthName(pc: number, sharps: number): string {
+  const name = NOTE_NAMES[pitchClass(pc)]!;
+  if (name.length === 1) return name;
+  const sharp = sharps > 0 || (sharps === 0 && pitchClass(pc) === 6);
+  return sharp ? `${name[0]}♯` : `${NOTE_NAMES[pitchClass(pc + 1)]}♭`;
+}
+
+/** Where a pitch class stands on the wheel: C at twelve o'clock, a fifth every 30 degrees. */
+export function wheelAngle(pc: number): number {
+  return -Math.PI / 2 + FIFTHS.indexOf(pitchClass(pc)) * (Math.PI / 6);
+}
+
+/** A point of the wheel, from its centre. */
+const spoke = (angle: number, r: number) => [Math.cos(angle) * r, Math.sin(angle) * r] as const;
+
+/** The short way round from one angle to another, signed. */
+const shortWay = (from: number, to: number) => ((to - from + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+
+/** How far through the chord in force the clock stands, which is where its runner stands too. */
+export const runShare = (at: number, from: number, to: number) =>
+  to > from ? clamp((at - from) / (to - from), 0, 1) : 0;
+
+/** The spent track, track 1 and track 2, `t` through an arrival that steps them all inward. */
+export function trackRadii(t: number): [number, number, number] {
+  const slide = easeInOut(t);
+  return [
+    ramp([TRACK_1, TRACK_1 - TRACK_BACK], slide),
+    ramp([TRACK_1 + TRACK_STEP, TRACK_1], slide),
+    ramp([TRACK_1 + TRACK_STEP * 2, TRACK_1 + TRACK_STEP], slide),
+  ];
+}
+
+/** Where a share of the way along a track stands, the loop of a same-root move included. */
+export function alongTrack(
+  from: number,
+  to: number,
+  r: number,
+  share: number,
+): readonly [number, number] {
+  const step = shortWay(from, to);
+  if (Math.abs(step) >= 0.01) return spoke(from + step * share, r);
+  const [x, y] = spoke(from, r + TRACK_LOOP);
+  // The loop stands outside the root, so the track point under it is the share the runner opens
+  // and closes on: the near side of the loop, straight back toward the wheel's centre.
+  const round = from + Math.PI + share * Math.PI * 2;
+  return [x + Math.cos(round) * TRACK_LOOP, y + Math.sin(round) * TRACK_LOOP] as const;
+}
+
+/**
+ * One segment of the band about the wheel's centre, its four corners filleted, so it reads as a
+ * key of the scale and not as a slice of a pie.
+ */
+function segmentPath(
+  ctx: CanvasRenderingContext2D,
+  mid: number,
+  inner: number,
+  outer: number,
+): void {
+  const half = Math.PI / 12 - SEGMENT_GAP;
+  const [a0, a1] = [mid - half, mid + half];
+  const [dOut, dIn] = [SEGMENT_ROUND / outer, SEGMENT_ROUND / inner];
+  ctx.beginPath();
+  ctx.arc(0, 0, outer, a0 + dOut, a1 - dOut);
+  ctx.quadraticCurveTo(...spoke(a1, outer), ...spoke(a1, outer - SEGMENT_ROUND));
+  ctx.lineTo(...spoke(a1, inner + SEGMENT_ROUND));
+  ctx.quadraticCurveTo(...spoke(a1, inner), ...spoke(a1 - dIn, inner));
+  ctx.arc(0, 0, inner, a1 - dIn, a0 + dIn, true);
+  ctx.quadraticCurveTo(...spoke(a0, inner), ...spoke(a0, inner + SEGMENT_ROUND));
+  ctx.lineTo(...spoke(a0, outer - SEGMENT_ROUND));
+  ctx.quadraticCurveTo(...spoke(a0, outer), ...spoke(a0 + dOut, outer));
+  ctx.closePath();
+}
+
+/**
+ * How much of the root's colour the chord's fill takes at its densest corner: the least that still
+ * stands off the paper by `FILL_CONTRAST`, so a pale hue is laid on thicker than a dark one.
+ */
+export function wheelFillAlpha(root: number, dark: boolean): number {
+  const paper = luminance(tone(PAPER, dark));
+  const face = colorOf(root, 'full', dark);
+  const [floor, ceiling] = FILL_ALPHA;
+  for (let pct = Math.round(floor * 100); pct < ceiling * 100; pct++) {
+    const on = luminance(mix(tone(PAPER, dark), face, pct / 100));
+    if ((Math.max(paper, on) + 0.05) / (Math.min(paper, on) + 0.05) >= FILL_CONTRAST) {
+      return pct / 100;
+    }
+  }
+  return ceiling;
+}
+
+/**
+ * How much a chord tone counts in the figure, by its semitones above the root: the root carries the
+ * chord, the third gives its quality, the seventh its colour, and the fifth and anything else weigh
+ * the least.
+ */
+export function toneWeight(interval: number): number {
+  const step = pitchClass(interval);
+  if (step === 0) return 1;
+  if (step === 3 || step === 4) return 0.75;
+  return step >= 9 ? 0.65 : 0.5;
+}
+
+/** How big a corner of the figure stands: the more its tone carries, the wider the dot. */
+export const wheelCornerR = (weight: number) => 2.5 + 2.5 * weight;
 
 /** Where in a range a share of the way lands. */
 const ramp = (range: readonly [number, number], t: number) => range[0] + (range[1] - range[0]) * t;
@@ -1702,12 +2237,7 @@ export function bounceAt(t: number): number {
  * The breath a count-in number takes as its beat is struck: up quickly and back down slowly, and
  * its own size outside its time.
  */
-export function popAt(t: number): number {
-  if (!(t > 0 && t < 1)) return 1;
-  const rising = t < COUNT_POP_RISE;
-  const at = rising ? t / COUNT_POP_RISE : (t - COUNT_POP_RISE) / (1 - COUNT_POP_RISE);
-  return 1 + COUNT_POP * (rising ? 1 - (1 - at) ** 3 : 1 - easeInOut(at));
-}
+export const popAt = (t: number) => 1 + COUNT_POP * swellAt(t, (at) => 1 - (1 - at) ** 3);
 
 /**
  * A countdown glyph burning up on its beat, from `left`, the share of its burn still to come: it
@@ -1754,6 +2284,17 @@ export function glideLeft(t: number): number {
 /** Fast out with a small overshoot, so a key settles under a finger with a bounce. */
 function easeOutBack(t: number): number {
   return 1 + 2.70158 * (t - 1) ** 3 + 1.70158 * (t - 1) ** 2;
+}
+
+/** One swell and settle over a pop's time: out past the mark, then back to nothing. */
+export const breathAt = (t: number) => swellAt(t, easeOutBack);
+
+/** A swell out on `rise` and a settle back on the same slow curve, and nothing outside its time. */
+function swellAt(t: number, rise: (at: number) => number): number {
+  if (!(t > 0 && t < 1)) return 0;
+  return t < COUNT_POP_RISE
+    ? rise(t / COUNT_POP_RISE)
+    : 1 - easeInOut((t - COUNT_POP_RISE) / (1 - COUNT_POP_RISE));
 }
 
 /** The same slow ends, each carried a little past its mark, so the panels swing into their slots. */

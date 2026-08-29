@@ -498,11 +498,11 @@ export function PlayScreen({
   return (
     <TooltipProvider>
       <div className="bg-chrome fixed inset-0 flex flex-col">
-        <div className="border-edge-soft relative flex h-12 flex-none items-center gap-0.5 border-b px-2">
+        <div className="border-edge-soft relative flex h-12 flex-none items-center gap-0.5 border-b pr-2 pl-20" data-tauri-drag-region>
           <BarButton label="Back to library" onClick={onBack}>
             <ArrowLeft {...ICON} />
           </BarButton>
-          <b className="ml-1.5 mr-1 min-w-0 truncate text-[13px] font-medium">{title}</b>
+          <b className="pointer-events-none ml-1.5 mr-1 min-w-0 truncate text-[13px] font-medium">{title}</b>
           <KeyPopover at={key} />
           <MidiLight open={midiOpen} onOpenChange={setMidiOpen} />
           <Mixer

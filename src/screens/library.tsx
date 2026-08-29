@@ -200,8 +200,8 @@ export function Library({
     <div className="relative flex h-full">
       <div className="border-edge-soft flex w-[340px] flex-none flex-col border-r">
         <TooltipProvider>
-          <div className="flex items-center gap-2 px-4 pt-3.5 pb-2.5">
-            <h1 className="mr-auto text-[15px] font-semibold">Library</h1>
+          <div className="flex items-center gap-2 px-4 pt-10 pb-2.5" data-tauri-drag-region>
+            <h1 className="pointer-events-none mr-auto text-[15px] font-semibold">Library</h1>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="sm" className="text-muted-ink text-[12px]">

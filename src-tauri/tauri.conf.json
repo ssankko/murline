@@ -14,7 +14,10 @@
       {
         "title": "Piano",
         "width": 1400,
-        "height": 1000
+        "height": 1000,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": { "x": 12, "y": 26 }
       }
     ],
     "security": { "csp": null }

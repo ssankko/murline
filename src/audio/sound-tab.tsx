@@ -28,6 +28,9 @@ export interface AudioStatus {
   fallback: string;
   buffer_frames: number;
   sample_rate: number;
+  /** The buffer sizes the device playing takes, ascending; empty when there is no engine to ask. */
+  buffer_choices: number[];
+  /** The sample rates the device playing takes, ascending; empty when there is no engine to ask. */
   /** The rate the loaded instrument's samples were recorded at; 0 for a plugin or nothing. */
   instrument_rate: number;
   /** What the device reports the buffer costs, in milliseconds. */
@@ -46,6 +49,7 @@ export const NO_STATUS: AudioStatus = {
   fallback: "",
   buffer_frames: 0,
   sample_rate: 0,
+  buffer_choices: [],
   instrument_rate: 0,
   latency_ms: 0,
   roles: [],

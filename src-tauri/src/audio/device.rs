@@ -13,14 +13,17 @@ use objc2_core_audio::{
     AudioObjectID, AudioObjectPropertyAddress, AudioObjectPropertyScope,
     AudioObjectPropertySelector, AudioObjectSetPropertyData,
     kAudioAggregateDeviceIsPrivateKey, kAudioAggregateDevicePropertyComposition,
-    kAudioDevicePropertyBufferFrameSize, kAudioDevicePropertyDeviceUID,
+    kAudioDevicePropertyAvailableNominalSampleRates, kAudioDevicePropertyBufferFrameSize,
+    kAudioDevicePropertyBufferFrameSizeRange, kAudioDevicePropertyDeviceUID,
     kAudioDevicePropertyIsHidden, kAudioDevicePropertyLatency,
     kAudioDevicePropertyNominalSampleRate, kAudioDevicePropertySafetyOffset,
-    kAudioDevicePropertyStreams, kAudioHardwarePropertyDefaultOutputDevice,
-    kAudioHardwarePropertyDevices, kAudioObjectPropertyElementMain, kAudioObjectPropertyName,
-    kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyScopeOutput, kAudioObjectSystemObject,
-    kAudioStreamPropertyLatency,
+    kAudioDevicePropertyStreams, kAudioDevicePropertyTransportType,
+    kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE,
+    kAudioHardwarePropertyDefaultOutputDevice, kAudioHardwarePropertyDevices,
+    kAudioObjectPropertyElementMain, kAudioObjectPropertyName, kAudioObjectPropertyScopeGlobal,
+    kAudioObjectPropertyScopeOutput, kAudioObjectSystemObject, kAudioStreamPropertyLatency,
 };
+use objc2_core_audio_types::AudioValueRange;
 use objc2_foundation::{NSDictionary, NSNumber, NSString};
 use std::ffi::c_void;
 use std::mem::MaybeUninit;
@@ -184,13 +187,39 @@ pub fn resolve(chosen: Option<&str>) -> Result<(DeviceId, bool), String> {
     Ok((default_output()?, wanted.is_some()))
 }
 
-/// The rate the device is running at. The app reads it and never writes it.
+/// The rate the device is running at.
 pub fn sample_rate(device: DeviceId) -> f64 {
     read(device, kAudioDevicePropertyNominalSampleRate, WHOLE).unwrap_or(0.0)
 }
 
 pub fn buffer_frames(device: DeviceId) -> u32 {
     read(device, kAudioDevicePropertyBufferFrameSize, WHOLE).unwrap_or(0)
+}
+
+/// The smallest and the largest IO cycle the device takes, in frames. A device that answers
+/// nothing takes no size at all, which is what an id that no longer names a device does.
+pub fn buffer_range(device: DeviceId) -> (u32, u32) {
+    read::<AudioValueRange>(device, kAudioDevicePropertyBufferFrameSizeRange, WHOLE)
+        .map_or((0, 0), |range| (range.mMinimum as u32, range.mMaximum as u32))
+}
+
+/// The rates the device can be set to, as the spans it reports. A device with a fixed set of rates
+/// reports each of them as a span whose ends are the same; one with its own clock reports a span
+/// it can run anywhere inside.
+pub fn sample_rate_ranges(device: DeviceId) -> Vec<(f64, f64)> {
+    read_all::<AudioValueRange>(device, kAudioDevicePropertyAvailableNominalSampleRates, WHOLE)
+        .into_iter()
+        .map(|range| (range.mMinimum, range.mMaximum))
+        .collect()
+}
+
+/// Whether the device plays over Bluetooth, which is what makes a small IO cycle unworkable: the
+/// radio ships audio in packets of about 20 ms whatever the buffer says.
+pub fn is_bluetooth(device: DeviceId) -> bool {
+    read::<u32>(device, kAudioDevicePropertyTransportType, WHOLE).is_some_and(|transport| {
+        transport == kAudioDeviceTransportTypeBluetooth
+            || transport == kAudioDeviceTransportTypeBluetoothLE
+    })
 }
 
 pub fn set_buffer_frames(device: DeviceId, frames: u32) -> Result<(), String> {

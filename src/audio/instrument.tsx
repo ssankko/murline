@@ -1,8 +1,11 @@
 // The Sound tab's Instrument section: the instrument the keyboard and the Preview play. The
 // engine finds them, this picks one, and every control writes its setting on change.
 
-import { restoreEnvelope } from '@/audio/envelope';
-import { Button } from '@/components/ui/button';
+import { restoreEnvelope } from "@/audio/envelope";
+import { Row, Segmented } from "@/audio/output";
+import { restoreRoles } from "@/audio/roles";
+import type { AudioStatus } from "@/audio/sound-tab";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,15 +13,15 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { readSettings, setSetting, type Settings } from '@/db/db';
-import { reasonOf } from '@/library/notice';
-import { rowId } from '@/lib/utils';
-import { Loading } from '@/look/loading';
-import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
-import { ChevronDown } from 'lucide-react';
-import { Fragment, useEffect, useState } from 'react';
+} from "@/components/ui/dropdown-menu";
+import { getSettingOr, readSettings, setSetting, type Settings } from "@/db/db";
+import { reasonOf } from "@/library/notice";
+import { rowId } from "@/lib/utils";
+import { Loading } from "@/look/loading";
+import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
+import { ChevronDown } from "lucide-react";
+import { Fragment, useEffect, useState } from "react";
 
 /** One line of the picker. The id is opaque; only the engine knows what it names. */
 export interface Instrument {
@@ -31,11 +34,26 @@ export interface Instrument {
   reason: string;
 }
 
+/** The sample rates the engine renders at, in Hz. Each voice costs in proportion. */
+const RATE_CHOICES = [44100, 48000, 88200, 96000];
+
+/**
+ * The rates that can be picked now: never above the rate the loaded file was recorded at, because
+ * rendering a sampled instrument over its own rate buys nothing but load. A plugin, which has no
+ * recorded rate, takes any.
+ */
+export function allowedRates(status: AudioStatus | null): number[] {
+  const ceiling = status?.instrument_rate ?? 0;
+  return ceiling > 0
+    ? RATE_CHOICES.filter((rate) => rate <= ceiling)
+    : RATE_CHOICES;
+}
+
 /** Logic's piano, which the app plays until the user picks something else. */
-const DEFAULT_NAME = 'Concert Grand Piano';
+const DEFAULT_NAME = "Concert Grand Piano";
 
 function listInstruments(folder: string): Promise<Instrument[]> {
-  return invoke<Instrument[]>('audio_instruments', { folder });
+  return invoke<Instrument[]>("audio_instruments", { folder });
 }
 
 /**
@@ -44,15 +62,21 @@ function listInstruments(folder: string): Promise<Instrument[]> {
  * engine can no longer find still goes in, so its reason reaches the status line instead of
  * silence with no explanation.
  */
-export async function restoreInstrument(settings: Settings): Promise<string | null> {
+export async function restoreInstrument(
+  settings: Settings,
+): Promise<string | null> {
   const all = await listInstruments(settings.instruments_folder);
   const chosen =
-    settings.instrument_id ?? all.find((one) => one.name === DEFAULT_NAME)?.id ?? null;
+    settings.instrument_id ??
+    all.find((one) => one.name === DEFAULT_NAME)?.id ??
+    null;
   if (!chosen) return null;
-  if (chosen !== settings.instrument_id) await setSetting('instrument_id', chosen);
+  if (chosen !== settings.instrument_id)
+    await setSetting("instrument_id", chosen);
   // The stored state belongs to the stored instrument, so a fresh default starts at its own.
-  const state = chosen === settings.instrument_id ? settings.instrument_state : null;
-  await invoke('audio_load_instrument', { id: chosen, state });
+  const state =
+    chosen === settings.instrument_id ? settings.instrument_state : null;
+  await invoke("audio_load_instrument", { id: chosen, state });
   await restoreEnvelope(chosen);
   return all.find((one) => one.id === chosen)?.name ?? null;
 }
@@ -68,10 +92,21 @@ export function InstrumentSection({
   onChanged?: () => void;
 }) {
   const [all, setAll] = useState<Instrument[]>([]);
-  const [chosen, setChosen] = useState<string>('');
-  const [folder, setFolder] = useState('');
-  const [failure, setFailure] = useState('');
+  const [chosen, setChosen] = useState<string>("");
+  const [folder, setFolder] = useState("");
+  const [failure, setFailure] = useState("");
   const [loading, setLoading] = useState(false);
+  const [rate, setRate] = useState(44100);
+  /** The engine's answer after the last load, for the rate the instrument was recorded at. */
+  const [status, setStatus] = useState<AudioStatus | null>(null);
+
+  const readEngine = () =>
+    invoke<AudioStatus>("audio_status").then(setStatus, console.error);
+
+  useEffect(() => {
+    void getSettingOr("audio_sample_rate").then(setRate);
+    void readEngine();
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -80,9 +115,11 @@ export function InstrumentSection({
         const found = await listInstruments(settings.instruments_folder);
         if (!live) return;
         setFolder(settings.instruments_folder);
-        setChosen(settings.instrument_id ?? '');
+        setChosen(settings.instrument_id ?? "");
         setAll(found);
-        setFailure(found.find((one) => one.id === settings.instrument_id)?.reason ?? '');
+        setFailure(
+          found.find((one) => one.id === settings.instrument_id)?.reason ?? "",
+        );
       })
       .catch((error: unknown) => live && setFailure(reasonOf(error)));
     return () => {
@@ -90,43 +127,75 @@ export function InstrumentSection({
     };
   }, []);
 
+  // The rate must never sit above the instrument's own, so an instrument recorded lower than the
+  // rate in force drags it down to the highest rate it and the device both take.
+  useEffect(() => {
+    if (!status?.instrument_rate || rate <= status.instrument_rate) return;
+    const top = allowedRates(status).at(-1);
+    if (top && top !== rate) void chooseRate(top);
+  }, [status, rate]);
+
   /**
    * A new instrument: the setting first, then the load, whose reason is what the picker says. A
    * Logic piano takes seconds to load, so the picker beats until the engine answers.
    */
   async function choose(id: string): Promise<void> {
     setChosen(id);
-    setFailure('');
+    setFailure("");
     setLoading(true);
-    await setSetting('instrument_id', id);
-    await setSetting('instrument_state', null);
+    await setSetting("instrument_id", id);
+    await setSetting("instrument_state", null);
     try {
-      await invoke('audio_load_instrument', { id, state: null });
+      await invoke("audio_load_instrument", { id, state: null });
       await restoreEnvelope(id);
     } catch (error) {
       setFailure(reasonOf(error));
     } finally {
       setLoading(false);
     }
+    await readEngine();
+    onChanged?.();
+  }
+
+  /**
+   * A new rate: the voice engine is built anew at it, so the instrument goes in again, and the
+   * envelope and the levels ride back in on the restore.
+   */
+  async function chooseRate(choice: number): Promise<void> {
+    setRate(choice);
+    await setSetting("audio_sample_rate", choice);
+    try {
+      await invoke("audio_set_sample_rate", { rate: choice });
+      const settings = await readSettings();
+      await restoreInstrument(settings);
+      await restoreRoles(settings.instrument_id);
+      setFailure("");
+    } catch (error) {
+      setFailure(reasonOf(error));
+    }
+    await readEngine();
     onChanged?.();
   }
 
   async function chooseFolder(): Promise<void> {
-    const picked = await open({ directory: true, defaultPath: folder || undefined });
-    if (typeof picked !== 'string') return;
-    await setSetting('instruments_folder', picked);
+    const picked = await open({
+      directory: true,
+      defaultPath: folder || undefined,
+    });
+    if (typeof picked !== "string") return;
+    await setSetting("instruments_folder", picked);
     setFolder(picked);
     setAll(await listInstruments(picked));
   }
 
   /** The plugin's own window, which hands back the state it was left in when the user closes it. */
   async function show(): Promise<void> {
-    const state = await invoke<string | null>('audio_show_instrument');
-    await setSetting('instrument_state', state);
+    const state = await invoke<string | null>("audio_show_instrument");
+    await setSetting("instrument_state", state);
   }
 
   const shown = all.find((one) => one.id === chosen);
-  const plugin = shown?.kind === 'plugin';
+  const plugin = shown?.kind === "plugin";
 
   /** One heading and the instruments under it, left out while the engine found none of that kind. */
   const group = (heading: string, ones: Instrument[]) =>
@@ -136,7 +205,11 @@ export function InstrumentSection({
           {heading}
         </DropdownMenuLabel>
         {ones.map((one) => (
-          <DropdownMenuRadioItem key={one.id} value={one.id} className="text-[13px]">
+          <DropdownMenuRadioItem
+            key={one.id}
+            value={one.id}
+            className="text-[13px]"
+          >
             <span className="truncate">{one.name}</span>
           </DropdownMenuRadioItem>
         ))}
@@ -148,9 +221,9 @@ export function InstrumentSection({
       <h3 className="text-[13px] font-semibold">Instrument</h3>
 
       <div
-        id={rowId('instrument_id')}
-        data-marked={marked === 'instrument_id' || undefined}
-        className={`flex min-h-8 items-center justify-between gap-3 py-1 text-[12px] ${marked === 'instrument_id' ? 'bg-ink/8' : ''}`}
+        id={rowId("instrument_id")}
+        data-marked={marked === "instrument_id" || undefined}
+        className={`flex min-h-8 items-center justify-between gap-3 py-1 text-[12px] ${marked === "instrument_id" ? "bg-ink/8" : ""}`}
       >
         <span className="flex-none">Instrument</span>
         <div className="flex min-w-0 items-center gap-2">
@@ -163,7 +236,7 @@ export function InstrumentSection({
                 className="h-7 max-w-[190px] justify-between px-2 text-[12px] font-normal"
               >
                 <span className="flex min-w-0 items-center gap-1.5">
-                  <span className="truncate">{shown?.name ?? 'None'}</span>
+                  <span className="truncate">{shown?.name ?? "None"}</span>
                   <Loading on={loading} label="Loading the instrument" />
                 </span>
                 <ChevronDown className="size-3.5 opacity-60" />
@@ -175,14 +248,17 @@ export function InstrumentSection({
                   No instrument found
                 </DropdownMenuLabel>
               )}
-              <DropdownMenuRadioGroup value={chosen} onValueChange={(id) => void choose(id)}>
+              <DropdownMenuRadioGroup
+                value={chosen}
+                onValueChange={(id) => void choose(id)}
+              >
                 {group(
-                  'Audio Unit instruments',
-                  all.filter((one) => one.kind === 'plugin'),
+                  "Audio Unit instruments",
+                  all.filter((one) => one.kind === "plugin"),
                 )}
                 {group(
-                  'Files',
-                  all.filter((one) => one.kind !== 'plugin'),
+                  "Files",
+                  all.filter((one) => one.kind !== "plugin"),
                 )}
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
@@ -200,13 +276,32 @@ export function InstrumentSection({
         </div>
       </div>
 
+      <Row label="Recommended sample rate">
+        <span className="text-muted-ink text-[12px] tabular-nums">
+          {recordedLine(status)}
+        </span>
+      </Row>
+
+      <Row
+        id="audio_sample_rate"
+        marked={marked === "audio_sample_rate"}
+        label="Sample rate (Hz)"
+      >
+        <Segmented
+          choices={RATE_CHOICES}
+          chosen={rate}
+          allowed={allowedRates(status)}
+          onPick={(choice) => void chooseRate(choice)}
+        />
+      </Row>
+
       {failure && <p className="text-muted-ink text-[12px]">{failure}</p>}
 
       {showFolder && (
         <div
-          id={rowId('instruments_folder')}
-          data-marked={marked === 'instruments_folder' || undefined}
-          className={`flex min-h-8 items-center justify-between gap-3 py-1 text-[12px] ${marked === 'instruments_folder' ? 'bg-ink/8' : ''}`}
+          id={rowId("instruments_folder")}
+          data-marked={marked === "instruments_folder" || undefined}
+          className={`flex min-h-8 items-center justify-between gap-3 py-1 text-[12px] ${marked === "instruments_folder" ? "bg-ink/8" : ""}`}
         >
           <span className="flex flex-col gap-0.5">
             Instruments folder
@@ -216,7 +311,7 @@ export function InstrumentSection({
           </span>
           <div className="flex min-w-0 items-center gap-2">
             <code className="text-muted-ink truncate text-[11.5px] select-text">
-              {folder || 'not set'}
+              {folder || "not set"}
             </code>
             <Button
               variant="outline"
@@ -231,4 +326,13 @@ export function InstrumentSection({
       )}
     </section>
   );
+}
+
+/** The rate the loaded file was recorded at, which is the one that plays it without resampling;
+ * a plugin renders at whatever rate it is given. */
+export function recordedLine(status: AudioStatus | null): string {
+  if (!status?.instrument) return "—";
+  if (!status.instrument_rate)
+    return "any: a plugin renders at the rate it is given";
+  return `${(status.instrument_rate / 1000).toFixed(1)} kHz, the rate it was recorded at`;
 }

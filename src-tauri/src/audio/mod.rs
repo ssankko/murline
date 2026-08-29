@@ -92,6 +92,9 @@ pub struct Status {
     /// Why the device playing is not the one chosen; empty while the choice is honoured.
     pub fallback: String,
     pub buffer_frames: u32,
+    /// The buffer sizes the device playing takes, of the ones the dialog knows, ascending. Empty
+    /// where there is no engine and no device.
+    pub buffer_choices: Vec<u32>,
     pub sample_rate: f64,
     /// The rate the loaded instrument's samples were recorded at, which the engine plays them as
     /// they are at; 0 for a plugin, which renders at any rate, and while nothing is loaded.
@@ -256,15 +259,15 @@ pub fn audio_set_output_device(id: Option<String>) -> Result<(), String> {
     engine::set_output_device(id)
 }
 
-/// 32, 64, 128 or 256 frames.
+/// One of the buffer sizes the status lists as the device's, and refused otherwise.
 #[tauri::command]
 pub fn audio_set_buffer_frames(frames: u32) -> Result<(), String> {
     engine::set_buffer_frames(frames)
 }
 
-/// 44100, 48000, 88200 or 96000 Hz, for the voice engine and, where it agrees, the device.
-/// Everything sounding stops and the instrument goes with the old rate, so the webview loads it
-/// again.
+/// One of the rates the status lists as the device's, for the voice engine and the device both,
+/// and refused otherwise. Everything sounding stops and the instrument goes with the old rate, so
+/// the webview loads it again.
 #[tauri::command]
 pub fn audio_set_sample_rate(rate: u32) -> Result<(), String> {
     engine::set_sample_rate(rate)

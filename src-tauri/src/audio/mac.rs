@@ -82,9 +82,14 @@ const SUSTAIN: u8 = 64;
 const ALL_SOUND_OFF: u8 = 120;
 const ALL_NOTES_OFF: u8 = 123;
 
-/// The buffer sizes the dialog offers, and the one the app starts at.
-pub const FRAME_CHOICES: [u32; 4] = [32, 64, 128, 256];
+/// The buffer sizes the dialog offers, and the one the app starts at. The device decides which of
+/// them it takes; `Graph::buffer_choices` is the list the dialog ends up with.
+pub const FRAME_CHOICES: [u32; 5] = [32, 64, 128, 256, 512];
 pub const DEFAULT_FRAMES: u32 = 64;
+/// The smallest IO cycle a Bluetooth device is asked for. The radio ships audio in packets of
+/// about 20 ms, and a sub-millisecond cycle under that is what makes coreaudiod miss deadlines for
+/// every app playing through the device.
+const BLUETOOTH_FRAMES: u32 = 256;
 /// The velocity remap the engine starts with: the whole range in, the whole range out, straight.
 /// Out of the box the app hands back exactly what the keyboard sent.
 const DEFAULT_MIN: u8 = 1;
@@ -550,6 +555,11 @@ impl Graph {
     /// Moves the whole graph to `device`. Nothing is left sounding: the notes go first, and the
     /// engine has to stop before the output unit will take a different device.
     fn play_through(&mut self, device: DeviceId, fell_back: bool) -> Result<(), String> {
+        // Already playing through it: the move is only about which device, so nothing is torn down.
+        if device == self.device && self.running() {
+            self.fell_back = fell_back;
+            return Ok(());
+        }
         self.release_all();
         unsafe { self.engine.stop() };
         set_current_device(self.output_unit(), device)?;
@@ -584,11 +594,29 @@ impl Graph {
         self.play_through(device, fell_back)
     }
 
+    /// The buffer sizes this device takes, which is what the dialog offers.
+    fn buffer_choices(&self) -> Vec<u32> {
+        allowed_buffers(device::buffer_range(self.device), device::is_bluetooth(self.device))
+    }
+
+    /// Whether the device lists `rate` among the ones it runs at.
+    fn device_runs_at(&self, rate: f64) -> bool {
+        device::sample_rate_ranges(self.device)
+            .iter()
+            .any(|&(low, high)| (low..=high).contains(&rate))
+    }
+
+    /// Asks for `frames`, one of `FRAME_CHOICES`. A device that does not take the size gets the
+    /// nearest one it does, so a saved size from another device never breaks the one playing.
     pub fn set_buffer(&mut self, frames: u32) -> Result<(), String> {
         if !FRAME_CHOICES.contains(&frames) {
-            return Err(format!("{frames} frames is not one of 32, 64, 128 and 256"));
+            return Err(format!("{frames} frames is not one of 32, 64, 128, 256 and 512"));
         }
         self.wanted_frames = frames;
+        // The device is on that size already, so there is nothing to restart the IO for.
+        if self.nearest_buffer() == Some(device::buffer_frames(self.device)) {
+            return Ok(());
+        }
         self.release_all();
         // The device restarts its own IO around the change, so the graph stops first and what would
         // have been a half-rendered buffer is silence instead.
@@ -625,8 +653,15 @@ impl Graph {
         self.release_all();
         unsafe { self.engine.stop() };
         self.rewire_at(f64::from(rate))?;
-        let _ = device::set_sample_rate(self.device, f64::from(rate));
-        self.start()
+        // A device that lists the rate is moved to it, so nothing is resampled on the way out;
+        // one that does not keeps its own, and the mixer converts.
+        let asked = if self.device_runs_at(f64::from(rate)) {
+            device::set_sample_rate(self.device, f64::from(rate))
+        } else {
+            Ok(())
+        };
+        self.start()?;
+        asked
     }
 
     /// Builds the voice engine's node at `rate` in the old one's place, with the graph stopped,
@@ -659,8 +694,20 @@ impl Graph {
         Ok(())
     }
 
+    /// Writes the buffer the user picked, or the nearest size the device does take: the smallest
+    /// choice at or above it, and the largest choice when every one of them is smaller.
+    /// The size the device is asked for: the wanted one, else the smallest it takes above it,
+    /// else the largest it takes.
+    fn nearest_buffer(&self) -> Option<u32> {
+        let choices = self.buffer_choices();
+        choices.iter().find(|&&frames| frames >= self.wanted_frames).or(choices.last()).copied()
+    }
+
     fn apply_buffer(&self) -> Result<(), String> {
-        let asked = device::set_buffer_frames(self.device, self.wanted_frames);
+        let asked = match self.nearest_buffer() {
+            Some(frames) => device::set_buffer_frames(self.device, frames),
+            None => Err(format!("{} takes none of the buffer sizes", device::name(self.device))),
+        };
         let running = device::buffer_frames(self.device);
         for unit in [self.output_unit(), unsafe { self.limiter.audioUnit() }] {
             raise_max_frames(unit, running);
@@ -675,6 +722,7 @@ impl Graph {
         status.device_name = device::name(self.device);
         status.fallback = if self.fell_back { GONE.into() } else { String::new() };
         status.buffer_frames = frames;
+        status.buffer_choices = self.buffer_choices();
         status.sample_rate = device::sample_rate(self.device);
         status.latency_ms = device::latency_ms(self.device, frames);
     }
@@ -1046,6 +1094,13 @@ fn blip(
 /// An NSError as the plain-text line the boot screen and the Audio dialog print.
 pub(super) fn reason(error: Retained<NSError>) -> String {
     error.localizedDescription().to_string()
+}
+
+/// The buffer sizes a device takes: the ones inside the range it reports, and on Bluetooth
+/// nothing under `BLUETOOTH_FRAMES`. A device that reports no range takes none of them.
+fn allowed_buffers(range: (u32, u32), bluetooth: bool) -> Vec<u32> {
+    let least = if bluetooth { range.0.max(BLUETOOTH_FRAMES) } else { range.0 };
+    FRAME_CHOICES.into_iter().filter(|&frames| frames >= least && frames <= range.1).collect()
 }
 
 fn current_device(unit: AudioUnit) -> Option<DeviceId> {
@@ -2418,6 +2473,47 @@ mod rate {
         let (base, moved) = (crossings_per_second_at(RATE), crossings_per_second_at(96000.0));
         assert!(base > 100.0, "{base} crossings a second: the fixture sounds");
         assert!((moved - base).abs() <= base * 0.05, "{moved} against {base}");
+    }
+}
+
+/// What the engine offers for the device it plays through, and what it refuses.
+#[cfg(test)]
+mod output {
+    use super::*;
+
+    #[test]
+    fn a_bluetooth_device_is_offered_nothing_under_a_packet() {
+        // The range AirPods report: everything the dialog knows is inside it.
+        assert_eq!(allowed_buffers((14, 960), false), vec![32, 64, 128, 256, 512]);
+        assert_eq!(allowed_buffers((14, 960), true), vec![256, 512]);
+
+        // An interface's range still bounds the list, and a device that reports none takes none.
+        assert_eq!(allowed_buffers((64, 256), false), vec![64, 128, 256]);
+        assert!(allowed_buffers((0, 0), false).is_empty());
+    }
+
+    /// A graph that has not been put on a device answers for no device, which takes nothing: the
+    /// same refusal a device that does not list the size gives.
+    #[test]
+    fn a_buffer_the_device_does_not_list_is_refused() {
+        let mut graph = Graph::build().unwrap();
+        assert!(graph.buffer_choices().is_empty());
+        assert!(graph.set_buffer(DEFAULT_FRAMES).is_err());
+    }
+
+    /// The app asks for its buffer size at every boot, and the device is usually on it already.
+    #[test]
+    fn the_size_the_device_already_runs_costs_no_restart() {
+        let Ok(device) = device::default_output() else { return };
+        let mut graph = Graph::build().unwrap();
+        graph.device = device;
+        let running = device::buffer_frames(device);
+        if !graph.buffer_choices().contains(&running) {
+            return; // This Mac's output runs a size the dialog does not offer.
+        }
+        graph.start_offline(4096).unwrap();
+        graph.set_buffer(running).unwrap();
+        assert!(graph.running(), "the engine plays on rather than stopping and starting");
     }
 }
 

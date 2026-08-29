@@ -15,6 +15,7 @@ let status = {
   fallback: "",
   buffer_frames: 64,
   sample_rate: 48000,
+  buffer_choices: [32, 64, 128, 256, 512],
   instrument_rate: 44100,
   latency_ms: 1.9,
 };
@@ -111,9 +112,10 @@ function checkedRow(): string {
   return found?.textContent?.trim() ?? "";
 }
 
-function clickText(label: string): void {
+/** Clicks what reads `label`, inside `within` when two rows offer the same number. */
+function clickText(label: string, within: ParentNode = document): void {
   const found = [
-    ...document.querySelectorAll('button, [role="menuitemradio"]'),
+    ...within.querySelectorAll('button, [role="menuitemradio"]'),
   ].find((element) => element.textContent?.trim() === label);
   if (!found) throw new Error(`nothing to click reads "${label}"`);
   for (const kind of ["pointerdown", "pointerup", "click"]) {
@@ -166,7 +168,7 @@ test("choosing a buffer size writes the setting and applies it", async () => {
   const text = await open();
   await vi.waitFor(() => expect(text()).toContain("Scarlett 2i2"));
 
-  clickText("128");
+  clickText("128", document.querySelector("#setting-row-audio_buffer_frames")!);
 
   await vi.waitFor(() =>
     expect(sent).toContainEqual(["audio_set_buffer_frames", { frames: 128 }]),
@@ -184,7 +186,7 @@ test("choosing a voice limit writes the setting and loads the instrument again a
   const text = await open();
   await vi.waitFor(() => expect(text()).toContain("Scarlett 2i2"));
 
-  clickText("512");
+  clickText("512", document.querySelector("#setting-row-audio_voices")!);
 
   await vi.waitFor(() =>
     expect(sent).toContainEqual(["audio_set_voices", { count: 512 }]),
@@ -192,6 +194,30 @@ test("choosing a voice limit writes the setting and loads the instrument again a
   expect(written).toContainEqual(["audio_voices", 512]);
   // The streaming rings are allocated with the instrument, so it goes in again at the new count.
   expect(sent.map(([command]) => command)).toContain("audio_load_instrument");
+});
+
+test("a device that takes only the big buffers leaves the small ones dead", async () => {
+  status = { ...status, buffer_choices: [256, 512] };
+
+  const text = await open();
+  await vi.waitFor(() => expect(text()).toContain("Scarlett 2i2"));
+
+  const buttons = (): HTMLButtonElement[] => [
+    ...document.querySelectorAll<HTMLButtonElement>(
+      "#setting-row-audio_buffer_frames button",
+    ),
+  ];
+  await vi.waitFor(() =>
+    expect(
+      buttons().map((button) => [button.textContent, button.disabled]),
+    ).toEqual([
+      ["32", true],
+      ["64", true],
+      ["128", true],
+      ["256", false],
+      ["512", false],
+    ]),
+  );
 });
 
 test("a chosen device that is not connected reads as the system default until it is back", async () => {

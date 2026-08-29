@@ -26,6 +26,11 @@ const HOSTED = {
   reason: '',
 };
 
+/** What the engine answers about itself, of which this section reads the rates. */
+let status: Record<string, unknown> = { instrument: '', instrument_rate: 0 };
+/** The rate setting in force, which an instrument recorded lower than it drags down. */
+let rateSetting = 44100;
+
 let listed = [HOSTED, CONCERT, BROKEN];
 let refusal: string | null = null;
 let loads: unknown[] = [];
@@ -44,6 +49,8 @@ function hold(): { promise: Promise<void>; release: () => void } {
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: async (command: string, args: Record<string, unknown>) => {
     if (command === 'audio_instruments') return listed;
+    if (command === 'audio_status') return status;
+    if (command === 'audio_set_sample_rate') return null;
     if (command === 'audio_load_instrument') {
       loads.push(args);
       if (held) await held.promise;
@@ -62,13 +69,15 @@ vi.mock('@/db/db', () => ({
     written.push([key, value]);
   },
   // No instrument here has been given an envelope, so restoring one after a load does nothing.
-  getSettingOr: async () => ({}),
+  getSettingOr: async (key: string) => (key === 'audio_sample_rate' ? rateSetting : {}),
 }));
 
 let close: (() => void) | null = null;
 
 beforeEach(() => {
   listed = [HOSTED, CONCERT, BROKEN];
+  status = { instrument: '', instrument_rate: 0 };
+  rateSetting = 44100;
   refusal = null;
   held = null;
   loads = [];
@@ -174,6 +183,31 @@ test('a load that fails stops saying it is loading', async () => {
   held.release();
   await vi.waitFor(() => expect(text()).toContain('That file is not a SoundFont'));
   await vi.waitFor(() => expect(trigger().querySelector('[role="status"]')).toBeNull());
+});
+
+/** The rate buttons, in the order the row offers them. */
+function rateButtons(): HTMLButtonElement[] {
+  return [...document.querySelectorAll<HTMLButtonElement>('#setting-row-audio_sample_rate button')];
+}
+
+test('an instrument recorded at 44.1 kHz leaves no higher rate to pick', async () => {
+  status = { instrument: 'Concert Grand Piano', instrument_rate: 44100 };
+  await open();
+  await vi.waitFor(() =>
+    expect(rateButtons().map((button) => [button.textContent, button.disabled])).toEqual([
+      ['44100', false],
+      ['48000', true],
+      ['88200', true],
+      ['96000', true],
+    ]),
+  );
+});
+
+test('an instrument recorded below the rate in force drags the rate down to its own', async () => {
+  rateSetting = 96000;
+  status = { instrument: 'Concert Grand Piano', instrument_rate: 44100 };
+  await open();
+  await vi.waitFor(() => expect(written).toContainEqual(['audio_sample_rate', 44100]));
 });
 
 /** Boot reads these three and nothing else of the settings. */

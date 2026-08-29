@@ -1,5 +1,5 @@
-// The Sound tab's Output section: the output device, the buffer size, the sample rate, the voices
-// the engine may hold sounding at once, and the latency the buffer costs. Every choice is a global setting
+// The Sound tab's Output section: the output device, the buffer size, the voices the engine may
+// hold sounding at once, and the latency the buffer costs. Every choice is a global setting
 // written on change and applied again at boot. The device list follows the hardware: the engine
 // sends `audio-devices-changed` on every plug and unplug, and this reads it again, so an interface
 // appears and disappears without a restart.
@@ -29,11 +29,8 @@ export interface OutputDevice {
   name: string;
 }
 
-/** The buffer sizes the engine takes, smallest first. */
-const FRAME_CHOICES = [32, 64, 128, 256];
-
-/** The sample rates the engine renders at, in Hz. Each voice costs in proportion. */
-const RATE_CHOICES = [44100, 48000, 88200, 96000];
+/** The buffer sizes the engine takes, smallest first. A device offers a subset of them. */
+const FRAME_CHOICES = [32, 64, 128, 256, 512];
 
 /** The voice limits the engine takes. 512 voices cost 256 MB of streaming buffers for an EXS. */
 const VOICE_CHOICES = [128, 256, 512];
@@ -43,7 +40,6 @@ export function OutputSection({ marked }: { marked?: string | null }) {
   const [status, setStatus] = useState<AudioStatus | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
   const [frames, setFrames] = useState(64);
-  const [rate, setRate] = useState(44100);
   const [voices, setVoices] = useState(128);
   /** What went wrong with the last change, shown until the next one works. */
   const [failure, setFailure] = useState("");
@@ -60,7 +56,6 @@ export function OutputSection({ marked }: { marked?: string | null }) {
   useEffect(() => {
     void getSettingOr("audio_output_device").then(setChosen);
     void getSettingOr("audio_buffer_frames").then(setFrames);
-    void getSettingOr("audio_sample_rate").then(setRate);
     void getSettingOr("audio_voices").then(setVoices);
   }, []);
 
@@ -103,22 +98,6 @@ export function OutputSection({ marked }: { marked?: string | null }) {
         await setSetting("audio_buffer_frames", choice);
       },
       () => invoke("audio_set_buffer_frames", { frames: choice }),
-    );
-
-  const chooseRate = (choice: number) =>
-    change(
-      async () => {
-        setRate(choice);
-        await setSetting("audio_sample_rate", choice);
-      },
-      async () => {
-        await invoke("audio_set_sample_rate", { rate: choice });
-        // The voice engine is built anew at the rate, so the instrument goes in again, and the
-        // envelope and the levels ride back in on the restore.
-        const settings = await readSettings();
-        await restoreInstrument(settings);
-        await restoreRoles(settings.instrument_id);
-      },
     );
 
   const chooseVoices = (choice: number) =>
@@ -187,6 +166,8 @@ export function OutputSection({ marked }: { marked?: string | null }) {
         </DropdownMenu>
       </Row>
 
+      {/* A saved size this device does not take is not the one running, so the row marks the
+          size the engine settled on instead. */}
       <Row
         id="audio_buffer_frames"
         marked={marked === "audio_buffer_frames"}
@@ -194,26 +175,14 @@ export function OutputSection({ marked }: { marked?: string | null }) {
       >
         <Segmented
           choices={FRAME_CHOICES}
-          chosen={frames}
+          chosen={
+            status?.buffer_choices?.includes(frames) === false
+              ? status.buffer_frames
+              : frames
+          }
+          allowed={status?.buffer_choices}
           onPick={(choice) => void chooseFrames(choice)}
         />
-      </Row>
-
-      <Row
-        id="audio_sample_rate"
-        marked={marked === "audio_sample_rate"}
-        label="Sample rate (Hz)"
-      >
-        <div className="flex items-center gap-3">
-          <Segmented
-            choices={RATE_CHOICES}
-            chosen={rate}
-            onPick={(choice) => void chooseRate(choice)}
-          />
-          <span className="text-muted-ink text-[12px] tabular-nums">
-            {recordedLine(status)}
-          </span>
-        </div>
       </Row>
 
       <Row id="audio_voices" marked={marked === "audio_voices"} label="Voices">
@@ -235,14 +204,6 @@ export function OutputSection({ marked }: { marked?: string | null }) {
   );
 }
 
-/** The rate the loaded file was recorded at, which is the one that plays it without resampling;
- * a plugin renders at whatever rate it is given. */
-export function recordedLine(status: AudioStatus | null): string {
-  if (!status?.instrument) return "";
-  if (!status.instrument_rate) return "plugin: any rate";
-  return `recorded at ${(status.instrument_rate / 1000).toFixed(1)} kHz`;
-}
-
 /** What the device reports the buffer costs, at the rate it runs: the one chosen above when the
  * device took it, else its own. */
 function latencyLine(status: AudioStatus | null): string {
@@ -250,35 +211,46 @@ function latencyLine(status: AudioStatus | null): string {
   return `${status.latency_ms.toFixed(1)} ms at ${(status.sample_rate / 1000).toFixed(1)} kHz`;
 }
 
-/** A row of numbers to pick one of, the one in force filled in. */
-function Segmented({
+/**
+ * A row of numbers to pick one of, the one in force filled in. `allowed` is what the engine takes
+ * now; every other choice is dimmed and dead. An empty or missing list is the engine saying
+ * nothing, so then anything can be picked.
+ */
+export function Segmented({
   choices,
   chosen,
   onPick,
+  allowed,
 }: {
   choices: number[];
   chosen: number;
   onPick: (choice: number) => void;
+  allowed?: number[];
 }) {
   return (
     <div className="border-edge flex flex-none border">
-      {choices.map((choice) => (
-        <button
-          key={choice}
-          aria-pressed={chosen === choice}
-          onClick={() => onPick(choice)}
-          className={`h-6 px-2 text-[11.5px] font-medium tabular-nums transition-colors duration-150 ${
-            chosen === choice ? "bg-ink text-paper" : "hover:bg-ink/8"
-          }`}
-        >
-          {choice}
-        </button>
-      ))}
+      {choices.map((choice) => {
+        const dead = allowed?.length ? !allowed.includes(choice) : false;
+        return (
+          <button
+            key={choice}
+            aria-pressed={chosen === choice}
+            aria-disabled={dead}
+            disabled={dead}
+            onClick={() => onPick(choice)}
+            className={`h-6 px-2 text-[11.5px] font-medium tabular-nums transition-colors duration-150 ${
+              chosen === choice ? "bg-ink text-paper" : "hover:bg-ink/8"
+            } ${dead ? "opacity-35 hover:bg-transparent" : ""}`}
+          >
+            {choice}
+          </button>
+        );
+      })}
     </div>
   );
 }
 
-function Row({
+export function Row({
   id,
   label,
   marked,

@@ -27,7 +27,15 @@ import {
   type Palette,
 } from '@/look/color';
 import { easeInOut, reducedMotion } from '@/look/motion';
-import { C_MAJOR, degreeOf, keyTable, scaleOf, tonicOf, type KeyAt } from '@/score/harmony';
+import {
+  C_MAJOR,
+  degreeOf,
+  keyTable,
+  scaleOf,
+  toneWeight,
+  tonicOf,
+  type KeyAt,
+} from '@/score/harmony';
 import type { Engine, LoopSpan, PlayEvent, SeekTarget, Snapshot } from '@/play/engine';
 import type { Section } from '@/play/section';
 import { isInactiveHand, type HandsSetting } from '@/play/settings';
@@ -252,6 +260,31 @@ const BADGE_PAD = 4;
 const BADGE_ROUND = 4;
 const BADGE_WIDTH = 2;
 const BADGE_TINT = [0.45, 0.35] as const;
+/** Inside the band: how far out the chord's corners stand, and the ring an unheld tone wears. */
+const CORNER_R = BAND_IN - 9;
+const CORNER_RING = 1.5;
+/** The figure's edges, at rest and while every tone is held, and how long the lift takes. */
+const EDGE_W = [1.25, 1.75] as const;
+const LIFT_MS = 120;
+/** A held key the chord does not name, as a dot on its own segment. */
+const OFF_DOT = 4;
+/**
+ * The chord's fill, all in the root's hue: the floor it keeps over the whole shape, the contrast a
+ * corner's pool holds against the paper and the alphas it may reach for it, and how far a pool
+ * carries as a share of the figure's longest edge.
+ */
+const FILL_FLOOR = [0.08, 0.12] as const;
+const FILL_CONTRAST = 1.6;
+const FILL_ALPHA = [0.35, 0.5] as const;
+const FILL_REACH = 0.55;
+/** How long one figure takes to give way to the next. */
+const FIGURE_FADE_MS = 150;
+/** The hub: the chord's name over the centre, its degree under it, and the halo the name wears. */
+const HUB_NAME = { size: 22, dy: -7 };
+const HUB_DEGREE = { size: 13, dy: 11 };
+const HUB_HALO_W = 6;
+/** The panel's chrome with its alpha spent on the paper, so the halo hides the edges under it. */
+const HUB_HALO = ['#ebebeb', '#181818'] as const;
 
 /** One ring or splash playing out at a key. A miss leaves no mark on the keys. */
 interface Effect {
@@ -449,6 +482,9 @@ export class Lane {
   private change: 'slide' | 'enter' | 'fade' = 'slide';
   private changeAt = -Infinity;
   private leaving: { chord: LaneChord; slot: number }[] = [];
+  /** Whether every tone of the chord in force is held, and when that last turned over. */
+  private lifted = false;
+  private liftAt = -Infinity;
   /** When the walk last changed, which is what tells a Loop toggle from a seek. */
   private walkAt = -Infinity;
   /**
@@ -1535,7 +1571,8 @@ export class Lane {
       ctx.fill();
     }
     // Size means "now": the root of the chord in force covers its segment with a bigger one.
-    const root = this.shownRows[0]?.event.root;
+    const current = this.shownRows[0]?.event;
+    const root = current?.root;
     if (root !== undefined) {
       segmentPath(ctx, wheelAngle(root), BAND_IN - RAISE_IN, BAND_OUT + RAISE_OUT);
       ctx.globalAlpha = 1;
@@ -1548,7 +1585,124 @@ export class Lane {
     }
     this.wheelBadge(this.wasScale, 1 - t);
     this.wheelBadge(this.scale, t);
+
+    const held = new Set<number>();
+    for (const [midi, press] of this.presses) if (press.down) held.add(pitchClass(midi));
+    // A chord whole under the hands firms its edges up, and loses them again as a finger leaves.
+    const whole = (current?.tones.length ?? 0) > 0 && current!.tones.every((pc) => held.has(pc));
+    if (whole !== this.lifted) {
+      this.lifted = whole;
+      this.liftAt = this.reduced ? -Infinity : this.now;
+    }
+    const eased = easeInOut(clamp((this.now - this.liftAt) / LIFT_MS, 0, 1));
+    const lift = whole ? eased : 1 - eased;
+    // The figure the chord before it left behind fades out where it stands as this one fades in.
+    const swap = this.reduced ? 1 : clamp((this.now - this.changeAt) / FIGURE_FADE_MS, 0, 1);
+    if (swap < 1) this.wheelFigure(this.leaving[0]?.chord.event, held, lift, 1 - swap);
+    this.wheelFigure(current, held, lift, swap);
+
+    // A held note the chord does not name sits off the figure, on a hollow segment when it is out
+    // of the key as well.
+    ctx.globalAlpha = 1;
+    for (const pc of held) {
+      if (current?.tones.includes(pc)) continue;
+      ctx.fillStyle = colorOf(pc, 'full', this.dark);
+      ctx.beginPath();
+      ctx.arc(...spoke(wheelAngle(pc), CORNER_R), OFF_DOT, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (current) this.wheelHub(current);
     ctx.restore();
+  }
+
+  /**
+   * The chord as one figure inside the band, painted in the root's colour alone: a floor of fill
+   * over the whole shape with a pool of opacity at every corner, so the root's end reads solid and
+   * the fifth's end light. A corner is a dot while its tone is held and a ring while it is not.
+   */
+  private wheelFigure(
+    of: ChordEvent | undefined,
+    held: Set<number>,
+    lift: number,
+    alpha: number,
+  ): void {
+    if (!of || of.tones.length === 0 || alpha <= 0.01) return;
+    const ctx = this.ctx;
+    const face = colorOf(of.root, 'full', this.dark);
+    const corners = of.tones
+      .map((pc) => ({
+        pc,
+        weight: toneWeight(pc - of.root),
+        point: spoke(wheelAngle(pc), CORNER_R),
+      }))
+      .sort((x, y) => FIFTHS.indexOf(pitchClass(x.pc)) - FIFTHS.indexOf(pitchClass(y.pc)));
+    const outline = () => {
+      ctx.beginPath();
+      corners.forEach(({ point }, i) => (i === 0 ? ctx.moveTo(...point) : ctx.lineTo(...point)));
+      ctx.closePath();
+    };
+    const reach =
+      FILL_REACH *
+      Math.max(
+        ...corners.map((one, i) => {
+          const next = corners[(i + 1) % corners.length]!;
+          return Math.hypot(next.point[0] - one.point[0], next.point[1] - one.point[1]);
+        }),
+      );
+
+    ctx.save();
+    outline();
+    ctx.clip();
+    ctx.globalAlpha = alpha;
+    const whole = [-WHEEL_SIZE / 2, -WHEEL_SIZE / 2, WHEEL_SIZE, WHEEL_SIZE] as const;
+    ctx.fillStyle = withAlpha(face, FILL_FLOOR[this.dark ? 1 : 0]);
+    ctx.fillRect(...whole);
+    const peak = wheelFillAlpha(of.root, this.dark);
+    for (const corner of corners) {
+      const pool = ctx.createRadialGradient(...corner.point, 0, ...corner.point, reach);
+      pool.addColorStop(0, withAlpha(face, peak * corner.weight));
+      pool.addColorStop(1, withAlpha(face, 0));
+      ctx.fillStyle = pool;
+      ctx.fillRect(...whole);
+    }
+    ctx.restore();
+
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = face;
+    ctx.lineWidth = ramp(EDGE_W, lift);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    outline();
+    ctx.stroke();
+
+    for (const corner of corners) {
+      ctx.beginPath();
+      ctx.arc(...corner.point, wheelCornerR(corner.weight), 0, Math.PI * 2);
+      if (held.has(corner.pc)) {
+        ctx.fillStyle = colorOf(corner.pc, 'full', this.dark);
+        ctx.fill();
+      } else {
+        ctx.strokeStyle = colorOf(corner.pc, 'full', this.dark);
+        ctx.lineWidth = CORNER_RING;
+        ctx.stroke();
+      }
+    }
+  }
+
+  /** The chord's two names at the centre, the absolute one haloed so the edges break around it. */
+  private wheelHub(of: ChordEvent): void {
+    const ctx = this.ctx;
+    ctx.globalAlpha = 1;
+    ctx.font = `${CHORD_PANEL.weight} ${HUB_NAME.size}px system-ui, sans-serif`;
+    ctx.strokeStyle = tone(HUB_HALO, this.dark);
+    ctx.lineWidth = HUB_HALO_W;
+    ctx.lineJoin = 'round';
+    ctx.strokeText(of.absolute, 0, HUB_NAME.dy);
+    ctx.fillStyle = tone(NOW_LINE, this.dark);
+    ctx.fillText(of.absolute, 0, HUB_NAME.dy);
+    ctx.font = `${NEXT_PANEL.weight} ${HUB_DEGREE.size}px system-ui, sans-serif`;
+    ctx.fillStyle = tone(INK.duration, this.dark);
+    ctx.fillText(of.degree, 0, HUB_DEGREE.dy);
   }
 
   /**
@@ -1706,6 +1860,42 @@ function segmentPath(
   ctx.quadraticCurveTo(...spoke(a0, outer), ...spoke(a0 + dOut, outer));
   ctx.closePath();
 }
+
+/** A `#rrggbb` carrying an alpha, which a gradient stop needs and `globalAlpha` cannot give. */
+const withAlpha = (hex: string, a: number) =>
+  hex +
+  Math.round(clamp(a, 0, 1) * 255)
+    .toString(16)
+    .padStart(2, '0');
+
+/** How bright a colour is to the eye, on the WCAG scale the contrast ratio is read off. */
+function luminance(hex: string): number {
+  const channel = (i: number) => {
+    const v = parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(0) + 0.7152 * channel(1) + 0.0722 * channel(2);
+}
+
+/**
+ * How much of the root's colour the chord's fill takes at its densest corner: the least that still
+ * stands off the paper by `FILL_CONTRAST`, so a pale hue is laid on thicker than a dark one.
+ */
+export function wheelFillAlpha(root: number, dark: boolean): number {
+  const paper = luminance(tone(PAPER, dark));
+  const face = colorOf(root, 'full', dark);
+  const [floor, ceiling] = FILL_ALPHA;
+  for (let pct = Math.round(floor * 100); pct < ceiling * 100; pct++) {
+    const on = luminance(mix(tone(PAPER, dark), face, pct / 100));
+    if ((Math.max(paper, on) + 0.05) / (Math.min(paper, on) + 0.05) >= FILL_CONTRAST) {
+      return pct / 100;
+    }
+  }
+  return ceiling;
+}
+
+/** How big a corner of the figure stands: the more its tone carries, the wider the dot. */
+export const wheelCornerR = (weight: number) => 2.5 + 2.5 * weight;
 
 /** Where in a range a share of the way lands. */
 const ramp = (range: readonly [number, number], t: number) => range[0] + (range[1] - range[0]) * t;

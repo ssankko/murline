@@ -1,3 +1,5 @@
+import { PAPER, colorOf, mix, tone } from '@/look/color';
+import { toneWeight } from '@/score/harmony';
 import { TICKS_PER_QUARTER, type ChordEvent, type KeyChange, type Score } from '@/score/types';
 import { describe, expect, test } from 'vitest';
 import {
@@ -15,6 +17,8 @@ import {
   slotRect,
   throughWrap,
   wheelAngle,
+  wheelCornerR,
+  wheelFillAlpha,
   zoomLookahead,
 } from './lane';
 
@@ -279,5 +283,51 @@ describe('a countdown glyph burning up on its beat', () => {
     expect(burnAt(0.8).scale).toBeLessThan(burnAt(0.5).scale);
     expect(burnAt(0.8).heat).toBeLessThan(burnAt(0.5).heat);
     expect(burnAt(0.5).alpha).toBe(1);
+  });
+});
+
+describe("the chord figure inside the wheel", () => {
+  /** The WCAG brightness of a `#rrggbb`, which is what the fill's alpha is chosen against. */
+  const luminance = (hex: string) =>
+    [0.2126, 0.7152, 0.0722].reduce((sum, weight, i) => {
+      const v = parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16) / 255;
+      return sum + weight * (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+    }, 0);
+
+  test.each([false, true])('the fill alpha stays inside its clamp on dark=%s', (dark) => {
+    for (const pc of [...Array(12).keys()]) {
+      expect(wheelFillAlpha(pc, dark)).toBeGreaterThanOrEqual(0.35);
+      expect(wheelFillAlpha(pc, dark)).toBeLessThanOrEqual(0.5);
+    }
+  });
+
+  test.each([false, true])('the fill is the least alpha off the paper, dark=%s', (dark) => {
+    const contrast = (pc: number, alpha: number) => {
+      const paper = luminance(tone(PAPER, dark));
+      const on = luminance(mix(tone(PAPER, dark), colorOf(pc, 'full', dark), alpha));
+      return (Math.max(paper, on) + 0.05) / (Math.min(paper, on) + 0.05);
+    };
+    for (const pc of [...Array(12).keys()]) {
+      const alpha = wheelFillAlpha(pc, dark);
+      expect(alpha === 0.5 || contrast(pc, alpha) >= 1.6).toBe(true);
+      // One hundredth less would not carry, unless the clamp already holds it at its floor.
+      expect(alpha === 0.35 || contrast(pc, alpha - 0.01) < 1.6).toBe(true);
+    }
+  });
+
+  test('the table turns over with the paper: a hue light paper swallows, dark paper shows', () => {
+    // E reads over dark paper on its own and needs the fill thickened over light paper; G♯ is the
+    // other way about.
+    expect(wheelFillAlpha(4, false)).toBe(0.5);
+    expect(wheelFillAlpha(4, true)).toBe(0.35);
+    expect(wheelFillAlpha(8, false)).toBe(0.35);
+    expect(wheelFillAlpha(8, true)).toBe(0.5);
+  });
+
+  test('a corner grows with the weight its tone carries', () => {
+    expect(wheelCornerR(toneWeight(0))).toBe(5);
+    expect(wheelCornerR(toneWeight(4))).toBeCloseTo(4.375);
+    expect(wheelCornerR(toneWeight(10))).toBeCloseTo(4.125);
+    expect(wheelCornerR(toneWeight(7))).toBeCloseTo(3.75);
   });
 });

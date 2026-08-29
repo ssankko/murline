@@ -43,7 +43,7 @@ The settings that belong to one piece and are set on the play toolbar while prac
 _Avoid_: Per-piece settings, overrides, piece defaults
 
 **Global settings**:
-The settings that apply to the whole app rather than to any one piece: sound, look, MIDI, grading, keyboard size and the library folders.
+The settings that apply to the whole app rather than to any one piece: sound, look, MIDI, grading, keyboard size and the library folders. The library page's order and its selected piece are kept beside them, remembered for the next launch rather than set in the panel.
 _Avoid_: Preferences, defaults
 
 **Settings panel**:

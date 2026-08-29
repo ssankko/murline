@@ -62,7 +62,7 @@ const HISTORY = `
   (SELECT MAX(started_at) FROM play WHERE piece_path = piece.path) AS last_played,
   (SELECT SUM(duration_s) FROM play WHERE piece_path = piece.path) AS practised_s`;
 
-/** How the list pane is ordered. The choice lives in the page, never in the database. */
+/** How the list pane is ordered. The choice is a global setting, never part of a piece. */
 export type SortOrder = 'recent' | 'title' | 'composer' | 'grade' | 'favorites';
 
 const BY_TITLE = 'title COLLATE NOCASE';

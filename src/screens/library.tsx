@@ -15,6 +15,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { getSettingOr, setSetting, SETTING_DEFAULTS } from '@/db/db';
 import { isMissingFile, pathOf } from '@/library/index-file';
 import {
   importFiles,
@@ -61,7 +62,7 @@ export function Library({
   onPreview,
 }: {
   folder: string | null;
-  /** The piece the play screen came back from, so leaving a play lands on it again. */
+  /** The piece the play screen came back from: it stands over the stored selection. */
   selected?: string;
   /** A folder chosen here or in the settings dialog: the app re-points and moves no file. */
   onFolder: (folder: string) => void;
@@ -70,7 +71,9 @@ export function Library({
 }) {
   const [pieces, setPieces] = useState<PieceRow[]>([]);
   const [selected, setSelected] = useState<string | null>(opened ?? null);
-  const [sort, setSort] = useState<SortOrder>('title');
+  const [sort, setSort] = useState<SortOrder>(SETTING_DEFAULTS.library_sort);
+  /** Whether the stored sort and selection have arrived; the list waits on them. */
+  const [restored, setRestored] = useState(false);
   const [folderGone, setFolderGone] = useState(false);
   const [notice, dismissNotice] = useNotice();
   const [dragging, setDragging] = useState(false);
@@ -83,8 +86,32 @@ export function Library({
   const [mixerOpen, setMixerOpen] = useState(false);
   const [midiOpen, setMidiOpen] = useState(false);
 
+  // The list waits on this, so no row is picked before the stored sort and selection arrive. It
+  // runs once: the route's piece stands over the stored one at the mount that carries it.
+  useEffect(() => {
+    void (async () => {
+      const [storedSort, storedSelected] = await Promise.all([
+        getSettingOr('library_sort'),
+        getSettingOr('library_selected'),
+      ]);
+      setSort(storedSort);
+      if (!opened) setSelected(storedSelected);
+      setRestored(true);
+    })();
+  }, []);
+
+  // Both are kept for the next launch. `selected` holds what the user reached, so the first row
+  // standing in for a piece that is gone is never written.
+  useEffect(() => {
+    if (restored) setSetting('library_sort', sort).catch(console.error);
+  }, [restored, sort]);
+  useEffect(() => {
+    if (restored) setSetting('library_selected', selected).catch(console.error);
+  }, [restored, selected]);
+
   // `scanLibrary` walks a folder once, so a sort change costs the re-list alone.
   useEffect(() => {
+    if (!restored) return;
     let live = true;
     void (async () => {
       try {
@@ -103,7 +130,7 @@ export function Library({
     return () => {
       live = false;
     };
-  }, [folder, sort]);
+  }, [folder, sort, restored]);
 
   /** The listener below outlives the render that registered it, so it drops through this. */
   const importRef = useRef(runImport);

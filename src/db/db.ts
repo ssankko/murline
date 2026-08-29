@@ -2,6 +2,7 @@ import type { EffectSlot } from '@/audio/effects';
 import type { Envelope } from '@/audio/envelope';
 import type { Role } from '@/audio/roles';
 import { DEFAULT_LANE_LOOK, DEFAULT_SPLIT, type LaneHarmony, type LaneLook } from '@/lane/lane';
+import type { SortOrder } from '@/library/queries';
 import type { Theme } from '@/look/use-dark';
 import { DEFAULT_PLAY_SETTINGS, type KeyboardPreset, type PlaySettings } from '@/play/settings';
 import { DEFAULT_SPACING } from '@/sheet/sheet';
@@ -13,6 +14,10 @@ export type Settings = {
   /** The folder holding `mxl/` from the unpacked PDMX tarball; empty until the user picks one. */
   pdmx_folder: string;
   onboarding_done: boolean;
+  /** How the library page orders its list. */
+  library_sort: SortOrder;
+  /** Folder-relative path of the piece the library page opens on; NULL takes the first row. */
+  library_selected: string | null;
   /** Id of the MIDI input port every launch starts on; NULL listens on every port not hidden. */
   midi_device: string | null;
   /** Ids of the MIDI input ports the player has put away, which "Any device" passes over. */
@@ -175,6 +180,8 @@ export const SETTING_DEFAULTS: Settings = {
   library_folder: '',
   pdmx_folder: '',
   onboarding_done: false,
+  library_sort: 'title',
+  library_selected: null,
   midi_device: null,
   midi_hidden: [],
   theme: 'system',
@@ -255,6 +262,8 @@ export async function readSettings(): Promise<Settings> {
     const written = rows
       .map((row) => [row.key, JSON.parse(row.value) as unknown] as const)
       .filter(([key, value]) => {
+        // A `KeyboardPreset` is a name or a count of keys, so both types are its own.
+        if (key === 'keyboard_preset') return typeof value === 'string' || typeof value === 'number';
         const fallback = SETTING_DEFAULTS[key as keyof Settings];
         return fallback == null || typeof value === typeof fallback;
       });

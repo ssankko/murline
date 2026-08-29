@@ -188,10 +188,11 @@ pub fn audio_click(strength: String, volume: u32) {
 }
 
 /// One note the app plays rather than the player: the inactive hand sounding itself. It takes the
-/// same path a MIDI key takes, so the velocity curve is on it. A no-op where there is no engine.
+/// same path a MIDI key takes, so the velocity curve is on it, unless `raw` says the caller already
+/// holds an output velocity. A no-op where there is no engine.
 #[tauri::command]
-pub fn audio_note(midi: u8, velocity: u8, on: bool) {
-    engine::note(midi, velocity, on);
+pub fn audio_note(midi: u8, velocity: u8, on: bool, raw: bool) {
+    engine::note(midi, velocity, on, raw);
 }
 
 /// The keyboard volume, 0 to 200, where 100 is the sound untouched: a gain after the effect chain,

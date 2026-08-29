@@ -1,5 +1,5 @@
 import { Engine } from '@/play/engine';
-import { ghost, silenceGhosts } from '@/play/ghost';
+import { ghost, ghostStrike, silenceGhosts } from '@/play/ghost';
 import { DEFAULT_PLAY_SETTINGS, type PlaySettings } from '@/play/settings';
 import {
   TICKS_PER_QUARTER,
@@ -93,20 +93,20 @@ function engine(settings: Partial<PlaySettings> = {}) {
   });
 }
 
-test('the left hand is owed on and off at its own ticks, at 80 per cent of its velocity', () => {
+test('the left hand is owed on and off at its own ticks, at its written velocity', () => {
   const play = engine();
   play.start();
 
   // Half way through the first beat: the left hand sounds, the right hand the player is playing
   // does not.
   play.advance(500);
-  expect(play.ghosts()).toEqual([{ midi: 48, velocity: 80, on: true }]);
+  expect(play.ghosts()).toEqual([{ midi: 48, velocity: 100, on: true }]);
 
   // On the second beat the first note has run out and the second starts, in that order.
   play.advance(500);
   expect(play.ghosts()).toEqual([
     { midi: 48, velocity: 0, on: false },
-    { midi: 48, velocity: 80, on: true },
+    { midi: 48, velocity: 100, on: true },
   ]);
 });
 
@@ -148,19 +148,57 @@ test('the setting off owes nothing, and turning it on starts from where the cloc
   // The notes already passed stay silent: only the note the clock reaches next sounds.
   play.settings.inactiveHandSounds = true;
   play.advance(500);
-  expect(play.ghosts()).toEqual([{ midi: 48, velocity: 80, on: true }]);
+  expect(play.ghosts()).toEqual([{ midi: 48, velocity: 100, on: true }]);
 });
 
+/** The two Playing settings, over the defaults, as the play screen hands them to `ghost`. */
+function sounding(velocity: 'score' | 'follow', level: number): PlaySettings {
+  return { ...DEFAULT_PLAY_SETTINGS, inactiveHandVelocity: velocity, inactiveHandLevel: level };
+}
+
 test('each owed note is one call of the note command, and a silence lets go of what is down', () => {
-  ghost({ midi: 48, velocity: 80, on: true });
-  ghost({ midi: 50, velocity: 64, on: true });
-  ghost({ midi: 48, velocity: 0, on: false });
+  const settings = sounding('score', 100);
+  ghost({ midi: 48, velocity: 80, on: true }, settings);
+  ghost({ midi: 50, velocity: 64, on: true }, settings);
+  ghost({ midi: 48, velocity: 0, on: false }, settings);
   silenceGhosts();
 
   expect(vi.mocked(invoke).mock.calls).toEqual([
-    ['audio_note', { midi: 48, velocity: 80, on: true }],
-    ['audio_note', { midi: 50, velocity: 64, on: true }],
-    ['audio_note', { midi: 48, velocity: 0, on: false }],
-    ['audio_note', { midi: 50, velocity: 0, on: false }],
+    ['audio_note', { midi: 48, velocity: 80, on: true, raw: false }],
+    ['audio_note', { midi: 50, velocity: 64, on: true, raw: false }],
+    ['audio_note', { midi: 48, velocity: 0, on: false, raw: false }],
+    ['audio_note', { midi: 50, velocity: 0, on: false, raw: false }],
   ]);
+});
+
+/** The velocity of the one note the calls hold, and whether the velocity curve was kept off it. */
+function sent(): { velocity: number; raw: boolean } {
+  const { velocity, raw } = vi.mocked(invoke).mock.calls.at(-1)![1] as {
+    velocity: number;
+    raw: boolean;
+  };
+  return { velocity, raw };
+}
+
+test('from the score plays the written velocity at the level, through the velocity curve', () => {
+  ghost({ midi: 48, velocity: 80, on: true }, sounding('score', 80));
+  expect(sent()).toEqual({ velocity: 64, raw: false });
+});
+
+test('the strikes the player makes are what follow plays at, and they are not remapped again', () => {
+  for (const velocity of [40, 40, 40]) ghostStrike(velocity);
+  ghost({ midi: 48, velocity: 100, on: true }, sounding('follow', 100));
+  expect(sent()).toEqual({ velocity: 40, raw: true });
+});
+
+test('follow before the first strike plays the written velocity, through the velocity curve', () => {
+  ghost({ midi: 48, velocity: 100, on: true }, sounding('follow', 50));
+  expect(sent()).toEqual({ velocity: 50, raw: false });
+});
+
+test('a silence forgets the strikes, so the next play follows its own', () => {
+  ghostStrike(40);
+  silenceGhosts();
+  ghost({ midi: 48, velocity: 100, on: true }, sounding('follow', 100));
+  expect(sent()).toEqual({ velocity: 100, raw: false });
 });

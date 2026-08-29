@@ -366,7 +366,7 @@ export function PreviewScreen({
       <div className="bg-chrome fixed inset-0 flex flex-col">
         {/* Fullscreen hides the traffic lights, so the gap kept for them folds away. */}
         <div
-          className={`border-edge-soft relative flex h-12 flex-none items-center gap-0.5 border-b pr-2 ${full ? 'pl-0' : 'pl-20'} transition-[padding] duration-200 ease-[var(--ease)] motion-reduce:transition-none`}
+          className={`border-edge-soft relative flex h-12 flex-none items-center gap-0.5 border-b pr-2 ${full ? 'pl-2' : 'pl-20'} transition-[padding] duration-200 ease-[var(--ease)] motion-reduce:transition-none`}
           data-tauri-drag-region
         >
           <BarButton label="Back to library" onClick={onBack}>

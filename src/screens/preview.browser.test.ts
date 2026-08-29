@@ -253,7 +253,7 @@ test('Escape rewinds off the start of the piece and leaves from it', async () =>
   expect(backs).toBe(1);
 }, 60_000);
 
-test('fullscreen folds the traffic-light gap away and the anchor reaches the left edge', async () => {
+test('fullscreen folds the traffic-light gap down to the bar\'s own padding', async () => {
   // The hook answers only inside Tauri, so the page has to carry the internals a webview does.
   (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
   await open();
@@ -263,8 +263,8 @@ test('fullscreen folds the traffic-light gap away and the anchor reaches the lef
 
   fullscreen = true;
   resized!();
-  await vi.waitFor(() => expect(bar().className).toContain('pl-0'));
-  expect(bar().className).not.toContain('pl-20');
+  await vi.waitFor(() => expect(bar().className).not.toContain('pl-20'));
+  expect(bar().className).toMatch(/\bpl-2\b/);
 
   delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
 }, 60_000);

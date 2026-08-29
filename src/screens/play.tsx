@@ -28,7 +28,7 @@ import { Metronome, type MetronomeHandle } from '@/look/metronome';
 import { useDark } from '@/look/use-dark';
 import { useMidiStatus } from '@/midi/use-midi-status';
 import { click, setClickVolume } from '@/play/click';
-import { ghost, silenceGhosts } from '@/play/ghost';
+import { ghost, ghostStrike, silenceGhosts } from '@/play/ghost';
 import {
   Engine,
   type PerformanceRecord,
@@ -147,7 +147,12 @@ export function PlayScreen({
   const [mode, setMode] = useState<PlayMode>(DEFAULT_PLAY_SETTINGS.mode);
   /** The score's own tempo, and whether it has only one, which is what BPM mode needs. */
   const [written, setWritten] = useState({ bpm: 120, constant: false });
-  const midi = useMidiStatus((event) => engineRef.current?.strike(event));
+  // The grade and the lane read every strike; the inactive hand reads only how hard the key went
+  // down, so it can follow the player's loudness.
+  const midi = useMidiStatus((event) => {
+    engineRef.current?.strike(event);
+    if (event.on) ghostStrike(event.velocity);
+  });
 
   // Opening a piece: bring its index up to date in case the file changed, read the bytes, render
   // the sheet and build the Score of what was rendered. Any failure goes back to the library.
@@ -433,7 +438,7 @@ export function PlayScreen({
     if (owed.length > 0) {
       metronomeRef.current?.tick(owed[owed.length - 1] === 'strong', engine.beatMs);
     }
-    for (const note of engine.ghosts()) ghost(note);
+    for (const note of engine.ghosts()) ghost(note, engine.settings);
     void savePractice();
     savePerformance();
     const snapshot = engine.snapshot();
@@ -517,8 +522,12 @@ export function PlayScreen({
     // Pausing a count-in drops the play back to Idle, so the same key stops it as stops the clock.
     if (at === 'running' || at === 'counting-in') engine.pause();
     else if (at === 'paused') engine.resume();
-    // Marks and colours of the last run stay on the sheet until the engine opens the notes again.
-    else engine.start();
+    // Marks and colours of the last run stay on the sheet until the engine opens the notes again,
+    // and the inactive hand learns the player's loudness again from this run's own strikes.
+    else {
+      silenceGhosts();
+      engine.start();
+    }
   }
 
   /** The next hands setting, on the engine and on the sheet; the lane reads the engine itself. */
@@ -564,7 +573,7 @@ export function PlayScreen({
       <div className="bg-chrome fixed inset-0 flex flex-col">
         {/* Fullscreen hides the traffic lights, so the gap kept for them folds away. */}
         <div
-          className={`border-edge-soft relative flex h-12 flex-none items-center gap-0.5 border-b pr-2 ${full ? 'pl-0' : 'pl-20'} transition-[padding] duration-200 ease-[var(--ease)] motion-reduce:transition-none`}
+          className={`border-edge-soft relative flex h-12 flex-none items-center gap-0.5 border-b pr-2 ${full ? 'pl-2' : 'pl-20'} transition-[padding] duration-200 ease-[var(--ease)] motion-reduce:transition-none`}
           data-tauri-drag-region
         >
           <BarButton label="Back to library" onClick={onBack}>

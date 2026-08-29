@@ -66,13 +66,10 @@ export interface PlayEvent {
  */
 export interface GhostEvent {
   midi: number;
-  /** The written velocity softened, 1 to 127. A note-off carries 0, which the engine ignores. */
+  /** The note's written velocity, 1 to 127. A note-off carries 0, which the engine ignores. */
   velocity: number;
   on: boolean;
 }
-
-/** How loud the inactive hand sounds against what the score writes for it. */
-const GHOST_VELOCITY = 0.8;
 
 /** One written note laid out in played time: what falls in the lane and what a strike may match. */
 export interface PlayNote {
@@ -807,11 +804,7 @@ export class Engine {
       // starts one.
       if (!wanted || !note.strikeable || !isInactiveHand(this.inForce.hands, note.hand)) continue;
       this.sounding.push({ midi: note.midi, end: note.onsetTick + note.durationTicks });
-      this.ghostEvents.push({
-        midi: note.midi,
-        velocity: Math.max(1, Math.round(note.note.velocity * GHOST_VELOCITY)),
-        on: true,
-      });
+      this.ghostEvents.push({ midi: note.midi, velocity: note.note.velocity, on: true });
     }
   }
 

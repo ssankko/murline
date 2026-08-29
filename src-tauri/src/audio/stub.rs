@@ -16,7 +16,7 @@ pub fn status() -> Status {
 
 pub fn click(_strong: bool, _volume: u32) {}
 
-pub fn note(_midi: u8, velocity: u8, _on: bool) -> u8 {
+pub fn note(_midi: u8, velocity: u8, _on: bool, _raw: bool) -> u8 {
     velocity
 }
 

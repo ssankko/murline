@@ -6,7 +6,6 @@ import type { Envelope } from '@/audio/envelope';
 import { SoundTab } from '@/audio/sound-tab';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import { getSettingOr, readSettings, setSetting, type Settings } from '@/db/db';
 import { type LaneHarmony, LOOKAHEAD_MAX, LOOKAHEAD_MIN } from '@/lane/lane';
 import { cancelPdmx, downloadPdmx, progressLabel, usePdmxDownload } from '@/library/pdmx';
@@ -15,8 +14,11 @@ import { noteName } from '@/score/pitch';
 import { Loading } from '@/look/loading';
 import { setTheme, type Theme } from '@/look/use-dark';
 import { useMidiStatus } from '@/midi/use-midi-status';
-import { validNumber } from '@/play/resolve';
-import { type KeyboardPreset } from '@/play/settings';
+import {
+  INACTIVE_HAND_LEVEL,
+  type InactiveHandVelocity,
+  type KeyboardPreset,
+} from '@/play/settings';
 import { SPACING_MAX, SPACING_MIN, type Pinch } from '@/sheet/sheet';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
@@ -39,6 +41,11 @@ const HARMONY: [LaneHarmony, string][] = [
   ['off', 'Off'],
 ];
 
+const INACTIVE_HAND_VELOCITIES: [InactiveHandVelocity, string][] = [
+  ['score', 'From the score'],
+  ['follow', 'Follows you'],
+];
+
 const PRESETS: [KeyboardPreset, string][] = [
   ['piece', 'Piece'],
   [25, '25'],
@@ -49,19 +56,22 @@ const PRESETS: [KeyboardPreset, string][] = [
   ['custom', 'Custom'],
 ];
 
-/** The eleven knobs that shape a Grade. Uncalibrated, so they ship only in a dev build. */
-const GRADE_KNOBS: [keyof Settings, string, number, number][] = [
-  ['grade_weight_timing', 'Timing weight', 0, 1],
-  ['grade_weight_velocity', 'Velocity weight', 0, 1],
-  ['grade_weight_release', 'Release weight', 0, 1],
-  ['grade_timing_flat_ms', 'Timing full marks (ms)', 0, 500],
-  ['grade_timing_zero_ms', 'Timing zero (ms)', 1, 2000],
-  ['grade_velocity_flat', 'Velocity full marks', 0, 127],
-  ['grade_velocity_zero', 'Velocity zero', 1, 127],
-  ['grade_release_flat_lo', 'Release full marks from', 0, 10],
-  ['grade_release_flat_hi', 'Release full marks to', 0, 10],
-  ['grade_release_zero_lo', 'Release zero below', 0, 10],
-  ['grade_release_zero_hi', 'Release zero above', 0, 10],
+/**
+ * The eleven knobs that shape a Grade, each with the span and the step its slider takes.
+ * Uncalibrated, so they ship only in a dev build.
+ */
+const GRADE_KNOBS: [key: keyof Settings, label: string, min: number, max: number, step: number][] = [
+  ['grade_weight_timing', 'Timing weight', 0, 1, 0.01],
+  ['grade_weight_velocity', 'Velocity weight', 0, 1, 0.01],
+  ['grade_weight_release', 'Release weight', 0, 1, 0.01],
+  ['grade_timing_flat_ms', 'Timing full marks (ms)', 0, 500, 1],
+  ['grade_timing_zero_ms', 'Timing zero (ms)', 1, 2000, 1],
+  ['grade_velocity_flat', 'Velocity full marks', 0, 127, 1],
+  ['grade_velocity_zero', 'Velocity zero', 1, 127, 1],
+  ['grade_release_flat_lo', 'Release full marks from', 0, 10, 0.01],
+  ['grade_release_flat_hi', 'Release full marks to', 0, 10, 0.01],
+  ['grade_release_zero_lo', 'Release zero below', 0, 10, 0.01],
+  ['grade_release_zero_hi', 'Release zero above', 0, 10, 0.01],
 ];
 
 /** One global setting as it was just written: a key, with a value of that key's own type. */
@@ -346,6 +356,18 @@ const SEARCH_ROWS: {
     label: 'Inactive hand sounds',
     words: ['other hand', 'ghost', 'left', 'right', 'accompaniment'],
   },
+  {
+    id: 'play_inactive_hand_velocity',
+    tab: 'playing',
+    label: 'Inactive hand velocity',
+    words: ['other hand', 'ghost', 'dynamics', 'follow', 'loudness'],
+  },
+  {
+    id: 'play_inactive_hand_level',
+    tab: 'playing',
+    label: 'Inactive hand level (%)',
+    words: ['other hand', 'ghost', 'loudness', 'softer'],
+  },
   ...(import.meta.env.DEV
     ? [
         {
@@ -354,6 +376,13 @@ const SEARCH_ROWS: {
           label: 'Grade tuning',
           words: ['score', 'rating', 'karaoke', 'weight', 'release'],
         },
+        ...GRADE_KNOBS.map(([key, label]) => ({
+          id: key as string,
+          tab: 'playing' as const,
+          label,
+          group: 'Grade tuning',
+          words: ['grade', 'score', 'rating', 'karaoke', 'tuning'],
+        })),
       ]
     : []),
   {
@@ -740,14 +769,17 @@ export function SettingsPanel({
           >
             {values && (
               <>
-                <Tabs.Content value="sound" className="flex flex-col gap-7">
+                {/* Radix makes every tab panel focusable, so a click in the body focuses the panel and
+                  the next key rings every row at once. Its rows are all controls, so the
+                  panel itself needs no place in the tab order. */}
+                <Tabs.Content value="sound" className="flex flex-col gap-7" tabIndex={undefined}>
                   {/* The sound engine's own settings write straight to it, not through `write`:
                     each one has to reach the running engine as well as the database. The two
                     volumes are not here at all; they are the mixer's two faders. */}
                   <SoundTab marked={marked} />
                 </Tabs.Content>
 
-                <Tabs.Content value="look" className="flex flex-col gap-6">
+                <Tabs.Content value="look" className="flex flex-col gap-6" tabIndex={undefined}>
                   <Rows>
                     <Row id="theme" marked={marked === 'theme'} label="Theme">
                       <Segmented
@@ -827,18 +859,22 @@ export function SettingsPanel({
                         marked={marked === 'lane_note_width'}
                         label="Note width (%)"
                       >
-                        <NumberField
+                        <Slider
+                          label="Note width in percent"
                           value={values.lane_note_width}
                           min={10}
                           max={100}
+                          step={1}
                           onChange={(value) => write('lane_note_width', value)}
                         />
                       </Row>
                       <Row id="lane_gap" marked={marked === 'lane_gap'} label="Gap (px)">
-                        <NumberField
+                        <Slider
+                          label="Gap in pixels"
                           value={values.lane_gap}
                           min={0}
                           max={20}
+                          step={1}
                           onChange={(value) => write('lane_gap', value)}
                         />
                       </Row>
@@ -917,17 +953,19 @@ export function SettingsPanel({
                   </Rows>
                 </Tabs.Content>
 
-                <Tabs.Content value="playing" className="flex flex-col gap-7">
+                <Tabs.Content value="playing" className="flex flex-col gap-7" tabIndex={undefined}>
                   <Rows>
                     <Row
                       id="matching_window_ms"
                       marked={marked === 'matching_window_ms'}
                       label="Matching window (ms)"
                     >
-                      <NumberField
+                      <Slider
+                        label="Matching window in milliseconds"
                         value={values.matching_window_ms}
                         min={1}
                         max={1000}
+                        step={1}
                         onChange={(value) => write('matching_window_ms', value)}
                       />
                     </Row>
@@ -936,10 +974,12 @@ export function SettingsPanel({
                       marked={marked === 'togetherness_ms'}
                       label="Togetherness window (ms)"
                     >
-                      <NumberField
+                      <Slider
+                        label="Togetherness window in milliseconds"
                         value={values.togetherness_ms}
                         min={1}
                         max={1000}
+                        step={1}
                         onChange={(value) => write('togetherness_ms', value)}
                       />
                     </Row>
@@ -953,10 +993,35 @@ export function SettingsPanel({
                         onChange={(value) => write('play_inactive_hand', value)}
                       />
                     </Row>
+                    <Row
+                      id="play_inactive_hand_velocity"
+                      marked={marked === 'play_inactive_hand_velocity'}
+                      label="Inactive hand velocity"
+                    >
+                      <Segmented
+                        options={INACTIVE_HAND_VELOCITIES}
+                        value={values.play_inactive_hand_velocity}
+                        onChange={(value) => write('play_inactive_hand_velocity', value)}
+                      />
+                    </Row>
+                    <Row
+                      id="play_inactive_hand_level"
+                      marked={marked === 'play_inactive_hand_level'}
+                      label="Inactive hand level (%)"
+                    >
+                      <Slider
+                        label="Inactive hand level in percent"
+                        value={values.play_inactive_hand_level}
+                        min={INACTIVE_HAND_LEVEL[0]}
+                        max={INACTIVE_HAND_LEVEL[1]}
+                        step={5}
+                        onChange={(value) => write('play_inactive_hand_level', value)}
+                      />
+                    </Row>
                   </Rows>
 
                   {import.meta.env.DEV && (
-                    <details id={rowId('grade_tuning')} open={marked === 'grade_tuning'}>
+                    <details id={rowId('grade_tuning')} open={!!marked?.startsWith('grade_')}>
                       <summary className="cursor-pointer text-[13px] font-semibold">
                         Grade tuning
                       </summary>
@@ -965,12 +1030,14 @@ export function SettingsPanel({
                       </p>
                       <div className="mt-3">
                         <Rows>
-                          {GRADE_KNOBS.map(([key, label, min, max]) => (
-                            <Row key={key} label={label}>
-                              <NumberField
+                          {GRADE_KNOBS.map(([key, label, min, max, step]) => (
+                            <Row key={key} id={key} marked={marked === key} label={label}>
+                              <Slider
+                                label={label}
                                 value={values[key] as number}
                                 min={min}
                                 max={max}
+                                step={step}
                                 onChange={(value) => write(key, value as never)}
                               />
                             </Row>
@@ -981,7 +1048,7 @@ export function SettingsPanel({
                   )}
                 </Tabs.Content>
 
-                <Tabs.Content value="library" className="flex flex-col gap-2">
+                <Tabs.Content value="library" className="flex flex-col gap-2" tabIndex={undefined}>
                   <p className="text-muted-ink text-[11.5px]">
                     A new library folder re-points the app. No file is moved.
                   </p>
@@ -1065,7 +1132,8 @@ function press(row: HTMLElement): boolean {
  */
 function slide(row: HTMLElement, way: 1 | -1, fine: boolean): boolean {
   const input = row.querySelector<HTMLInputElement>('input[type="range"]');
-  if (!input || input.disabled) return false;
+  // A row that folds other rows under it reaches their sliders as well; only its own answers.
+  if (!input || input.disabled || input.closest('[id^="setting-row-"]') !== row) return false;
   const min = Number(input.min);
   const max = Number(input.max);
   const step = Number(input.step) || 1;
@@ -1180,55 +1248,6 @@ function Path({ value, onChoose }: { value: string; onChoose: () => void }) {
         Choose…
       </Button>
     </div>
-  );
-}
-
-/**
- * A number that writes as it is typed. Text that is no number of the span leaves the setting at its
- * last valid value and says so under the field.
- */
-function NumberField({
-  value,
-  min,
-  max,
-  onChange,
-}: {
-  value: number;
-  min: number;
-  max: number;
-  onChange: (value: number) => void;
-}) {
-  const [text, setText] = useState(String(value));
-  const [error, setError] = useState<string | null>(null);
-  /** What this field last wrote, so a value that moved elsewhere is told apart from typing. */
-  const written = useRef(value);
-
-  // A pinch behind the panel moves the value without the field being touched.
-  useEffect(() => {
-    if (value === written.current) return;
-    written.current = value;
-    setText(String(value));
-    setError(null);
-  }, [value]);
-
-  return (
-    <span className="flex flex-none flex-col items-end gap-0.5">
-      <Input
-        type="text"
-        inputMode="decimal"
-        value={text}
-        onChange={(event) => {
-          setText(event.target.value);
-          const checked = validNumber(event.target.value, min, max, value);
-          setError(checked.error);
-          if (checked.error) return;
-          written.current = checked.value;
-          onChange(checked.value);
-        }}
-        className="h-7 w-20 px-2 text-right text-[12px] tabular-nums"
-      />
-      {error && <span className="text-[11px] text-red-600 dark:text-red-400">{error}</span>}
-    </span>
   );
 }
 

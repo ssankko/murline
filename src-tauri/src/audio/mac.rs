@@ -641,12 +641,18 @@ impl Graph {
     /// output takes it from the return rather than mapping a second time.
     pub fn note_on(&self, note: u8, velocity: u8) -> u8 {
         let velocity = curved(velocity, self.velocity_min, self.velocity_max, self.velocity_curve);
+        self.strike(note, velocity);
+        velocity
+    }
+
+    /// Plays the note at the velocity given, with no remap: for a caller holding an output velocity
+    /// already, which the curve would squeeze into the band a second time.
+    pub fn strike(&self, note: u8, velocity: u8) {
         if self.file {
             self.send(Command::NoteOn { note, velocity });
         } else if let Some(unit) = self.target() {
             unsafe { unit.startNote_withVelocity_onChannel(note, velocity, CHANNEL) };
         }
-        velocity
     }
 
     /// The velocity remap: `min` and `max` are the output velocities the lightest and the hardest
@@ -1199,15 +1205,16 @@ pub fn set_role_level(role: sampler::Role, percent: u32) {
 
 /// One key of the MIDI keyboard, down or up. Answers the output velocity the note was played at, so
 /// the caller telling the webview about the strike reports the same number the instrument heard.
-/// A key coming up carries the velocity it arrived with: only a note on is remapped.
-pub fn note(midi: u8, velocity: u8, on: bool) -> u8 {
+/// A key coming up carries the velocity it arrived with: only a note on is remapped, and `raw`
+/// takes even that off, for a velocity that is already an output.
+pub fn note(midi: u8, velocity: u8, on: bool, raw: bool) -> u8 {
     with(|graph| {
-        if on {
-            graph.note_on(midi, velocity)
-        } else {
-            graph.note_off(midi);
-            velocity
+        match (on, raw) {
+            (false, _) => graph.note_off(midi),
+            (true, true) => graph.strike(midi, velocity),
+            (true, false) => return graph.note_on(midi, velocity),
         }
+        velocity
     })
     .unwrap_or(velocity)
 }
@@ -1481,11 +1488,11 @@ mod tests {
         assert!(status().available, "{}", status().reason);
 
         for midi in [60, 64, 67] {
-            note(midi, 90, true);
+            note(midi, 90, true, false);
         }
         sleep(Duration::from_millis(2500));
         for midi in [60, 64, 67] {
-            note(midi, 0, false);
+            note(midi, 0, false, false);
         }
         sleep(Duration::from_millis(500));
         for beat in 0..4 {
@@ -1571,9 +1578,9 @@ mod tests {
         for velocity in [20u8, 60, 100, 127] {
             sleep(Duration::from_millis(400));
             *taken.lock().unwrap() = Default::default();
-            note(60, velocity, true);
+            note(60, velocity, true, false);
             sleep(Duration::from_millis(900));
-            note(60, 0, false);
+            note(60, 0, false, false);
             sleep(Duration::from_millis(300));
 
             let (samples, times) = taken.lock().unwrap().clone();
@@ -1644,12 +1651,12 @@ mod tests {
             mixer.outputFormatForBus(0).sampleRate()
         };
 
-        note(60, 127, true);
+        note(60, 127, true, false);
         sleep(Duration::from_millis(400));
         // The same key again while the first strike is still ringing.
-        note(60, 127, true);
+        note(60, 127, true, false);
         sleep(Duration::from_millis(400));
-        note(60, 0, false);
+        note(60, 0, false, false);
         sleep(Duration::from_millis(300));
 
         let samples = taken.lock().unwrap().clone();
@@ -1851,11 +1858,11 @@ mod tests {
             let (dry, stolen) = (underruns(), sampler::engine::steals());
             pedal(127);
             for midi in chord {
-                note(midi, 127, true);
+                note(midi, 127, true, false);
             }
             sleep(Duration::from_secs(3));
             for midi in chord {
-                note(midi, 0, false);
+                note(midi, 0, false, false);
             }
             pedal(0);
             sleep(Duration::from_millis(500));

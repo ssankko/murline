@@ -467,3 +467,83 @@ test('the PDMX row beats while the archive is coming', async () => {
   await vi.waitFor(() => expect(beating()).toBe(null));
   fetching = null;
 });
+
+/** What inside the panel the browser holds as keyboard-focused. */
+function ringed(): string[] {
+  return [...document.querySelectorAll('[role="dialog"] *')]
+    .filter((each) => each.matches(':focus-visible'))
+    .map((each) => each.getAttribute('aria-label') ?? each.tagName);
+}
+
+/** Marks a row the way a search result does, which is how the walk starts anywhere but the top. */
+async function jump(query: string, id: string): Promise<void> {
+  await search(query);
+  await userEvent.keyboard('{Enter}');
+  await vi.waitFor(() => expect(marked(id)).toBe(true));
+}
+
+// Radix gives each tab panel a tabindex, so a click anywhere in the body focuses the panel itself
+// and the next key turns that focus visible: a ring around every row at once.
+test('walking the panel draws no ring around the rows', async () => {
+  await open();
+
+  await userEvent.keyboard('{ArrowDown}');
+  await vi.waitFor(() => expect(marked('audio_output_device')).toBe(true));
+  expect(document.activeElement).toBe(
+    document.querySelector('input[aria-label="Search settings"]'),
+  );
+  expect(ringed()).toEqual(['Search settings']);
+
+  // The same walk after a click in the body, which is what used to focus the tab panel.
+  await userEvent.click(document.querySelector('#setting-row-audio_buffer_frames > span')!);
+  expect(document.querySelector('[role="tabpanel"]')!.hasAttribute('tabindex')).toBe(false);
+  await userEvent.keyboard('{ArrowDown}');
+  await vi.waitFor(() => expect(marked('audio_buffer_frames')).toBe(true));
+  expect(ringed()).toEqual([]);
+  // A click with no control under it leaves focus on the modal, which draws no ring of its own.
+  expect(document.activeElement).toBe(document.querySelector('[role="dialog"]'));
+  expect((document.activeElement as HTMLElement).className).toContain('outline-none');
+});
+
+test('every number setting is a slider the arrows move', async () => {
+  await open();
+
+  // 1 to 1000 in whole milliseconds: a twentieth of the span is 50.
+  await jump('matching window', 'matching_window_ms');
+  expect(slider('matching_window_ms').value).toBe('150');
+  await userEvent.keyboard('{ArrowRight}');
+  await vi.waitFor(() => expect(slider('matching_window_ms').value).toBe('200'));
+
+  await userEvent.keyboard('{ArrowDown}');
+  await vi.waitFor(() => expect(marked('togetherness_ms')).toBe(true));
+  expect(slider('togetherness_ms')).toBeTruthy();
+
+  await openTab('Look');
+  expect(slider('lane_note_width')).toBeTruthy();
+  expect(slider('lane_gap')).toBeTruthy();
+});
+
+test('a grade knob is a slider of its own, found by search and stepped by the arrows', async () => {
+  await open();
+
+  const results = await search('Timing weight');
+  expect(labels(results)).toEqual(['Timing weight']);
+  await userEvent.click(results[0]!);
+  await vi.waitFor(() => expect(marked('grade_weight_timing')).toBe(true));
+  expect(activeTab()).toBe('Playing');
+
+  // 0 to 1 in hundredths, and the readout says the value rather than a float with a long tail.
+  expect(slider('grade_weight_timing').step).toBe('0.01');
+  const readout = () =>
+    [...document.querySelectorAll('#setting-row-grade_weight_timing span')].pop()!.textContent!;
+  expect(readout()).toBe('0.7');
+
+  await userEvent.keyboard('{Shift>}{ArrowRight}{/Shift}');
+  await vi.waitFor(() => expect(readout()).toBe('0.71'));
+
+  // The fold above the knobs holds them all, and moves none of them.
+  await userEvent.keyboard('{ArrowUp}');
+  await vi.waitFor(() => expect(marked('grade_weight_timing')).toBe(false));
+  await userEvent.keyboard('{ArrowRight}');
+  expect(readout()).toBe('0.71');
+});

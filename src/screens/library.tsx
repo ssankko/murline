@@ -248,7 +248,7 @@ export function Library({
     <div className="relative flex h-full flex-col">
       {/* Fullscreen hides the traffic lights, so the gap kept for them folds away. */}
       <div
-        className={`border-edge-soft relative flex h-12 flex-none items-center border-b pr-2 ${full ? 'pl-0' : 'pl-20'} transition-[padding] duration-200 ease-[var(--ease)] motion-reduce:transition-none`}
+        className={`border-edge-soft relative flex h-12 flex-none items-center border-b pr-2 ${full ? 'pl-2' : 'pl-20'} transition-[padding] duration-200 ease-[var(--ease)] motion-reduce:transition-none`}
         data-tauri-drag-region
       >
         <h1 className="pointer-events-none text-[15px] font-semibold">Library</h1>

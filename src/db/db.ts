@@ -4,7 +4,12 @@ import type { Role } from '@/audio/roles';
 import { DEFAULT_LANE_LOOK, DEFAULT_SPLIT, type LaneHarmony, type LaneLook } from '@/lane/lane';
 import type { SortOrder } from '@/library/queries';
 import type { Theme } from '@/look/use-dark';
-import { DEFAULT_PLAY_SETTINGS, type KeyboardPreset, type PlaySettings } from '@/play/settings';
+import {
+  DEFAULT_PLAY_SETTINGS,
+  type InactiveHandVelocity,
+  type KeyboardPreset,
+  type PlaySettings,
+} from '@/play/settings';
 import type { SettingsTab } from '@/screens/settings';
 import { DEFAULT_SPACING } from '@/sheet/sheet';
 import Database from '@tauri-apps/plugin-sql';
@@ -131,6 +136,10 @@ export type Settings = {
   togetherness_ms: number;
   /** Whether the hand the player is not playing sounds itself while a play runs. */
   play_inactive_hand: boolean;
+  /** Which loudness that hand plays at: the written dynamics, or the player's own strikes. */
+  play_inactive_hand_velocity: InactiveHandVelocity;
+  /** Percent of that loudness it sounds at, inside `INACTIVE_HAND_LEVEL`. */
+  play_inactive_hand_level: number;
 };
 
 /** The global knobs a running play reads, and the field of `PlaySettings` each one lands in. */
@@ -149,6 +158,8 @@ export const ENGINE_KNOBS = {
   matching_window_ms: 'matchingWindowMs',
   togetherness_ms: 'togethernessMs',
   play_inactive_hand: 'inactiveHandSounds',
+  play_inactive_hand_velocity: 'inactiveHandVelocity',
+  play_inactive_hand_level: 'inactiveHandLevel',
   keyboard_preset: 'keyboardPreset',
   keyboard_lo: 'keyboardLo',
   keyboard_hi: 'keyboardHi',

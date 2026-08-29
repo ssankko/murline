@@ -40,23 +40,6 @@ export function resolvePlaySettings(piece: PieceSettingRow): PieceSettings {
   return settings as PieceSettings;
 }
 
-/**
- * What a settings field types under: the number when the text is one inside the span, otherwise the
- * last value that was, with the error to show beside it.
- */
-export function validNumber(
-  text: string,
-  min: number,
-  max: number,
-  last: number,
-): { value: number; error: string | null } {
-  const value = Number(text);
-  if (text.trim() === '' || !Number.isFinite(value) || value < min || value > max) {
-    return { value: last, error: `Enter a number from ${min} to ${max}` };
-  }
-  return { value, error: null };
-}
-
 function handsOf(text: string | null): HandsSetting | null {
   return text === 'both' || text === 'left' || text === 'right' ? text : null;
 }

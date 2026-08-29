@@ -112,7 +112,7 @@ The span of keys the on-screen keyboard draws: a fixed number of keys, a custom 
 _Avoid_: Keyboard preset, key range, keyboard width
 
 **Inactive hand**:
-The hand not selected when the hands setting is left or right. Its notes are context only: never expected, never graded, never required by Wait mode, and a strike on one of them is absorbed. With the global setting on it sounds itself as the clock passes it, at 80 per cent of its written velocity, so the player hears the whole piece.
+The hand not selected when the hands setting is left or right. Its notes are context only: never expected, never graded, never required by Wait mode, and a strike on one of them is absorbed. With the global setting on it sounds itself as the clock passes it, so the player hears the whole piece, at a level in per cent of either the written velocity or the player's own recent strikes, whichever of the two the velocity mode names.
 _Avoid_: Other hand, resting hand, muted hand
 
 **Ghost**:

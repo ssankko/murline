@@ -60,6 +60,12 @@ export function isInactiveHand(hands: HandsSetting, hand: Hand): boolean {
   return hands !== 'both' && hands !== hand;
 }
 
+/** Where the inactive hand's loudness comes from: the score's own dynamics, or the player's hands. */
+export type InactiveHandVelocity = 'score' | 'follow';
+
+/** The span the inactive hand's level may be set to, in percent. */
+export const INACTIVE_HAND_LEVEL: [min: number, max: number] = [10, 150];
+
 /** "piece" spans the piece's own range; a number is that many keys; "custom" uses lo and hi. */
 export type KeyboardPreset = 'piece' | 25 | 49 | 61 | 76 | 88 | 'custom';
 
@@ -70,6 +76,10 @@ export interface PlaySettings {
   hands: HandsSetting;
   /** Whether the inactive hand sounds itself, softer, as the clock passes its notes. */
   inactiveHandSounds: boolean;
+  /** Which loudness the inactive hand plays at: the written dynamics, or the player's own strikes. */
+  inactiveHandVelocity: InactiveHandVelocity;
+  /** Percent of that loudness the inactive hand sounds at, inside `INACTIVE_HAND_LEVEL`. */
+  inactiveHandLevel: number;
   mode: PlayMode;
   metronome: boolean;
   /** Bars of count-in before motion starts. The toolbar writes 0 or 1; the engine counts any. */
@@ -111,6 +121,8 @@ export const DEFAULT_PLAY_SETTINGS: PlaySettings = {
   tempoValue: 100,
   hands: 'both',
   inactiveHandSounds: false,
+  inactiveHandVelocity: 'follow',
+  inactiveHandLevel: 80,
   mode: 'flow',
   metronome: false,
   countInBars: 0,

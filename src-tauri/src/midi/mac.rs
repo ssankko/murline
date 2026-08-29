@@ -130,7 +130,7 @@ impl Reader {
 fn play(app: Option<&AppHandle>, message: Message, time: f64) {
     match message {
         Message::Note { midi, velocity, on } => {
-            let velocity = audio::mac::note(midi, velocity, on);
+            let velocity = audio::mac::note(midi, velocity, on, false);
             if let Some(app) = app {
                 let _ = app.emit(STRIKE, Strike { midi, velocity, time, on });
             }

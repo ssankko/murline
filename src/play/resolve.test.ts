@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SETTING_DEFAULTS } from '@/db/db';
 import { PIECE_SETTING_COLUMNS, type PieceSettingRow } from '@/library/queries';
-import { resolvePlaySettings, UNSET_PIECE_SETTINGS, validNumber } from '@/play/resolve';
+import { resolvePlaySettings, UNSET_PIECE_SETTINGS } from '@/play/resolve';
 
 const row = (own: Partial<PieceSettingRow> = {}): PieceSettingRow => ({
   ...UNSET_PIECE_SETTINGS,
@@ -90,25 +90,5 @@ describe('no piece setting has a global default', () => {
       'sectionTo',
     ]);
     expect(SETTING_DEFAULTS.keyboard_preset).toBe('piece');
-  });
-});
-
-describe('validNumber', () => {
-  it('takes a number inside the span', () => {
-    expect(validNumber('0.7', 0, 1, 0.2)).toEqual({ value: 0.7, error: null });
-  });
-
-  it('keeps the last valid value for a weight outside 0 to 1', () => {
-    expect(validNumber('2', 0, 1, 0.7)).toEqual({ value: 0.7, error: 'Enter a number from 0 to 1' });
-  });
-
-  it('keeps the last valid value for text that is no number at all', () => {
-    expect(validNumber('loud', 0, 1, 0.7).value).toBe(0.7);
-    expect(validNumber('', 0, 1, 0.7).error).not.toBe(null);
-  });
-
-  it('takes the edges of the span', () => {
-    expect(validNumber('0', 0, 1, 0.7).error).toBe(null);
-    expect(validNumber('1', 0, 1, 0.7).error).toBe(null);
   });
 });

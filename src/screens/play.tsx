@@ -504,19 +504,6 @@ export function PlayScreen({
           </BarButton>
           <b className="pointer-events-none ml-1.5 mr-1 min-w-0 truncate text-[13px] font-medium">{title}</b>
           <KeyPopover at={key} />
-          <MidiLight open={midiOpen} onOpenChange={setMidiOpen} />
-          <Mixer
-            open={mixerOpen}
-            onOpenChange={setMixerOpen}
-            onSoundSettings={() => {
-              setSettingsJump('instrument_id');
-              setSettingsOpen(true);
-            }}
-            onGlobalChange={applyGlobal}
-          />
-          <BarButton label="Settings" onClick={() => setSettingsOpen(true)}>
-            <SlidersHorizontal {...ICON} />
-          </BarButton>
 
           {/* The play disc keeps the window's midline whatever the two sides hold. */}
           <div className="absolute left-1/2 flex -translate-x-1/2 items-center gap-0.5">
@@ -618,6 +605,21 @@ export function PlayScreen({
                 {performing ? 'Stop the performance' : 'Perform'}
               </TooltipContent>
             </Tooltip>
+            <div className="ml-2.5 flex items-center gap-2.5">
+              <MidiLight open={midiOpen} onOpenChange={setMidiOpen} />
+              <Mixer
+                open={mixerOpen}
+                onOpenChange={setMixerOpen}
+                onSoundSettings={() => {
+                  setSettingsJump('instrument_id');
+                  setSettingsOpen(true);
+                }}
+                onGlobalChange={applyGlobal}
+              />
+              <BarButton label="Settings" onClick={() => setSettingsOpen(true)}>
+                <SlidersHorizontal {...ICON} />
+              </BarButton>
+            </div>
           </div>
         </div>
 

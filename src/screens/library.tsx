@@ -35,6 +35,7 @@ import {
 import { scanLibrary, splitError } from '@/library/scan';
 import { Collapse } from '@/look/collapse';
 import { MidiLight } from '@/midi/midi-light';
+import { BarButton, ICON } from '@/screens/bar';
 import { Finder } from '@/screens/finder';
 import { Detail } from '@/screens/piece-detail';
 import { Mixer } from '@/audio/mixer';
@@ -42,7 +43,7 @@ import { SettingsPanel } from '@/screens/settings';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open } from '@tauri-apps/plugin-dialog';
-import { ArrowUpDown, Settings } from 'lucide-react';
+import { ArrowUpDown, SlidersHorizontal } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 const SORTS: [SortOrder, string][] = [
@@ -224,31 +225,35 @@ export function Library({
   }
 
   return (
-    <div className="relative flex h-full">
-      <div className="border-edge-soft flex w-[340px] flex-none flex-col border-r">
-        <TooltipProvider>
-          <div className="flex items-center gap-2 px-4 pt-10 pb-2.5" data-tauri-drag-region>
-            <h1 className="pointer-events-none mr-auto text-[15px] font-semibold">Library</h1>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="text-muted-ink text-[12px]">
-                  <ArrowUpDown className="size-3.5" />
-                  {SORTS.find(([key]) => key === sort)![1]}
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuRadioGroup
-                  value={sort}
-                  onValueChange={(value) => setSort(value as SortOrder)}
-                >
-                  {SORTS.map(([key, label]) => (
-                    <DropdownMenuRadioItem key={key} value={key} className="text-[13px]">
-                      {label}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
+    <div className="relative flex h-full flex-col">
+      <TooltipProvider>
+        <div
+          className="border-edge-soft relative flex h-12 flex-none items-center gap-0.5 border-b pr-2 pl-20"
+          data-tauri-drag-region
+        >
+          <h1 className="pointer-events-none mr-1 text-[15px] font-semibold">Library</h1>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="text-muted-ink text-[12px]">
+                <ArrowUpDown className="size-3.5" />
+                {SORTS.find(([key]) => key === sort)![1]}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuRadioGroup
+                value={sort}
+                onValueChange={(value) => setSort(value as SortOrder)}
+              >
+                {SORTS.map(([key, label]) => (
+                  <DropdownMenuRadioItem key={key} value={key} className="text-[13px]">
+                    {label}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <div className="ml-auto flex items-center gap-2.5">
             <MidiLight open={midiOpen} onOpenChange={setMidiOpen} />
             <Mixer
               open={mixerOpen}
@@ -258,96 +263,95 @@ export function Library({
                 setSettingsOpen(true);
               }}
             />
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Settings"
-              onClick={() => setSettingsOpen(true)}
-            >
-              <Settings />
-            </Button>
+            <BarButton label="Settings" onClick={() => setSettingsOpen(true)}>
+              <SlidersHorizontal {...ICON} />
+            </BarButton>
           </div>
-        </TooltipProvider>
+        </div>
+      </TooltipProvider>
 
-        {/* No folder at all reads the same as one that has gone: there is nothing to list. */}
-        {(!folder || folderGone) && (
-          <div className="border-edge-soft flex items-center gap-2 border-y px-4 py-2 text-[12px]">
-            <p className="min-w-0">
-              Library folder not found
-              <span className="text-muted-ink"> {folder}</span>
-            </p>
-            {/* The folder has one home now: the panel's Library tab. */}
+      <div className="flex min-h-0 flex-1">
+        <div className="border-edge-soft flex w-[340px] flex-none flex-col border-r">
+          {/* No folder at all reads the same as one that has gone: there is nothing to list. */}
+          {(!folder || folderGone) && (
+            <div className="border-edge-soft flex items-center gap-2 border-y px-4 py-2 text-[12px]">
+              <p className="min-w-0">
+                Library folder not found
+                <span className="text-muted-ink"> {folder}</span>
+              </p>
+              {/* The folder has one home now: the panel's Library tab. */}
+              <Button
+                variant="outline"
+                size="sm"
+                className="ml-auto h-7 flex-none"
+                onClick={() => setSettingsOpen(true)}
+              >
+                Settings…
+              </Button>
+            </div>
+          )}
+
+          <Collapse open={notice !== null}>
+            <div className="border-edge-soft flex items-start gap-2 border-y px-4 py-2 text-[12px]">
+              <p className="whitespace-pre-line">{lastNotice.current}</p>
+              <button
+                onClick={dismissNotice}
+                aria-label="Dismiss"
+                className="text-muted-ink hover:text-ink ml-auto flex-none"
+              >
+                ✕
+              </button>
+            </div>
+          </Collapse>
+
+          <div ref={list} className="flex-1 overflow-y-auto">
+            {pieces.map((row) => (
+              <Row
+                key={row.path}
+                row={row}
+                selected={row === piece}
+                onSelect={() => setSelected(row.path)}
+                onOpen={() => !row.error && folder && onPreview(row.path)}
+              />
+            ))}
+            {pieces.length === 0 && (
+              <p className="text-muted-ink px-4 py-6 text-center text-[12px]">No pieces yet.</p>
+            )}
+          </div>
+
+          <div className="border-edge-soft flex gap-2 border-t px-3 py-2.5">
+            <Button variant="outline" size="sm" disabled={!folder} onClick={() => void pickFiles()}>
+              Import
+            </Button>
             <Button
               variant="outline"
               size="sm"
-              className="ml-auto h-7 flex-none"
-              onClick={() => setSettingsOpen(true)}
+              disabled={!folder}
+              onClick={() => void openFinder()}
             >
-              Settings…
+              Find online
             </Button>
           </div>
+        </div>
+
+        {piece ? (
+          <Detail
+            piece={piece}
+            folder={folder}
+            onFavorite={() => void toggleFavorite(piece)}
+            onDelete={() => void remove(piece)}
+            onPlay={onPlay}
+            onPreview={onPreview}
+          />
+        ) : (
+          <div className="flex flex-1 items-center justify-center px-12">
+            <div className="flex max-w-[420px] flex-col gap-2 text-center">
+              <p className="text-[13px]">Copy a MusicXML file into the folder to add a piece.</p>
+              <p className="text-muted-ink text-[12px]">{folder ?? 'No library folder set'}</p>
+            </div>
+          </div>
         )}
-
-        <Collapse open={notice !== null}>
-          <div className="border-edge-soft flex items-start gap-2 border-y px-4 py-2 text-[12px]">
-            <p className="whitespace-pre-line">{lastNotice.current}</p>
-            <button
-              onClick={dismissNotice}
-              aria-label="Dismiss"
-              className="text-muted-ink hover:text-ink ml-auto flex-none"
-            >
-              ✕
-            </button>
-          </div>
-        </Collapse>
-
-        <div ref={list} className="flex-1 overflow-y-auto">
-          {pieces.map((row) => (
-            <Row
-              key={row.path}
-              row={row}
-              selected={row === piece}
-              onSelect={() => setSelected(row.path)}
-              onOpen={() => !row.error && folder && onPreview(row.path)}
-            />
-          ))}
-          {pieces.length === 0 && (
-            <p className="text-muted-ink px-4 py-6 text-center text-[12px]">No pieces yet.</p>
-          )}
-        </div>
-
-        <div className="border-edge-soft flex gap-2 border-t px-3 py-2.5">
-          <Button variant="outline" size="sm" disabled={!folder} onClick={() => void pickFiles()}>
-            Import
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={!folder}
-            onClick={() => void openFinder()}
-          >
-            Find online
-          </Button>
-        </div>
       </div>
-
-      {piece ? (
-        <Detail
-          piece={piece}
-          folder={folder}
-          onFavorite={() => void toggleFavorite(piece)}
-          onDelete={() => void remove(piece)}
-          onPlay={onPlay}
-          onPreview={onPreview}
-        />
-      ) : (
-        <div className="flex flex-1 items-center justify-center px-12">
-          <div className="flex max-w-[420px] flex-col gap-2 text-center">
-            <p className="text-[13px]">Copy a MusicXML file into the folder to add a piece.</p>
-            <p className="text-muted-ink text-[12px]">{folder ?? 'No library folder set'}</p>
-          </div>
-        </div>
-      )}
 
       <div
         aria-hidden={!dragging}

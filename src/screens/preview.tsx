@@ -23,6 +23,7 @@ import { ScoreError, bpmAt, stepSeconds, type Score } from '@/score/types';
 import { BarButton, ICON, TEMPO_STEP, TempoPopover } from '@/screens/bar';
 import { SettingsPanel, SpacingPopup, type SettingChange } from '@/screens/settings';
 import { StatusBar } from '@/screens/status-bar';
+import { useFullscreen } from '@/screens/use-fullscreen';
 import type { Pinch } from '@/sheet/pinch';
 import { PreviewSheet, windowTicksOf } from '@/sheet/preview-sheet';
 import { invoke } from '@tauri-apps/api/core';
@@ -66,6 +67,7 @@ export function PreviewScreen({
   darkRef.current = dark;
   const backRef = useRef(onBack);
   backRef.current = onBack;
+  const full = useFullscreen();
 
   const [title, setTitle] = useState(baseNameOf(path));
   /** True from the start of the open until the page stands on the screen, and on a failure too. */
@@ -329,7 +331,11 @@ export function PreviewScreen({
   return (
     <TooltipProvider>
       <div className="bg-chrome fixed inset-0 flex flex-col">
-        <div className="border-edge-soft relative flex h-12 flex-none items-center gap-0.5 border-b pr-2 pl-20" data-tauri-drag-region>
+        {/* Fullscreen hides the traffic lights, so the gap kept for them folds away. */}
+        <div
+          className={`border-edge-soft relative flex h-12 flex-none items-center gap-0.5 border-b pr-2 ${full ? 'pl-0' : 'pl-20'} transition-[padding] duration-200 ease-[var(--ease)] motion-reduce:transition-none`}
+          data-tauri-drag-region
+        >
           <BarButton label="Back to library" onClick={onBack}>
             <ArrowLeft {...ICON} />
           </BarButton>

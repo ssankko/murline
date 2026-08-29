@@ -39,6 +39,7 @@ import { Finder } from '@/screens/finder';
 import { Detail } from '@/screens/piece-detail';
 import { SettingsPanel } from '@/screens/settings';
 import { StatusBar } from '@/screens/status-bar';
+import { useFullscreen } from '@/screens/use-fullscreen';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -87,6 +88,7 @@ export function Library({
   const [settingsJump, setSettingsJump] = useState<string | null>(null);
   const [mixerOpen, setMixerOpen] = useState(false);
   const [midiOpen, setMidiOpen] = useState(false);
+  const full = useFullscreen();
 
   // The list waits on this, so no row is picked before the stored sort and selection arrive. It
   // runs once: the route's piece stands over the stored one at the mount that carries it.
@@ -244,8 +246,9 @@ export function Library({
 
   return (
     <div className="relative flex h-full flex-col">
+      {/* Fullscreen hides the traffic lights, so the gap kept for them folds away. */}
       <div
-        className="border-edge-soft relative flex h-12 flex-none items-center border-b pr-2 pl-20"
+        className={`border-edge-soft relative flex h-12 flex-none items-center border-b pr-2 ${full ? 'pl-0' : 'pl-20'} transition-[padding] duration-200 ease-[var(--ease)] motion-reduce:transition-none`}
         data-tauri-drag-region
       >
         <h1 className="pointer-events-none text-[15px] font-semibold">Library</h1>

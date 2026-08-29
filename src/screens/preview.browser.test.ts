@@ -43,6 +43,20 @@ vi.mock('@tauri-apps/api/event', () => ({
   },
 }));
 
+// The fullscreen state the top bar's hook reads, flipped by the resize handler it subscribed with.
+let fullscreen = false;
+let resized: (() => void) | null = null;
+
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: () => ({
+    isFullscreen: async () => fullscreen,
+    onResized: async (handler: () => void) => {
+      resized = handler;
+      return () => {};
+    },
+  }),
+}));
+
 /** Every row the screen writes: the piece's tempo, and the settings the panel changes. */
 let written: { sql: string; values: unknown[] }[] = [];
 
@@ -70,6 +84,8 @@ beforeEach(() => {
   sent = [];
   written = [];
   progress = null;
+  fullscreen = false;
+  resized = null;
 });
 
 afterEach(() => {
@@ -235,6 +251,22 @@ test('Escape rewinds off the start of the piece and leaves from it', async () =>
   await vi.waitFor(() => expect(button('Play')).toBeTruthy());
   press('Escape');
   expect(backs).toBe(1);
+}, 60_000);
+
+test('fullscreen folds the traffic-light gap away and the anchor reaches the left edge', async () => {
+  // The hook answers only inside Tauri, so the page has to carry the internals a webview does.
+  (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+  await open();
+
+  const bar = () => host!.querySelector<HTMLElement>('[data-tauri-drag-region]')!;
+  expect(bar().className).toContain('pl-20');
+
+  fullscreen = true;
+  resized!();
+  await vi.waitFor(() => expect(bar().className).toContain('pl-0'));
+  expect(bar().className).not.toContain('pl-20');
+
+  delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
 }, 60_000);
 
 test('the tempo stepper writes the piece row and reads back on the bar', async () => {

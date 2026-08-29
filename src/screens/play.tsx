@@ -51,6 +51,7 @@ import { Button } from '@/components/ui/button';
 import { BarButton, ICON, KeyPopover, TEMPO_STEP, TempoPopover } from '@/screens/bar';
 import { SettingsPanel, SpacingPopup, type SettingChange } from '@/screens/settings';
 import { StatusBar } from '@/screens/status-bar';
+import { useFullscreen } from '@/screens/use-fullscreen';
 import { Sheet, type Pinch } from '@/sheet/sheet';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
@@ -102,6 +103,7 @@ export function PlayScreen({
   darkRef.current = dark;
   const backRef = useRef(onBack);
   backRef.current = onBack;
+  const full = useFullscreen();
 
   const [title, setTitle] = useState(baseNameOf(path));
   /** True from the start of the open until the piece stands on the screen, and on a failure too. */
@@ -526,7 +528,11 @@ export function PlayScreen({
   return (
     <TooltipProvider>
       <div className="bg-chrome fixed inset-0 flex flex-col">
-        <div className="border-edge-soft relative flex h-12 flex-none items-center gap-0.5 border-b pr-2 pl-20" data-tauri-drag-region>
+        {/* Fullscreen hides the traffic lights, so the gap kept for them folds away. */}
+        <div
+          className={`border-edge-soft relative flex h-12 flex-none items-center gap-0.5 border-b pr-2 ${full ? 'pl-0' : 'pl-20'} transition-[padding] duration-200 ease-[var(--ease)] motion-reduce:transition-none`}
+          data-tauri-drag-region
+        >
           <BarButton label="Back to library" onClick={onBack}>
             <ArrowLeft {...ICON} />
           </BarButton>

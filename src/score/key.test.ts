@@ -212,6 +212,33 @@ describe('the scale and the name of a key', () => {
   });
 });
 
+describe('the letter a key spells a pitch class with', () => {
+  test('a black key follows the signature of the key, and a written flat overrides it', () => {
+    const spelled = (key: ReturnType<typeof keyOf>, written = 0) =>
+      [6, 1, 8, 3, 10].map((pc) => key.spell(pc, written));
+    expect(spelled(D_MAJOR)).toEqual(['F♯', 'C♯', 'G♯', 'D♯', 'A♯']);
+    expect(spelled(keyOf(-3, 0))).toEqual(['G♭', 'D♭', 'A♭', 'E♭', 'B♭']);
+    // A key with no signature spells sharps; a note the score writes flat is flat in any key.
+    expect(spelled(C_MAJOR)).toEqual(['F♯', 'C♯', 'G♯', 'D♯', 'A♯']);
+    expect(spelled(D_MAJOR, -1)).toEqual(['G♭', 'D♭', 'A♭', 'E♭', 'B♭']);
+  });
+
+  test('a white key wears its letter whatever the key', () => {
+    for (const sharps of [-5, 0, 5]) {
+      const key = keyOf(sharps, 0);
+      expect([0, 2, 4, 5, 7, 9, 11].map((pc) => key.spell(pc, 0))).toEqual([
+        'C',
+        'D',
+        'E',
+        'F',
+        'G',
+        'A',
+        'B',
+      ]);
+    }
+  });
+});
+
 describe('the modes', () => {
   test('name every member of the KeyEnum and read the name back', () => {
     for (const mode of [0, 1, 3, 9]) expect(modeOf(modeName(mode))).toBe(mode);

@@ -1,13 +1,13 @@
 // The one colour rule of the app: `colorOf` turns a MIDI number into the hex its notehead, its
-// falling block and its key swatch are painted in. Every caller goes through it. The pitch-class
-// helpers under it are the vocabulary the rest of the app names notes with.
+// falling block and its key swatch are painted in. Every caller goes through it.
+
+import { isBlackKey, pitchClass } from '@/score/pitch';
 
 export type Palette = 'muted' | 'full';
 
 // Hue per pitch class, C red through B magenta. Each sharp sits on the hue midway between its
 // neighbouring naturals, then drops in saturation and lightness so it never reads as its natural.
 const HUES = [3, 20, 38, 55, 72, 135, 163, 190, 222, 253, 292, 330];
-const IS_SHARP = [false, true, false, true, false, false, true, false, true, false, true, false];
 const SHARP_S = -24;
 const SHARP_L = -16;
 
@@ -34,29 +34,13 @@ function hslHex(h: number, s: number, l: number): string {
 }
 
 export function colorOf(midi: number, palette: Palette = 'muted', dark = false): string {
-  const pc = pitchClass(midi);
   const tone = TONE[palette];
-  const sharp = IS_SHARP[pc]!;
+  const sharp = isBlackKey(midi);
   return hslHex(
-    HUES[pc]!,
+    HUES[pitchClass(midi)]!,
     tone.s + (sharp ? SHARP_S : 0),
     tone.l + (sharp ? SHARP_L : 0) + (dark ? DARK_LIFT : 0),
   );
-}
-
-/** Pitch class 0 to 11 of any semitone number, MIDI or OSMD half tone alike. */
-export function pitchClass(semitones: number): number {
-  return ((semitones % 12) + 12) % 12;
-}
-
-export const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-
-export function noteName(midi: number): string {
-  return NOTE_NAMES[pitchClass(midi)] + (Math.floor(midi / 12) - 1);
-}
-
-export function isBlackKey(midi: number): boolean {
-  return IS_SHARP[pitchClass(midi)]!;
 }
 
 // Three ink tiers for the sheet, plus the paper grey every screen sits on. Light value first, dark

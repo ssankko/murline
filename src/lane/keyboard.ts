@@ -1,7 +1,8 @@
 // The on-screen keyboard at the foot of the lane canvas: where the falling notes land, and the
 // app's only colour legend. Its x axis is the lane's x axis, so a block always falls on its key.
 
-import { INK, NOTE_NAMES, colorOf, isBlackKey, mix, pitchClass, tone } from '@/look/color';
+import { INK, colorOf, mix, tone } from '@/look/color';
+import { SHARP_NAMES, isBlackKey, noteName, pitchClass } from '@/score/pitch';
 import type { PlayNote } from '@/play/engine';
 import type { KeyboardPreset, PlaySettings } from '@/play/settings';
 
@@ -165,7 +166,7 @@ function drawLabels(
     ctx.fillStyle = tone(INK.duration, dark);
     ctx.font = `${key.black ? 8 : 9}px system-ui, sans-serif`;
     // Only a C carries its octave, which is enough to find your place on the keys.
-    ctx.fillText(pc === 0 ? `C${Math.floor(key.midi / 12) - 1}` : NOTE_NAMES[pc]!, cx, bottom - 6);
+    ctx.fillText(pc === 0 ? noteName(key.midi) : SHARP_NAMES[pc]!, cx, bottom - 6);
   }
   ctx.textAlign = 'left';
 }

@@ -3,10 +3,10 @@
 // against the key in force ("5⁷/7"). A file that writes its own `<harmony>` symbols is not analysed
 // at all; the symbols are the harmony.
 
-import { pitchClass } from '@/look/color';
 import { AccidentalEnum, ChordSymbolEnum } from 'opensheetmusicdisplay';
 import { beatOf } from './beat';
 import { C_MAJOR, keyOf, type Key, type KeyAt } from './key';
+import { pitchClass } from './pitch';
 import {
   TICKS_PER_QUARTER,
   type ChordEvent,

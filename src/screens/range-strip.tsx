@@ -1,5 +1,6 @@
 import { keyLayout } from '@/lane/keyboard';
-import { colorOf, pitchClass } from '@/look/color';
+import { colorOf } from '@/look/color';
+import { pitchClass } from '@/score/pitch';
 import { useDark } from '@/look/use-dark';
 
 const LOWEST = 21;

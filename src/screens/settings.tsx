@@ -11,7 +11,7 @@ import { readSettings, setSetting, type Settings } from '@/db/db';
 import { type LaneHarmony, LOOKAHEAD_MAX, LOOKAHEAD_MIN } from '@/lane/lane';
 import { cancelPdmx, downloadPdmx, progressLabel, usePdmxDownload } from '@/library/pdmx';
 import { clamp, rowId } from '@/lib/utils';
-import { noteName } from '@/look/color';
+import { noteName } from '@/score/pitch';
 import { Loading } from '@/look/loading';
 import { setTheme, type Theme } from '@/look/use-dark';
 import { useMidiStatus } from '@/midi/use-midi-status';

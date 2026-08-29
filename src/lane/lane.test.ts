@@ -9,7 +9,6 @@ import {
   burnAt,
   chordsAt,
   chordsOf,
-  fifthName,
   glideLeft,
   jumpOf,
   laneKeysOf,
@@ -327,29 +326,6 @@ describe("the chord figure inside the wheel", () => {
     expect(wheelCornerR(toneWeight(4))).toBeCloseTo(4.375);
     expect(wheelCornerR(toneWeight(10))).toBeCloseTo(4.125);
     expect(wheelCornerR(toneWeight(7))).toBeCloseTo(3.75);
-  });
-});
-
-describe('the letter a segment outside the key wears', () => {
-  test('a black key follows the signature of the key in force', () => {
-    expect([6, 1, 8, 3, 10].map((pc) => fifthName(pc, 4))).toEqual(['F♯', 'C♯', 'G♯', 'D♯', 'A♯']);
-    expect([6, 1, 8, 3, 10].map((pc) => fifthName(pc, -3))).toEqual(['G♭', 'D♭', 'A♭', 'E♭', 'B♭']);
-    // A key with no signature keeps one sharp on the way out and flats coming back.
-    expect([6, 1, 8, 3, 10].map((pc) => fifthName(pc, 0))).toEqual(['F♯', 'D♭', 'A♭', 'E♭', 'B♭']);
-  });
-
-  test('a white key wears its letter whatever the key', () => {
-    for (const sharps of [-5, 0, 5]) {
-      expect([0, 2, 4, 5, 7, 9, 11].map((pc) => fifthName(pc, sharps))).toEqual([
-        'C',
-        'D',
-        'E',
-        'F',
-        'G',
-        'A',
-        'B',
-      ]);
-    }
   });
 });
 

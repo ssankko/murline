@@ -1,4 +1,4 @@
-import { colorOf, isBlackKey, labelInk, noteName, PAPER } from '@/look/color';
+import { colorOf, labelInk, PAPER } from '@/look/color';
 import { expect, test } from 'vitest';
 
 // The twelve hexes the spec fixes for the muted palette, C through B.
@@ -13,13 +13,6 @@ const octave = (dark: boolean) =>
 test('the muted palette matches the spec on light and dark paper', () => {
   expect(octave(false)).toBe(LIGHT);
   expect(octave(true)).toBe(DARK);
-});
-
-test('note names and black keys follow the same pitch class', () => {
-  expect(noteName(60)).toBe('C4');
-  expect(noteName(21)).toBe('A0');
-  expect(isBlackKey(61)).toBe(true);
-  expect(isBlackKey(60)).toBe(false);
 });
 
 test('a label takes the ink its fill leaves readable', () => {

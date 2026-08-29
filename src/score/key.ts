@@ -2,8 +2,8 @@
 // and everything a caller reads off it: its tonic, its scale, the spelled notes, its name, its
 // signature, its degree table and the keys related to it.
 
-import { NOTE_NAMES, pitchClass } from '@/look/color';
 import { SEVENTHS, TRIADS, type Shape } from './harmony';
+import { FLAT_NAMES, SHARP_NAMES, pitchClass } from './pitch';
 
 /** One scale degree of a key: what it is called and what it stacks into. */
 export interface KeyDegree {
@@ -85,7 +85,6 @@ const HARMONIC_MINOR = [0, 2, 3, 5, 7, 8, 11];
 // Semitones from the key signature's major tonic to the mode's tonic, indexed by OSMD's KeyEnum.
 const MODE_OFFSET = [0, 9, 0, 2, 4, 5, 7, 9, 0, 11];
 const MAJOR_MODES = new Set([0, 2, 8]);
-const FLAT_NAMES = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
 /** The note letters, the pitch class each one is natural at, and the accidentals from -2 to 2. */
 const LETTERS = 'CDEFGAB';
 const LETTER_PCS = [0, 2, 4, 5, 7, 9, 11];
@@ -162,7 +161,7 @@ function build(sharps: number, mode: number): Key {
     },
     spell(pc, written) {
       const flat = written < 0 || (written === 0 && sharps < 0);
-      return (flat ? FLAT_NAMES : NOTE_NAMES)[pc]!;
+      return (flat ? FLAT_NAMES : SHARP_NAMES)[pc]!;
     },
   };
 }

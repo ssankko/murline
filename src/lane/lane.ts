@@ -16,20 +16,18 @@ import {
 import { clamp } from '@/lib/utils';
 import {
   INK,
-  NOTE_NAMES,
   PAPER,
   colorOf,
-  isBlackKey,
   labelInk,
   luminance,
   mix,
-  pitchClass,
   tone,
   withAlpha,
   type Palette,
 } from '@/look/color';
 import { easeInOut, reducedMotion } from '@/look/motion';
 import { C_MAJOR, keyOf, type Key, type KeyAt } from '@/score/key';
+import { FIFTHS, SHARP_NAMES, isBlackKey, pitchClass } from '@/score/pitch';
 import type { Engine, LoopSpan, PlayEvent, SeekTarget, Snapshot } from '@/play/engine';
 import type { Section } from '@/play/section';
 import { isInactiveHand, type HandsSetting } from '@/play/settings';
@@ -1141,7 +1139,7 @@ export class Lane {
         // to hold it whole grows a tab in its own fill around the name, so the name is never
         // shrunk and never left off.
         if (this.look.names) {
-          const name = NOTE_NAMES[pitchClass(note.midi)]!;
+          const name = SHARP_NAMES[pitchClass(note.midi)]!;
           ctx.font = NAME_FONT;
           const need = ctx.measureText(name).width + NAME_PAD * 2;
           if (need > width || height < NAME_MIN_H) {
@@ -1819,9 +1817,10 @@ export class Lane {
   }
 
   /**
-   * One segment's letter, with its degree under it where the key holds the pitch class. A `faced`
-   * segment wears the face of the chord in force, so its letter is read against that face and not
-   * against the chrome a hollow segment leaves bare.
+   * One segment's letter, with its degree under it where the key holds the pitch class; the key
+   * outside its own notes spells by its signature, and C major stands in where none is in force. A
+   * `faced` segment wears the face of the chord in force, so its letter is read against that face
+   * and not against the chrome a hollow segment leaves bare.
    */
   private wheelLabel(pc: number, of: Key | null, alpha: number, faced: boolean): void {
     if (alpha <= 0.01) return;
@@ -1833,7 +1832,7 @@ export class Lane {
     ctx.font = LETTER_FONT;
     if (degree < 0) {
       ctx.fillStyle = faced ? ink : tone(INK.scaffolding, this.dark);
-      ctx.fillText(fifthName(pc, of?.sharps ?? 0), x, y);
+      ctx.fillText((of ?? C_MAJOR).spell(pc, 0), x, y);
       return;
     }
     ctx.fillStyle = ink;
@@ -1923,19 +1922,6 @@ function blendLayout(from: KeyLayout, to: KeyLayout, t: number): KeyLayout {
     return { ...key, x: ramp([was.x, key.x], t), w: ramp([was.w, key.w], t) };
   });
   return { keys, byMidi: new Map(keys.map((key) => [key.midi, key])), width: to.width };
-}
-
-/** The twelve pitch classes a fifth apart, which is the order the wheel's segments run in. */
-const FIFTHS = [0, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10, 5];
-/**
- * The letter a segment wears where the key in force spells no name for it: a black key follows the
- * key's own signature, and a key with no signature takes F♯ on the sharp side and flats past it.
- */
-export function fifthName(pc: number, sharps: number): string {
-  const name = NOTE_NAMES[pitchClass(pc)]!;
-  if (name.length === 1) return name;
-  const sharp = sharps > 0 || (sharps === 0 && pitchClass(pc) === 6);
-  return sharp ? `${name[0]}♯` : `${NOTE_NAMES[pitchClass(pc + 1)]}♭`;
 }
 
 /** Where a pitch class stands on the wheel: C at twelve o'clock, a fifth every 30 degrees. */

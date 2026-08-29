@@ -92,13 +92,13 @@ describe('the naming rules', () => {
   });
 
   test('a half-diminished seventh on a chromatic root reads as a dominant seventh', () => {
-    expect(names(analyzeHarmony(scoreOf([[[54, 1], 57, 60, 64]])))).toEqual(['D7/F# 2⁷/♯4']);
+    expect(names(analyzeHarmony(scoreOf([[[54, 1], 57, 60, 64]])))).toEqual(['D7/F♯ 2⁷/♯4']);
   });
 
   test('a diminished seventh is spelled from its bass, and the key decides the sign', () => {
-    expect(names(analyzeHarmony(scoreOf([[[54, 1], 57, 60, 63]])))).toEqual(['F#°7 ♯4°⁷']);
+    expect(names(analyzeHarmony(scoreOf([[[54, 1], 57, 60, 63]])))).toEqual(['F♯°7 ♯4°⁷']);
     expect(names(analyzeHarmony(scoreOf([[[56, -1], 59, 62, 65]], keyOf(-4, 0))))).toEqual([
-      'Ab°7 1°⁷',
+      'A♭°7 1°⁷',
     ]);
   });
 

@@ -33,6 +33,7 @@ import {
   type SortOrder,
 } from '@/library/queries';
 import { scanLibrary, splitError } from '@/library/scan';
+import { clamp } from '@/lib/utils';
 import { Collapse } from '@/look/collapse';
 import { Finder } from '@/screens/finder';
 import { Detail } from '@/screens/piece-detail';
@@ -262,7 +263,16 @@ export function Library({
                 aria-label="Search library"
                 placeholder="Search"
                 onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => event.key === 'Escape' && setQuery('')}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') return setQuery('');
+                  const step = ARROWS[event.key];
+                  if (!step || shown.length === 0) return;
+                  // The caret stays where it is: the arrows belong to the list while the field
+                  // holds the focus, and the effect above scrolls the row they reach into view.
+                  event.preventDefault();
+                  const at = shown.findIndex((row) => row === piece);
+                  setSelected(shown[nextRow(shown.length, at, step)]!.path);
+                }}
                 className="placeholder:text-muted-ink min-w-0 flex-1 bg-transparent text-[13px] outline-none"
               />
             </div>
@@ -454,6 +464,14 @@ export function Library({
       )}
     </div>
   );
+}
+
+/** The step each arrow key takes through the rows the search field leaves. */
+const ARROWS: Record<string, number | undefined> = { ArrowDown: 1, ArrowUp: -1 };
+
+/** The row an arrow key reaches from row `at` of `count` rows: the ends hold, they do not wrap. */
+export function nextRow(count: number, at: number, step: number): number {
+  return clamp(at + step, 0, count - 1);
 }
 
 /**

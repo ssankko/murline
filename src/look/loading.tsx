@@ -94,7 +94,16 @@ function leave(marks: HTMLElement[], beat: Animation[]): Animation[] {
  * next beat and leaves on it, and is on the page nowhere else. `label` is what a screen reader
  * says it is waiting for. Motion turned down takes the row away the moment the wait ends.
  */
-export function Loading({ on = true, label = 'Loading' }: { on?: boolean; label?: string }) {
+export function Loading({
+  on = true,
+  label = 'Loading',
+  scale = 1,
+}: {
+  on?: boolean;
+  label?: string;
+  /** How much larger than the lane's own countdown the row is drawn, marks and label together. */
+  scale?: number;
+}) {
   const row = useRef<HTMLSpanElement>(null);
   /** What the row is under: its beat while the wait runs, its exit while it leaves. */
   const running = useRef<Animation[]>([]);
@@ -147,7 +156,13 @@ export function Loading({ on = true, label = 'Loading' }: { on?: boolean; label?
       ref={row}
       role="status"
       className="flex-none align-middle"
-      style={{ position: 'relative', display: 'inline-block', width: WIDTH, height: TALL }}
+      style={{
+        position: 'relative',
+        display: 'inline-block',
+        width: WIDTH,
+        height: TALL,
+        transform: `scale(${scale})`,
+      }}
     >
       {Array.from({ length: BEATS }, (_, beat) => (
         <span
@@ -170,5 +185,18 @@ export function Loading({ on = true, label = 'Loading' }: { on?: boolean; label?
       ))}
       <span className="sr-only">{label}</span>
     </span>
+  );
+}
+
+/**
+ * The wait while a piece opens, over the content area of the play screen and the Preview: between
+ * the 48 px top bar and the 22 px status bar, with the sheet host and the lane left standing under
+ * it. It takes no pointer input, so the row is only ever drawn over them.
+ */
+export function Opening({ on, name }: { on: boolean; name: string }) {
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-12 bottom-[22px] flex items-center justify-center">
+      <Loading on={on} scale={3} label={`Opening ${name}`} />
+    </div>
   );
 }

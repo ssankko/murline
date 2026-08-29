@@ -25,7 +25,8 @@ _Avoid_: Caching, scanning, import (import is the act of adding the file; indexi
 **Library**:
 The set of pieces the app has imported, with per-piece favorites, history and settings. The list
 pane has a search field over its rows, matching title and composer; ⌘F reaches it and Escape clears
-it, and what it holds lasts for the session alone.
+it, and what it holds lasts for the session alone. While the field has the focus the arrow keys walk
+the selection through the rows it leaves, holding at either end.
 _Avoid_: Collection, catalogue
 
 **Score finder**:
@@ -57,7 +58,7 @@ The last row of the library, Preview and play screens, one line of small text hi
 _Avoid_: Footer, status line, taskbar
 
 **Loading indicator**:
-The row of beats that runs wherever the app is waiting on work the user asked for or on the app's own boot, drawn as the falling notes' countdown is: a capsule for the strong beat and dots for the weak ones, travelling right, the one at the right burning out as a new one is born at the left. It leaves only on a beat: the row runs to the next beat, then every mark eases out to the right.
+The row of beats that runs wherever the app is waiting on work the user asked for or on the app's own boot, drawn as the falling notes' countdown is: a capsule for the strong beat and dots for the weak ones, travelling right, the one at the right burning out as a new one is born at the left. It leaves only on a beat: the row runs to the next beat, then every mark eases out to the right. The open of a piece is one of those waits: while the play screen or the Preview reads a file, the row stands large over the content area and names the piece it is opening.
 _Avoid_: Spinner, progress bar, throbber
 
 ### Playing

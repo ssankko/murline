@@ -12,6 +12,7 @@ import { setNotice } from '@/library/notice';
 import { getPiece, updatePieceSettings } from '@/library/queries';
 import { reindexIfChanged } from '@/library/scan';
 import { clamp } from '@/lib/utils';
+import { Opening } from '@/look/loading';
 import { useDark } from '@/look/use-dark';
 import type { SeekTarget } from '@/play/engine';
 import { UNSET_PIECE_SETTINGS, resolvePlaySettings } from '@/play/resolve';
@@ -67,6 +68,8 @@ export function PreviewScreen({
   backRef.current = onBack;
 
   const [title, setTitle] = useState(baseNameOf(path));
+  /** True from the start of the open until the page stands on the screen, and on a failure too. */
+  const [opening, setOpening] = useState(true);
   const [playing, setPlaying] = useState(false);
   /** Why there is no sound, empty when there is; null until the engine has answered. */
   const [reason, setReason] = useState<string | null>(null);
@@ -233,6 +236,7 @@ export function PreviewScreen({
   useEffect(() => {
     let live = true;
     const fileName = baseNameOf(path);
+    setOpening(true);
     void (async () => {
       try {
         await reindexIfChanged(folder, path);
@@ -265,6 +269,7 @@ export function PreviewScreen({
         setTempoMode(resolved.tempoMode);
         setTempo(resolved.tempoValue);
         setTitle(sheet.score.title || fileName);
+        setOpening(false);
       } catch (error) {
         // A Preview the user closed mid-load throws on the host the cleanup already released, so
         // only a failure while the screen still stands is worth a notice.
@@ -273,6 +278,7 @@ export function PreviewScreen({
         const row = await getPiece(path).catch(() => null);
         if (!live) return;
         setNotice(`Could not open ${row?.title ?? fileName}: ${reason}`);
+        setOpening(false);
         backRef.current();
       }
     })();
@@ -371,6 +377,8 @@ export function PreviewScreen({
         <div className="bg-paper flex-1 overflow-x-hidden overflow-y-auto">
           <div ref={hostRef} />
         </div>
+
+        <Opening on={opening} name={title} />
 
         <StatusBar
           midiOpen={midiOpen}

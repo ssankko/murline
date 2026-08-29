@@ -23,6 +23,7 @@ import {
 import { reindexIfChanged } from '@/library/scan';
 import { clamp } from '@/lib/utils';
 import { Collapse } from '@/look/collapse';
+import { Opening } from '@/look/loading';
 import { Metronome, type MetronomeHandle } from '@/look/metronome';
 import { useDark } from '@/look/use-dark';
 import { useMidiStatus } from '@/midi/use-midi-status';
@@ -103,6 +104,8 @@ export function PlayScreen({
   backRef.current = onBack;
 
   const [title, setTitle] = useState(baseNameOf(path));
+  /** True from the start of the open until the piece stands on the screen, and on a failure too. */
+  const [opening, setOpening] = useState(true);
   const [state, setState] = useState<PlayState>('idle');
   const [kind, setKind] = useState<PlayKind>('practice');
   /** The card of the performance that just ended, with the piece's best before this run. */
@@ -144,6 +147,7 @@ export function PlayScreen({
   // the sheet and build the Score of what was rendered. Any failure goes back to the library.
   useEffect(() => {
     mounted.current = true;
+    setOpening(true);
     // One flag per run of the effect: `mounted` is shared, so a later mount puts it back up while
     // the sheet of a run that is over is still on its way.
     let live = true;
@@ -167,7 +171,7 @@ export function PlayScreen({
         // The file may have changed since the Section was saved, so the engine is never given one
         // naming a bar this piece no longer has.
         const kept = savedSection(sheet.score.measures, resolved.sectionFrom, resolved.sectionTo);
-        const opening: PieceSettings = {
+        const settings: PieceSettings = {
           ...resolved,
           sectionFrom: kept?.from ?? null,
           sectionTo: kept?.to ?? null,
@@ -177,7 +181,7 @@ export function PlayScreen({
         const engine = new Engine(sheet.score, {
           ...DEFAULT_PLAY_SETTINGS,
           ...knobValues(globals, ENGINE_KNOBS),
-          ...opening,
+          ...settings,
         });
         if (intent === 'performance') engine.arm();
         engineRef.current = engine;
@@ -203,7 +207,8 @@ export function PlayScreen({
         };
         setSplit(clamp(globals.sheet_split, SPLIT_MIN, SPLIT_MAX));
         setOneStaff(sheet.score.staffCount < 2);
-        show(opening, kept);
+        show(settings, kept);
+        setOpening(false);
         // The piece reopens where it was left. The seek runs with the Section and Loop already in
         // force, so a place inside the lap wins and one outside it is pulled to the lap's start.
         // A file that lost the bars it named leaves a tick past the end, which is no place to open.
@@ -223,6 +228,7 @@ export function PlayScreen({
         if (!live) return;
         const reason = error instanceof ScoreError ? error.reason : String(error);
         setNotice(`Could not open ${fileName}: ${reason}`);
+        setOpening(false);
         backRef.current();
       }
     })();
@@ -643,6 +649,9 @@ export function PlayScreen({
             />
           )}
         </div>
+
+        {/* After the sheet and the lane, so the row stands over both of them. */}
+        <Opening on={opening} name={title} />
 
         <StatusBar
           midiOpen={midiOpen}

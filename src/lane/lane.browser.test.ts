@@ -434,7 +434,7 @@ test('the Section band travels from the bars it had to the bars it takes', () =>
 /** The wheel's panel: a lane tall enough to hold it, and where it stands in one. */
 const WHEEL_HEIGHT = 600;
 const WHEEL_LEFT = WIDTH - 16 - 200;
-const WHEEL_TOP = 172;
+const WHEEL_TOP = 16;
 
 /** Every colour the wheel's panel carries, as `#rrggbb`. */
 function panelColours(ctx: CanvasRenderingContext2D): Set<string> {
@@ -451,9 +451,9 @@ function panelColours(ctx: CanvasRenderingContext2D): Set<string> {
 /** The pitch classes of C major but for C, which every note of the test piece already wears. */
 const IN_C = [2, 4, 5, 7, 9, 11];
 
-test('the wheel faces the scale in force, and covers nothing while the setting is off', () => {
+test('the wheel faces the scale in force, and covers nothing while the setting names the panels', () => {
   const wall = performance.timeOrigin + performance.now();
-  const on = mount({ height: WHEEL_HEIGHT });
+  const on = mount({ height: WHEEL_HEIGHT, look: { harmony: 'wheel' } });
   // The first key of all fades in, so the band stands whole a slide after the frame it opens on.
   on.lane.frame(on.engine.snapshot(), on.engine.windowTicks, wall);
   on.lane.frame(on.engine.snapshot(), on.engine.windowTicks, wall + 250);
@@ -463,7 +463,7 @@ test('the wheel faces the scale in force, and covers nothing while the setting i
   expect(colours.has(colorOf(6, 'muted', false))).toBe(false);
   on.lane.dispose();
 
-  const off = mount({ height: WHEEL_HEIGHT, look: { wheel: false } });
+  const off = mount({ height: WHEEL_HEIGHT });
   off.lane.frame(off.engine.snapshot(), off.engine.windowTicks, wall);
   off.lane.frame(off.engine.snapshot(), off.engine.windowTicks, wall + 250);
   const bare = panelColours(off.ctx);
@@ -484,7 +484,11 @@ function scoreTurning(): Score {
 }
 
 test('a key change cross-fades the band, and a seek snaps it', () => {
-  const { engine, lane, ctx } = mount({ score: scoreTurning(), height: WHEEL_HEIGHT });
+  const { engine, lane, ctx } = mount({
+    score: scoreTurning(),
+    height: WHEEL_HEIGHT,
+    look: { harmony: 'wheel' },
+  });
   const wall = performance.timeOrigin + performance.now();
   const frame = (at: number) => lane.frame(engine.snapshot(), engine.windowTicks, wall + at);
   // F sharp belongs to D major alone, and B flat to E flat major alone.

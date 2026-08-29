@@ -117,7 +117,7 @@ The part of the play screen that names the chord sounding at the cursor and the 
 _Avoid_: Chord track, roman numerals
 
 **Wheel** (long form: wheel of fifths):
-The circle-of-fifths panel in the falling notes, under the harmony display: twelve segments a fifth apart with C at the top, the seven of the key in force faced in their pitch colours and the other five hollow, the tonic in a badge, and the root of the chord sounding now on a segment that stands off the band. The pointer's wheel is always called the mouse wheel.
+The circle-of-fifths panel in the falling notes, shown in place of the chord panels when the harmony setting names it: twelve segments a fifth apart with C at the top, the seven of the key in force faced in their pitch colours and the other five hollow, the tonic in a badge, and the root of the chord sounding now on a segment that stands off the band. The pointer's wheel is always called the mouse wheel.
 _Avoid_: Dial, circle, chart
 
 **Key readout**:

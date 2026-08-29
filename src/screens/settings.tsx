@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { readSettings, setSetting, type Settings } from '@/db/db';
-import { LOOKAHEAD_MAX, LOOKAHEAD_MIN } from '@/lane/lane';
+import { type LaneHarmony, LOOKAHEAD_MAX, LOOKAHEAD_MIN } from '@/lane/lane';
 import { cancelPdmx, downloadPdmx, progressLabel, usePdmxDownload } from '@/library/pdmx';
 import { clamp, rowId } from '@/lib/utils';
 import { noteName } from '@/look/color';
@@ -31,6 +31,12 @@ const THEMES: [Theme, string][] = [
   ['system', 'System'],
   ['light', 'Light'],
   ['dark', 'Dark'],
+];
+
+const HARMONY: [LaneHarmony, string][] = [
+  ['panels', 'Panels'],
+  ['wheel', 'Wheel'],
+  ['off', 'Off'],
 ];
 
 const PRESETS: [KeyboardPreset, string][] = [
@@ -253,14 +259,7 @@ const SEARCH_ROWS: {
     tab: 'look',
     label: 'Harmony',
     group: 'Falling notes',
-    words: ['chords', 'chord track', 'roman numerals'],
-  },
-  {
-    id: 'lane_wheel',
-    tab: 'look',
-    label: 'Harmony wheel',
-    group: 'Falling notes',
-    words: ['circle of fifths', 'key', 'chord'],
+    words: ['chords', 'chord track', 'roman numerals', 'wheel', 'circle of fifths'],
   },
   {
     id: 'keyboard_scale_marks',
@@ -695,15 +694,10 @@ export function SettingsPanel({
                         />
                       </Row>
                       <Row id="lane_harmony" marked={marked === 'lane_harmony'} label="Harmony">
-                        <Toggle
+                        <Segmented
+                          options={HARMONY}
                           value={values.lane_harmony}
                           onChange={(value) => write('lane_harmony', value)}
-                        />
-                      </Row>
-                      <Row id="lane_wheel" marked={marked === 'lane_wheel'} label="Harmony wheel">
-                        <Toggle
-                          value={values.lane_wheel}
-                          onChange={(value) => write('lane_wheel', value)}
                         />
                       </Row>
                       <Row id="lane_colour" marked={marked === 'lane_colour'} label="Pitch colours">

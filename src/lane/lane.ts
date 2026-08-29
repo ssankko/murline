@@ -43,16 +43,16 @@ import { barsOfWalk, beatOf } from '@/score/beat';
 import { TICKS_PER_QUARTER, type ChordEvent, type PlayStep, type Score } from '@/score/types';
 
 /** Look knobs, all global settings the Look tab writes to. */
+export type LaneHarmony = 'panels' | 'wheel' | 'off';
+
 export interface LaneLook {
   lookaheadBeats: number;
   /** Width of a block as a percent of its key. */
   noteWidthPct: number;
   gapPx: number;
   keyLabels: boolean;
-  /** Whether the harmony panels are drawn. */
-  harmony: boolean;
-  /** Whether the wheel is drawn under the harmony panels. */
-  wheel: boolean;
+  /** How the harmony shows at the lane's top right: as the chord panels, as the wheel, or not at all. */
+  harmony: LaneHarmony;
   /** Whether the keys outside the scale in force wear a dimmed face. */
   scaleMarks: boolean;
   /** Whether a block wears the pitch colour of its note, against one neutral ink for every note. */
@@ -66,8 +66,7 @@ export const DEFAULT_LANE_LOOK: LaneLook = {
   noteWidthPct: 80,
   gapPx: 2,
   keyLabels: true,
-  harmony: true,
-  wheel: true,
+  harmony: 'panels',
   scaleMarks: false,
   colour: true,
   names: false,
@@ -238,9 +237,9 @@ const BURN_SHARE = 0.25;
 const BURN_COLLAPSE = 0.18;
 const BURN_SWELL = 0.3;
 
-/** The wheel under the panels: its side, and the gap between it and the last panel. */
+/** The wheel, which stands where the chord panels would: its side and its corner. */
 const WHEEL_SIZE = 200;
-const WHEEL_GAP = PANEL_GAP * 3;
+const WHEEL_ROUND = 16;
 /** The band, which is the scale in force, and the two lines of type it carries. */
 const BAND_IN = 54;
 const BAND_OUT = 78;
@@ -1460,7 +1459,7 @@ export class Lane {
     }
     this.shownRows = [current, ...ahead];
     // The wheel reads the row above, so it is kept whether or not the panels are drawn.
-    if (!this.look.harmony) return;
+    if (this.look.harmony !== 'panels') return;
 
     const [next, after] = ahead;
     const rows: { chord: LaneChord; slot: number; glyphs: BeatGlyph[] }[] = [];
@@ -1563,16 +1562,15 @@ export class Lane {
    * of the chord sounding now on a segment that stands off the band.
    */
   private drawWheel(width: number): void {
-    if (!this.look.wheel) return;
+    if (this.look.harmony !== 'wheel') return;
     const ctx = this.ctx;
-    const last = slotRect(2, width);
     const left = width - PANEL_INSET - WHEEL_SIZE;
-    const top = last.y + last.h + WHEEL_GAP;
+    const top = PANEL_INSET;
     ctx.save();
     ctx.globalAlpha = 1;
     ctx.fillStyle = tone(PANEL_FILL, this.dark);
     ctx.beginPath();
-    ctx.roundRect(left, top, WHEEL_SIZE, WHEEL_SIZE, 4);
+    ctx.roundRect(left, top, WHEEL_SIZE, WHEEL_SIZE, WHEEL_ROUND);
     ctx.fill();
     ctx.translate(left + WHEEL_SIZE / 2, top + WHEEL_SIZE / 2);
     ctx.textAlign = 'center';

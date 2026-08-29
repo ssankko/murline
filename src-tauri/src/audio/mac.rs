@@ -14,7 +14,7 @@ pub use effects::{chain, effects, set_chain, show_effect};
 use crate::audio::device::{self, DeviceId};
 use crate::audio::preview::{Event, HELD, PreviewNote, Scheduler};
 use crate::audio::sampler::{self, Command, Ring, engine::Sampler};
-use crate::audio::{Envelope, OutputDevice, Status, progress};
+use crate::audio::{Envelope, OutputDevice, Status, load, progress};
 // The instrument the graph plays, and the window a hosted plugin brings with it.
 pub use crate::audio::instruments::{list as instruments, load as load_instrument};
 pub use crate::audio::window::show_instrument;
@@ -41,7 +41,7 @@ use std::cell::RefCell;
 use std::path::Path;
 use std::ptr::{NonNull, from_ref};
 use std::sync::atomic::Ordering::Relaxed;
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};
 use std::sync::mpsc::{Receiver, Sender, SyncSender, TrySendError, channel, sync_channel};
 use std::sync::{Arc, Mutex, Once, Weak};
 use std::thread::sleep;
@@ -96,6 +96,9 @@ const FIRST_RENDER: Duration = Duration::from_secs(2);
 const IDLE: Duration = Duration::from_millis(20);
 /// About thirty progress events a second, which is what the moving bar highlight needs.
 const PROGRESS: Duration = Duration::from_millis(33);
+/// Four render-load events a second: fast enough for the status bar to read as live, slow enough
+/// that the number stands still long enough to be read.
+const LOAD: Duration = Duration::from_millis(250);
 /// Preview events the render block may leave waiting for a hosted plugin, and how many the
 /// reporter takes out of the ring at a time. A wake behind schedule empties it over several turns.
 const PREVIEW_RING: usize = 1024;
@@ -121,6 +124,15 @@ struct Shared {
     /// false while a plugin does, and they go out through `notes` for the reporter to start.
     file: AtomicBool,
     notes: Ring<Event>,
+}
+
+/// What the render block reports about its own work, written at the end of every call and read by
+/// the reporter thread: the voices sounding, and the block's own wall time as a percent of the
+/// time the buffer it filled will take to play.
+#[derive(Default)]
+struct Meters {
+    voices: AtomicU32,
+    load: AtomicU32,
 }
 
 /// The one graph the app plays through, empty until `start` builds it.
@@ -202,6 +214,7 @@ pub struct Graph {
     /// thread. Drained at every operation, the way `graveyard` is at every load.
     played: Receiver<Vec<PreviewNote>>,
     preview: Arc<Shared>,
+    meters: Arc<Meters>,
 }
 
 // AVFAudio's classes carry no main-thread requirement, and every call into one goes through the
@@ -240,7 +253,16 @@ impl Graph {
                 file: AtomicBool::new(false),
                 notes: Ring::new(PREVIEW_RING),
             });
-            let source = source_node(&format, orders, dead, operations, finished, preview.clone());
+            let meters = Arc::new(Meters::default());
+            let source = source_node(
+                &format,
+                orders,
+                dead,
+                operations,
+                finished,
+                preview.clone(),
+                meters.clone(),
+            );
             engine.attachNode(&source);
             engine.attachNode(&clicker);
             engine.attachNode(&fader);
@@ -281,6 +303,7 @@ impl Graph {
                 previews,
                 played,
                 preview,
+                meters,
             })
         }
     }
@@ -789,6 +812,7 @@ fn source_node(
     operations: Receiver<Preview>,
     played: SyncSender<Vec<PreviewNote>>,
     preview: Arc<Shared>,
+    meters: Arc<Meters>,
 ) -> Retained<AVAudioSourceNode> {
     let voices = RefCell::new(Sampler::new(RATE, VOICES, dead));
     let scheduler = RefCell::new(Scheduler::default());
@@ -798,6 +822,7 @@ fn source_node(
               _when: NonNull<AudioTimeStamp>,
               frames: AVAudioFrameCount,
               output: NonNull<AudioBufferList>| {
+            let entered = Instant::now();
             let mut voices = voices.borrow_mut();
             while let Ok(command) = orders.try_recv() {
                 voices.apply(command);
@@ -874,6 +899,13 @@ fn source_node(
                     std::slice::from_raw_parts_mut(right.mData.cast(), frames),
                 );
             }
+            // The render load: what this call cost against the time its own buffer will play for.
+            // Two relaxed stores and a clock read, so the block still allocates nothing and waits
+            // on nothing.
+            let playing_for = f64::from(frames) / RATE;
+            let share = entered.elapsed().as_secs_f64() / playing_for * 100.0;
+            meters.load.store(share as u32, Relaxed);
+            meters.voices.store(voices.active() as u32, Relaxed);
             0
         },
     );
@@ -1035,15 +1067,16 @@ fn watch_configuration(engine: &AVAudioEngine) {
 
 /// Reports the Preview: it tells the webview where the render block's clock stands, and starts on
 /// a hosted plugin the notes the block left in the ring, an Audio Unit being no thing to call from
-/// the audio thread.
+/// the audio thread. It also carries the render load out to the status bar, four times a second.
 // ponytail: a plugin's notes are started at this thread's wake rather than at the frame they fall
 // on; MusicDeviceMIDIEvent with a frame offset, sent from inside the block, is the exact upgrade.
 fn report_forever() {
     let mut told = Instant::now() - PROGRESS;
+    let mut metered = Instant::now() - LOAD;
     let mut was_playing = false;
     let mut notes = [Event::default(); PREVIEW_BATCH];
     loop {
-        let Some((seconds, playing)) = with(|graph| {
+        let Some((seconds, playing, voices, share)) = with(|graph| {
             loop {
                 let took = graph.preview.notes.pop(&mut notes);
                 if took == 0 {
@@ -1053,11 +1086,16 @@ fn report_forever() {
                     graph.play_preview(event);
                 }
             }
-            graph.preview_progress()
+            let (seconds, playing) = graph.preview_progress();
+            (seconds, playing, graph.meters.voices.load(Relaxed), graph.meters.load.load(Relaxed))
         }) else {
             sleep(IDLE);
             continue;
         };
+        if metered.elapsed() >= LOAD {
+            metered = Instant::now();
+            load(voices, share);
+        }
         // The end of the piece is told at once, so the play button comes back without a wait.
         if (playing || was_playing) && (!playing || told.elapsed() >= PROGRESS) {
             told = Instant::now();

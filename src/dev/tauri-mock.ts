@@ -35,6 +35,7 @@ export function installTauriMock(): void {
       if (cmd === 'plugin:sql|execute') return [0, 0];
       if (cmd === 'list_library') return [];
       if (cmd === 'audio_instruments') return [{ id: 'mock', name: 'Concert Grand Piano' }];
+      if (cmd === 'audio_chain') return [];
       return 0;
     },
   };

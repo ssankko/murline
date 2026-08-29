@@ -1,5 +1,5 @@
-// The MIDI light on every bar: a piano glyph that is full ink while a keyboard is listened to,
-// and the popover behind it where the player says which devices count.
+// The MIDI light: the popover where the player says which devices count, hanging from the status
+// bar's MIDI cell, with a piano glyph of its own for any caller that gives it no trigger.
 
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -15,18 +15,20 @@ import { Piano } from 'lucide-react';
 import { useState } from 'react';
 
 /**
- * Says from the bar what is listened to, and opens the list of every source the machine has. The
- * machine offers other Macs, phones and buses as MIDI sources, so the choice of which are
- * keyboards is the player's: Use is for this session, Default is for every launch, and Hide keeps
- * one out of the way until it is shown again.
+ * Lists every source the machine has. The machine offers other Macs, phones and buses as MIDI
+ * sources, so the choice of which are keyboards is the player's: Use is for this session, Default
+ * is for every launch, and Hide keeps one out of the way until it is shown again.
  */
 export function MidiLight({
   open,
   onOpenChange,
+  trigger,
 }: {
   /** Held by the screen, because a search result in the settings panel opens this too. */
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** What opens the popover, when it is not the bar button: the status bar's own MIDI cell. */
+  trigger?: React.ReactNode;
 }) {
   const { devices, ports, pinned, defaultId, hidden, error } = useMidiStatus();
   const [showAway, setShowAway] = useState(false);
@@ -36,9 +38,11 @@ export function MidiLight({
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>
-        <BarButton label={label} dim={error !== null || devices.length === 0}>
-          <Piano {...ICON} />
-        </BarButton>
+        {trigger ?? (
+          <BarButton label={label} dim={error !== null || devices.length === 0}>
+            <Piano {...ICON} />
+          </BarButton>
+        )}
       </PopoverTrigger>
       <PopoverContent side="bottom" align="end" className="flex w-72 flex-col gap-2 p-3">
         <p className="text-muted-ink text-[11px] leading-snug">

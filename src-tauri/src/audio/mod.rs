@@ -60,6 +60,22 @@ pub fn progress(seconds: f64, playing: bool) {
     }
 }
 
+/// What the render block last cost, emitted as `audio-load`: the voices sounding, and the block's
+/// own time as a percent of the time the buffer it filled plays for.
+#[derive(Clone, Serialize)]
+pub struct Load {
+    pub voices: u32,
+    pub load: u32,
+}
+
+/// Called from the engine's reporter four times a second. Silent while the app has no handle, and
+/// nothing is sent at all while there is no graph to measure.
+pub fn load(voices: u32, load: u32) {
+    if let Some(app) = APP.get() {
+        let _ = app.emit("audio-load", Load { voices, load });
+    }
+}
+
 /// What the Audio dialog reads: whether sound can come out of the app, the one line saying why not
 /// when it cannot, and the output the engine plays through.
 #[derive(Debug, Default, Serialize)]

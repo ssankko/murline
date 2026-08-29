@@ -346,6 +346,12 @@ impl Sampler {
         }
     }
 
+    /// How many voices are making sound, the ones dying away and the ones fading out of a steal
+    /// included. What the status bar counts.
+    pub fn active(&self) -> usize {
+        self.voices.iter().filter(|v| v.active).count()
+    }
+
     /// Voices answering to a key, which a note-off and a re-strike both act on.
     fn sounding(&mut self) -> impl Iterator<Item = &mut Voice> {
         self.voices

@@ -48,8 +48,12 @@ The settings that apply to the whole app rather than to any one piece: sound, lo
 _Avoid_: Preferences, defaults
 
 **Settings panel**:
-The modal holding every global setting, grouped into Sound, Look, Playing and Library tabs with one search box reaching across all four. Opened from every screen, and while it is open it owns the whole screen's input. It opens on the tab and the scroll place it was last left at, unless the caller names a row to open on.
+The modal holding every global setting, grouped into Sound, Look, Playing and Library tabs with one search box reaching across all four. Opened by the status bar's gear or by ⌘, on every screen that has the bar, and while it is open it owns the whole screen's input. It opens on the tab and the scroll place it was last left at, unless the caller names a row to open on.
 _Avoid_: Settings dialog, preferences, options
+
+**Status bar**:
+The last row of the library, Preview and play screens, one line of small text high. On the left it says what MIDI is listened to and what the sound is made of, each cell the button its popover hangs from; on the right it counts the voices sounding and the render load, and holds the gear into the settings panel. The boot and onboarding screens have none.
+_Avoid_: Footer, status line, taskbar
 
 **Loading indicator**:
 The row of beats that runs wherever the app is waiting on work the user asked for or on the app's own boot, drawn as the falling notes' countdown is: a capsule for the strong beat and dots for the weak ones, travelling right, the one at the right burning out as a new one is born at the left. It leaves only on a beat: the row runs to the next beat, then every mark eases out to the right.
@@ -160,7 +164,7 @@ The ordered list of Audio Unit effects between the instrument and the output. Ea
 _Avoid_: FX chain, rack, inserts, effects bus
 
 **Mixer**:
-The popover behind the volume button that carries the keyboard volume and the metronome's, names the output device and instrument in force, and says when the sound engine is down.
+The popover behind the status bar's sound cell that carries the keyboard volume and the metronome's, names the output device and instrument in force, and says when the sound engine is down.
 _Avoid_: Volume popover, levels, audio dialog
 
 **Keyboard volume**:
@@ -174,6 +178,10 @@ _Avoid_: ADSR (the four sliders, not the concept), amp envelope, volume envelope
 **Velocity curve**:
 The remap from the velocity a key press sends to the velocity the app works in, set by a minimum, a maximum and the shape of the path between them. Velocity 1 lands on the minimum and velocity 127 on the maximum, so the whole of the keyboard's range is squeezed into the band rather than cut off at it. Calibrated by ear. The instrument is played at the output velocity and so is the Preview, and a grade reads the output velocity too. Distinct from the keyboard volume, which sets the finished sound rather than the velocity behind it.
 _Avoid_: Velocity sensitivity, dynamics curve, velocity clamp
+
+**Render load**:
+What one pass of the sound engine's render block costs: its own time over the time the buffer it filled plays for, as a percent. Rust reports it four times a second beside the voices sounding, and the status bar shows both.
+_Avoid_: CPU usage, DSP load, processor time
 
 **Sounding**:
 The keys the Sound tab's two plots draw: the ones under the hands, plus the ones let go and still dying away. Each carries the velocity it was struck at and how long it was held, and each is drawn in its own pitch colour, the same colours the lane uses. The touch plot puts one at the height it was struck; the envelope plot walks one along the envelope. A key let go leaves both plots at once, after the envelope's release, so neither is left holding a note the other has finished with. The tab counts them itself and only while the panel is open.

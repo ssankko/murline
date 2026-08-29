@@ -25,7 +25,6 @@ import { clamp } from '@/lib/utils';
 import { Collapse } from '@/look/collapse';
 import { Metronome, type MetronomeHandle } from '@/look/metronome';
 import { useDark } from '@/look/use-dark';
-import { MidiLight } from '@/midi/midi-light';
 import { useMidiStatus } from '@/midi/use-midi-status';
 import { click, setClickVolume } from '@/play/click';
 import {
@@ -48,9 +47,9 @@ import { useFrameLoop } from '@/play/use-frame-loop';
 import { keyAt, type Key } from '@/score/key';
 import { bpmAt, ScoreError, type Measure } from '@/score/types';
 import { Button } from '@/components/ui/button';
-import { Mixer } from '@/audio/mixer';
 import { BarButton, ICON, KeyPopover, TEMPO_STEP, TempoPopover } from '@/screens/bar';
 import { SettingsPanel, SpacingPopup, type SettingChange } from '@/screens/settings';
+import { StatusBar } from '@/screens/status-bar';
 import { Sheet, type Pinch } from '@/sheet/sheet';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
@@ -63,7 +62,6 @@ import {
   Plus,
   Repeat,
   RotateCcw,
-  SlidersHorizontal,
   Square,
   Tally4,
 } from 'lucide-react';
@@ -629,21 +627,6 @@ export function PlayScreen({
                 {performing ? 'Stop the performance' : 'Perform'}
               </TooltipContent>
             </Tooltip>
-            <div className="ml-2.5 flex items-center gap-2.5">
-              <MidiLight open={midiOpen} onOpenChange={setMidiOpen} />
-              <Mixer
-                open={mixerOpen}
-                onOpenChange={setMixerOpen}
-                onSoundSettings={() => {
-                  setSettingsJump('instrument_id');
-                  setSettingsOpen(true);
-                }}
-                onGlobalChange={applyGlobal}
-              />
-              <BarButton label="Settings" onClick={() => setSettingsOpen(true)}>
-                <SlidersHorizontal {...ICON} />
-              </BarButton>
-            </div>
           </div>
         </div>
 
@@ -660,6 +643,19 @@ export function PlayScreen({
             />
           )}
         </div>
+
+        <StatusBar
+          midiOpen={midiOpen}
+          onMidiOpen={setMidiOpen}
+          mixerOpen={mixerOpen}
+          onMixerOpen={setMixerOpen}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onSoundSettings={() => {
+            setSettingsJump('instrument_id');
+            setSettingsOpen(true);
+          }}
+          onGlobalChange={applyGlobal}
+        />
 
         <SpacingPopup pinch={pinch} />
 

@@ -1,5 +1,4 @@
 import { Button } from '@/components/ui/button';
-import { TooltipProvider } from '@/components/ui/tooltip';
 import {
   Dialog,
   DialogContent,
@@ -35,16 +34,14 @@ import {
 } from '@/library/queries';
 import { scanLibrary, splitError } from '@/library/scan';
 import { Collapse } from '@/look/collapse';
-import { MidiLight } from '@/midi/midi-light';
-import { BarButton, ICON } from '@/screens/bar';
 import { Finder } from '@/screens/finder';
 import { Detail } from '@/screens/piece-detail';
-import { Mixer } from '@/audio/mixer';
 import { SettingsPanel } from '@/screens/settings';
+import { StatusBar } from '@/screens/status-bar';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open } from '@tauri-apps/plugin-dialog';
-import { ArrowUpDown, Search, SlidersHorizontal } from 'lucide-react';
+import { ArrowUpDown, Search } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 const SORTS: [SortOrder, string][] = [
@@ -232,29 +229,12 @@ export function Library({
 
   return (
     <div className="relative flex h-full flex-col">
-      <TooltipProvider>
-        <div
-          className="border-edge-soft relative flex h-12 flex-none items-center gap-0.5 border-b pr-2 pl-20"
-          data-tauri-drag-region
-        >
-          <h1 className="pointer-events-none mr-1 text-[15px] font-semibold">Library</h1>
-
-          <div className="ml-auto flex items-center gap-2.5">
-            <MidiLight open={midiOpen} onOpenChange={setMidiOpen} />
-            <Mixer
-              open={mixerOpen}
-              onOpenChange={setMixerOpen}
-              onSoundSettings={() => {
-                setSettingsJump('instrument_id');
-                setSettingsOpen(true);
-              }}
-            />
-            <BarButton label="Settings" onClick={() => setSettingsOpen(true)}>
-              <SlidersHorizontal {...ICON} />
-            </BarButton>
-          </div>
-        </div>
-      </TooltipProvider>
+      <div
+        className="border-edge-soft relative flex h-12 flex-none items-center border-b pr-2 pl-20"
+        data-tauri-drag-region
+      >
+        <h1 className="pointer-events-none text-[15px] font-semibold">Library</h1>
+      </div>
 
       <div className="flex min-h-0 flex-1">
         <div className="border-edge-soft flex w-[340px] flex-none flex-col border-r">
@@ -379,6 +359,18 @@ export function Library({
           </div>
         )}
       </div>
+
+      <StatusBar
+        midiOpen={midiOpen}
+        onMidiOpen={setMidiOpen}
+        mixerOpen={mixerOpen}
+        onMixerOpen={setMixerOpen}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onSoundSettings={() => {
+          setSettingsJump('instrument_id');
+          setSettingsOpen(true);
+        }}
+      />
 
       <div
         aria-hidden={!dragging}

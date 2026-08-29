@@ -2,7 +2,6 @@
 // that plays it through the sound engine. The notes are scheduled in Rust; this screen only builds
 // the note list, sends the transport commands and walks the band down the page at its clock.
 
-import { Mixer } from '@/audio/mixer';
 import { previewNotes, secondsOf, tickAt } from '@/audio/preview';
 import type { AudioStatus } from '@/audio/sound-tab';
 import { Button } from '@/components/ui/button';
@@ -14,7 +13,6 @@ import { getPiece, updatePieceSettings } from '@/library/queries';
 import { reindexIfChanged } from '@/library/scan';
 import { clamp } from '@/lib/utils';
 import { useDark } from '@/look/use-dark';
-import { MidiLight } from '@/midi/midi-light';
 import type { SeekTarget } from '@/play/engine';
 import { UNSET_PIECE_SETTINGS, resolvePlaySettings } from '@/play/resolve';
 import { DEFAULT_PLAY_SETTINGS, TEMPO_RANGE, type TempoMode } from '@/play/settings';
@@ -23,11 +21,12 @@ import { barTickOf } from '@/score/beat';
 import { ScoreError, bpmAt, stepSeconds, type Score } from '@/score/types';
 import { BarButton, ICON, TEMPO_STEP, TempoPopover } from '@/screens/bar';
 import { SettingsPanel, SpacingPopup, type SettingChange } from '@/screens/settings';
+import { StatusBar } from '@/screens/status-bar';
 import type { Pinch } from '@/sheet/pinch';
 import { PreviewSheet, windowTicksOf } from '@/sheet/preview-sheet';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { ArrowLeft, Minus, Pause, Play, Plus, SlidersHorizontal } from 'lucide-react';
+import { ArrowLeft, Minus, Pause, Play, Plus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 /** A window drag fires the observer far faster than a whole sheet can be drawn again. */
@@ -365,19 +364,6 @@ export function PreviewScreen({
             <Button size="sm" onClick={() => onPlay('performance')}>
               Perform
             </Button>
-            <MidiLight open={midiOpen} onOpenChange={setMidiOpen} />
-            <Mixer
-              open={mixerOpen}
-              onOpenChange={setMixerOpen}
-              onSoundSettings={() => {
-                setSettingsJump('instrument_id');
-                setSettingsOpen(true);
-              }}
-              onGlobalChange={applyGlobal}
-            />
-            <BarButton label="Settings" onClick={() => setSettingsOpen(true)}>
-              <SlidersHorizontal {...ICON} />
-            </BarButton>
           </div>
         </div>
 
@@ -385,6 +371,19 @@ export function PreviewScreen({
         <div className="bg-paper flex-1 overflow-x-hidden overflow-y-auto">
           <div ref={hostRef} />
         </div>
+
+        <StatusBar
+          midiOpen={midiOpen}
+          onMidiOpen={setMidiOpen}
+          mixerOpen={mixerOpen}
+          onMixerOpen={setMixerOpen}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onSoundSettings={() => {
+            setSettingsJump('instrument_id');
+            setSettingsOpen(true);
+          }}
+          onGlobalChange={applyGlobal}
+        />
 
         <SpacingPopup pinch={pinch} />
 

@@ -1,5 +1,5 @@
-// The mixer: the volume button that sits beside the settings button on every screen, and the
-// popover behind it. Two faders and one line saying what the sound is coming out of.
+// The mixer: the popover behind the status bar's sound cell, with a volume button of its own for
+// any caller that gives it no trigger. Two faders and one line saying what the sound comes out of.
 
 import { useAudioStatus, type AudioStatus } from '@/audio/sound-tab';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -22,14 +22,15 @@ function output(status: AudioStatus | null): string {
  * instrument and the effects answering the hands exactly as they did. The metronome fader is the
  * click's own volume and shares nothing with it.
  *
- * The button carries a badge whenever the engine cannot make sound, so a silent app says so from
- * the header bar without being opened.
+ * The volume button carries a badge whenever the engine cannot make sound, so a silent app says so
+ * without being opened.
  */
 export function Mixer({
   open,
   onOpenChange,
   onSoundSettings,
   onGlobalChange,
+  trigger,
 }: {
   /** Held by the screen, because a search result in the settings panel opens the mixer too. */
   open: boolean;
@@ -37,6 +38,8 @@ export function Mixer({
   /** The way into the Sound tab, which is where the device and the instrument are chosen. */
   onSoundSettings: () => void;
   onGlobalChange?: (...change: SettingChange) => void;
+  /** What opens the popover, when it is not the volume button: the status bar's own audio cell. */
+  trigger?: React.ReactNode;
 }) {
   const [values, setValues] = useState<{ keyboard: number; click: number } | null>(null);
   const status = useAudioStatus();
@@ -71,20 +74,22 @@ export function Mixer({
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>
-        <button
-          aria-label="Volume"
-          data-engine={down ? 'down' : undefined}
-          title={down ? status.reason : undefined}
-          className="hover:bg-ink/8 relative flex size-8 flex-none items-center justify-center rounded-md transition-colors duration-150"
-        >
-          <Volume2 size={18} strokeWidth={1.75} />
-          {down && (
-            <span
-              aria-hidden
-              className="bg-ink ring-chrome absolute top-1 right-1 size-1.5 rounded-full ring-2"
-            />
-          )}
-        </button>
+        {trigger ?? (
+          <button
+            aria-label="Volume"
+            data-engine={down ? 'down' : undefined}
+            title={down ? status.reason : undefined}
+            className="hover:bg-ink/8 relative flex size-8 flex-none items-center justify-center rounded-md transition-colors duration-150"
+          >
+            <Volume2 size={18} strokeWidth={1.75} />
+            {down && (
+              <span
+                aria-hidden
+                className="bg-ink ring-chrome absolute top-1 right-1 size-1.5 rounded-full ring-2"
+              />
+            )}
+          </button>
+        )}
       </PopoverTrigger>
       <PopoverContent side="bottom" align="end" className="flex w-64 flex-col gap-3 p-3">
         <Fader

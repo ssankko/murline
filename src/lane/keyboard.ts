@@ -16,6 +16,16 @@ const KEY_BLACK = ['#c3c3c3', '#4c4c4c'] as const;
 const LABEL_MIN_W = 11;
 
 /**
+ * The scale marks: the quiet ink a dotted border traces round a key outside the scale in force,
+ * and how far the legend on such a key fades. The ink carries the quietness itself, so the border
+ * draws opaque and reads the same over every face it crosses.
+ */
+const MARK_INK = ['#b0b0b0', '#585858'] as const;
+const MARK_DASH = [2.5, 3.5] as const;
+const MARK_W = 1.25;
+const MARK_LABEL_ALPHA = 0.5;
+
+/**
  * How far a pressed white key sinks, how far its whole face shades, and how much deeper the strip
  * it sinks under is shaded. The face shades as well as sinking, so a press reads on a coloured key.
  * A black key stands proud of the white ones, so it sinks a share of that and never overshoots it.
@@ -88,7 +98,8 @@ export function keyRange(notes: readonly PlayNote[], settings: PlaySettings): [n
  * or whatever the play says it is right now. `depth` gives each key how far down it stands, 0 up
  * and 1 held: its face shades, and it drops under a strip of that face shaded deeper, which
  * sinks with it. The ease that feeds it overshoots, so a depth past 1 or under 0 is a key in
- * motion.
+ * motion. `mark` says which keys wear the scale marks: a dotted border round the key and a faded
+ * legend on it.
  */
 export function drawKeyboard(
   ctx: CanvasRenderingContext2D,
@@ -98,6 +109,7 @@ export function drawKeyboard(
   labels: boolean,
   fill: (midi: number, base: string) => string,
   depth: (midi: number) => number = () => 0,
+  mark: (midi: number) => boolean = () => false,
 ): void {
   const white = tone(KEY_WHITE, dark);
   const black = tone(KEY_BLACK, dark);
@@ -133,20 +145,48 @@ export function drawKeyboard(
     ctx.roundRect(key.x, top - 1 + drop, key.w, blackH, [0, 0, 2, 2]);
     ctx.fill();
   }
-  if (labels) drawLabels(ctx, layout, top, blackH, dark);
+  drawMarks(ctx, layout, top, blackH, dark, mark);
+  if (labels) drawLabels(ctx, layout, top, blackH, dark, mark);
+}
+
+/** A dotted border round every marked key, whites boxed whole and blacks over their own shape. */
+function drawMarks(
+  ctx: CanvasRenderingContext2D,
+  layout: KeyLayout,
+  top: number,
+  blackH: number,
+  dark: boolean,
+  mark: (midi: number) => boolean,
+): void {
+  ctx.strokeStyle = tone(MARK_INK, dark);
+  ctx.lineWidth = MARK_W;
+  ctx.setLineDash([...MARK_DASH]);
+  ctx.lineCap = 'round';
+  for (const key of layout.keys) {
+    if (!mark(key.midi)) continue;
+    ctx.beginPath();
+    if (key.black) {
+      ctx.roundRect(key.x + 1.5, top + 0.5, key.w - 3, blackH - 2.5, [0, 0, 2, 2]);
+    } else {
+      ctx.rect(key.x + 2, top + 2.5, key.w - 5, KEYBOARD_H - 5);
+    }
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
 }
 
 /** A pressed face is its own colour a little way toward the paper's far end, black or white. */
 const shade = (face: string, amount: number, dark: boolean) =>
   amount > 0 ? mix(face, dark ? '#ffffff' : '#000000', amount) : face;
 
-/** The legend lives on the keys: a swatch in the pitch colour over the note name. */
+/** The legend lives on the keys: a swatch in the pitch colour over the note name, faded on marks. */
 function drawLabels(
   ctx: CanvasRenderingContext2D,
   layout: KeyLayout,
   top: number,
   blackH: number,
   dark: boolean,
+  mark: (midi: number) => boolean,
 ): void {
   ctx.textAlign = 'center';
   for (const key of layout.keys) {
@@ -157,6 +197,7 @@ function drawLabels(
     const y = bottom - 19 - swatch;
     const pc = pitchClass(key.midi);
 
+    ctx.globalAlpha = mark(key.midi) ? MARK_LABEL_ALPHA : 1;
     ctx.fillStyle = colorOf(key.midi, 'muted', dark);
     ctx.beginPath();
     ctx.roundRect(cx - swatch / 2, y, swatch, swatch, 3);
@@ -168,5 +209,6 @@ function drawLabels(
     // Only a C carries its octave, which is enough to find your place on the keys.
     ctx.fillText(pc === 0 ? noteName(key.midi) : SHARP_NAMES[pc]!, cx, bottom - 6);
   }
+  ctx.globalAlpha = 1;
   ctx.textAlign = 'left';
 }

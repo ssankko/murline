@@ -45,7 +45,7 @@ export interface LaneLook {
   keyLabels: boolean;
   /** How the harmony shows at the lane's top right: as the chord panels, as the wheel, or not at all. */
   harmony: LaneHarmony;
-  /** Whether the keys outside the scale in force wear a dimmed face. */
+  /** Whether the keys outside the scale in force wear a ghosted face and a dotted border. */
   scaleMarks: boolean;
   /** Whether a block wears the pitch colour of its note, against one neutral ink for every note. */
   colour: boolean;
@@ -208,9 +208,8 @@ const PANEL_SLIDE_MS = 250;
 const PANEL_PAD = 6;
 /** The chrome tone a panel over the lane wears: paper enough to read on, sheer enough to see past. */
 const PANEL_FILL = ['rgba(233,233,233,0.82)', 'rgba(22,22,22,0.82)'] as const;
-/** The face a key outside the scale in force dims toward, and how far it goes. */
-const SCALE_DIM = ['#8f8f8f', '#181818'] as const;
-const SCALE_DIM_T = 0.6;
+/** How far a key outside the scale in force washes toward the paper, and the face that leaves. */
+const GHOST_WASH = 0.55;
 /** The panel of the chord sounding now, and of each of the two after it: its size and its type. */
 const CHORD_PANEL = { w: 128, h: 64, weight: 700, size: 26 };
 const NEXT_PANEL = { w: 72, h: 36, weight: 600, size: 15 };
@@ -390,7 +389,7 @@ export class Lane {
   /** The key the wheel cross-fades from, and when it set off; a seek and reduced motion snap. */
   private wasScale: Key | null = null;
   private keyAt = -Infinity;
-  /** The dimmed face of each of the keyboard's two base greys, mixed once and kept. */
+  /** The ghosted face of each of the keyboard's two base greys, mixed once and kept. */
   private readonly dimmed = new Map<string, string>();
   /** The walk the bars and the dividers were read from; Loop swaps it for the linear one. */
   private walk: PlayStep[];
@@ -749,6 +748,7 @@ export class Lane {
       this.look.keyLabels,
       this.keyFill,
       this.keyDepth,
+      this.keyMarks,
     );
     this.drawParticles();
     if (this.shownNotice) this.drawNotice(width, laneH);
@@ -1362,12 +1362,15 @@ export class Lane {
   private readonly keyFill = (midi: number, base: string): string => {
     const state = this.engine.keyState(midi);
     let face = base;
-    // A key outside the scale in force rests dimmed while the marks are on; every strike and press
-    // below paints its own face over it, so the marks only show what the key does when left alone.
+    // A key outside the scale in force rests washed toward the paper while the marks are on, the
+    // dotted border over it saying what the wash whispers. Every strike and press below paints its
+    // own face over it, so the marks only show what the key does when left alone.
     if (this.look.scaleMarks && this.scale && !this.scale.has(midi)) {
-      let dim = this.dimmed.get(base);
-      if (!dim) this.dimmed.set(base, (dim = mix(base, tone(SCALE_DIM, this.dark), SCALE_DIM_T)));
-      face = dim;
+      let ghost = this.dimmed.get(base);
+      if (!ghost) {
+        this.dimmed.set(base, (ghost = mix(base, tone(PAPER, this.dark), GHOST_WASH)));
+      }
+      face = ghost;
     }
     if (state === 'color') face = this.sounding(midi, base);
     else if (state === 'grey') {
@@ -1379,6 +1382,13 @@ export class Lane {
     const gone = (this.now - blink) / BLINK_MS;
     return gone >= 1 ? face : mix(colorOf(midi, 'full', this.dark), face, gone);
   };
+
+  /** Which keys wear the scale marks: outside the scale in force, and left alone by the play. */
+  private readonly keyMarks = (midi: number): boolean =>
+    this.look.scaleMarks &&
+    this.scale !== null &&
+    !this.scale.has(midi) &&
+    this.engine.keyState(midi) === 'base';
 
   /** A sounding key's face, drained toward its base as its note's written duration runs out. */
   private sounding(midi: number, base: string): string {

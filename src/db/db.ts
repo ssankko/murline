@@ -60,7 +60,7 @@ export type Settings = {
   lane_colour: boolean;
   /** Whether each falling block carries the name of its note. */
   lane_names: boolean;
-  /** Whether the keyboard dims the keys outside the scale in force. */
+  /** Whether the keyboard marks the keys outside the scale in force. */
   keyboard_scale_marks: boolean;
 
   /** Loudness of the metronome click, 0 to 100. */

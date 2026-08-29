@@ -7,7 +7,7 @@ import { SoundTab } from '@/audio/sound-tab';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { readSettings, setSetting, type Settings } from '@/db/db';
+import { getSettingOr, readSettings, setSetting, type Settings } from '@/db/db';
 import { type LaneHarmony, LOOKAHEAD_MAX, LOOKAHEAD_MIN } from '@/lane/lane';
 import { cancelPdmx, downloadPdmx, progressLabel, usePdmxDownload } from '@/library/pdmx';
 import { clamp, rowId } from '@/lib/utils';
@@ -67,7 +67,7 @@ const GRADE_KNOBS: [keyof Settings, string, number, number][] = [
 /** One global setting as it was just written: a key, with a value of that key's own type. */
 export type SettingChange = { [K in keyof Settings]: [key: K, value: Settings[K]] }[keyof Settings];
 
-type SettingsTab = 'sound' | 'look' | 'playing' | 'library';
+export type SettingsTab = 'sound' | 'look' | 'playing' | 'library';
 
 const TAB_LABELS: Record<SettingsTab, string> = {
   sound: 'Sound',
@@ -393,6 +393,10 @@ export function SettingsPanel({
   const [envelope, setEnvelope] = useState(false);
   const [pdmxReady, setPdmxReady] = useState<boolean | null>(null);
   const list = useRef<HTMLUListElement>(null);
+  const column = useRef<HTMLDivElement>(null);
+  /** The stored offset waiting for the column to have rows to scroll; null once placed. */
+  const [opensAt, setOpensAt] = useState<number | null>(null);
+  const scrollWrite = useRef<ReturnType<typeof setTimeout>>(undefined);
   const pdmx = usePdmxDownload();
   const downloading = pdmx.progress !== null;
 
@@ -418,6 +422,33 @@ export function SettingsPanel({
     setMarked(row.id);
   }, [open, jumpTo]);
 
+  // Where the panel was left, taken up at every open. A `jumpTo` names the place instead, so the
+  // stored one is passed over for that open.
+  useEffect(() => {
+    if (!open || jumpTo) return;
+    let live = true;
+    Promise.all([getSettingOr('settings_tab'), getSettingOr('settings_scroll')]).then(
+      ([last, offset]) => {
+        if (!live) return;
+        setTab(last);
+        setOpensAt(offset);
+      },
+      console.error,
+    );
+    return () => {
+      live = false;
+    };
+  }, [open, jumpTo]);
+
+  // The rows arrive with `values` and the offset on its own read, in either order, and the column
+  // can take the offset only once both are here.
+  useEffect(() => {
+    if (values && column.current && opensAt !== null) {
+      column.current.scrollTop = opensAt;
+      setOpensAt(null);
+    }
+  }, [values, opensAt]);
+
   // Whether the folder in force holds unpacked scores. Rust answers off the disk, not the setting.
   useEffect(() => {
     const folder = values?.pdmx_folder;
@@ -441,6 +472,26 @@ export function SettingsPanel({
   useEffect(() => {
     list.current?.querySelector('[data-selected]')?.scrollIntoView({ block: 'nearest' });
   }, [sel, query]);
+
+  /** Every tab opens at the top, so the offset held is the open tab's own. */
+  function chooseTab(next: SettingsTab): void {
+    setTab(next);
+    setMarked(null);
+    setOpensAt(null);
+    if (column.current) column.current.scrollTop = 0;
+    setSetting('settings_tab', next).catch(console.error);
+    setSetting('settings_scroll', 0).catch(console.error);
+  }
+
+  // Scrolling writes far more often than the database is worth, so only the place a scroll rests
+  // at is kept.
+  function onScroll(event: React.UIEvent<HTMLDivElement>): void {
+    const top = event.currentTarget.scrollTop;
+    clearTimeout(scrollWrite.current);
+    scrollWrite.current = setTimeout(() => {
+      setSetting('settings_scroll', top).catch(console.error);
+    }, 300);
+  }
 
   function write<K extends keyof Settings>(key: K, value: Settings[K]): void {
     setValues((held) => held && { ...held, [key]: value });
@@ -478,7 +529,7 @@ export function SettingsPanel({
       (row.tab === 'mixer' ? onOpenMixer : onOpenMidi)?.();
       return;
     }
-    setTab(row.tab);
+    chooseTab(row.tab);
     setMarked(row.id);
   }
 
@@ -558,10 +609,7 @@ export function SettingsPanel({
 
         <Tabs.Root
           value={tab}
-          onValueChange={(next) => {
-            setTab(next as SettingsTab);
-            setMarked(null);
-          }}
+          onValueChange={(next) => chooseTab(next as SettingsTab)}
           className="flex min-h-0 flex-1 flex-col"
         >
           <Tabs.List className="border-edge-soft flex flex-none gap-0.5 border-b px-4 pt-3">
@@ -578,7 +626,11 @@ export function SettingsPanel({
 
           {/* The box is a grid whose track is as wide as its widest content unless the column is let
             go under it: without min-w-0 a long path widens the whole panel. */}
-          <div className="flex min-w-0 flex-1 flex-col overflow-y-auto px-4 py-4">
+          <div
+            ref={column}
+            onScroll={onScroll}
+            className="flex min-w-0 flex-1 flex-col overflow-y-auto px-4 py-4"
+          >
             {values && (
               <>
                 <Tabs.Content value="sound" className="flex flex-col gap-7">

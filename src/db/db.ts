@@ -5,6 +5,7 @@ import { DEFAULT_LANE_LOOK, DEFAULT_SPLIT, type LaneHarmony, type LaneLook } fro
 import type { SortOrder } from '@/library/queries';
 import type { Theme } from '@/look/use-dark';
 import { DEFAULT_PLAY_SETTINGS, type KeyboardPreset, type PlaySettings } from '@/play/settings';
+import type { SettingsTab } from '@/screens/settings';
 import { DEFAULT_SPACING } from '@/sheet/sheet';
 import Database from '@tauri-apps/plugin-sql';
 
@@ -18,6 +19,10 @@ export type Settings = {
   library_sort: SortOrder;
   /** Folder-relative path of the piece the library page opens on; NULL takes the first row. */
   library_selected: string | null;
+  /** The tab the settings panel opens on. */
+  settings_tab: SettingsTab;
+  /** How far that tab was scrolled when it was last left, in pixels. */
+  settings_scroll: number;
   /** Id of the MIDI input port every launch starts on; NULL listens on every port not hidden. */
   midi_device: string | null;
   /** Ids of the MIDI input ports the player has put away, which "Any device" passes over. */
@@ -182,6 +187,8 @@ export const SETTING_DEFAULTS: Settings = {
   onboarding_done: false,
   library_sort: 'title',
   library_selected: null,
+  settings_tab: 'sound',
+  settings_scroll: 0,
   midi_device: null,
   midi_hidden: [],
   theme: 'system',

@@ -48,7 +48,7 @@ The settings that apply to the whole app rather than to any one piece: sound, lo
 _Avoid_: Preferences, defaults
 
 **Settings panel**:
-The modal holding every global setting, grouped into Sound, Look, Playing and Library tabs with one search box reaching across all four. Opened from every screen, and while it is open it owns the whole screen's input.
+The modal holding every global setting, grouped into Sound, Look, Playing and Library tabs with one search box reaching across all four. Opened from every screen, and while it is open it owns the whole screen's input. It opens on the tab and the scroll place it was last left at, unless the caller names a row to open on.
 _Avoid_: Settings dialog, preferences, options
 
 **Loading indicator**:

@@ -6,7 +6,7 @@
 import { pitchClass } from '@/look/color';
 import { AccidentalEnum, ChordSymbolEnum } from 'opensheetmusicdisplay';
 import { beatOf } from './beat';
-import { C_MAJOR, keyOf, type Key, type KeyAt } from './key';
+import { keyAt, type Key, type KeyAt } from './key';
 import {
   TICKS_PER_QUARTER,
   type ChordEvent,
@@ -153,13 +153,13 @@ function scoreSegment(weight: number[], off: number[], total: number): Candidate
   return best!;
 }
 
-/** The key in force at each key change, in sheet ticks. */
+/** The key in force at each key change, in sheet ticks; a piece that writes none opens in C major. */
 function keysOf(score: Score): KeyAt[] {
-  const keys = score.keys.map((k) => ({
+  if (score.keys.length === 0) return [{ tick: 0, key: keyAt(score, 0) }];
+  return score.keys.map((k) => ({
     tick: score.measures[k.measureIndex]?.startTick ?? 0,
-    key: keyOf(k.sharps, k.mode),
+    key: keyAt(score, k.measureIndex),
   }));
-  return keys.length > 0 ? keys : [{ tick: 0, key: C_MAJOR }];
 }
 
 /** Every beat start of the whole piece; a compound meter beats in dotted quarters. */
@@ -396,7 +396,8 @@ function fromSymbols(score: Score): ChordEvent[] {
   const keys = keysOf(score);
   const events: ChordEvent[] = [];
   for (const symbol of score.chords) {
-    const key = keys.findLast((k) => k.tick <= symbol.tick)?.key ?? C_MAJOR;
+    // A symbol written before the first change stands in the piece's first key.
+    const key = keys.findLast((k) => k.tick <= symbol.tick)?.key ?? keys[0]!.key;
     const shape = KIND_SHAPE.get(symbol.kind);
     const named = {
       absolute: symbol.text,

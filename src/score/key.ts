@@ -4,6 +4,7 @@
 
 import { NOTE_NAMES, pitchClass } from '@/look/color';
 import { SEVENTHS, TRIADS, type Shape } from './harmony';
+import type { Score } from './types';
 
 /** One scale degree of a key: what it is called and what it stacks into. */
 export interface KeyDegree {
@@ -204,4 +205,13 @@ function tableOf(scale: number[], names: string[], tonic: number): KeyDegree[] {
       seventh: note + seventh.abs,
     };
   });
+}
+
+/**
+ * The key in force at a measure. A measure before the first written signature takes the piece's
+ * first key, and a piece that writes no signature at all is in C major.
+ */
+export function keyAt(score: Score, measureIndex: number): Key {
+  const change = score.keys.findLast((k) => k.measureIndex <= measureIndex) ?? score.keys[0];
+  return change ? keyOf(change.sharps, change.mode) : C_MAJOR;
 }

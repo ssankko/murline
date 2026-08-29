@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import { keyOf, modeName, modeOf } from './key';
+import { keyAt, keyOf, modeName, modeOf } from './key';
+import type { KeyChange, Score } from './types';
 
 const C_MAJOR = keyOf(0, 0);
 const A_MINOR = keyOf(0, 1);
@@ -223,5 +224,28 @@ describe('the modes', () => {
   test('read anything unknown as major', () => {
     expect(modeName(42)).toBe('major');
     expect(modeOf('whatever')).toBe(0);
+  });
+});
+
+describe('the key in force at a measure', () => {
+  const scoreOf = (keys: KeyChange[]): Score => ({ keys }) as Score;
+
+  test('holds the key written at or before the measure', () => {
+    const score = scoreOf([
+      { measureIndex: 0, sharps: 2, mode: 0 },
+      { measureIndex: 4, sharps: -3, mode: 0 },
+    ]);
+    expect(keyAt(score, 0)).toBe(D_MAJOR);
+    expect(keyAt(score, 3)).toBe(D_MAJOR);
+    expect(keyAt(score, 4)).toBe(keyOf(-3, 0));
+    expect(keyAt(score, 99)).toBe(keyOf(-3, 0));
+  });
+
+  test('takes the first written key for a measure before it', () => {
+    expect(keyAt(scoreOf([{ measureIndex: 2, sharps: 2, mode: 0 }]), 0)).toBe(D_MAJOR);
+  });
+
+  test('reads a piece with no key signature in C major', () => {
+    expect(keyAt(scoreOf([]), 7)).toBe(C_MAJOR);
   });
 });

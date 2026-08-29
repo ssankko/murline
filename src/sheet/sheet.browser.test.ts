@@ -719,6 +719,7 @@ function snapshot(playedTick: number, over: Partial<Snapshot> = {}): Snapshot {
     kind: 'practice',
     playedTick,
     stepIndex: 0,
+    measureIndex: 0,
     countInTo: 0,
     stopped: false,
     ...over,

@@ -1094,7 +1094,7 @@ fn report_forever() {
         };
         if metered.elapsed() >= LOAD {
             metered = Instant::now();
-            load(voices, share);
+            load(voices, VOICES as u32, share);
         }
         // The end of the piece is told at once, so the play button comes back without a wait.
         if (playing || was_playing) && (!playing || told.elapsed() >= PROGRESS) {

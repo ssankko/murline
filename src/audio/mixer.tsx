@@ -1,15 +1,16 @@
-// The mixer: the popover behind the status bar's sound cell, with a volume button of its own for
-// any caller that gives it no trigger. Two faders and one line saying what the sound comes out of.
+// The mixer: the popover behind the status bar's volume cells. Two faders, the line saying what
+// the sound comes out of, and the Sound tab's own instrument picker and effect chain.
 
+import { EffectsSection } from '@/audio/effects';
+import { InstrumentSection } from '@/audio/instrument';
 import { useAudioStatus, type AudioStatus } from '@/audio/sound-tab';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { readSettings, setSetting } from '@/db/db';
 import type { SettingChange } from '@/screens/settings';
 import { invoke } from '@tauri-apps/api/core';
-import { Volume2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
-/** What the line under the faders says: the sound's way out, or why there is none. */
+/** What the line under the sections says: the sound's way out, or why there is none. */
 function output(status: AudioStatus | null): string {
   if (!status) return '';
   if (!status.available) return status.reason;
@@ -17,33 +18,33 @@ function output(status: AudioStatus | null): string {
 }
 
 /**
- * The volume button and its mixer. The keyboard fader is a gain in the sound engine after the
- * effect chain, running from silence to twice the sound the instrument makes, and it leaves the
- * instrument and the effects answering the hands exactly as they did. The metronome fader is the
- * click's own volume and shares nothing with it.
- *
- * The volume button carries a badge whenever the engine cannot make sound, so a silent app says so
- * without being opened.
+ * The mixer popover. The keyboard fader is a gain in the sound engine after the effect chain,
+ * running from silence to twice the sound the instrument makes, and it leaves the instrument and
+ * the effects answering the hands exactly as they did. The metronome fader is the click's own
+ * volume and shares nothing with it. Under the faders stand the instrument and the chain that make
+ * the sound, the same two sections the Sound tab holds; the rest of the tab is one link away.
  */
 export function Mixer({
   open,
   onOpenChange,
   onSoundSettings,
   onGlobalChange,
+  onChanged,
   trigger,
 }: {
   /** Held by the screen, because a search result in the settings panel opens the mixer too. */
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** The way into the Sound tab, which is where the device and the instrument are chosen. */
+  /** The way into the rest of the Sound tab: the output device, the envelope, the velocity. */
   onSoundSettings: () => void;
   onGlobalChange?: (...change: SettingChange) => void;
-  /** What opens the popover, when it is not the volume button: the status bar's own audio cell. */
-  trigger?: React.ReactNode;
+  /** A new instrument, so the status bar's sound cell can be read again at once. */
+  onChanged?: () => void;
+  /** What opens the popover: the status bar's pair of volume cells. */
+  trigger: React.ReactNode;
 }) {
   const [values, setValues] = useState<{ keyboard: number; click: number } | null>(null);
   const status = useAudioStatus();
-  const down = status !== null && !status.available;
 
   // Read at every open, the way the settings panel does, so the faders are in step with whatever
   // wrote them last.
@@ -73,25 +74,12 @@ export function Mixer({
 
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger asChild>
-        {trigger ?? (
-          <button
-            aria-label="Volume"
-            data-engine={down ? 'down' : undefined}
-            title={down ? status.reason : undefined}
-            className="hover:bg-ink/8 relative flex size-8 flex-none items-center justify-center rounded-md transition-colors duration-150"
-          >
-            <Volume2 size={18} strokeWidth={1.75} />
-            {down && (
-              <span
-                aria-hidden
-                className="bg-ink ring-chrome absolute top-1 right-1 size-1.5 rounded-full ring-2"
-              />
-            )}
-          </button>
-        )}
-      </PopoverTrigger>
-      <PopoverContent side="bottom" align="end" className="flex w-64 flex-col gap-3 p-3">
+      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+      <PopoverContent
+        side="top"
+        align="end"
+        className="flex max-h-[70vh] w-96 flex-col gap-3 overflow-y-auto p-3"
+      >
         <Fader
           label="Keyboard"
           max={200}
@@ -105,6 +93,10 @@ export function Mixer({
           disabled={!values}
           onChange={writeClick}
         />
+        <div className="border-edge-soft flex flex-col gap-4 border-t pt-3">
+          <InstrumentSection onChanged={onChanged} />
+          <EffectsSection />
+        </div>
         <div className="border-edge-soft flex flex-col items-start gap-1.5 border-t pt-3">
           {output(status) && (
             <p className="text-muted-ink text-[11px] leading-snug">{output(status)}</p>

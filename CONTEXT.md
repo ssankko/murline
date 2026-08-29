@@ -52,7 +52,7 @@ The modal holding every global setting, grouped into Sound, Look, Playing and Li
 _Avoid_: Settings dialog, preferences, options
 
 **Status bar**:
-The last row of the library, Preview and play screens, one line of small text high. On the left it says what MIDI is listened to and what the sound is made of, each cell the button its popover hangs from; on the right it counts the voices sounding and the render load, and holds the gear into the settings panel. The boot and onboarding screens have none.
+The last row of the library, Preview and play screens, one line of small text high. At the far left the solid cog into the settings panel, then the MIDI cell, which hangs the MIDI popover, and the sound cell, which opens the settings panel on the Sound tab at the instrument row. At the right the keyboard and metronome volumes, which together are the mixer's button, then the output latency, the voices sounding of the most the engine holds, and the render load. Every number sits in a box wide enough for its longest reading, so a digit more or less moves nothing. The boot and onboarding screens have none.
 _Avoid_: Footer, status line, taskbar
 
 **Loading indicator**:
@@ -164,7 +164,7 @@ The ordered list of Audio Unit effects between the instrument and the output. Ea
 _Avoid_: FX chain, rack, inserts, effects bus
 
 **Mixer**:
-The popover behind the status bar's sound cell that carries the keyboard volume and the metronome's, names the output device and instrument in force, and says when the sound engine is down.
+The popover behind the status bar's two volume cells. It carries the keyboard volume and the metronome's, the instrument picker and the effect chain, names the output device and instrument in force, and holds the link into the rest of the Sound tab.
 _Avoid_: Volume popover, levels, audio dialog
 
 **Keyboard volume**:

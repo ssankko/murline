@@ -21,12 +21,24 @@ vi.mock('@tauri-apps/api/core', () => ({
     sent.push([command, args]);
     if (command === 'audio_status') return status;
     if (command === 'audio_set_keyboard_volume') return null;
+    // The instrument picker and the effect chain, which stand under the faders.
+    if (command === 'audio_instruments')
+      return [{ id: 'grand', name: 'Concert Grand Piano', kind: 'file', loaded: true, reason: '' }];
+    if (command === 'audio_effects')
+      return [{ id: 'reverb', name: 'AUMatrixReverb', manufacturer: 'Apple' }];
+    if (command === 'audio_set_chain') return [];
     throw new Error(`unexpected command ${command}`);
   },
 }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }));
 
-let stored: Record<string, number> = { keyboard_volume: 80, click_volume: 40 };
+let stored: Record<string, unknown> = {
+  keyboard_volume: 80,
+  click_volume: 40,
+  instruments_folder: '/instruments',
+  instrument_id: 'grand',
+  instrument_state: null,
+};
 let written: [string, unknown][] = [];
 
 // The status hook lives beside the Sound tab, so the tab's own sections come in behind it and
@@ -36,7 +48,7 @@ vi.mock('@/db/db', () => ({
   // The Sound tab reaches the MIDI ports, which read the pinned device, though the mixer shows
   // neither; the mock has to answer for the whole module the mixer's imports pull in.
   getSetting: async () => null,
-  getSettingOr: async (_key: string, fallback: unknown) => fallback,
+  getSettingOr: async () => [],
   setSetting: async (key: string, value: unknown) => {
     written.push([key, value]);
   },
@@ -51,7 +63,13 @@ beforeEach(() => {
   sent = [];
   written = [];
   changed = [];
-  stored = { keyboard_volume: 80, click_volume: 40 };
+  stored = {
+    keyboard_volume: 80,
+    click_volume: 40,
+    instruments_folder: '/instruments',
+    instrument_id: 'grand',
+    instrument_state: null,
+  };
 });
 
 afterEach(() => {
@@ -62,7 +80,7 @@ afterEach(() => {
 });
 
 /** The mixer's open state belongs to the screen around it, because a search result in the settings
- * panel opens it too. This is that screen. */
+ * panel opens it too. This is that screen, with the status bar's volume cells for a trigger. */
 function Screen({ onSoundSettings }: { onSoundSettings: () => void }) {
   const [open, setOpen] = useState(false);
   return createElement(Mixer, {
@@ -70,6 +88,7 @@ function Screen({ onSoundSettings }: { onSoundSettings: () => void }) {
     onOpenChange: setOpen,
     onSoundSettings,
     onGlobalChange: (...change: [string, unknown]) => changed.push(change),
+    trigger: createElement('button', { 'aria-label': 'Volume' }, '80'),
   });
 }
 
@@ -133,21 +152,28 @@ test('the metronome fader is the click volume and touches the engine gain not at
   expect(sent.map(([command]) => command)).not.toContain('audio_set_keyboard_volume');
 });
 
+test('the instrument picker and the effect chain stand under the faders', async () => {
+  await open();
+
+  await vi.waitFor(() =>
+    expect(
+      document.querySelector('button[aria-label="Instrument"]')!.textContent,
+    ).toContain('Concert Grand Piano'),
+  );
+  expect(document.body.textContent).toContain('Effect chain');
+  expect(
+    [...document.querySelectorAll('button')].some((each) => each.textContent === 'Add effect'),
+  ).toBe(true);
+});
+
 test('the line names the device and the instrument the sound is coming out of', async () => {
   await open();
   expect(document.body.textContent).toContain('Babyface Pro · Concert Grand Piano');
-  expect(document.querySelector('button[aria-label="Volume"]')!.getAttribute('data-engine')).toBe(
-    null,
-  );
 });
 
-test('an engine that cannot make sound says why, and the button says so unopened', async () => {
+test('an engine that cannot make sound says why', async () => {
   status = { ...PLAYING, available: false, reason: 'No instrument chosen', instrument: '' };
-  const button = await mount();
-  await vi.waitFor(() => expect(button.dataset.engine).toBe('down'));
-  expect(button.title).toBe('No instrument chosen');
-
-  await userEvent.click(button);
+  await userEvent.click(await mount());
   await vi.waitFor(() => expect(document.body.textContent).toContain('No instrument chosen'));
 });
 

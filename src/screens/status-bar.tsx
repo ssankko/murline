@@ -1,17 +1,19 @@
-// The status bar: the last row of the library, the Preview and the play screen. On the left it
-// says what the app is listening to and what it is playing through, each cell the button its
-// popover hangs from; on the right it says what the sound engine costs, and holds the way into the
-// settings panel.
+// The status bar: the last row of the library, the Preview and the play screen. On the left the
+// cog into the settings panel and two cells saying what the app is listening to and what it is
+// playing through; on the right the volumes, which are the mixer's button, and what the sound
+// engine costs.
 
 import type { EffectSlot } from '@/audio/effects';
 import { Mixer } from '@/audio/mixer';
 import { NO_STATUS, type AudioStatus } from '@/audio/sound-tab';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { readSettings } from '@/db/db';
 import { MidiLight } from '@/midi/midi-light';
 import { useMidiStatus } from '@/midi/use-midi-status';
 import type { SettingChange } from '@/screens/settings';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { AudioLines, Cpu, SlidersHorizontal } from 'lucide-react';
+import { AudioLines, Cpu, Gauge, Metronome, Piano, Settings } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 /** How the dot beside a cell reads: working, nothing there, or something wrong. */
@@ -23,9 +25,14 @@ export const HOT = 80;
 /** How often the sound line is read again, in milliseconds. */
 const READ_MS = 2000;
 
+/** One icon size and stroke for the whole bar. */
+const ICON = { size: 12, strokeWidth: 1.75 } as const;
+
 /** What the render block last reported about itself. */
 interface Meter {
   voices: number;
+  /** The most voices the engine holds sounding at once. */
+  limit: number;
   load: number;
 }
 
@@ -47,6 +54,13 @@ export function soundLabel(status: AudioStatus | null, chain: EffectSlot[]): str
   if (status && !status.available) return status.reason || 'No sound';
   const parts = [status?.instrument || 'No instrument', ...chain.map((slot) => slot.name)];
   return parts.filter(Boolean).join(' → ');
+}
+
+/** What the latency tooltip says the milliseconds are made of, empty while there is no engine. */
+export function latencyLabel(status: AudioStatus | null): string {
+  if (!status?.available || !status.sample_rate) return 'Output latency';
+  const rate = Number((status.sample_rate / 1000).toFixed(1));
+  return `Output latency: ${status.buffer_frames} frames at ${rate} kHz`;
 }
 
 /**
@@ -77,7 +91,7 @@ export function StatusBar({
   mixerOpen: boolean;
   onMixerOpen: (open: boolean) => void;
   onOpenSettings: () => void;
-  /** The mixer's way into the Sound tab, which the screen opens the panel for. */
+  /** The Sound tab at the instrument row, which the sound cell and the mixer both ask for. */
   onSoundSettings: () => void;
   onGlobalChange?: (...change: SettingChange) => void;
 }) {
@@ -87,10 +101,12 @@ export function StatusBar({
     chain: [],
   });
   const [meter, setMeter] = useState<Meter | null>(null);
+  const [volumes, setVolumes] = useState<{ keyboard: number; click: number } | null>(null);
 
   // A new instrument and an edited chain raise no event, so the line is read again on a timer as
-  // well as at every change of the device list.
+  // well as at every change of the device list. The mixer's own changes ask for a read at once.
   // ponytail: polling stands in for the `audio-changed` event the engine does not send.
+  const reread = useRef(() => {});
   useEffect(() => {
     let live = true;
     const read = async () => {
@@ -100,6 +116,7 @@ export function StatusBar({
       ]);
       if (live) setEngine({ status, chain });
     };
+    reread.current = () => void read();
     void read();
     const timer = setInterval(() => void read(), READ_MS);
     const listening = listen('audio-devices-changed', () => void read()).catch(() => () => {});
@@ -118,6 +135,20 @@ export function StatusBar({
     return () => void listening.then((stop) => stop());
   }, []);
 
+  // The mixer is the only place either volume is written, so one read at boot and the mixer's own
+  // word after that keep the two cells true.
+  useEffect(() => {
+    let live = true;
+    readSettings().then(
+      (settings) =>
+        live && setVolumes({ keyboard: settings.keyboard_volume, click: settings.click_volume }),
+      console.error,
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
+
   const settings = useRef(onOpenSettings);
   settings.current = onOpenSettings;
 
@@ -133,53 +164,124 @@ export function StatusBar({
   }, []);
 
   const { status, chain } = engine;
-  // Without an engine there is nothing to count, so both meters stand at a dash.
+  // Without an engine there is nothing to count, so the meters stand at a dash.
   const shown = status?.available ? meter : null;
+  const latency = status?.available ? Math.round(status.latency_ms) : null;
   const midiLabel = error ?? (devices.length ? devices.join(', ') : 'No MIDI device');
+  const sound = soundLabel(status, chain);
 
   return (
-    <div className="bg-chrome border-edge-soft flex h-[22px] flex-none items-center gap-1 border-t px-2 text-[11px]">
-      <MidiLight
-        open={midiOpen}
-        onOpenChange={onMidiOpen}
-        trigger={<Cell label="MIDI devices" dot={midiDot(devices, error)} text={midiLabel} />}
-      />
-      <Mixer
-        open={mixerOpen}
-        onOpenChange={onMixerOpen}
-        onSoundSettings={onSoundSettings}
-        onGlobalChange={onGlobalChange}
-        trigger={
-          <Cell label="Sound" dot={audioDot(status)} text={soundLabel(status, chain)} />
-        }
-      />
-
-      <div className="text-muted-ink ml-auto flex flex-none items-center gap-2">
-        <span className="flex items-center gap-1" title="Voices sounding">
-          <AudioLines size={12} strokeWidth={1.75} />
-          <span className="tabular-nums">{shown ? shown.voices : '—'}</span>
-        </span>
-        <span
-          className="flex items-center gap-1"
-          title="Render load: the share of its time the sound engine takes"
-        >
-          <Cpu size={12} strokeWidth={1.75} />
-          <span
-            className={`tabular-nums ${shown && shown.load > HOT ? 'text-red-600 dark:text-red-400' : ''}`}
+    <TooltipProvider>
+      <div className="bg-chrome border-edge-soft flex h-[22px] flex-none items-center gap-1 border-t px-2 text-[11px]">
+        <Tip text="Settings (⌘,)">
+          <button
+            aria-label="Settings"
+            onClick={onOpenSettings}
+            className="hover:bg-ink/8 hover:text-ink flex size-[18px] flex-none items-center justify-center rounded-sm transition-colors duration-150"
           >
-            {shown ? `${shown.load} %` : '—'}
-          </span>
-        </span>
-        <button
-          aria-label="Settings"
-          title="Settings (⌘,)"
-          onClick={onOpenSettings}
-          className="hover:bg-ink/8 hover:text-ink flex size-[18px] flex-none items-center justify-center rounded-sm transition-colors duration-150"
-        >
-          <SlidersHorizontal size={12} strokeWidth={1.75} />
-        </button>
+            {/* The gear is solid, with the bar's own background left standing in its middle. */}
+            <Settings {...ICON} fill="currentColor" className="[&>circle]:fill-chrome" />
+          </button>
+        </Tip>
+
+        <Tooltip>
+          <MidiLight
+            open={midiOpen}
+            onOpenChange={onMidiOpen}
+            trigger={
+              <TooltipTrigger asChild>
+                <Cell label="MIDI devices" dot={midiDot(devices, error)} text={midiLabel} />
+              </TooltipTrigger>
+            }
+          />
+          <TooltipContent side="top">{midiLabel}</TooltipContent>
+        </Tooltip>
+
+        <Tip text={sound}>
+          <Cell label="Sound" dot={audioDot(status)} text={sound} onClick={onSoundSettings} />
+        </Tip>
+
+        <div className="text-muted-ink ml-auto flex flex-none items-center gap-2">
+          <Mixer
+            open={mixerOpen}
+            onOpenChange={onMixerOpen}
+            onSoundSettings={onSoundSettings}
+            onChanged={() => reread.current()}
+            onGlobalChange={(...change) => {
+              const [key, value] = change;
+              if (key === 'keyboard_volume') {
+                setVolumes((held) => held && { ...held, keyboard: value });
+              } else if (key === 'click_volume') {
+                setVolumes((held) => held && { ...held, click: value });
+              }
+              onGlobalChange?.(...change);
+            }}
+            trigger={
+              <button
+                aria-label="Volume"
+                className="hover:bg-ink/8 hover:text-ink flex h-[18px] flex-none items-center gap-2 rounded-sm px-1 transition-colors duration-150"
+              >
+                <Tip text="Keyboard volume">
+                  <span className="flex items-center gap-1">
+                    <Piano {...ICON} />
+                    <span className="w-[3ch] text-right tabular-nums">
+                      {volumes ? volumes.keyboard : '—'}
+                    </span>
+                  </span>
+                </Tip>
+                <Tip text="Metronome volume">
+                  <span className="flex items-center gap-1">
+                    <Metronome {...ICON} />
+                    <span className="w-[3ch] text-right tabular-nums">
+                      {volumes ? volumes.click : '—'}
+                    </span>
+                  </span>
+                </Tip>
+              </button>
+            }
+          />
+
+          <Tip text={latencyLabel(status)}>
+            <span className="flex items-center gap-1">
+              <Gauge {...ICON} />
+              <span className="w-[5ch] text-right tabular-nums">
+                {latency === null ? '—' : `${latency} ms`}
+              </span>
+            </span>
+          </Tip>
+
+          <Tip text="Voices sounding, of the most the engine holds">
+            <span className="flex items-center gap-1">
+              <AudioLines {...ICON} />
+              <span className="w-[7ch] text-right tabular-nums">
+                {shown ? `${shown.voices} / ${shown.limit}` : '—'}
+              </span>
+            </span>
+          </Tip>
+
+          <Tip text="Render load: the share of its time the sound engine takes">
+            <span className="flex items-center gap-1">
+              <Cpu {...ICON} />
+              <span
+                className={`w-[5ch] text-right tabular-nums ${shown && shown.load > HOT ? 'text-red-600 dark:text-red-400' : ''}`}
+              >
+                {shown ? `${shown.load} %` : '—'}
+              </span>
+            </span>
+          </Tip>
+        </div>
       </div>
-    </div>
+    </TooltipProvider>
+  );
+}
+
+/** One cell's tooltip, over whatever the cell is: a button, or a span that only reads out. */
+function Tip({ text, children }: { text: string; children: React.ReactNode }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent side="top">{text}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -194,8 +296,8 @@ function Light({ dot }: { dot: Dot }) {
 }
 
 /**
- * One cell of the left group: a dot, a line of text, and the whole of it the button its popover
- * hangs from. The bar is one row high, so a long line is cut off and the title carries it whole.
+ * One cell of the left group: a dot and a line of text, the whole of it a button. The bar is one
+ * row high, so a long line is cut off and the tooltip carries it whole.
  */
 function Cell({
   label,
@@ -207,7 +309,6 @@ function Cell({
     <button
       {...rest}
       aria-label={label}
-      title={text}
       className="hover:bg-ink/8 flex h-[18px] max-w-[280px] min-w-0 items-center gap-1.5 rounded-sm px-1.5 transition-colors duration-150"
     >
       <Light dot={dot} />

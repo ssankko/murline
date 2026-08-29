@@ -35,7 +35,7 @@ impl Sample {
 }
 
 /// What a zone is for: the tone a key-down sounds, or one of the noises a piano makes around it.
-/// Every role but `Sustain` is a toggle the user may switch off.
+/// Every role but `Sustain` sounds at a level the user sets, 0 being silent.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
@@ -52,13 +52,8 @@ pub enum Role {
     PedalNoise,
 }
 
-impl Role {
-    /// The bit this role holds in the mask `Command::Roles` carries, which is how the toggles
-    /// reach the audio thread without a heap allocation.
-    pub fn bit(self) -> u8 {
-        1 << self as u8
-    }
-}
+/// How many roles there are, which is the width of the engine's level array.
+pub const ROLES: usize = 5;
 
 /// One playable region: the keys and velocities it answers, the key it was recorded at, and where
 /// in its sample it starts and ends. `start` and `end` are frame indexes; `loop_` is a frame
@@ -110,6 +105,9 @@ pub enum Command {
     /// Ends every voice at once, pedal included.
     AllOff,
     Envelope(Envelope),
-    /// Which roles may start a voice, as `Role::bit` set. `Sustain` sounds whatever this says.
-    Roles(u8),
+    /// The share of its recorded loudness one role sounds at, 0 to 1. `Sustain` ignores it.
+    RoleLevel { role: Role, level: f32 },
+    /// How many voices may sound at once from the next render on. Empties the pool, so everything
+    /// sounding stops.
+    MaxVoices(usize),
 }

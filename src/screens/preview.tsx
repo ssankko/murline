@@ -16,7 +16,14 @@ import { Opening } from '@/look/loading';
 import { useDark } from '@/look/use-dark';
 import type { SeekTarget } from '@/play/engine';
 import { UNSET_PIECE_SETTINGS, resolvePlaySettings } from '@/play/resolve';
-import { DEFAULT_PLAY_SETTINGS, TEMPO_RANGE, type TempoMode } from '@/play/settings';
+import {
+  DEFAULT_PLAY_SETTINGS,
+  stepTempo,
+  TEMPO_KEYS,
+  TEMPO_RANGE,
+  type TempoMode,
+} from '@/play/settings';
+import { arrowBack, stepTarget } from '@/play/step';
 import { useFrameLoop } from '@/play/use-frame-loop';
 import { barTickOf } from '@/score/beat';
 import { ScoreError, bpmAt, stepSeconds, type Score } from '@/score/types';
@@ -34,19 +41,29 @@ import { useEffect, useRef, useState } from 'react';
 /** A window drag fires the observer far faster than a whole sheet can be drawn again. */
 const REFIT_MS = 120;
 
-/** The played tick a seek target names, on the first pass through its bar. */
-function tickOfTarget(score: Score, target: SeekTarget): number {
+/**
+ * The played tick a seek target names. A repeat gives it one tick per pass, so the pass nearest
+ * `near` wins and a target read off the start of the piece lands on the first of them.
+ */
+function tickOfTarget(score: Score, target: SeekTarget, near = 0): number {
   if ('tick' in target) return target.tick;
+  let best = 0;
+  let distance = Infinity;
   for (const step of score.playOrder) {
     const onset = score.onsets[step.onsetIndex]!;
+    let tick: number;
     if ('onset' in target) {
-      if (step.onsetIndex === target.onset) return step.tick;
-      continue;
+      if (step.onsetIndex !== target.onset) continue;
+      tick = step.tick;
+    } else {
+      if (onset.measureIndex !== target.measure) continue;
+      tick = barTickOf(step, onset, score.measures[target.measure]!) + (target.into ?? 0);
     }
-    if (onset.measureIndex !== target.measure) continue;
-    return barTickOf(step, onset, score.measures[target.measure]!) + (target.into ?? 0);
+    if (Math.abs(tick - near) >= distance) continue;
+    distance = Math.abs(tick - near);
+    best = tick;
   }
-  return 0;
+  return best;
 }
 
 export function PreviewScreen({
@@ -144,10 +161,11 @@ export function PreviewScreen({
     void invoke('preview_stop');
   };
 
-  const seek = async (target: SeekTarget): Promise<void> => {
+  const seek = async (target: SeekTarget, near = 0): Promise<void> => {
     const sheet = sheetRef.current;
     if (off || !sheet) return;
-    const seconds = secondsOf(sheet.score, startsRef.current, tickOfTarget(sheet.score, target));
+    const tick = tickOfTarget(sheet.score, target, near);
+    const seconds = secondsOf(sheet.score, startsRef.current, tick);
     // The local clock moves first, so the band stands on the click this frame rather than waiting
     // for the engine to report back.
     restartClock(seconds);
@@ -157,7 +175,7 @@ export function PreviewScreen({
   seekRef.current = (target) => void seek(target);
 
   const [tempoMin, tempoMax] = TEMPO_RANGE[tempoMode];
-  const stepTempo = (by: number): void => changeTempo(clamp(tempo + by, tempoMin, tempoMax));
+  const nudgeTempo = (by: number): void => changeTempo(clamp(tempo + by, tempoMin, tempoMax));
 
   /** Every tempo change goes to the piece row, so the piece reopens at the tempo it was left at. */
   function changeTempo(value: number): void {
@@ -315,9 +333,24 @@ export function PreviewScreen({
       // The settings panel and every popover are `role="dialog"`: while one is open the keys are
       // its own and never reach the transport.
       if (document.querySelector('[role="dialog"][data-state="open"]')) return;
+      const tempoStep = TEMPO_KEYS[event.code];
       if (event.key === ' ') {
         event.preventDefault();
         void toggle();
+      } else if (tempoStep && !off) {
+        changeTempo(stepTempo(tempo, tempoStep, event.shiftKey, tempoMode));
+      } else if (event.key.startsWith('Arrow')) {
+        const sheet = sheetRef.current;
+        if (off || !sheet) return;
+        // There is no lane here, so the pointer stands over the paper or away from it.
+        const back = arrowBack(event.key, hostRef.current?.matches(':hover') ? 'sheet' : null);
+        if (back === null) return;
+        event.preventDefault();
+        // The clock reads back as a fraction of a tick, so a position on an Onset is rounded onto it.
+        const at = Math.round(tickAt(sheet.score, startsRef.current, secondsNow()));
+        const to = stepTarget(sheet.score, sheet.score.playOrder, at, back, event.shiftKey);
+        // The step was found in played ticks, so the seek keeps the pass the clock stands in.
+        if (to) void seek(to, at);
       } else if (event.key === 'Escape') {
         // Escape off the start of the piece is a rewind; from the start it leaves.
         if (playing || secondsNow() > 0) rewind();
@@ -326,7 +359,7 @@ export function PreviewScreen({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [playing, off, percent]);
+  }, [playing, off, percent, tempo, tempoMode]);
 
   return (
     <TooltipProvider>
@@ -356,7 +389,7 @@ export function PreviewScreen({
 
           <div className="ml-auto flex items-center gap-2.5">
             <div className="flex items-center" title={reason || undefined}>
-              <BarButton label="Slower" off={off} onClick={() => stepTempo(-TEMPO_STEP)}>
+              <BarButton label="Slower" off={off} onClick={() => nudgeTempo(-TEMPO_STEP)}>
                 <Minus {...ICON} />
               </BarButton>
               <TempoPopover
@@ -366,7 +399,7 @@ export function PreviewScreen({
                 onMode={switchMode}
                 onValue={changeTempo}
               />
-              <BarButton label="Faster" off={off} onClick={() => stepTempo(TEMPO_STEP)}>
+              <BarButton label="Faster" off={off} onClick={() => nudgeTempo(TEMPO_STEP)}>
                 <Plus {...ICON} />
               </BarButton>
             </div>

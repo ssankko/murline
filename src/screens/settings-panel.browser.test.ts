@@ -7,6 +7,10 @@ import { afterEach, expect, test, vi } from 'vitest';
 /** Set by the PDMX test so the archive is still coming while it looks at the row. */
 let fetching: { promise: Promise<void>; release: () => void } | null = null;
 
+/** What the engine says the instrument offers: a sampled piano, until a test says otherwise. */
+const OFFERED = ['release', 'key_off', 'sympathetic', 'pedal_noise'];
+let roles = [...OFFERED];
+
 vi.mock('@tauri-apps/api/core', () => ({
   Channel: class {},
   invoke: async (command: string) => {
@@ -15,8 +19,14 @@ vi.mock('@tauri-apps/api/core', () => ({
       await fetching?.promise;
       return '/pdmx';
     }
-    // The Sound tab asks the engine about itself the moment it is on the page.
-    if (command === 'audio_status') return { available: true, reason: '', fallback: '' };
+    // The Sound tab asks the engine about itself the moment it is on the page. `roles` is what the
+    // loaded instrument offers beyond its tone, which is what puts the four level rows on the tab.
+    if (command === 'audio_status') return { available: true, reason: '', fallback: '', roles };
+    if (command === 'audio_set_role_level') return null;
+    // A file instrument with an envelope, which is what puts the four envelope rows on the tab.
+    if (command === 'audio_envelope') return { attack: 0.01, decay: 0.5, sustain: 0.8, release: 0.4 };
+    if (command === 'audio_set_envelope') return null;
+    if (command === 'audio_set_velocity_curve') return null;
     if (command === 'audio_output_devices') return [];
     if (command === 'audio_instruments') return [];
     if (command === 'audio_effects') return [];
@@ -40,6 +50,7 @@ afterEach(() => {
   root = null;
   host?.remove();
   host = null;
+  roles = [...OFFERED];
 });
 
 /** Mounts an open panel and waits for the settings read to land its rows on the page. */
@@ -275,6 +286,16 @@ test('the search names no row the panel does not render', async () => {
 
 // The three screens hold the component whether it is open or not, so a shut panel is a mounted
 // component with nothing on the page. Radix portals the modal, so ask the whole page, not the host.
+test('an instrument offering no roles keeps the role rows out of the search', async () => {
+  roles = [];
+  await open();
+
+  const found = labels(await search('release'));
+  expect(found).not.toContain('Release samples');
+  // The envelope's own Release row is not a role row, so it is still found.
+  expect(found).toContain('Release');
+});
+
 test('a shut panel is off the page and out of reach', async () => {
   await open();
   expect(document.querySelector('[role="dialog"]')).toBeTruthy();
@@ -332,6 +353,93 @@ test('the arrows move the search selection and enter picks it', async () => {
   await vi.waitFor(() => expect(activeTab()).toBe('Look'));
   expect(marked('lane_harmony')).toBe(true);
   expect(marked('sheet_harmony')).toBe(false);
+});
+
+/** The choice a row shows as pressed, by its label. */
+function pressed(id: string): string {
+  return [...document.querySelectorAll<HTMLButtonElement>(`#setting-row-${id} button`)].find(
+    (each) => each.getAttribute('aria-pressed') === 'true',
+  )!.textContent!;
+}
+
+function slider(id: string): HTMLInputElement {
+  return document.querySelector<HTMLInputElement>(`#setting-row-${id} input[type="range"]`)!;
+}
+
+test('down marks the first row of the open tab and up holds at the top', async () => {
+  await open();
+  expect(marked('audio_output_device')).toBe(false);
+
+  await userEvent.keyboard('{ArrowDown}');
+  await vi.waitFor(() => expect(marked('audio_output_device')).toBe(true));
+
+  await userEvent.keyboard('{ArrowDown}');
+  await vi.waitFor(() => expect(marked('audio_buffer_frames')).toBe(true));
+
+  // Two Ups from the second row stop at the first rather than running off the top.
+  await userEvent.keyboard('{ArrowUp}{ArrowUp}');
+  await vi.waitFor(() => expect(marked('audio_output_device')).toBe(true));
+});
+
+test('space steps the marked row s choice and left and right move its slider', async () => {
+  await open();
+  await search('theme');
+  await userEvent.keyboard('{Enter}');
+  await vi.waitFor(() => expect(marked('theme')).toBe(true));
+  expect(activeTab()).toBe('Look');
+
+  // Three choices, so Space steps to the next one rather than flipping.
+  expect(pressed('theme')).toBe('System');
+  await userEvent.keyboard(' ');
+  await vi.waitFor(() => expect(pressed('theme')).toBe('Light'));
+
+  // The next row down is a two-button toggle, which the same key flips.
+  await userEvent.keyboard('{ArrowDown}');
+  await vi.waitFor(() => expect(marked('sheet_proportional')).toBe(true));
+  expect(pressed('sheet_proportional')).toBe('Off');
+  await userEvent.keyboard(' ');
+  await vi.waitFor(() => expect(pressed('sheet_proportional')).toBe('On'));
+
+  // 80 to 300 in steps of 5: a twentieth of the span is 11, which rounds to two steps.
+  await userEvent.keyboard('{ArrowDown}');
+  await vi.waitFor(() => expect(marked('sheet_spacing')).toBe(true));
+  expect(slider('sheet_spacing').value).toBe('150');
+  await userEvent.keyboard('{ArrowRight}');
+  await vi.waitFor(() => expect(slider('sheet_spacing').value).toBe('160'));
+  await userEvent.keyboard('{Shift>}{ArrowRight}{/Shift}');
+  await vi.waitFor(() => expect(slider('sheet_spacing').value).toBe('165'));
+  await userEvent.keyboard('{ArrowLeft}');
+  await vi.waitFor(() => expect(slider('sheet_spacing').value).toBe('155'));
+});
+
+test('a control worked by the mouse marks its row, and the keys carry on from there', async () => {
+  await open();
+  await openTab('Look');
+  expect(marked('sheet_harmony')).toBe(false);
+
+  await userEvent.click(
+    [...document.querySelectorAll<HTMLButtonElement>('#setting-row-sheet_harmony button')].find(
+      (each) => each.textContent === 'Off',
+    )!,
+  );
+  await vi.waitFor(() => expect(marked('sheet_harmony')).toBe(true));
+
+  await userEvent.keyboard('{ArrowDown}');
+  await vi.waitFor(() => expect(marked('sheet_colour')).toBe(true));
+});
+
+test('an envelope row moves one step whether shift is held or not', async () => {
+  await open();
+  await search('attack');
+  await userEvent.keyboard('{Enter}');
+  await vi.waitFor(() => expect(marked('envelope_attack')).toBe(true));
+
+  // 0 to 2000 ms: a twentieth would be 100, and the envelope is set a millisecond at a time.
+  expect(slider('envelope_attack').value).toBe('10');
+  await userEvent.keyboard('{ArrowRight}');
+  await vi.waitFor(() => expect(slider('envelope_attack').value).toBe('11'));
+  await userEvent.keyboard('{ArrowLeft}{ArrowLeft}');
+  await vi.waitFor(() => expect(slider('envelope_attack').value).toBe('9'));
 });
 
 test('a query nothing matches says so', async () => {

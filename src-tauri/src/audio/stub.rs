@@ -16,6 +16,10 @@ pub fn status() -> Status {
 
 pub fn click(_strong: bool, _volume: u32) {}
 
+pub fn note(_midi: u8, velocity: u8, _on: bool) -> u8 {
+    velocity
+}
+
 pub fn set_keyboard_volume(_percent: u32) {}
 
 pub fn set_velocity_curve(_min: u32, _max: u32, _curve: f64) {}
@@ -53,6 +57,10 @@ pub fn set_buffer_frames(_frames: u32) -> Result<(), String> {
     Err(PLATFORM.into())
 }
 
+pub fn set_voices(_count: usize) -> Result<(), String> {
+    Err(PLATFORM.into())
+}
+
 pub fn instruments(_folder: &str) -> Vec<Instrument> {
     Vec::new()
 }
@@ -74,7 +82,7 @@ pub fn envelope() -> Option<Envelope> {
 
 pub fn set_envelope(_envelope: Envelope) {}
 
-pub fn set_roles(_roles: Vec<crate::audio::sampler::Role>) {}
+pub fn set_role_level(_role: crate::audio::sampler::Role, _percent: u32) {}
 
 pub fn preview_load(_notes: Vec<PreviewNote>) {}
 

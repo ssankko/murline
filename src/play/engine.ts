@@ -60,6 +60,20 @@ export interface PlayEvent {
   velocity: number;
 }
 
+/**
+ * One inactive-hand note the sound engine is told to start or to let go. The play screen sends
+ * these; nothing here reaches the matcher, Wait mode or the Grade.
+ */
+export interface GhostEvent {
+  midi: number;
+  /** The written velocity softened, 1 to 127. A note-off carries 0, which the engine ignores. */
+  velocity: number;
+  on: boolean;
+}
+
+/** How loud the inactive hand sounds against what the score writes for it. */
+const GHOST_VELOCITY = 0.8;
+
 /** One written note laid out in played time: what falls in the lane and what a strike may match. */
 export interface PlayNote {
   midi: number;
@@ -207,6 +221,13 @@ export class Engine {
   /** Played tick the count-in leads to, which is where motion starts. */
   private countInTo = 0;
 
+  /** Inactive-hand notes owed to the sound engine, taken by `ghosts()`. */
+  private ghostEvents: GhostEvent[] = [];
+  /** First note of the walk the inactive hand has not passed yet. */
+  private ghostNext = 0;
+  /** What the inactive hand sounds now: the pitch, and the played tick it is let go at. */
+  private sounding: { midi: number; end: number }[] = [];
+
   /** Milliseconds the clock has moved since the play started: what a practice row stores. */
   private motionMs = 0;
   /** Unix milliseconds of the first motion of this play. */
@@ -283,6 +304,17 @@ export class Engine {
     const clicks = this.clicks;
     this.clicks = [];
     return clicks;
+  }
+
+  /**
+   * Takes the inactive hand's note-ons and note-offs owed since the last call, in the order the
+   * clock crossed them. Nothing is owed while the hands setting is both or the setting is off,
+   * and nothing while the clock stands still: a count-in, a pause and a Wait mode stop are silent.
+   */
+  ghosts(): GhostEvent[] {
+    const events = this.ghostEvents;
+    this.ghostEvents = [];
+    return events;
   }
 
   /**
@@ -372,7 +404,7 @@ export class Engine {
     this.applyLoop();
     this.startTick = 0;
     this.tick = 0;
-    this.syncBeats();
+    this.syncClock();
   }
 
   /** Practice only: the clock freezes and the cursor drops back to the bar it stands in. */
@@ -391,7 +423,7 @@ export class Engine {
       this.tick = this.countInTo;
       this.countInBeats = [];
       this.state = 'idle';
-      this.syncBeats();
+      this.syncClock();
       return;
     }
     if (this.state !== 'running') return;
@@ -417,7 +449,7 @@ export class Engine {
     this.tick = this.startTick;
     this.stopStep = null;
     this.countInBeats = [];
-    this.syncBeats();
+    this.syncClock();
     this.applyLoop();
   }
 
@@ -559,7 +591,7 @@ export class Engine {
     // Wait mode stands at the Onset it lands on when that Onset asks for anything.
     const stop = this.nextStop();
     if (stop >= 0 && this.walk[stop]!.tick <= to) this.stopStep = stop;
-    this.syncBeats();
+    this.syncClock();
   }
 
   /**
@@ -680,6 +712,7 @@ export class Engine {
           this.abort();
         } else {
           this.state = 'ended';
+          this.silenceGhosts();
           this.endRecord();
         }
         return;
@@ -714,7 +747,7 @@ export class Engine {
     } else {
       this.state = 'running';
     }
-    this.syncBeats();
+    this.syncClock();
   }
 
   /**
@@ -734,7 +767,7 @@ export class Engine {
     }
     if (want < this.countInTo) return 0;
     this.countInBeats = [];
-    this.syncBeats();
+    this.syncClock();
     this.state = 'running';
     return (want - this.countInTo) / rate;
   }
@@ -748,14 +781,57 @@ export class Engine {
       this.clicks.push(beat.strong ? 'strong' : 'weak');
     }
     if (!this.passedOnset && this.stepAt(this.tick) > this.startStep) this.passedOnset = true;
+    this.crossGhosts();
   }
 
   /**
-   * Puts the metronome back on the grid after the tick moved by itself, without a click. A beat the
-   * clock stands exactly on is still owed, so a play starting on a bar line clicks its downbeat.
+   * What the inactive hand sounds where the clock now stands: a note-on for every note of it the
+   * clock has reached, a note-off for every one whose written duration has run out. The pointer
+   * walks on with the setting off too, so switching it on mid-play sounds the notes from here
+   * rather than every note passed before it.
    */
-  private syncBeats(): void {
+  private crossGhosts(): void {
+    const wanted = this.settings.inactiveHandSounds && this.inForce.hands !== 'both';
+    // What has run out is let go of first, so a pitch played twice in a row is let go of before it
+    // sounds again rather than after.
+    this.sounding = this.sounding.filter((held) => {
+      if (wanted && held.end > this.tick) return true;
+      this.ghostEvents.push({ midi: held.midi, velocity: 0, on: false });
+      return false;
+    });
+    while (this.ghostNext < this.notes.length) {
+      const note = this.notes[this.ghostNext]!;
+      if (note.onsetTick > this.tick) break;
+      this.ghostNext++;
+      // A tie continuation is an earlier note still sounding, so only the note that opens the tie
+      // starts one.
+      if (!wanted || !note.strikeable || !isInactiveHand(this.inForce.hands, note.hand)) continue;
+      this.sounding.push({ midi: note.midi, end: note.onsetTick + note.durationTicks });
+      this.ghostEvents.push({
+        midi: note.midi,
+        velocity: Math.max(1, Math.round(note.note.velocity * GHOST_VELOCITY)),
+        on: true,
+      });
+    }
+  }
+
+  /** Lets go of everything the inactive hand sounds, whatever the clock is doing. */
+  private silenceGhosts(): void {
+    for (const held of this.sounding) {
+      this.ghostEvents.push({ midi: held.midi, velocity: 0, on: false });
+    }
+    this.sounding = [];
+  }
+
+  /**
+   * Puts the metronome and the inactive hand back where the tick now stands after it moved by
+   * itself, without a click. A beat the clock stands exactly on is still owed, so a play starting
+   * on a bar line clicks its downbeat; nothing the inactive hand sounded survives the jump.
+   */
+  private syncClock(): void {
     this.beatNext = firstWhere(this.beatGrid.length, (i) => this.beatGrid[i]!.tick >= this.tick);
+    this.silenceGhosts();
+    this.ghostNext = this.firstNoteFrom(this.tick);
   }
 
   /** A stop keeps the practice's motion for the library; a play that passed no Onset keeps none. */

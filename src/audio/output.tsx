@@ -1,8 +1,11 @@
-// The Sound tab's Output section: the output device, the buffer size and the latency they cost.
-// Both are global settings written on change and applied again at boot. The list follows the
-// hardware: the engine sends `audio-devices-changed` on every plug and unplug, and this reads it
-// again, so an interface appears and disappears without a restart.
+// The Sound tab's Output section: the output device, the buffer size, the voices the engine may
+// hold sounding at once, and the latency the buffer costs. All three choices are global settings
+// written on change and applied again at boot. The device list follows the hardware: the engine
+// sends `audio-devices-changed` on every plug and unplug, and this reads it again, so an interface
+// appears and disappears without a restart.
 
+import { restoreInstrument } from '@/audio/instrument';
+import { restoreRoles } from '@/audio/roles';
 import type { AudioStatus } from '@/audio/sound-tab';
 import { Button } from '@/components/ui/button';
 import {
@@ -12,7 +15,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { getSettingOr, setSetting } from '@/db/db';
+import { getSettingOr, readSettings, setSetting } from '@/db/db';
 import { reasonOf } from '@/library/notice';
 import { rowId } from '@/lib/utils';
 import { invoke } from '@tauri-apps/api/core';
@@ -29,11 +32,15 @@ export interface OutputDevice {
 /** The buffer sizes the engine takes, smallest first. */
 const FRAME_CHOICES = [32, 64, 128, 256];
 
+/** The voice limits the engine takes. 512 voices cost 256 MB of streaming buffers for an EXS. */
+const VOICE_CHOICES = [128, 256, 512];
+
 export function OutputSection({ marked }: { marked?: string | null }) {
   const [devices, setDevices] = useState<OutputDevice[]>([]);
   const [status, setStatus] = useState<AudioStatus | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
   const [frames, setFrames] = useState(64);
+  const [voices, setVoices] = useState(128);
   /** What went wrong with the last change, shown until the next one works. */
   const [failure, setFailure] = useState('');
 
@@ -49,6 +56,7 @@ export function OutputSection({ marked }: { marked?: string | null }) {
   useEffect(() => {
     void getSettingOr('audio_output_device').then(setChosen);
     void getSettingOr('audio_buffer_frames').then(setFrames);
+    void getSettingOr('audio_voices').then(setVoices);
   }, []);
 
   useEffect(() => {
@@ -87,6 +95,22 @@ export function OutputSection({ marked }: { marked?: string | null }) {
         await setSetting('audio_buffer_frames', choice);
       },
       () => invoke('audio_set_buffer_frames', { frames: choice }),
+    );
+
+  const chooseVoices = (choice: number) =>
+    change(
+      async () => {
+        setVoices(choice);
+        await setSetting('audio_voices', choice);
+      },
+      async () => {
+        await invoke('audio_set_voices', { count: choice });
+        // A sampled instrument's streaming rings are allocated with it, two slots per voice, so it
+        // is read again at the new count; the envelope and the levels ride back in on the restore.
+        const settings = await readSettings();
+        await restoreInstrument(settings);
+        await restoreRoles(settings.instrument_id);
+      },
     );
 
   // A device that is not connected is not in the list, and the picker names it nowhere. It reads as
@@ -138,20 +162,19 @@ export function OutputSection({ marked }: { marked?: string | null }) {
         marked={marked === 'audio_buffer_frames'}
         label="Buffer (frames)"
       >
-        <div className="border-edge flex flex-none border">
-          {FRAME_CHOICES.map((choice) => (
-            <button
-              key={choice}
-              aria-pressed={frames === choice}
-              onClick={() => void chooseFrames(choice)}
-              className={`h-6 px-2 text-[11.5px] font-medium tabular-nums transition-colors duration-150 ${
-                frames === choice ? 'bg-ink text-paper' : 'hover:bg-ink/8'
-              }`}
-            >
-              {choice}
-            </button>
-          ))}
-        </div>
+        <Segmented
+          choices={FRAME_CHOICES}
+          chosen={frames}
+          onPick={(choice) => void chooseFrames(choice)}
+        />
+      </Row>
+
+      <Row id="audio_voices" marked={marked === 'audio_voices'} label="Voices">
+        <Segmented
+          choices={VOICE_CHOICES}
+          chosen={voices}
+          onPick={(choice) => void chooseVoices(choice)}
+        />
       </Row>
 
       <Row label="Latency">
@@ -167,6 +190,34 @@ export function OutputSection({ marked }: { marked?: string | null }) {
 function latencyLine(status: AudioStatus | null): string {
   if (!status?.latency_ms) return '—';
   return `${status.latency_ms.toFixed(1)} ms at ${(status.sample_rate / 1000).toFixed(1)} kHz`;
+}
+
+/** A row of numbers to pick one of, the one in force filled in. */
+function Segmented({
+  choices,
+  chosen,
+  onPick,
+}: {
+  choices: number[];
+  chosen: number;
+  onPick: (choice: number) => void;
+}) {
+  return (
+    <div className="border-edge flex flex-none border">
+      {choices.map((choice) => (
+        <button
+          key={choice}
+          aria-pressed={chosen === choice}
+          onClick={() => onPick(choice)}
+          className={`h-6 px-2 text-[11.5px] font-medium tabular-nums transition-colors duration-150 ${
+            chosen === choice ? 'bg-ink text-paper' : 'hover:bg-ink/8'
+          }`}
+        >
+          {choice}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function Row({

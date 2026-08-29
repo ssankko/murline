@@ -2,6 +2,7 @@
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { sticky } from '@/lib/utils';
 import { colorOf } from '@/look/color';
 import { useDark } from '@/look/use-dark';
 import { TEMPO_RANGE, tempoLabel, type TempoMode } from '@/play/settings';
@@ -73,7 +74,7 @@ export function TempoPopover({
           max={max}
           step={1}
           value={value}
-          onChange={(event) => onValue(Number(event.target.value))}
+          onChange={(event) => onValue(sticky(Number(event.target.value)))}
           className="accent-ink w-full"
         />
         <div className="text-muted-ink flex justify-between text-[11px] tabular-nums">

@@ -126,7 +126,12 @@ export function SoundControls({
           onChanged?.();
         }}
       />
-      <RolesSection roles={status?.roles} instrument={instrument} round={round} />
+      <RolesSection
+        marked={marked}
+        roles={status?.roles}
+        instrument={instrument}
+        round={round}
+      />
       <VelocitySection marked={marked} sounding={sounding.keys} />
       <EnvelopeSection
         marked={marked}

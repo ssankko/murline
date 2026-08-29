@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{SyncSender, TrySendError};
 
-use super::{Command, Envelope, Fill, Instrument, Role, Stream};
+use super::{Command, Envelope, Fill, Instrument, ROLES, Role, Stream};
 
 /// Every voice opens under a raised-cosine fade this long, whatever the envelope's attack says, so
 /// a sample whose first frame sits far from zero cannot put a step into the output.
@@ -17,6 +17,10 @@ const CUT_FADE: f64 = 0.005;
 
 /// The level a voice counts as finished at, -80 dBFS.
 const SILENCE: f32 = 1e-4;
+
+/// The largest voice limit the engine takes. The pool is built with room for it, so moving from
+/// one limit to another allocates nothing on the audio thread.
+pub const MOST_VOICES: usize = 512;
 
 /// The velocity a pedal noise starts at. The velocity bands of a Pedal Noise group hold
 /// round-robin takes of the one noise rather than louder and softer ones, so any band answers.
@@ -70,7 +74,7 @@ struct Voice {
     start: f64,
     end: f64,
     loop_: Option<(f64, f64)>,
-    /// Zone gain and velocity together, the constant part of the voice's loudness.
+    /// Zone gain, velocity and the role's level together, the constant part of the loudness.
     amp: f32,
     stage: Stage,
     level: f32,
@@ -261,9 +265,8 @@ pub struct Sampler {
     envelope: Envelope,
     pedal: bool,
     age: u64,
-    /// The roles that may start a voice, as `Role::bit` set. `Sustain` is not in it: the tone
-    /// sounds whatever the toggles say.
-    roles: u8,
+    /// The gain each role sounds at, indexed by `Role`. The tone reads no entry: it sounds whole.
+    levels: [f32; ROLES],
     /// What each key was last struck at, so the noises its key-up makes match the strike.
     struck: [u8; 128],
 }
@@ -273,12 +276,10 @@ impl Sampler {
     /// every instrument it lets go to `dead`. Every buffer the engine will ever need is allocated
     /// here.
     pub fn new(rate: f64, max_voices: usize, dead: SyncSender<Arc<Instrument>>) -> Self {
-        let max_voices = max_voices.max(1);
-        Self {
+        let mut engine = Self {
             rate,
-            max_voices,
-            // Twice the sounding limit; the spare half carries the voices fading out of a steal.
-            voices: vec![Voice::default(); max_voices * 2],
+            max_voices: 0,
+            voices: Vec::with_capacity(MOST_VOICES * 2),
             instrument: None,
             retiring: None,
             spent: None,
@@ -287,21 +288,36 @@ impl Sampler {
             envelope: Envelope { attack: 0.0, decay: 0.0, sustain: 1.0, release: 0.3 },
             pedal: false,
             age: 0,
-            roles: u8::MAX,
+            levels: [1.0; ROLES],
             struck: [0; 128],
-        }
+        };
+        engine.set_max(max_voices);
+        engine
+    }
+
+    /// How many voices may sound at once, up to `MOST_VOICES`. The pool holds twice that, the
+    /// spare half for the voices fading out of a steal, and empties here: every voice in it is
+    /// dropped where it stands, which is why only a setting change asks for this.
+    fn set_max(&mut self, max_voices: usize) {
+        self.max_voices = max_voices.clamp(1, MOST_VOICES);
+        self.voices.clear();
+        self.voices.resize(self.max_voices * 2, Voice::default());
     }
 
     /// Applies one command.
     pub fn apply(&mut self, command: Command) {
         let rate = self.rate;
         match command {
-            Command::Load(instrument) => self.swap(Some(instrument)),
+            // A load starts every role whole; the webview sends back what it keeps for it.
+            Command::Load(instrument) => {
+                self.levels = [1.0; ROLES];
+                self.swap(Some(instrument));
+            }
             Command::Unload => self.swap(None),
             Command::NoteOn { note, velocity } => self.note_on(note, velocity),
             Command::NoteOff { note } => self.note_off(note),
             Command::Sustain(down) => self.pedal(down),
-            Command::Roles(roles) => self.roles = roles,
+            Command::RoleLevel { role, level } => self.levels[role as usize] = level.max(0.0),
             Command::AllOff => {
                 self.pedal = false;
                 for v in self.voices.iter_mut().filter(|v| v.active) {
@@ -309,6 +325,7 @@ impl Sampler {
                 }
             }
             Command::Envelope(envelope) => self.envelope = envelope,
+            Command::MaxVoices(count) => self.set_max(count),
         }
     }
 
@@ -443,11 +460,16 @@ impl Sampler {
         if down { keys.max() } else { keys.min() }
     }
 
+    /// The gain a role sounds at. The tone is no level of its own: it sounds whole.
+    fn level(&self, role: Role) -> f32 {
+        if role == Role::Sustain { 1.0 } else { self.levels[role as usize] }
+    }
+
     /// Sounds every zone that answers this key, this velocity and this role. An EXS layers them:
     /// Studio Grand holds its three mic sets as three zones over the same key, and a piano whose
-    /// groups split the keyboard has one. A role the user has switched off starts nothing.
+    /// groups split the keyboard has one. A role at level 0 starts nothing.
     fn start(&mut self, note: u8, velocity: u8, role: Role) {
-        if velocity == 0 || (role != Role::Sustain && self.roles & role.bit() == 0) {
+        if velocity == 0 || self.level(role) == 0.0 {
             return;
         }
         // The instrument is held for the whole of this, so nothing here borrows the engine.
@@ -482,7 +504,7 @@ impl Sampler {
         let step = (semitones / 12.0).exp2() * sample_rate / rate;
         // ponytail: velocity reads straight as amplitude; a per-instrument curve if the touch of a
         // real piano wants one.
-        let amp = 10f32.powf(zone.gain_db / 20.0) * velocity as f32 / 127.0;
+        let amp = 10f32.powf(zone.gain_db / 20.0) * velocity as f32 / 127.0 * self.level(role);
         let attack = envelope.attack > 0.0;
 
         self.age += 1;
@@ -711,6 +733,29 @@ mod tests {
     }
 
     #[test]
+    fn the_engine_sounds_up_to_the_limit_it_was_last_given() {
+        let (mut s, _dead) = sampler(4);
+        let live =
+            |s: &Sampler| s.voices.iter().filter(|v| v.active && v.stage != Stage::Cut).count();
+        let ten_keys = |s: &mut Sampler| {
+            for note in 60..70 {
+                s.apply(Command::NoteOn { note, velocity: 64 });
+            }
+            // Longer than the cut fade, so the voices the steals gave way for are gone by the end.
+            render(s, 0.05);
+        };
+
+        s.apply(Command::Load(instrument(55.0)));
+        ten_keys(&mut s);
+        assert_eq!(live(&s), 4);
+
+        s.apply(Command::MaxVoices(16));
+        assert_eq!(live(&s), 0, "the pool empties, so nothing plays on through the change");
+        ten_keys(&mut s);
+        assert_eq!(live(&s), 10);
+    }
+
+    #[test]
     fn an_octave_up_plays_the_sample_twice_as_fast() {
         let crossings = |note| {
             let (mut s, _dead) = sampler(8);
@@ -906,18 +951,48 @@ mod tests {
     }
 
     #[test]
-    fn a_role_switched_off_starts_nothing() {
+    fn a_role_at_zero_starts_nothing() {
         let (mut s, _dead) = sampler(8);
         s.apply(Command::Load(every_role()));
-        s.apply(Command::Roles(0));
+        for role in [Role::Release, Role::KeyOff, Role::Sympathetic, Role::PedalNoise] {
+            s.apply(Command::RoleLevel { role, level: 0.0 });
+        }
         s.apply(Command::Sustain(true));
         s.apply(Command::NoteOn { note: 60, velocity: 100 });
         s.apply(Command::NoteOff { note: 60 });
         s.apply(Command::Sustain(false));
-        assert_eq!(playing(&s, Role::Sustain), vec![60], "the tone is no toggle");
+        assert_eq!(playing(&s, Role::Sustain), vec![60], "the tone has no level");
         for role in [Role::Release, Role::KeyOff, Role::Sympathetic, Role::PedalNoise] {
             assert!(playing(&s, role).is_empty(), "{role:?}");
         }
+    }
+
+    #[test]
+    fn a_role_level_scales_the_voices_it_starts() {
+        // `amp` is the gain every frame of the voice is multiplied by.
+        let released = |percent: f32| {
+            let (mut s, _dead) = sampler(8);
+            s.apply(Command::Load(every_role()));
+            s.apply(Command::RoleLevel { role: Role::Release, level: percent / 100.0 });
+            s.apply(Command::NoteOn { note: 60, velocity: 100 });
+            s.apply(Command::NoteOff { note: 60 });
+            s.voices.iter().find(|v| v.active && v.role == Role::Release).map(|v| v.amp)
+        };
+        let whole = released(100.0).expect("a release voice at 100");
+        let half = released(50.0).expect("a release voice at 50");
+        assert!((half - whole / 2.0).abs() < 1e-6, "{half} against {whole}");
+        assert_eq!(released(0.0), None, "0 starts no voice");
+    }
+
+    #[test]
+    fn a_load_puts_every_role_back_to_whole() {
+        let (mut s, _dead) = sampler(8);
+        s.apply(Command::Load(every_role()));
+        s.apply(Command::RoleLevel { role: Role::KeyOff, level: 0.0 });
+        s.apply(Command::Load(every_role()));
+        s.apply(Command::NoteOn { note: 60, velocity: 100 });
+        s.apply(Command::NoteOff { note: 60 });
+        assert_eq!(playing(&s, Role::KeyOff), vec![60]);
     }
 
     /// Renders in buffer-sized passes at the pace a device would pull them, which is what the
@@ -947,16 +1022,17 @@ mod tests {
         );
         let exs = crate::audio::sampler::exs::read(&path).unwrap();
         let instrument = Arc::new(crate::audio::sampler::disk::load(&exs, 32).unwrap());
-        let after_key_up = |roles: u8| {
+        let after_key_up = |level: f32| {
             let (mut s, _dead) = sampler(16);
             s.apply(Command::Load(instrument.clone()));
-            s.apply(Command::Roles(roles));
+            s.apply(Command::RoleLevel { role: Role::Release, level });
+            s.apply(Command::RoleLevel { role: Role::KeyOff, level });
             s.apply(Command::NoteOn { note: 60, velocity: 100 });
             realtime(&mut s, 0.5);
             s.apply(Command::NoteOff { note: 60 });
             rms(&realtime(&mut s, 0.1))
         };
-        let (on, off) = (after_key_up(u8::MAX), after_key_up(0));
+        let (on, off) = (after_key_up(1.0), after_key_up(0.0));
         println!("100 ms after key-up: roles on {on}, roles off {off}");
         assert!(on > 2.0 * off, "the release sample is not sounding: {on} against {off}");
     }

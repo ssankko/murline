@@ -91,6 +91,8 @@ export async function boot(print: (lines: BootLine[]) => void): Promise<Settings
       await failure(() =>
         invoke('audio_set_buffer_frames', { frames: settings.audio_buffer_frames }),
       ),
+      // Before the instrument goes in, so its streaming rings are allocated at this count.
+      await failure(() => invoke('audio_set_voices', { count: settings.audio_voices })),
       await failure(() => invoke('audio_set_chain', { chain: settings.effect_chain })),
       await failure(() =>
         invoke('audio_set_keyboard_volume', { percent: settings.keyboard_volume }),

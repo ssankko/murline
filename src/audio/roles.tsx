@@ -1,13 +1,14 @@
-// The Sound tab's Roles section: the noises a sampled piano makes around its tone, each one
-// switchable on its own. The engine names the roles the loaded instrument offers; an instrument
-// that offers none, such as a plugin or a plain file, gets no section at all.
+// The Sound tab's Roles section: the noises a sampled piano makes around its tone, each one at a
+// level of its own. The engine names the roles the loaded instrument offers; an instrument that
+// offers none, such as a plugin or a plain file, gets no section at all.
 //
-// The setting holds the roles switched off, so an instrument nobody has touched plays everything
-// it has. The engine has every role on after a load, so the set is put back whenever the loaded
-// instrument changes.
+// The setting holds the levels the user has moved, so an instrument nobody has touched plays
+// everything it has whole. The engine puts every role back to 100 on a load, so the levels are
+// sent again whenever the loaded instrument changes.
 
+import { Knob } from '@/audio/knob';
 import { getSettingOr, setSetting } from '@/db/db';
-import { rowId } from '@/lib/utils';
+import { sticky } from '@/lib/utils';
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 
@@ -22,48 +23,66 @@ const LABELS: Record<Role, string> = {
   pedal_noise: 'Pedal noise',
 };
 
-/** The roles kept switched off for one instrument. */
-async function keptOff(instrument: string | null): Promise<Role[]> {
-  if (!instrument) return [];
-  return (await getSettingOr('instrument_roles'))[instrument] ?? [];
+/** The level per role, 0 to 100; a role the map misses sounds at 100. */
+type Levels = Partial<Record<Role, number>>;
+
+/** What one instrument is kept at. A value written as the list of roles switched off reads as
+ * those roles at 0, which is the same instrument playing the same way. */
+async function keptLevels(instrument: string | null): Promise<Levels> {
+  if (!instrument) return {};
+  const kept: Levels | Role[] | undefined = (await getSettingOr('instrument_roles'))[instrument];
+  if (Array.isArray(kept)) return Object.fromEntries(kept.map((one) => [one, 0]));
+  return kept ?? {};
+}
+
+const at = (levels: Levels, role: Role): number => levels[role] ?? 100;
+
+/** Sends every offered role's level to the engine, which loads with all of them at 100. */
+async function send(roles: Role[], levels: Levels): Promise<void> {
+  for (const role of roles) {
+    await invoke('audio_set_role_level', { role, percent: at(levels, role) });
+  }
 }
 
 /**
- * Puts the roles an instrument has switched off back on the engine, which loads with all of them
- * on. Reads the offered roles from the engine, because only it knows what the file holds. An
- * instrument with nothing switched off is already playing as it should and is left alone.
+ * Puts the levels an instrument is kept at back on the engine. Reads the offered roles from the
+ * engine, because only it knows what the file holds. An instrument with nothing moved already
+ * plays as it should and is left alone.
  */
 export async function restoreRoles(instrument: string | null): Promise<void> {
-  const off = await keptOff(instrument);
-  if (!off.length) return;
+  const levels = await keptLevels(instrument);
+  if (!Object.keys(levels).length) return;
   const { roles } = await invoke<{ roles: Role[] }>('audio_status');
-  await invoke('audio_set_roles', { roles: roles.filter((one) => !off.includes(one)) });
+  await send(roles, levels);
 }
 
 /**
  * `roles` is what the loaded instrument offers, from the engine's status, and `round` goes up
- * whenever the instrument changed, which is when the engine has forgotten the set.
+ * whenever the instrument changed, which is when the engine has forgotten the levels.
  */
 export function RolesSection({
+  marked,
   roles = [],
   instrument,
   round = 0,
 }: {
+  /** The row a search result jumped to, which each level row tints itself for. */
+  marked?: string | null;
   roles?: Role[];
   instrument?: string | null;
   round?: number;
 }) {
-  const [off, setOff] = useState<Role[]>([]);
+  const [levels, setLevels] = useState<Levels>({});
   const offered = roles.join(' ');
 
   useEffect(() => {
     if (!roles.length) return;
     let live = true;
     void (async () => {
-      const kept = await keptOff(instrument ?? null);
+      const kept = await keptLevels(instrument ?? null);
       if (!live) return;
-      setOff(kept);
-      await invoke('audio_set_roles', { roles: roles.filter((one) => !kept.includes(one)) });
+      setLevels(kept);
+      await send(roles, kept);
     })().catch(console.error);
     return () => {
       live = false;
@@ -71,15 +90,15 @@ export function RolesSection({
     // `offered` stands in for `roles`, which is a fresh array on every status the tab reads.
   }, [instrument, round, offered]);
 
-  /** Switches one role: the setting first, so a crash after it still plays what the user chose. */
-  async function toggle(role: Role): Promise<void> {
-    const next = off.includes(role) ? off.filter((one) => one !== role) : [...off, role];
-    setOff(next);
+  /** Moves one role: the setting first, so a crash after it still plays what the user chose. */
+  async function move(role: Role, percent: number): Promise<void> {
+    const next = { ...levels, [role]: percent };
+    setLevels(next);
     if (instrument) {
       const all = await getSettingOr('instrument_roles');
       await setSetting('instrument_roles', { ...all, [instrument]: next });
     }
-    await invoke('audio_set_roles', { roles: roles.filter((one) => !next.includes(one)) });
+    await invoke('audio_set_role_level', { role, percent });
   }
 
   if (!roles.length) return null;
@@ -87,28 +106,19 @@ export function RolesSection({
   return (
     <section className="flex flex-col gap-2">
       <h3 className="text-[13px] font-semibold">Roles</h3>
-      {roles.map((role) => {
-        const on = !off.includes(role);
-        return (
-          <div
-            key={role}
-            id={rowId(`role_${role}`)}
-            className="flex min-h-8 items-center justify-between gap-3 py-1 text-[12px]"
-          >
-            <span className="flex-none">{LABELS[role]}</span>
-            <button
-              aria-label={LABELS[role]}
-              aria-pressed={on}
-              onClick={() => void toggle(role).catch(console.error)}
-              className={`border-edge h-6 flex-none border px-2 text-[11.5px] font-medium ${
-                on ? 'bg-ink text-paper' : 'hover:bg-ink/8'
-              }`}
-            >
-              {on ? 'On' : 'Off'}
-            </button>
-          </div>
-        );
-      })}
+      {roles.map((role) => (
+        <Knob
+          key={role}
+          id={`role_${role}`}
+          marked={marked}
+          label={LABELS[role]}
+          lo={0}
+          hi={100}
+          value={at(levels, role)}
+          readout={`${at(levels, role)}%`}
+          onChange={(percent) => void move(role, sticky(percent)).catch(console.error)}
+        />
+      ))}
     </section>
   );
 }

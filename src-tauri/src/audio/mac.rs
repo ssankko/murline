@@ -64,12 +64,14 @@ const STRONG_PEAK: f32 = 0.4;
 /// damper falling.
 const FILE_ENVELOPE: Envelope = Envelope { attack: 0.0, decay: 0.0, sustain: 1.0, release: 0.3 };
 
-/// How many voices the engine may hold sounding at once. A key is not a voice: an EXS layers its
-/// zones, so one key of the Studio Grand sounds three mic sets and, under the pedal, three
-/// sympathetic zones beside them, and its key-up sounds six more. Ten keys held and let go reach
-/// about 126. Twice this many ring slots are allocated with the instrument, at 256 KB each, so
-/// the streaming costs 64 MB of buffers at this figure.
-const VOICES: usize = 128;
+/// How many voices the engine may hold sounding at once, as the dialog offers them, and the one
+/// the app starts at. A key is not a voice: an EXS layers its zones, so one key of the Studio
+/// Grand sounds three mic sets and, under the pedal, three sympathetic zones beside them, and its
+/// key-up sounds six more. Ten keys held and let go reach about 126. Twice the limit in ring slots
+/// is allocated with the instrument, at 256 KB each, so an EXS costs 64 MB of streaming buffers at
+/// 128 voices and 256 MB at 512.
+pub const VOICE_CHOICES: [usize; 3] = [128, 256, sampler::engine::MOST_VOICES];
+pub const DEFAULT_VOICES: usize = 128;
 
 /// The MIDI channel everything the app plays goes out on.
 const CHANNEL: u8 = 0;
@@ -203,6 +205,9 @@ pub struct Graph {
     fell_back: bool,
     /// The buffer the user picked. What the device runs may differ, and the status reports that.
     wanted_frames: u32,
+    /// The voices the user picked, which is both the engine's limit and half the ring slots a file
+    /// instrument is read in with.
+    voices: usize,
     /// The velocity remap: the output the lightest strike lands on, the output the hardest lands
     /// on, and the exponent of the path between them.
     velocity_min: u8,
@@ -297,6 +302,7 @@ impl Graph {
                 device: 0,
                 fell_back: false,
                 wanted_frames: DEFAULT_FRAMES,
+                voices: DEFAULT_VOICES,
                 velocity_min: DEFAULT_MIN,
                 velocity_max: DEFAULT_MAX,
                 velocity_curve: DEFAULT_CURVE,
@@ -404,7 +410,7 @@ impl Graph {
         } else {
             // One ring per voice slot, which is what the engine sounds at once plus the spares its
             // steals fade out through.
-            sampler::disk::load(&sampler::exs::read(path)?, VOICES * 2)?
+            sampler::disk::load(&sampler::exs::read(path)?, self.voices * 2)?
         });
         // Weakly, so unloading the instrument still stops its reader thread.
         self.streaming = instrument.stream.as_ref().map(Arc::downgrade);
@@ -598,6 +604,18 @@ impl Graph {
         applied
     }
 
+    /// The voices the engine may hold sounding at once. The pool empties, so everything sounding
+    /// stops; the ring slots of a file instrument are allocated with it, so the caller loads the
+    /// instrument again for the new count to reach the streaming too.
+    pub fn set_voices(&mut self, count: usize) -> Result<(), String> {
+        if !VOICE_CHOICES.contains(&count) {
+            return Err(format!("{count} voices is not one of 128, 256 and 512"));
+        }
+        self.voices = count;
+        self.send(Command::MaxVoices(count));
+        Ok(())
+    }
+
     fn apply_buffer(&self) -> Result<(), String> {
         let asked = device::set_buffer_frames(self.device, self.wanted_frames);
         let running = device::buffer_frames(self.device);
@@ -658,10 +676,11 @@ impl Graph {
         }
     }
 
-    /// Which of the noises around the tone the voice engine may sound. The tone is no toggle, and
-    /// a hosted plugin makes its noises behind its own window, so this reaches only the sampler.
-    pub fn set_roles(&self, roles: &[sampler::Role]) {
-        self.send(Command::Roles(roles.iter().fold(0, |mask, role| mask | role.bit())));
+    /// How loud one of the noises around the tone sounds, as a percent of the sample. The tone has
+    /// no level, and a hosted plugin makes its noises behind its own window, so this reaches only
+    /// the sampler.
+    pub fn set_role_level(&self, role: sampler::Role, percent: u32) {
+        self.send(Command::RoleLevel { role, level: percent.min(100) as f32 / 100.0 });
     }
 
     /// Ends everything sounding, pedal included: what a stopped play and a lost MIDI port send.
@@ -814,7 +833,7 @@ fn source_node(
     preview: Arc<Shared>,
     meters: Arc<Meters>,
 ) -> Retained<AVAudioSourceNode> {
-    let voices = RefCell::new(Sampler::new(RATE, VOICES, dead));
+    let voices = RefCell::new(Sampler::new(RATE, DEFAULT_VOICES, dead));
     let scheduler = RefCell::new(Scheduler::default());
     let events = RefCell::new(Vec::with_capacity(HELD));
     let render = RcBlock::new(
@@ -1076,7 +1095,7 @@ fn report_forever() {
     let mut was_playing = false;
     let mut notes = [Event::default(); PREVIEW_BATCH];
     loop {
-        let Some((seconds, playing, voices, share)) = with(|graph| {
+        let Some((seconds, playing, voices, limit, share)) = with(|graph| {
             loop {
                 let took = graph.preview.notes.pop(&mut notes);
                 if took == 0 {
@@ -1087,14 +1106,20 @@ fn report_forever() {
                 }
             }
             let (seconds, playing) = graph.preview_progress();
-            (seconds, playing, graph.meters.voices.load(Relaxed), graph.meters.load.load(Relaxed))
+            (
+                seconds,
+                playing,
+                graph.meters.voices.load(Relaxed),
+                graph.voices as u32,
+                graph.meters.load.load(Relaxed),
+            )
         }) else {
             sleep(IDLE);
             continue;
         };
         if metered.elapsed() >= LOAD {
             metered = Instant::now();
-            load(voices, VOICES as u32, share);
+            load(voices, limit, share);
         }
         // The end of the piece is told at once, so the play button comes back without a wait.
         if (playing || was_playing) && (!playing || told.elapsed() >= PROGRESS) {
@@ -1168,8 +1193,8 @@ pub fn set_envelope(want: Envelope) {
     with(|graph| graph.set_envelope(want));
 }
 
-pub fn set_roles(roles: Vec<sampler::Role>) {
-    with(|graph| graph.set_roles(&roles));
+pub fn set_role_level(role: sampler::Role, percent: u32) {
+    with(|graph| graph.set_role_level(role, percent));
 }
 
 /// One key of the MIDI keyboard, down or up. Answers the output velocity the note was played at, so
@@ -1207,6 +1232,10 @@ pub fn set_output_device(id: Option<String>) -> Result<(), String> {
 
 pub fn set_buffer_frames(frames: u32) -> Result<(), String> {
     with_graph(|graph| graph.set_buffer(frames))
+}
+
+pub fn set_voices(count: usize) -> Result<(), String> {
+    with_graph(|graph| graph.set_voices(count))
 }
 
 fn with_graph(run: impl FnOnce(&mut Graph) -> Result<(), String>) -> Result<(), String> {

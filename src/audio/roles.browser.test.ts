@@ -15,12 +15,12 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: async (command: string, args: Record<string, unknown>) => {
     sent.push([command, args]);
     if (command === 'audio_status') return { roles: offered };
-    if (command === 'audio_set_roles') return null;
+    if (command === 'audio_set_role_level') return null;
     throw new Error(`unexpected command ${command}`);
   },
 }));
 
-let kept: Record<string, Role[]> = {};
+let kept: Record<string, Partial<Record<Role, number>> | Role[]> = {};
 let written: [string, unknown][] = [];
 
 vi.mock('@/db/db', () => ({
@@ -56,12 +56,18 @@ function show(roles: Role[], round = 0): void {
   root!.render(createElement(RolesSection, { roles, instrument: 'grand.exs', round }));
 }
 
-function toggle(label: string): HTMLButtonElement | null {
-  return host!.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+function slider(label: string): HTMLInputElement | null {
+  return host!.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`);
 }
 
-function put(): [string, unknown][] {
-  return sent.filter(([command]) => command === 'audio_set_roles');
+/** The levels the engine was given, role by role, in the order they were sent. */
+function put(): [Role, number][] {
+  return sent
+    .filter(([command]) => command === 'audio_set_role_level')
+    .map(([, args]) => {
+      const { role, percent } = args as { role: Role; percent: number };
+      return [role, percent];
+    });
 }
 
 test('an instrument with no roles to offer has no section', async () => {
@@ -70,61 +76,79 @@ test('an instrument with no roles to offer has no section', async () => {
   expect(sent).toHaveLength(0);
 });
 
-test('every role the instrument offers gets a toggle, all on by default', async () => {
+test('every role the instrument offers gets a slider, all at 100 by default', async () => {
   show(ALL);
-  await vi.waitFor(() => expect(toggle('Pedal noise')).toBeTruthy());
+  await vi.waitFor(() => expect(slider('Pedal noise')).toBeTruthy());
   for (const label of [
     'Release samples',
     'Key-off noise',
     'Sympathetic resonance',
     'Pedal noise',
   ]) {
-    expect(toggle(label)?.getAttribute('aria-pressed'), label).toBe('true');
+    expect(slider(label)?.value, label).toBe('100');
   }
+  expect(host!.querySelector('#setting-row-role_key_off')).toBeTruthy();
+  await vi.waitFor(() => expect(put()).toHaveLength(4));
 });
 
-test('switching a role off keeps it and leaves the engine playing the others', async () => {
-  kept = { 'other.exs': ['release'] };
+test('moving a role keeps its level and sends it to the engine', async () => {
+  kept = { 'other.exs': { release: 0 } };
   show(ALL);
-  await vi.waitFor(() => expect(toggle('Key-off noise')).toBeTruthy());
+  await vi.waitFor(() => expect(slider('Key-off noise')).toBeTruthy());
 
-  await userEvent.click(toggle('Key-off noise')!);
+  await userEvent.fill(slider('Key-off noise')!, '40');
   await vi.waitFor(() =>
     expect(written).toContainEqual([
       'instrument_roles',
-      { 'other.exs': ['release'], 'grand.exs': ['key_off'] },
+      { 'other.exs': { release: 0 }, 'grand.exs': { key_off: 40 } },
     ]),
   );
-  expect(put().at(-1)).toEqual([
-    'audio_set_roles',
-    { roles: ['release', 'sympathetic', 'pedal_noise'] },
-  ]);
-  expect(toggle('Key-off noise')!.getAttribute('aria-pressed')).toBe('false');
+  expect(put().at(-1)).toEqual(['key_off', 40]);
+  expect(slider('Key-off noise')!.value).toBe('40');
 });
 
-test('the set the instrument was left on goes back in after a load', async () => {
-  kept = { 'grand.exs': ['sympathetic', 'pedal_noise'] };
+test('the levels the instrument was left at go back in after a load', async () => {
+  kept = { 'grand.exs': { sympathetic: 0, pedal_noise: 25 } };
   show(ALL);
   await vi.waitFor(() =>
-    expect(put()).toContainEqual(['audio_set_roles', { roles: ['release', 'key_off'] }]),
+    expect(put()).toEqual([
+      ['release', 100],
+      ['key_off', 100],
+      ['sympathetic', 0],
+      ['pedal_noise', 25],
+    ]),
   );
-  expect(toggle('Sympathetic resonance')!.getAttribute('aria-pressed')).toBe('false');
+  expect(slider('Pedal noise')!.value).toBe('25');
 
-  // The same instrument loaded again: the engine has forgotten the set, so it is sent once more.
+  // The same instrument loaded again: the engine has put every role back to 100, so the levels
+  // are sent once more.
   show(ALL, 1);
-  await vi.waitFor(() => expect(put()).toHaveLength(2));
-  expect(put()[1]).toEqual(['audio_set_roles', { roles: ['release', 'key_off'] }]);
+  await vi.waitFor(() => expect(put()).toHaveLength(8));
 });
 
-test('boot asks the engine what the instrument offers and takes the kept roles out of it', async () => {
-  kept = { 'grand.exs': ['pedal_noise'] };
+test('boot asks the engine what the instrument offers and sends the kept levels', async () => {
+  kept = { 'grand.exs': { pedal_noise: 0 } };
   await restoreRoles('grand.exs');
   expect(put()).toEqual([
-    ['audio_set_roles', { roles: ['release', 'key_off', 'sympathetic'] }],
+    ['release', 100],
+    ['key_off', 100],
+    ['sympathetic', 100],
+    ['pedal_noise', 0],
   ]);
 });
 
-test('an instrument with nothing switched off is left as the load left it', async () => {
+test('a set of roles switched off reads as those roles at 0', async () => {
+  kept = { 'grand.exs': ['sympathetic', 'pedal_noise'] };
+  await restoreRoles('grand.exs');
+  expect(put()).toEqual([
+    ['release', 100],
+    ['key_off', 100],
+    ['sympathetic', 0],
+    ['pedal_noise', 0],
+  ]);
+});
+
+test('an instrument with nothing moved is left as the load left it', async () => {
   await restoreRoles('grand.exs');
   await restoreRoles(null);
   expect(sent).toHaveLength(0);

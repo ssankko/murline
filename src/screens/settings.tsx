@@ -133,6 +133,12 @@ const SEARCH_ROWS: {
     words: ['latency', 'delay', 'lag', 'block size', 'samples'],
   },
   {
+    id: 'audio_voices',
+    tab: 'sound',
+    label: 'Voices',
+    words: ['polyphony', 'notes at once', 'voice limit', 'memory', 'streaming'],
+  },
+  {
     id: 'instrument_id',
     tab: 'sound',
     label: 'Instrument',
@@ -143,6 +149,34 @@ const SEARCH_ROWS: {
     tab: 'sound',
     label: 'Instruments folder',
     words: ['sf2', 'exs', 'sound fonts', 'samples'],
+  },
+  {
+    id: 'role_release',
+    tab: 'sound',
+    label: 'Release samples',
+    group: 'Roles',
+    words: ['damper', 'key up', 'noise', 'level'],
+  },
+  {
+    id: 'role_key_off',
+    tab: 'sound',
+    label: 'Key-off noise',
+    group: 'Roles',
+    words: ['key up', 'mechanism', 'noise', 'level'],
+  },
+  {
+    id: 'role_sympathetic',
+    tab: 'sound',
+    label: 'Sympathetic resonance',
+    group: 'Roles',
+    words: ['strings', 'ringing', 'pedal', 'noise', 'level'],
+  },
+  {
+    id: 'role_pedal_noise',
+    tab: 'sound',
+    label: 'Pedal noise',
+    group: 'Roles',
+    words: ['sustain pedal', 'thump', 'noise', 'level'],
   },
   {
     id: 'velocity_min',
@@ -306,6 +340,12 @@ const SEARCH_ROWS: {
     label: 'Togetherness window (ms)',
     words: ['chord', 'spread', 'together'],
   },
+  {
+    id: 'play_inactive_hand',
+    tab: 'playing',
+    label: 'Inactive hand sounds',
+    words: ['other hand', 'ghost', 'left', 'right', 'accompaniment'],
+  },
   ...(import.meta.env.DEV
     ? [
         {
@@ -338,15 +378,17 @@ const SEARCH_ROWS: {
 
 /**
  * The rows whose label, tab name or one of their words holds what was typed. `envelope` says
- * whether the instrument playing has an envelope to shape; a hosted plugin has none, and the
- * search must not offer rows the panel is not showing.
+ * whether the instrument playing has an envelope to shape and `roles` whether it offers any of the
+ * noises around its tone; a hosted plugin has neither, and the search must not offer rows the panel
+ * is not showing.
  */
-function searchRows(query: string, envelope: boolean): typeof SEARCH_ROWS {
+function searchRows(query: string, envelope: boolean, roles: boolean): typeof SEARCH_ROWS {
   const needle = query.trim().toLowerCase();
   if (!needle) return [];
   return SEARCH_ROWS.filter(
     (row) =>
       (envelope || !row.id.startsWith('envelope_')) &&
+      (roles || !row.id.startsWith('role_')) &&
       [row.label, WHERE_LABELS[row.tab], row.group ?? '', ...row.words].some((word) =>
         word.toLowerCase().includes(needle),
       ),
@@ -391,9 +433,16 @@ export function SettingsPanel({
   const [marked, setMarked] = useState<string | null>(null);
   /** Whether the instrument playing has an envelope, which is what puts its rows in the search. */
   const [envelope, setEnvelope] = useState(false);
+  /** Whether it offers any role beyond the tone, which is what puts the four level rows there. */
+  const [roles, setRoles] = useState(false);
   const [pdmxReady, setPdmxReady] = useState<boolean | null>(null);
   const list = useRef<HTMLUListElement>(null);
   const column = useRef<HTMLDivElement>(null);
+  /** The search box, whose keys are its own while its results stand and the marked row's after. */
+  const box = useRef<HTMLInputElement>(null);
+  /** How the mark is scrolled to: a search jump lands the row in the middle of the column, a mark
+   * walked or clicked moves the column no further than it must. */
+  const markScroll = useRef<ScrollLogicalPosition>('center');
   /** The stored offset waiting for the column to have rows to scroll; null once placed. */
   const [opensAt, setOpensAt] = useState<number | null>(null);
   const scrollWrite = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -409,6 +458,10 @@ export function SettingsPanel({
       invoke<Envelope | null>('audio_envelope').then(
         (one) => setEnvelope(one !== null),
         () => setEnvelope(false),
+      );
+      invoke<{ roles?: string[] }>('audio_status').then(
+        (status) => setRoles(!!status.roles?.length),
+        () => setRoles(false),
       );
     }
   }, [open, downloading]);
@@ -466,7 +519,9 @@ export function SettingsPanel({
   // The tab switch and the mark land in one render, so the row is on the page by the time this
   // runs. A row on a tab nobody has built yet is not in `SEARCH_ROWS`, so there is nothing to miss.
   useEffect(() => {
-    if (marked) document.getElementById(rowId(marked))?.scrollIntoView({ block: 'center' });
+    if (marked)
+      document.getElementById(rowId(marked))?.scrollIntoView({ block: markScroll.current });
+    markScroll.current = 'center';
   }, [marked]);
 
   useEffect(() => {
@@ -516,7 +571,7 @@ export function SettingsPanel({
     if (typeof picked === 'string') write(key, picked);
   }
 
-  const results = searchRows(query, envelope);
+  const results = searchRows(query, envelope, roles);
   const selected = results[Math.min(sel, results.length - 1)] ?? null;
 
   function pick(row: (typeof SEARCH_ROWS)[number]): void {
@@ -533,9 +588,11 @@ export function SettingsPanel({
     setMarked(row.id);
   }
 
-  // The arrows belong to the search box alone: every slider, select and toggle on the tabs below
-  // reads its own arrow keys, so the list must not take them from the whole modal.
+  // The arrows belong to the results list alone: every slider, select and toggle on the tabs below
+  // reads its own arrow keys, so the list must not take them from the whole modal. With no list up
+  // the box holds no selection, and its keys are the marked row's.
   function onSearchKey(event: React.KeyboardEvent): void {
+    if (query.trim() === '') return;
     if (event.key === 'ArrowDown') {
       event.preventDefault();
       setSel((at) => Math.min(at + 1, results.length - 1));
@@ -546,6 +603,52 @@ export function SettingsPanel({
       event.preventDefault();
       pick(selected);
     }
+  }
+
+  /**
+   * The panel walked by keyboard: Up and Down move the mark through the rows of the open tab,
+   * Space works the marked row's choice, Left and Right its slider. A held key repeats, so a
+   * repeat is taken like any other press.
+   */
+  function onPanelKey(event: React.KeyboardEvent<HTMLDivElement>): void {
+    // The results list and the tab strip answer first and mark what they took as spent.
+    if (event.defaultPrevented) return;
+    const target = event.target as HTMLElement;
+    // A select and a number field keep their own keys, and so does the search box while it has a
+    // list under it.
+    const own =
+      target === box.current
+        ? query.trim() !== ''
+        : target.closest('select, textarea, input:not([type="range"])') !== null;
+    if (own) return;
+
+    const rows = [...event.currentTarget.querySelectorAll<HTMLElement>('[id^="setting-row-"]')]
+      // A row of a tab that is not open is on the page but out of the walk.
+      .filter((row) => row.offsetParent !== null);
+    const at = rows.findIndex((row) => row.id === rowId(marked ?? ''));
+
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const next = rows[clamp(at + (event.key === 'ArrowDown' ? 1 : -1), 0, rows.length - 1)];
+      if (!next) return;
+      markScroll.current = 'nearest';
+      setMarked(next.id.slice(rowId('').length));
+      return;
+    }
+
+    const row = rows[at];
+    if (!row) return;
+    if (event.key === ' ' && press(row)) event.preventDefault();
+    const way = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+    if (way !== 0 && slide(row, way, event.shiftKey)) event.preventDefault();
+  }
+
+  // A click or a tab into a control marks the row it sits in, so the keys carry on from there.
+  function onPanelFocus(event: React.FocusEvent<HTMLDivElement>): void {
+    const row = (event.target as HTMLElement).closest('[id^="setting-row-"]');
+    if (!row) return;
+    markScroll.current = 'nearest';
+    setMarked(row.id.slice(rowId('').length));
   }
 
   return (
@@ -559,6 +662,9 @@ export function SettingsPanel({
         // readable while a look setting is moved.
         overlayClassName="bg-black/20"
         className="top-[12%] flex max-h-[70vh] w-[640px] translate-y-0 flex-col gap-0 p-0 sm:max-w-[640px]"
+        // On the content rather than on each row, so the keys work wherever focus sits inside.
+        onKeyDown={onPanelKey}
+        onFocus={onPanelFocus}
       >
         <DialogTitle className="sr-only">Settings</DialogTitle>
 
@@ -566,6 +672,7 @@ export function SettingsPanel({
           <Search className="text-muted-ink size-4" />
           <input
             autoFocus
+            ref={box}
             value={query}
             aria-label="Search settings"
             placeholder="Search settings"
@@ -836,6 +943,16 @@ export function SettingsPanel({
                         onChange={(value) => write('togetherness_ms', value)}
                       />
                     </Row>
+                    <Row
+                      id="play_inactive_hand"
+                      marked={marked === 'play_inactive_hand'}
+                      label="Inactive hand sounds"
+                    >
+                      <Toggle
+                        value={values.play_inactive_hand}
+                        onChange={(value) => write('play_inactive_hand', value)}
+                      />
+                    </Row>
                   </Rows>
 
                   {import.meta.env.DEV && (
@@ -926,6 +1043,46 @@ export function SettingsPanel({
       </DialogContent>
     </Dialog>
   );
+}
+
+/**
+ * Space on a row: presses the choice after the one pressed, wrapping, which flips a two-button
+ * toggle and steps a longer set. False for a row that offers no choice, and Space stays the
+ * browser's there.
+ */
+function press(row: HTMLElement): boolean {
+  const buttons = [...row.querySelectorAll<HTMLButtonElement>('button[aria-pressed]')];
+  if (buttons.length === 0) return false;
+  const at = buttons.findIndex((each) => each.getAttribute('aria-pressed') === 'true');
+  buttons[(at + 1) % buttons.length]!.click();
+  return true;
+}
+
+/**
+ * Left and Right on a row: a twentieth of the slider's span, rounded to its step and never under
+ * one step, or one step exactly when Shift is down and on the envelope and touch rows, whose every
+ * step is worth hearing. False for a row with no slider to move.
+ */
+function slide(row: HTMLElement, way: 1 | -1, fine: boolean): boolean {
+  const input = row.querySelector<HTMLInputElement>('input[type="range"]');
+  if (!input || input.disabled) return false;
+  const min = Number(input.min);
+  const max = Number(input.max);
+  const step = Number(input.step) || 1;
+  const jump =
+    fine || /^setting-row-(envelope|velocity)_/.test(row.id)
+      ? step
+      : Math.max(step, Math.round(((max - min) * 0.05) / step) * step);
+  const next = clamp(Number(input.value) + way * jump, min, max);
+  // React holds the value it last rendered, and swallows a plain assignment as no change. The
+  // native setter with an `input` event is the same arrival as a drag, so the row's own handler
+  // writes the setting.
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
+    input,
+    String(next),
+  );
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  return true;
 }
 
 /** Paper kept between the fingers and the panel a pinch raises, and from the window's edges. */

@@ -25,6 +25,9 @@ vi.mock('@tauri-apps/api/core', () => ({
     if (command === 'audio_output_devices') return devices;
     if (command === 'audio_status') return status;
     if (command === 'audio_set_output_device' || command === 'audio_set_buffer_frames') return;
+    // The voice limit reloads the instrument, because its streaming rings come with it.
+    if (command === 'audio_set_voices' || command === 'audio_load_instrument') return;
+    if (command === 'audio_instruments') return [];
     throw new Error(`unexpected command ${command}`);
   },
 }));
@@ -43,10 +46,17 @@ vi.mock('@tauri-apps/api/event', () => ({
 let settings: Record<string, unknown> = {
   audio_output_device: 'Scarlett',
   audio_buffer_frames: 64,
+  audio_voices: 128,
+  instrument_id: 'file:/Steinway.exs',
+  instrument_state: null,
+  instruments_folder: '/instruments',
+  instrument_envelopes: {},
+  instrument_roles: {},
 };
 const written: [string, unknown][] = [];
 vi.mock('@/db/db', () => ({
   getSettingOr: async (key: string) => settings[key],
+  readSettings: async () => settings,
   setSetting: async (key: string, value: unknown) => {
     written.push([key, value]);
   },
@@ -150,8 +160,20 @@ test('choosing a buffer size writes the setting and applies it', async () => {
   );
 });
 
+test('choosing a voice limit writes the setting and loads the instrument again at it', async () => {
+  const text = await open();
+  await vi.waitFor(() => expect(text()).toContain('Scarlett 2i2'));
+
+  clickText('512');
+
+  await vi.waitFor(() => expect(sent).toContainEqual(['audio_set_voices', { count: 512 }]));
+  expect(written).toContainEqual(['audio_voices', 512]);
+  // The streaming rings are allocated with the instrument, so it goes in again at the new count.
+  expect(sent.map(([command]) => command)).toContain('audio_load_instrument');
+});
+
 test('a chosen device that is not connected reads as the system default until it is back', async () => {
-  settings = { audio_output_device: 'Scarlett', audio_buffer_frames: 64 };
+  settings = { ...settings, audio_output_device: 'Scarlett', audio_buffer_frames: 64 };
   devices = [{ id: 'BuiltInSpeakerDevice', name: 'MacBook Pro Speakers' }];
   status = {
     ...status,

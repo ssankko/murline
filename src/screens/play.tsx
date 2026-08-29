@@ -28,6 +28,7 @@ import { Metronome, type MetronomeHandle } from '@/look/metronome';
 import { useDark } from '@/look/use-dark';
 import { useMidiStatus } from '@/midi/use-midi-status';
 import { click, setClickVolume } from '@/play/click';
+import { ghost, silenceGhosts } from '@/play/ghost';
 import {
   Engine,
   type PerformanceRecord,
@@ -38,12 +39,15 @@ import { resolvePlaySettings, UNSET_PIECE_SETTINGS, type PieceSettings } from '@
 import {
   DEFAULT_PLAY_SETTINGS,
   type HandsSetting,
+  stepTempo,
+  TEMPO_KEYS,
   TEMPO_RANGE,
   tempoLabel,
   type PlayMode,
   type TempoMode,
 } from '@/play/settings';
 import { clampSection, savedSection, sectionLabel, type Section } from '@/play/section';
+import { arrowBack, stepTarget } from '@/play/step';
 import { useFrameLoop } from '@/play/use-frame-loop';
 import { keyAt, type Key } from '@/score/key';
 import { bpmAt, ScoreError, type Measure } from '@/score/types';
@@ -241,6 +245,8 @@ export function PlayScreen({
       // stored on the way out.
       void savePosition();
       engineRef.current?.abort();
+      // The frame loop is gone, so the note-offs the abort owes are sent from what is held instead.
+      silenceGhosts();
       void savePractice();
       sheetRef.current?.dispose();
       laneRef.current?.dispose();
@@ -427,6 +433,7 @@ export function PlayScreen({
     if (owed.length > 0) {
       metronomeRef.current?.tick(owed[owed.length - 1] === 'strong', engine.beatMs);
     }
+    for (const note of engine.ghosts()) ghost(note);
     void savePractice();
     savePerformance();
     const snapshot = engine.snapshot();
@@ -458,9 +465,37 @@ export function PlayScreen({
       // The settings dialog and every popover are `role="dialog"`: while one is open the keys are
       // its own and never reach the clock.
       if (document.querySelector('[role="dialog"][data-state="open"]')) return;
+      const tempoStep = TEMPO_KEYS[event.code];
       if (event.key === ' ') {
         event.preventDefault();
         toggle();
+      } else if (tempoStep) {
+        // Only a practice takes a tempo key; a performance keeps the tempo it was armed at.
+        const engine = engineRef.current;
+        if (engine?.kind !== 'practice') return;
+        const { tempoValue, tempoMode: mode } = engine.settings;
+        changeTempo(stepTempo(tempoValue, tempoStep, event.shiftKey, mode));
+      } else if (event.key.startsWith('Arrow')) {
+        // Only a practice moves by the arrows; a performance is one clean run.
+        const engine = engineRef.current;
+        if (engine?.kind !== 'practice') return;
+        // The pointer says which arrows act: over the falling notes, over the sheet, or elsewhere.
+        const area = canvasRef.current?.matches(':hover')
+          ? 'lane'
+          : hostRef.current?.matches(':hover')
+            ? 'sheet'
+            : null;
+        const back = arrowBack(event.key, area);
+        if (back === null) return;
+        event.preventDefault();
+        const to = stepTarget(
+          engine.score,
+          engine.walk,
+          engine.snapshot().playedTick,
+          back,
+          event.shiftKey,
+        );
+        if (to) engine.seek(to);
       } else if (event.key === 'Escape') {
         // Escape clears the Section only in a practice that is already still; every other play,
         // an armed performance included, it aborts.
@@ -508,8 +543,7 @@ export function PlayScreen({
   const performing = kind === 'performance';
   const running = state === 'running' || state === 'counting-in';
   const [tempoMin, tempoMax] = TEMPO_RANGE[tempoMode];
-  const stepTempo = (by: number) =>
-    changeTempo(clamp(tempo + by, tempoMin, tempoMax));
+  const nudgeTempo = (by: number) => changeTempo(clamp(tempo + by, tempoMin, tempoMax));
 
   /** The two modes read the same piece at the same speed, so a switch carries the value over. */
   function switchMode(next: TempoMode): void {
@@ -580,7 +614,7 @@ export function PlayScreen({
             <Collapse axis="x" open={!performing}>
               <div className="flex items-center gap-2.5 pr-2.5">
                 <div className="flex items-center">
-                  <BarButton label="Slower" onClick={() => stepTempo(-TEMPO_STEP)}>
+                  <BarButton label="Slower" onClick={() => nudgeTempo(-TEMPO_STEP)}>
                     <Minus {...ICON} />
                   </BarButton>
                   <TempoPopover
@@ -590,7 +624,7 @@ export function PlayScreen({
                     onMode={switchMode}
                     onValue={changeTempo}
                   />
-                  <BarButton label="Faster" onClick={() => stepTempo(TEMPO_STEP)}>
+                  <BarButton label="Faster" onClick={() => nudgeTempo(TEMPO_STEP)}>
                     <Plus {...ICON} />
                   </BarButton>
                 </div>

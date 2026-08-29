@@ -5,6 +5,7 @@
 import { SoundControls, useAudioStatus, type AudioStatus } from '@/audio/sound-tab';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { readSettings, setSetting } from '@/db/db';
+import { sticky } from '@/lib/utils';
 import type { SettingChange } from '@/screens/settings';
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
@@ -182,7 +183,7 @@ function Fader({
         step={1}
         value={value}
         disabled={disabled}
-        onChange={(event) => onChange(Number(event.target.value))}
+        onChange={(event) => onChange(sticky(Number(event.target.value)))}
         className="accent-ink min-w-0 flex-1 disabled:opacity-30"
       />
       <span className="text-muted-ink w-8 flex-none text-right text-[11px] tabular-nums">

@@ -187,6 +187,13 @@ pub fn audio_click(strength: String, volume: u32) {
     engine::click(strength == "strong", volume);
 }
 
+/// One note the app plays rather than the player: the inactive hand sounding itself. It takes the
+/// same path a MIDI key takes, so the velocity curve is on it. A no-op where there is no engine.
+#[tauri::command]
+pub fn audio_note(midi: u8, velocity: u8, on: bool) {
+    engine::note(midi, velocity, on);
+}
+
 /// The keyboard volume, 0 to 200, where 100 is the sound untouched: a gain after the effect chain,
 /// so it sets how loud what the instrument path has finished making comes out without changing what
 /// the instrument or the effects were given. A no-op where there is no engine, which is silent
@@ -251,6 +258,14 @@ pub fn audio_set_buffer_frames(frames: u32) -> Result<(), String> {
     engine::set_buffer_frames(frames)
 }
 
+/// How many voices the engine may hold sounding at once: 128, 256 or 512. Everything sounding
+/// stops. The streaming buffers of a file instrument are allocated with it, two ring slots per
+/// voice, so the webview loads the instrument again for the new count to reach them.
+#[tauri::command]
+pub fn audio_set_voices(count: usize) -> Result<(), String> {
+    engine::set_voices(count)
+}
+
 /// Every instrument the engine can play: Logic's pianos, the files in the folder the webview
 /// names, and the installed Audio Unit instruments.
 #[tauri::command]
@@ -285,13 +300,14 @@ pub fn audio_set_envelope(envelope: Envelope) {
     engine::set_envelope(envelope);
 }
 
-/// Which of the noises a piano makes around the tone the instrument may sound: the damper landing,
-/// the key coming back up, the strings ringing along, the pedal. The tone itself is no toggle, and
-/// a role the loaded instrument has no samples for is simply silent. The set stands until it is
-/// sent again, and the webview keeps one per instrument and sends it after every load.
+/// How loud one of the noises a piano makes around the tone sounds, 0 to 100: the damper landing,
+/// the key coming back up, the strings ringing along, the pedal. 0 sounds none of it, the tone
+/// itself has no level, and a role the loaded instrument has no samples for is simply silent. A
+/// load puts every role back to 100, and the webview keeps a level per instrument and sends it
+/// after every load.
 #[tauri::command]
-pub fn audio_set_roles(roles: Vec<sampler::Role>) {
-    engine::set_roles(roles);
+pub fn audio_set_role_level(role: sampler::Role, percent: u32) {
+    engine::set_role_level(role, percent);
 }
 
 /// The Preview's note list, in seconds at the score's own tempo. Replaces whatever was loaded.
@@ -348,7 +364,7 @@ mod tests {
         stub::set_velocity_curve(1, 127, 1.0);
         stub::set_envelope(Envelope::default());
         assert!(stub::envelope().is_none());
-        stub::set_roles(vec![sampler::Role::Release]);
+        stub::set_role_level(sampler::Role::Release, 50);
 
         assert!(stub::effects().is_empty());
         assert!(stub::chain().is_empty());
@@ -360,6 +376,7 @@ mod tests {
         assert!(stub::output_devices().is_empty());
         assert!(stub::set_output_device(Some("anything".into())).is_err());
         assert!(stub::set_buffer_frames(64).is_err());
+        assert!(stub::set_voices(256).is_err());
 
         assert!(stub::instruments("/instruments").is_empty());
         assert_eq!(

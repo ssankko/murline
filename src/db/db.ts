@@ -82,6 +82,10 @@ export type Settings = {
   audio_output_device: string | null;
   /** Frames the output device runs per buffer: 32, 64, 128 or 256. Smaller is lower latency. */
   audio_buffer_frames: number;
+  /** Voices the sound engine may hold sounding at once: 128, 256 or 512. Twice the count in
+   * streaming ring slots is allocated with a sampled instrument, at 256 KB each, so 512 voices
+   * cost 256 MB of buffers for an EXS. */
+  audio_voices: number;
 
   // The sound engine's instrument. The id is opaque: only the engine knows whether it names a
   // file or an Audio Unit.
@@ -95,10 +99,9 @@ export type Settings = {
    * the instruments the user has actually shaped. Plugins never appear: they have their own
    * window for it. */
   instrument_envelopes: Record<string, Envelope>;
-  /** The roles each instrument has switched off, under the instrument's own opaque id. One missing
-   * from here plays every role its file holds, which is why this holds only what the user has
-   * turned down. */
-  instrument_roles: Record<string, Role[]>;
+  /** The level of each role, 0 to 100, under the instrument's own opaque id. A role missing from an
+   * instrument's map sounds at 100, which is why this holds only what the user has moved. */
+  instrument_roles: Record<string, Partial<Record<Role, number>>>;
   /** Folder of `.sf2` and `.exs` files the picker lists; empty lists none of its own. */
   instruments_folder: string;
 
@@ -126,6 +129,8 @@ export type Settings = {
   matching_window_ms: number;
   /** How far apart the first and last strike of one chord may be, in milliseconds. */
   togetherness_ms: number;
+  /** Whether the hand the player is not playing sounds itself while a play runs. */
+  play_inactive_hand: boolean;
 };
 
 /** The global knobs a running play reads, and the field of `PlaySettings` each one lands in. */
@@ -143,6 +148,7 @@ export const ENGINE_KNOBS = {
   grade_weight_release: 'weightRelease',
   matching_window_ms: 'matchingWindowMs',
   togetherness_ms: 'togethernessMs',
+  play_inactive_hand: 'inactiveHandSounds',
   keyboard_preset: 'keyboardPreset',
   keyboard_lo: 'keyboardLo',
   keyboard_hi: 'keyboardHi',
@@ -205,6 +211,7 @@ export const SETTING_DEFAULTS: Settings = {
   velocity_curve: 1,
   audio_output_device: null,
   audio_buffer_frames: 64,
+  audio_voices: 128,
   instrument_id: null,
   instrument_state: null,
   instrument_envelopes: {},

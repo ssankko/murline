@@ -112,7 +112,7 @@ The span of keys the on-screen keyboard draws: a fixed number of keys, a custom 
 _Avoid_: Keyboard preset, key range, keyboard width
 
 **Inactive hand**:
-The hand not selected when the hands setting is left or right. Its notes are context only: never expected, never graded, never required by Wait mode, and a strike on one of them is absorbed.
+The hand not selected when the hands setting is left or right. Its notes are context only: never expected, never graded, never required by Wait mode, and a strike on one of them is absorbed. With the global setting on it sounds itself as the clock passes it, at 80 per cent of its written velocity, so the player hears the whole piece.
 _Avoid_: Other hand, resting hand, muted hand
 
 **Ghost**:
@@ -158,7 +158,7 @@ The one Audio Unit instrument, or file the sound engine plays: an EXS or a Sound
 _Avoid_: Patch, preset, voice, sound font (a SoundFont is one kind of file an instrument is loaded from)
 
 **Role**:
-One part of a sampled instrument other than the tone a key-down sounds: the release samples, the key-off noise, the sympathetic resonance and the pedal noise. Each is switched on or off on the Sound tab and kept per instrument; an instrument offering none, such as a plugin, is not asked about.
+One part of a sampled instrument other than the tone a key-down sounds: the release samples, the key-off noise, the sympathetic resonance and the pedal noise. Each has a level from 0 to 100 per cent, set on the Sound tab and kept per instrument, 0 being off; an instrument offering none, such as a plugin, is not asked about.
 _Avoid_: Layer, group, articulation, sample set
 
 **Effect chain**:

@@ -1,6 +1,7 @@
 // The settings one play runs under. A piece setting falls back to the defaults here and to nothing
 // else; that resolution happens where a play is started, never inside the engine.
 
+import { clamp } from '@/lib/utils';
 import type { Hand } from '@/score/types';
 
 export type TempoMode = 'percent' | 'bpm';
@@ -14,6 +15,35 @@ export const TEMPO_RANGE: Record<TempoMode, [min: number, max: number]> = {
 /** The tempo as a player reads it: a quarter-note BPM, or a percent of the written marks. */
 export function tempoLabel(mode: TempoMode, value: number): string {
   return mode === 'bpm' ? `♩ = ${value}` : `${value} %`;
+}
+
+/**
+ * Which way each tempo key steps. Shift+= types `+` and Shift+- types `_`, so the handlers read
+ * `event.code` rather than the character.
+ */
+export const TEMPO_KEYS: Record<string, 1 | -1 | undefined> = {
+  Equal: 1,
+  NumpadAdd: 1,
+  Minus: -1,
+  NumpadSubtract: -1,
+};
+
+/**
+ * The tempo one key press away: the next multiple of 5 in `direction`, or one unit with `fine`,
+ * held inside the mode's range. In BPM mode the same rule reads the BPM number.
+ */
+export function stepTempo(
+  value: number,
+  direction: 1 | -1,
+  fine: boolean,
+  mode: TempoMode,
+): number {
+  const next = fine
+    ? value + direction
+    : direction > 0
+      ? Math.floor(value / 5) * 5 + 5
+      : Math.ceil(value / 5) * 5 - 5;
+  return clamp(next, ...TEMPO_RANGE[mode]);
 }
 
 /** Flow runs the cursor at tempo whatever the player does; Wait stops it at every unsatisfied Onset. */
@@ -38,6 +68,8 @@ export interface PlaySettings {
   /** Percent of every written tempo mark, or a flat quarter-note BPM, inside `TEMPO_RANGE`. */
   tempoValue: number;
   hands: HandsSetting;
+  /** Whether the inactive hand sounds itself, softer, as the clock passes its notes. */
+  inactiveHandSounds: boolean;
   mode: PlayMode;
   metronome: boolean;
   /** Bars of count-in before motion starts. The toolbar writes 0 or 1; the engine counts any. */
@@ -78,6 +110,7 @@ export const DEFAULT_PLAY_SETTINGS: PlaySettings = {
   tempoMode: 'percent',
   tempoValue: 100,
   hands: 'both',
+  inactiveHandSounds: false,
   mode: 'flow',
   metronome: false,
   countInBars: 0,

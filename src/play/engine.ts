@@ -896,8 +896,12 @@ export class Engine {
   strike(event: StrikeEvent): void {
     if (!event.on) {
       const matched = this.held.get(event.midi) ?? BLOCKING;
-      const struck = matched < 0 ? undefined : this.struck[matched];
-      if (struck && struck.offMs === null) struck.offMs = event.time;
+      if (matched >= 0) {
+        for (const i of [matched, ...this.twinsOf(matched)]) {
+          const struck = this.struck[i];
+          if (struck && struck.offMs === null) struck.offMs = event.time;
+        }
+      }
       this.held.delete(event.midi);
       this.wait.release(event.midi);
       // A blocking or a required key coming up may be the last thing a stop was waiting for.
@@ -918,24 +922,7 @@ export class Engine {
     const window = this.msToTicks(this.settings.matchingWindowMs, at);
     const hit = this.nearest(event.midi, at, window, true);
     if (hit >= 0) {
-      const note = this.notes[hit]!;
-      this.struck[hit] = {
-        timingMs: (at - note.tick) / this.ticksPerMs(note.tick),
-        velocity: event.velocity,
-        onMs: event.time,
-        offMs: null,
-      };
-      this.states[hit] = 'hit';
-      this.resolved[hit] = event.time;
-      this.version++;
-      this.held.set(event.midi, hit);
-      this.pending.push({
-        verdict: 'hit',
-        midi: event.midi,
-        noteIndex: hit,
-        time: event.time,
-        velocity: event.velocity,
-      });
+      this.hitNote(hit, event, at);
       return;
     }
     const absorbed = this.nearest(event.midi, at, window, false) >= 0;
@@ -980,6 +967,47 @@ export class Engine {
       }
     }
     return best;
+  }
+
+  /**
+   * Marks the note a strike matched as hit, and with it every twin still pending: one key press
+   * satisfies every written note of that pitch at the Onset, whichever hand writes it.
+   */
+  private hitNote(index: number, event: StrikeEvent, at: number): void {
+    for (const i of [index, ...this.twinsOf(index)]) {
+      if (i !== index && this.states[i] !== 'pending') continue;
+      const note = this.notes[i]!;
+      this.struck[i] = {
+        timingMs: (at - note.tick) / this.ticksPerMs(note.tick),
+        velocity: event.velocity,
+        onMs: event.time,
+        offMs: null,
+      };
+      this.states[i] = 'hit';
+      this.resolved[i] = event.time;
+      this.pending.push({
+        verdict: 'hit',
+        midi: event.midi,
+        noteIndex: i,
+        time: event.time,
+        velocity: event.velocity,
+      });
+    }
+    this.version++;
+    this.held.set(event.midi, index);
+  }
+
+  /** The other expected notes of the same pitch at the same Onset, one key for all of them. */
+  private twinsOf(index: number): number[] {
+    const { midi, onsetTick } = this.notes[index]!;
+    let from = index;
+    while (from > 0 && this.notes[from - 1]!.onsetTick === onsetTick) from--;
+    const twins: number[] = [];
+    for (let i = from; i < this.notes.length && this.notes[i]!.onsetTick === onsetTick; i++) {
+      const note = this.notes[i]!;
+      if (i !== index && note.midi === midi && this.isExpected(note)) twins.push(i);
+    }
+    return twins;
   }
 
   /** An expected note the clock has left behind unmatched is a miss, once. */
@@ -1078,19 +1106,8 @@ export class Engine {
     const at = this.stopStep === null ? this.tickAt(event.time) : this.tick;
     const step = this.openStepFor(event.midi, at);
     if (step >= 0) {
-      const index = this.noteAt(step, event.midi);
       this.wait.count(step, event.midi, event.time);
-      this.states[index] = 'hit';
-      this.resolved[index] = event.time;
-      this.version++;
-      this.held.set(event.midi, index);
-      this.pending.push({
-        verdict: 'hit',
-        midi: event.midi,
-        noteIndex: index,
-        time: event.time,
-        velocity: event.velocity,
-      });
+      this.hitNote(this.noteAt(step, event.midi), event, at);
     } else {
       const absorbed = this.absorbs(event.midi);
       this.held.set(event.midi, absorbed ? ABSORBED : BLOCKING);

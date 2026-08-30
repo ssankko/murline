@@ -528,6 +528,19 @@ function waiting(
 const CHORD = [{ tick: TICKS_PER_QUARTER, notes: [{ midi: 60 }, { midi: 64 }] }];
 
 describe('Wait mode', () => {
+  test('one key press satisfies a pitch both hands write at the same Onset', () => {
+    const play = waiting([
+      { tick: TICKS_PER_QUARTER, notes: [{ midi: 60, hand: 'right' }, { midi: 60, hand: 'left', staff: 1 }] },
+    ]);
+    play.advance(2 * BEAT_MS);
+    expect(play.snapshot().stopped).toBe(true);
+
+    down(play, 60, 2 * BEAT_MS);
+
+    expect(play.snapshot().stopped).toBe(false);
+    expect([play.noteState(0), play.noteState(1)]).toEqual(['hit', 'hit']);
+  });
+
   test('a tie continuation is neither required nor blocking', () => {
     const play = waiting([
       {
@@ -1105,6 +1118,22 @@ describe('a performance', () => {
     play.arm();
     return play;
   }
+
+  test('a pitch both hands write at one Onset is matched twice by one key press', () => {
+    const play = engine(
+      scoreFrom([{ tick: 0, notes: [{ midi: 60, hand: 'right' }, { midi: 60, hand: 'left', staff: 1 }] }]),
+    );
+    play.arm();
+    play.start();
+    down(play, 60, 0);
+    play.advance(BEAT_MS);
+    up(play, 60, BEAT_MS);
+    play.advance(10 * BEAT_MS);
+
+    expect(play.snapshot().state).toBe('ended');
+    expect(play.events().filter((e) => e.verdict === 'hit').map((e) => e.noteIndex)).toEqual([0, 1]);
+    expect(play.takePerformance()?.grade).toMatchObject({ expected: 2, matched: 2, extras: 0, meanRelease: 100 });
+  });
 
   test('arms Idle at bar one and stops the practice it interrupted', () => {
     const play = engine(scoreOf(2));

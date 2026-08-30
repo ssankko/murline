@@ -1,5 +1,5 @@
 import { NO_STATUS } from "@/rust";
-import { fakeRust, type FakeRust } from "@/rust.fake";
+import { fakeRust, fakeSettings, type FakeRust } from "@/rust.fake";
 import {
   audioDot,
   latencyLabel,
@@ -8,6 +8,7 @@ import {
   soundLabel,
   StatusBar,
 } from "@/screens/status-bar";
+import { load } from "@/settings/settings";
 import { createElement, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -97,7 +98,7 @@ test("the settings shortcut stands back for a text field and for an open dialog"
 let latencyMs = 12;
 let rust: FakeRust;
 
-beforeEach(() => {
+beforeEach(async () => {
   rust = fakeRust({
     audio_status: () => ({ ...PLAYING, latency_ms: latencyMs }),
     audio_chain: () => [
@@ -117,23 +118,11 @@ beforeEach(() => {
       release: 0.4,
     }),
   });
+  fakeSettings.set("click_volume", 50);
+  fakeSettings.set("instruments_folder", "/instruments");
+  fakeSettings.set("instrument_id", "grand");
+  await load();
 });
-
-vi.mock("@/db/db", () => ({
-  readSettings: async () => ({
-    keyboard_volume: 100,
-    click_volume: 50,
-    instruments_folder: "/instruments",
-    instrument_id: "grand",
-    instrument_state: null,
-    velocity_min: 1,
-    velocity_max: 127,
-    velocity_curve: 0,
-  }),
-  getSetting: async () => null,
-  getSettingOr: async () => [],
-  setSetting: async () => {},
-}));
 
 let root: Root | null = null;
 let host: HTMLElement | null = null;

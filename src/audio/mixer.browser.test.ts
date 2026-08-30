@@ -1,6 +1,7 @@
 import { Mixer } from '@/audio/mixer';
 import { NO_STATUS, type AudioStatus } from '@/rust';
-import { fakeRust, type FakeRust } from '@/rust.fake';
+import { fakeRust, fakeSettings, type FakeRust } from '@/rust.fake';
+import { load } from '@/settings/settings';
 import { createElement, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { userEvent } from 'vitest/browser';
@@ -17,42 +18,27 @@ const PLAYING: AudioStatus = {
 let status: AudioStatus = PLAYING;
 let rust: FakeRust;
 
-let stored: Record<string, unknown> = {
+/** The two faders as the last session left them. */
+const STORED: Record<string, unknown> = {
   keyboard_volume: 80,
   click_volume: 40,
   instruments_folder: '/instruments',
   instrument_id: 'grand',
-  instrument_state: null,
 };
-let written: [string, unknown][] = [];
 
-// The status hook lives beside the Sound tab, so the whole settings module comes in behind it and
-// every read it makes has to resolve.
-vi.mock('@/db/db', () => ({
-  readSettings: async () => stored,
-  getSetting: async () => null,
-  getSettingOr: async () => [],
-  setSetting: async (key: string, value: unknown) => {
-    written.push([key, value]);
-  },
-}));
+/** Every setting written so far, in the shape the store sent it. */
+function written(): [string, unknown][] {
+  return rust.argsOf('settings_write').map(({ key, value }) => [key, value]);
+}
 
 let root: Root | null = null;
 let host: HTMLElement | null = null;
-let changed: [string, unknown][] = [];
 
-beforeEach(() => {
+beforeEach(async () => {
   status = PLAYING;
   rust = fakeRust({ audio_status: () => status });
-  written = [];
-  changed = [];
-  stored = {
-    keyboard_volume: 80,
-    click_volume: 40,
-    instruments_folder: '/instruments',
-    instrument_id: 'grand',
-    instrument_state: null,
-  };
+  for (const [key, value] of Object.entries(STORED)) fakeSettings.set(key, value);
+  await load();
 });
 
 afterEach(() => {
@@ -70,7 +56,6 @@ function Screen({ onSoundSettings }: { onSoundSettings: () => void }) {
     open,
     onOpenChange: setOpen,
     onSoundSettings,
-    onGlobalChange: (...change: [string, unknown]) => changed.push(change),
     trigger: createElement('button', { 'aria-label': 'Volume' }, '80'),
   });
 }
@@ -107,12 +92,13 @@ test('the mixer opens on the two faders as they were last left', async () => {
   expect(document.querySelector('[role="dialog"][data-state="open"]')).toBeTruthy();
 });
 
+// The write is what reaches the engine: the Rust side puts an audio setting on the running graph
+// as it stores it.
 test('the keyboard fader writes the setting and reaches the running engine', async () => {
   await open();
   await userEvent.fill(fader('Keyboard'), '30');
 
-  expect(written).toContainEqual(['keyboard_volume', 30]);
-  expect(rust.argsOf('audio_set_keyboard_volume')).toContainEqual({ percent: 30 });
+  expect(written()).toContainEqual(['keyboard_volume', 30]);
 });
 
 test('the keyboard fader goes to 200 and the metronome stops at 100', async () => {
@@ -121,18 +107,15 @@ test('the keyboard fader goes to 200 and the metronome stops at 100', async () =
   expect(fader('Metronome').max).toBe('100');
 
   await userEvent.fill(fader('Keyboard'), '200');
-  expect(written).toContainEqual(['keyboard_volume', 200]);
-  expect(rust.argsOf('audio_set_keyboard_volume')).toContainEqual({ percent: 200 });
+  expect(written()).toContainEqual(['keyboard_volume', 200]);
 });
 
 test('the metronome fader is the click volume and touches the engine gain not at all', async () => {
   await open();
   await userEvent.fill(fader('Metronome'), '0');
 
-  expect(written).toContainEqual(['click_volume', 0]);
-  // The play screen's metronome reads it live, so the change has to be handed on.
-  expect(changed).toContainEqual(['click_volume', 0]);
-  expect(rust.argsOf('audio_set_keyboard_volume')).toEqual([]);
+  // The click volume is the app's own, so the keyboard fader is left where it was.
+  expect(written()).toEqual([['click_volume', 0]]);
 });
 
 test('the mixer carries the two faders and nothing that makes the sound', async () => {

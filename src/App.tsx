@@ -1,10 +1,10 @@
 import { BEAT_MS, LogLine, usePacedLines } from '@/boot-pacing';
 import { boot, lineText, START_LINE, type BootLine } from '@/boot';
-import { getSettingOr, type Settings } from '@/db/db';
 import { Loading } from '@/look/loading';
 import { EASE_CURVE, reducedMotion } from '@/look/motion';
 import type { PlayKind } from '@/play/engine';
 import { Library } from '@/screens/library';
+import { setting } from '@/settings/settings';
 import { Onboarding } from '@/screens/onboarding';
 import { PlayScreen } from '@/screens/play';
 import { PreviewScreen } from '@/screens/preview';
@@ -24,7 +24,7 @@ export function App() {
   const [route, setRoute] = useState<Route>({ at: 'loading' });
   // The log starts with the line index.html paints, so React's first frame shows the same screen.
   const [lines, setLines] = useState<BootLine[]>([START_LINE]);
-  const [booted, setBooted] = useState<Settings | null>(null);
+  const [booted, setBooted] = useState(false);
   const [fading, setFading] = useState(false);
   const { shown, drained } = usePacedLines(lines, BEAT_MS);
   const layer = useRef<HTMLDivElement>(null);
@@ -36,7 +36,7 @@ export function App() {
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    void boot(setLines).then(setBooted);
+    void boot(setLines).then(() => setBooted(true));
   }, []);
 
   // The handover waits for the log to be whole and for its last line to have held the screen. It
@@ -44,8 +44,8 @@ export function App() {
   useEffect(() => {
     if (!booted || !drained) return;
     setRoute(
-      booted.onboarding_done
-        ? { at: 'library', folder: booted.library_folder || null }
+      setting('onboarding_done')
+        ? { at: 'library', folder: setting('library_folder') || null }
         : { at: 'onboarding' },
     );
     if (!reducedMotion()) setFading(true);
@@ -134,9 +134,11 @@ function screenOf(route: Route, setRoute: (route: Route) => void) {
           intent={route.intent}
           onBack={() =>
             // The library folder may have moved in the settings dialog while the piece was open.
-            void getSettingOr('library_folder', route.folder).then((folder) =>
-              setRoute({ at: 'library', folder, selected: route.path }),
-            )
+            setRoute({
+              at: 'library',
+              folder: setting('library_folder') || route.folder,
+              selected: route.path,
+            })
           }
         />
       );

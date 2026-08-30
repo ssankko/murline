@@ -9,10 +9,9 @@ import {
 } from '@/midi/use-midi-status';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
-import { fakeRust } from '@/rust.fake';
+import { fakeRust, fakeSettings } from '@/rust.fake';
+import { load } from '@/settings/settings';
 import { beforeEach, expect, test, vi } from 'vitest';
-
-const written: [string, unknown][] = [];
 
 /** What Rust answers with. The default and the hidden list are settings the store holds itself. */
 let ports: Omit<MidiStatus, 'defaultId' | 'hidden'> = {
@@ -28,14 +27,16 @@ let ports: Omit<MidiStatus, 'defaultId' | 'hidden'> = {
 // The store starts once for the whole file and keeps the handlers it registered, so one fake
 // stands behind every test here.
 const rust = fakeRust({ midi_status: () => ports });
-beforeEach(() => rust.install());
+beforeEach(async () => {
+  rust.install();
+  fakeSettings.set('midi_device', '1');
+  await load();
+});
 
-vi.mock('@/db/db', () => ({
-  getSettingOr: async (key: string) => (key === 'midi_device' ? '1' : []),
-  setSetting: async (key: string, value: unknown) => {
-    written.push([key, value]);
-  },
-}));
+/** Every setting written so far, oldest first, in the shape the store sent it. */
+function written(): [string, unknown][] {
+  return rust.argsOf('settings_write').map(({ key, value }) => [key, value]);
+}
 
 const struck: StrikeEvent[] = [];
 let shown: MidiStatus = {
@@ -68,8 +69,10 @@ test('the ports and every strike come off the Rust events in the shape they alwa
     { id: '2', name: 'IAC' },
   ]);
   expect(shown.error).toBe(null);
-  // Rust keeps no settings, so the rule goes out before the first look at the ports.
-  expect(rust.calls[0]).toEqual({ name: 'midi_listen', args: { pinned: '1', hidden: [] } });
+  // The rule goes out before the first look at the ports, so what comes back is the rule's.
+  const asked = rust.calls.map((one) => one.name);
+  expect(asked.indexOf('midi_listen')).toBeLessThan(asked.indexOf('midi_status'));
+  expect(rust.argsOf('midi_listen')[0]).toEqual({ pinned: '1', hidden: [] });
   expect(shown.defaultId).toBe('1');
 
   const strike: StrikeEvent = { midi: 60, velocity: 100, time: 1735689600123.5, on: true };
@@ -92,17 +95,17 @@ test('every choice sends the rule again and only the lasting ones are written', 
   // For this session alone: nothing is written, so the next launch is on the default again.
   useDevice('2');
   expect(sent()).toEqual({ pinned: '2', hidden: [] });
-  expect(written).toEqual([]);
+  expect(written()).toEqual([]);
 
   // For good, and now: the session pin steps aside so the new default is what is listened to.
   setDefaultDevice('2');
-  expect(written).toEqual([['midi_device', '2']]);
+  expect(written()).toEqual([['midi_device', '2']]);
   expect(sent()).toEqual({ pinned: '2', hidden: [] });
   await vi.waitFor(() => expect(shown.defaultId).toBe('2'));
 
   // Hiding the default clears it, or the rule would open the port that was just put away.
   hideDevice('2');
-  expect(written.slice(1)).toEqual([
+  expect(written().slice(1)).toEqual([
     ['midi_device', null],
     ['midi_hidden', ['2']],
   ]);

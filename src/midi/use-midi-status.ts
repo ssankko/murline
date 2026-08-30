@@ -1,4 +1,4 @@
-import { getSettingOr, setSetting } from '@/db/db';
+import { set, setting } from '@/settings/settings';
 import type { StrikeEvent } from '@/play/engine';
 import { call, on, type MidiPorts } from '@/rust';
 import { useEffect, useRef, useSyncExternalStore } from 'react';
@@ -42,7 +42,7 @@ export function useDevice(id: string | null): void {
 export function setDefaultDevice(id: string | null): void {
   session = undefined;
   publish({ defaultId: id });
-  setSetting('midi_device', id).catch(console.error);
+  void set('midi_device', id);
   void send();
 }
 
@@ -51,7 +51,7 @@ export function hideDevice(id: string): void {
   if (session === id) session = undefined;
   if (status.defaultId === id) {
     publish({ defaultId: null });
-    setSetting('midi_device', null).catch(console.error);
+    void set('midi_device', null);
   }
   void hide([...status.hidden, id]);
 }
@@ -101,7 +101,7 @@ function send(): Promise<void> {
 
 function hide(hidden: string[]): Promise<void> {
   publish({ hidden });
-  setSetting('midi_hidden', hidden).catch(console.error);
+  void set('midi_hidden', hidden);
   return send();
 }
 
@@ -113,10 +113,7 @@ function start(): void {
       for (const handler of strikes) handler(strike);
     });
     on('midi-ports', publish);
-    publish({
-      defaultId: await getSettingOr('midi_device'),
-      hidden: await getSettingOr('midi_hidden'),
-    });
+    publish({ defaultId: setting('midi_device'), hidden: setting('midi_hidden') });
     // The rule goes out before the first look at the ports, so what comes back is the rule's.
     await send();
     publish(await call('midi_status'));

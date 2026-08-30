@@ -1,6 +1,6 @@
 // The Sound tab's effect chain: the ordered chain of effects after the instrument. The whole
-// chain is one global setting, and every change here writes it and hands it to the engine, which
-// answers with what it made of it: the names the plugins call themselves and the slots whose plugin
+// chain is one global setting; writing it is what hands it to the engine, and the engine's own
+// chain is read back after, for the names the plugins call themselves and the slots whose plugin
 // this Mac does not have.
 
 import { Button } from '@/components/ui/button';
@@ -10,7 +10,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { getSettingOr, setSetting } from '@/db/db';
+import { set, setting } from '@/settings/settings';
 import { rowId } from '@/lib/utils';
 import { Toggle } from '@/look/rows';
 import { call, on, type Effect, type EffectSlot } from '@/rust';
@@ -27,24 +27,24 @@ export function EffectsSection({ marked }: { marked?: string | null }) {
   const [available, setAvailable] = useState<Effect[]>([]);
   const [dragging, setDragging] = useState<number | null>(null);
 
-  /** Hands the chain to the engine and takes its answer, which marks what it could not load. */
-  async function push(chain: EffectSlot[]): Promise<void> {
-    setSlots(chain);
-    try {
-      setSlots(await call('audio_set_chain', { chain: chain.map(stored) }));
-    } catch {
-      // No engine: the chain is still the user's to build, it simply plays through nothing.
-    }
+  /** What the engine made of the chain: the plugin names and the slots it could not load. An
+   * engine with nothing in it leaves the user's own chain on the page. */
+  async function readEngine(chain: EffectSlot[]): Promise<void> {
+    const made = await call('audio_chain').catch(() => []);
+    setSlots(made.length ? made : chain);
   }
 
-  /** Every change the user makes: written first, so a crash after it still opens on this chain. */
+  /** Every change the user makes. The write is what puts the chain in the engine. */
   async function change(chain: EffectSlot[]): Promise<void> {
-    await setSetting('effect_chain', chain.map(stored)).catch(console.error);
-    await push(chain);
+    setSlots(chain);
+    await set('effect_chain', chain.map(stored));
+    await readEngine(chain);
   }
 
   useEffect(() => {
-    getSettingOr('effect_chain').then(push, console.error);
+    const kept = setting('effect_chain');
+    setSlots(kept);
+    void readEngine(kept);
     call('audio_effects').then(setAvailable, () => setAvailable([]));
   }, []);
 

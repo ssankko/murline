@@ -1,6 +1,7 @@
 import { EffectsSection } from '@/audio/effects';
 import type { EffectSlot } from '@/rust';
-import { fakeRust, type FakeRust } from '@/rust.fake';
+import { fakeRust, fakeSettings, type FakeRust } from '@/rust.fake';
+import { load } from '@/settings/settings';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -8,30 +9,30 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 const REVERB = 'aufx:rvb2:appl';
 const GONE = 'aumf:FR2p:FabF';
 
-let held: EffectSlot[] = [];
-let written: EffectSlot[][] = [];
 let rust: FakeRust;
 
-vi.mock('@/db/db', () => ({
-  getSettingOr: async () => held,
-  setSetting: async (_key: string, value: EffectSlot[]) => {
-    written.push(value);
-  },
-}));
+/** Every chain written so far, oldest first. */
+function written(): EffectSlot[][] {
+  return rust.argsOf('settings_write').map(({ value }) => value as EffectSlot[]);
+}
 
 let close: (() => void) | null = null;
 
-beforeEach(() => {
-  held = [
-    { id: REVERB, name: 'AUReverb2', bypass: false, state: '' },
-    { id: GONE, name: 'Pro-R 2', bypass: false, state: 'AAAA' },
-  ];
-  written = [];
+beforeEach(async () => {
   rust = fakeRust({
     audio_effects: () => [{ id: REVERB, name: 'AUReverb2', manufacturer: 'Apple' }],
-    // The engine answers with what it made of the chain: a plugin it does not have is missing.
-    audio_set_chain: ({ chain }) => chain.map((slot) => ({ ...slot, missing: slot.id === GONE })),
+    // The engine holds the chain the setting put in it, and marks a plugin it does not have.
+    audio_chain: () =>
+      ((fakeSettings.get('effect_chain') as EffectSlot[] | undefined) ?? []).map((slot) => ({
+        ...slot,
+        missing: slot.id === GONE,
+      })),
   });
+  fakeSettings.set('effect_chain', [
+    { id: REVERB, name: 'AUReverb2', bypass: false, state: '' },
+    { id: GONE, name: 'Pro-R 2', bypass: false, state: 'AAAA' },
+  ]);
+  await load();
 });
 
 afterEach(() => {
@@ -75,21 +76,21 @@ test('a slot switched off writes the whole chain and keeps every other slot as i
   expect(button('On').getAttribute('aria-pressed')).toBe('true');
   button('Off').click();
 
-  await vi.waitFor(() => expect(written).toHaveLength(1));
-  expect(written[0]).toEqual([
+  await vi.waitFor(() => expect(written()).toHaveLength(1));
+  expect(written()[0]).toEqual([
     { id: REVERB, name: 'AUReverb2', bypass: true, state: '' },
     { id: GONE, name: 'Pro-R 2', bypass: false, state: 'AAAA' },
   ]);
   // What is stored is the user's chain, never the engine's word about this Mac.
-  expect(written[0]![1]).not.toHaveProperty('missing');
+  expect(written()[0]![1]).not.toHaveProperty('missing');
 });
 
 test('removing a slot writes the chain without it', async () => {
   const text = await open();
   button('Remove').click();
 
-  await vi.waitFor(() => expect(written).toHaveLength(1));
-  expect(written[0]!.map((slot) => slot.id)).toEqual([GONE]);
+  await vi.waitFor(() => expect(written()).toHaveLength(1));
+  expect(written()[0]!.map((slot) => slot.id)).toEqual([GONE]);
   await vi.waitFor(() => expect(text()).not.toContain('AUReverb2'));
 });
 
@@ -116,6 +117,6 @@ test('an effect picked from the list lands at the end of the chain', async () =>
   )!;
   (item as HTMLElement).click();
 
-  await vi.waitFor(() => expect(written).toHaveLength(1));
-  expect(written[0]!.map((slot) => slot.id)).toEqual([REVERB, GONE, REVERB]);
+  await vi.waitFor(() => expect(written()).toHaveLength(1));
+  expect(written()[0]!.map((slot) => slot.id)).toEqual([REVERB, GONE, REVERB]);
 });

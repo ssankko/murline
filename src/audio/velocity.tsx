@@ -10,13 +10,10 @@
 import { curveOf, curved, positionOf } from '@/audio/curve';
 import { Knob } from '@/audio/knob';
 import type { Sounding } from '@/audio/sounding';
-import { readSettings, setSetting } from '@/db/db';
+import { set, useSetting } from '@/settings/settings';
 import { colorOf } from '@/look/color';
 import { useDark } from '@/look/use-dark';
-import { call } from '@/rust';
-import { useEffect, useState } from 'react';
-
-type Remap = { min: number; max: number; curve: number };
+import { useState } from 'react';
 
 /**
  * The three controls of the velocity remap, beside a plot of what they make. `sounding` is every
@@ -30,57 +27,21 @@ export function VelocitySection({
   marked?: string | null;
   sounding?: Sounding[];
 }) {
-  const [values, setValues] = useState<Remap | null>(null);
+  const min = useSetting('velocity_min');
+  const max = useSetting('velocity_max');
+  const curve = useSetting('velocity_curve');
+  /** Why the engine would not take the last move, shown until one it takes. */
+  const [failure, setFailure] = useState('');
 
-  useEffect(() => {
-    let live = true;
-    readSettings().then(
-      (settings) =>
-        live &&
-        setValues({
-          min: settings.velocity_min,
-          max: settings.velocity_max,
-          curve: settings.velocity_curve,
-        }),
-      console.error,
-    );
-    return () => {
-      live = false;
-    };
-  }, []);
-
-  /** Straight into the running engine, so the next strike answers the control that just moved. */
-  function apply(next: Remap): void {
-    setValues(next);
-    call('audio_set_velocity_curve', next).catch(console.error);
-  }
+  /** Each write reaches the running engine, so the next strike answers the control that moved. */
+  const write = (key: 'velocity_min' | 'velocity_max' | 'velocity_curve', value: number) =>
+    void set(key, value).then(setFailure);
 
   // Two independent controls can cross, and a minimum above the maximum is a map that runs
   // backwards, so each one stops at the other.
-  function writeMin(asked: number): void {
-    if (!values) return;
-    const min = Math.min(asked, values.max);
-    apply({ ...values, min });
-    setSetting('velocity_min', min).catch(console.error);
-  }
-
-  function writeMax(asked: number): void {
-    if (!values) return;
-    const max = Math.max(asked, values.min);
-    apply({ ...values, max });
-    setSetting('velocity_max', max).catch(console.error);
-  }
-
-  function writeCurve(position: number): void {
-    if (!values) return;
-    const curve = curveOf(position);
-    apply({ ...values, curve });
-    setSetting('velocity_curve', curve).catch(console.error);
-  }
-
-  const min = values?.min ?? 1;
-  const max = values?.max ?? 127;
-  const curve = values?.curve ?? 1;
+  const writeMin = (asked: number) => write('velocity_min', Math.min(asked, max));
+  const writeMax = (asked: number) => write('velocity_max', Math.max(asked, min));
+  const writeCurve = (position: number) => write('velocity_curve', curveOf(position));
 
   return (
     <section className="flex flex-col gap-2">
@@ -97,7 +58,6 @@ export function VelocitySection({
             hi={127}
             value={min}
             readout={`${min}`}
-            disabled={!values}
             onChange={writeMin}
           />
           <Knob
@@ -109,7 +69,6 @@ export function VelocitySection({
             hi={127}
             value={max}
             readout={`${max}`}
-            disabled={!values}
             onChange={writeMax}
           />
           <Knob
@@ -121,12 +80,12 @@ export function VelocitySection({
             hi={100}
             value={positionOf(curve)}
             readout={curve.toFixed(2)}
-            disabled={!values}
             onChange={writeCurve}
           />
         </div>
         <CurvePlot min={min} max={max} curve={curve} sounding={sounding} />
       </div>
+      {failure && <p className="text-muted-ink text-[12px]">{failure}</p>}
     </section>
   );
 }

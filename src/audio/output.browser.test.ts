@@ -1,6 +1,7 @@
 import { OutputSection } from "@/audio/output";
 import { NO_STATUS, type AudioStatus, type OutputDevice } from "@/rust";
-import { fakeRust, type FakeRust } from "@/rust.fake";
+import { fakeRust, fakeSettings, type FakeRust } from "@/rust.fake";
+import { load } from "@/settings/settings";
 import { createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -22,35 +23,31 @@ let status: AudioStatus = {
 };
 let rust: FakeRust;
 
-let settings: Record<string, unknown> = {
+/** The settings a launch starts from, in the fake's table before the section mounts. */
+const STORED: Record<string, unknown> = {
   audio_output_device: "Scarlett",
   audio_buffer_frames: 64,
   audio_voices: 128,
   instrument_id: "file:/Steinway.exs",
-  instrument_state: null,
   instruments_folder: "/instruments",
-  instrument_envelopes: {},
-  instrument_roles: {},
 };
-const written: [string, unknown][] = [];
-vi.mock("@/db/db", () => ({
-  getSettingOr: async (key: string) => settings[key],
-  readSettings: async () => settings,
-  setSetting: async (key: string, value: unknown) => {
-    written.push([key, value]);
-  },
-}));
+
+/** Every setting written so far, in the shape the store sent it. */
+function written(): [string, unknown][] {
+  return rust.argsOf("settings_write").map(({ key, value }) => [key, value]);
+}
 
 let close: (() => void) | null = null;
 
-beforeEach(() => {
-  written.length = 0;
+beforeEach(async () => {
   rust = fakeRust({
     audio_output_devices: () => devices,
     audio_status: () => status,
     // The section's own list is never shown, so the engine may report none.
     audio_instruments: () => [],
   });
+  for (const [key, value] of Object.entries(STORED)) fakeSettings.set(key, value);
+  await load();
 });
 
 afterEach(() => {
@@ -130,14 +127,8 @@ test("choosing a device writes the setting and moves the engine", async () => {
   clickText("MacBook Pro Speakers");
 
   await vi.waitFor(() =>
-    expect(rust.argsOf("audio_set_output_device")).toContainEqual({
-      id: "BuiltInSpeakerDevice",
-    }),
+    expect(written()).toContainEqual(["audio_output_device", "BuiltInSpeakerDevice"]),
   );
-  expect(written).toContainEqual([
-    "audio_output_device",
-    "BuiltInSpeakerDevice",
-  ]);
 });
 
 test("choosing a buffer size writes the setting and applies it", async () => {
@@ -146,10 +137,7 @@ test("choosing a buffer size writes the setting and applies it", async () => {
 
   clickText("128", document.querySelector("#setting-row-audio_buffer_frames")!);
 
-  await vi.waitFor(() =>
-    expect(rust.argsOf("audio_set_buffer_frames")).toContainEqual({ frames: 128 }),
-  );
-  expect(written).toContainEqual(["audio_buffer_frames", 128]);
+  await vi.waitFor(() => expect(written()).toContainEqual(["audio_buffer_frames", 128]));
   // The readout is asked again, because the buffer is most of what the latency is.
   await vi.waitFor(() =>
     expect(rust.argsOf("audio_status").length).toBeGreaterThan(1),
@@ -162,12 +150,11 @@ test("choosing a voice limit writes the setting and loads the instrument again a
 
   clickText("512", document.querySelector("#setting-row-audio_voices")!);
 
-  await vi.waitFor(() =>
-    expect(rust.argsOf("audio_set_voices")).toContainEqual({ count: 512 }),
-  );
-  expect(written).toContainEqual(["audio_voices", 512]);
+  await vi.waitFor(() => expect(written()).toContainEqual(["audio_voices", 512]));
   // The streaming rings are allocated with the instrument, so it goes in again at the new count.
-  expect(rust.calls.map((one) => one.name)).toContain("audio_load_instrument");
+  await vi.waitFor(() =>
+    expect(rust.calls.map((one) => one.name)).toContain("audio_load_instrument"),
+  );
 });
 
 test("a device that takes only the big buffers leaves the small ones dead", async () => {
@@ -195,11 +182,6 @@ test("a device that takes only the big buffers leaves the small ones dead", asyn
 });
 
 test("a chosen device that is not connected reads as the system default until it is back", async () => {
-  settings = {
-    ...settings,
-    audio_output_device: "Scarlett",
-    audio_buffer_frames: 64,
-  };
   devices = [{ id: "BuiltInSpeakerDevice", name: "MacBook Pro Speakers" }];
   status = {
     ...status,
@@ -230,7 +212,6 @@ test("a chosen device that is not connected reads as the system default until it
 });
 
 test("a buffer size this device does not take says so and shows the one running", async () => {
-  settings = { ...settings, audio_buffer_frames: 64 };
   status = { ...status, buffer_choices: [128, 256, 512], buffer_frames: 128 };
 
   const text = await open();

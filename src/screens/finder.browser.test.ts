@@ -27,8 +27,6 @@ const ROW: FinderRow = {
 let held: { promise: Promise<void>; release: () => void } | null = null;
 let refusal: string | null = null;
 
-vi.mock('@/db/db', () => ({ getSetting: async () => '/pdmx' }));
-
 vi.mock('@/library/import', () => ({
   importFiles: async () => ({ imported: ['prelude28-4.musicxml'], failures: [] }),
 }));

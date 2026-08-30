@@ -7,7 +7,7 @@
 // sent again whenever the loaded instrument changes.
 
 import { Knob } from '@/audio/knob';
-import { getSettingOr, setSetting } from '@/db/db';
+import { set, setting } from '@/settings/settings';
 import { sticky } from '@/lib/utils';
 import { call, type Role } from '@/rust';
 import { useEffect, useState } from 'react';
@@ -33,9 +33,9 @@ type Levels = Partial<Record<Role, number>>;
 
 /** What one instrument is kept at. A value written as the list of roles switched off reads as
  * those roles at 0, which is the same instrument playing the same way. */
-async function keptLevels(instrument: string | null): Promise<Levels> {
+function keptLevels(instrument: string | null): Levels {
   if (!instrument) return {};
-  const kept: Levels | Role[] | undefined = (await getSettingOr('instrument_roles'))[instrument];
+  const kept: Levels | Role[] | undefined = setting('instrument_roles')[instrument];
   if (Array.isArray(kept)) return Object.fromEntries(kept.map((one) => [one, 0]));
   return kept ?? {};
 }
@@ -45,7 +45,7 @@ const at = (levels: Levels, role: Role): number => levels[role] ?? 100;
 /** Sends every offered role's level to the engine, which loads with all of them at 100. */
 async function send(roles: Role[], levels: Levels): Promise<void> {
   for (const role of roles) {
-    await call('audio_set_role_level', { role, percent: at(levels, role) });
+    await call('audio_apply_role_level', { role, percent: at(levels, role) });
   }
 }
 
@@ -55,7 +55,7 @@ async function send(roles: Role[], levels: Levels): Promise<void> {
  * plays as it should and is left alone.
  */
 export async function restoreRoles(instrument: string | null): Promise<void> {
-  const levels = await keptLevels(instrument);
+  const levels = keptLevels(instrument);
   if (!Object.keys(levels).length) return;
   const { roles } = await call('audio_status');
   await send(roles, levels);
@@ -82,16 +82,9 @@ export function RolesSection({
 
   useEffect(() => {
     if (!roles.length) return;
-    let live = true;
-    void (async () => {
-      const kept = await keptLevels(instrument ?? null);
-      if (!live) return;
-      setLevels(kept);
-      await send(roles, kept);
-    })().catch(console.error);
-    return () => {
-      live = false;
-    };
+    const kept = keptLevels(instrument ?? null);
+    setLevels(kept);
+    void send(roles, kept).catch(console.error);
     // `offered` stands in for `roles`, which is a fresh array on every status the tab reads.
   }, [instrument, round, offered]);
 
@@ -100,10 +93,9 @@ export function RolesSection({
     const next = { ...levels, [role]: percent };
     setLevels(next);
     if (instrument) {
-      const all = await getSettingOr('instrument_roles');
-      await setSetting('instrument_roles', { ...all, [instrument]: next });
+      await set('instrument_roles', { ...setting('instrument_roles'), [instrument]: next });
     }
-    await call('audio_set_role_level', { role, percent });
+    await call('audio_apply_role_level', { role, percent });
   }
 
   if (!roles.length) return null;

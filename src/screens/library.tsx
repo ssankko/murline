@@ -14,7 +14,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { getSettingOr, setSetting, SETTING_DEFAULTS } from '@/db/db';
+import { set, setting, SETTING_DEFAULTS, subscribe } from '@/settings/settings';
 import { isMissingFile, pathOf } from '@/library/index-file';
 import {
   importFiles,
@@ -90,27 +90,28 @@ export function Library({
   const [midiOpen, setMidiOpen] = useState(false);
   const full = useFullscreen();
 
-  // The list waits on this, so no row is picked before the stored sort and selection arrive. It
-  // runs once: the route's piece stands over the stored one at the mount that carries it.
+  // The list waits on this, so no row is picked before the stored sort and selection are on the
+  // page. It runs once: the route's piece stands over the stored one at the mount that carries it.
   useEffect(() => {
-    void (async () => {
-      const [storedSort, storedSelected] = await Promise.all([
-        getSettingOr('library_sort'),
-        getSettingOr('library_selected'),
-      ]);
-      setSort(storedSort);
-      if (!opened) setSelected(storedSelected);
-      setRestored(true);
-    })();
+    setSort(setting('library_sort'));
+    if (!opened) setSelected(setting('library_selected'));
+    setRestored(true);
   }, []);
+
+  // A new library folder in the settings panel re-points the app; the scan runs again and no file
+  // is touched.
+  useEffect(
+    () => subscribe('library_folder', () => onFolder(setting('library_folder'))),
+    [onFolder],
+  );
 
   // Both are kept for the next launch. `selected` holds what the user reached, so the first row
   // standing in for a piece that is gone is never written.
   useEffect(() => {
-    if (restored) setSetting('library_sort', sort).catch(console.error);
+    if (restored) void set('library_sort', sort);
   }, [restored, sort]);
   useEffect(() => {
-    if (restored) setSetting('library_selected', selected).catch(console.error);
+    if (restored) void set('library_selected', selected);
   }, [restored, selected]);
 
   // `scanLibrary` walks a folder once, so a sort change costs the re-list alone.
@@ -427,16 +428,12 @@ export function Library({
         />
       )}
 
-      {/* A new library folder re-points the app. The scan runs again and no file is touched. */}
       <SettingsPanel
         open={settingsOpen}
         jumpTo={settingsJump}
         onClose={() => {
           setSettingsOpen(false);
           setSettingsJump(null);
-        }}
-        onGlobalChange={(key, value) => {
-          if (key === 'library_folder') onFolder(value as string);
         }}
         onOpenMixer={() => setMixerOpen(true)}
         onOpenMidi={() => setMidiOpen(true)}

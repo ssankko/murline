@@ -5,11 +5,10 @@
 import { Knob } from '@/audio/knob';
 import { SoundControls, useAudioStatus } from '@/audio/sound-tab';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { readSettings, setSetting } from '@/db/db';
 import { sticky } from '@/lib/utils';
-import type { SettingChange } from '@/screens/settings';
-import { call, type AudioStatus } from '@/rust';
-import { useEffect, useState } from 'react';
+import { type AudioStatus } from '@/rust';
+import { set, useSetting } from '@/settings/settings';
+import { useState } from 'react';
 
 /** What the line under a popover says: the sound's way out, or why there is none. */
 function output(status: AudioStatus | null): string {
@@ -31,7 +30,6 @@ export function Mixer({
   open,
   onOpenChange,
   onSoundSettings,
-  onGlobalChange,
   trigger,
 }: {
   /** Held by the screen, because a search result in the settings panel opens the mixer too. */
@@ -39,37 +37,19 @@ export function Mixer({
   onOpenChange: (open: boolean) => void;
   /** The way into the rest of the Sound tab: the output device, the envelope, the velocity. */
   onSoundSettings: () => void;
-  onGlobalChange?: (...change: SettingChange) => void;
   /** What opens the popover: the status bar's pair of volume cells. */
   trigger: React.ReactNode;
 }) {
-  const [values, setValues] = useState<{ keyboard: number; click: number } | null>(null);
+  const keyboard = useSetting('keyboard_volume');
+  const click = useSetting('click_volume');
   const status = useAudioStatus();
+  /** Why the engine would not take the keyboard fader, shown until a move it takes. */
+  const [failure, setFailure] = useState('');
 
-  // Read at every open, the way the settings panel does, so the faders are in step with whatever
-  // wrote them last.
-  useEffect(() => {
-    if (!open) return;
-    readSettings().then(
-      (settings) => setValues({ keyboard: settings.keyboard_volume, click: settings.click_volume }),
-      console.error,
-    );
-  }, [open]);
-
+  /** The gain goes in place in the running graph, so a note ringing as the fader moves keeps
+   * ringing. */
   function writeKeyboard(percent: number): void {
-    setValues((held) => held && { ...held, keyboard: percent });
-    setSetting('keyboard_volume', percent).catch(console.error);
-    // In place in the running graph: nothing is reconnected, so a note ringing while the fader
-    // moves keeps ringing.
-    call('audio_set_keyboard_volume', { percent }).catch(console.error);
-    onGlobalChange?.('keyboard_volume', percent);
-  }
-
-  function writeClick(percent: number): void {
-    setValues((held) => held && { ...held, click: percent });
-    setSetting('click_volume', percent).catch(console.error);
-    // The play screen's metronome reads it from here, so a change lands mid-practice.
-    onGlobalChange?.('click_volume', percent);
+    void set('keyboard_volume', percent).then(setFailure);
   }
 
   return (
@@ -82,9 +62,8 @@ export function Mixer({
           hint="100% is the instrument's own; a limiter stops clipping."
           lo={0}
           hi={200}
-          value={values?.keyboard ?? 100}
-          readout={`${values?.keyboard ?? 100}%`}
-          disabled={!values}
+          value={keyboard}
+          readout={`${keyboard}%`}
           onChange={(percent) => writeKeyboard(sticky(percent))}
         />
         <Knob
@@ -93,11 +72,11 @@ export function Mixer({
           hint="The click's own volume, straight to the output."
           lo={0}
           hi={100}
-          value={values?.click ?? 0}
-          readout={`${values?.click ?? 0}%`}
-          disabled={!values}
-          onChange={(percent) => writeClick(sticky(percent))}
+          value={click}
+          readout={`${click}%`}
+          onChange={(percent) => void set('click_volume', sticky(percent))}
         />
+        {failure && <p className="text-muted-ink text-[11px] leading-snug">{failure}</p>}
         <Foot status={status} onOpenChange={onOpenChange} onSoundSettings={onSoundSettings} />
       </PopoverContent>
     </Popover>

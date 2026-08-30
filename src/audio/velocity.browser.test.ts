@@ -2,6 +2,7 @@ import { curveOf, curved, positionOf } from '@/audio/curve';
 import type { Sounding } from '@/audio/sounding';
 import { VelocitySection } from '@/audio/velocity';
 import { fakeRust, type FakeRust } from '@/rust.fake';
+import { load } from '@/settings/settings';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { userEvent } from 'vitest/browser';
@@ -9,23 +10,17 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 let rust: FakeRust;
 
-let stored: Record<string, number> = { velocity_min: 1, velocity_max: 127, velocity_curve: 1 };
-let written: [string, unknown][] = [];
-
-vi.mock('@/db/db', () => ({
-  readSettings: async () => stored,
-  setSetting: async (key: string, value: unknown) => {
-    written.push([key, value]);
-  },
-}));
+/** Every setting written so far, in the shape the store sent it. */
+function written(): [string, unknown][] {
+  return rust.argsOf('settings_write').map(({ key, value }) => [key, value]);
+}
 
 let close: (() => void) | null = null;
 let host: HTMLElement | null = null;
 
-beforeEach(() => {
+beforeEach(async () => {
   rust = fakeRust();
-  written = [];
-  stored = { velocity_min: 1, velocity_max: 127, velocity_curve: 1 };
+  await load();
 });
 
 afterEach(() => {
@@ -48,7 +43,7 @@ async function open(sounding: Sounding[] = []): Promise<void> {
     root.unmount();
     host?.remove();
   };
-  await vi.waitFor(() => expect(slider('Velocity curve').disabled).toBe(false));
+  await vi.waitFor(() => expect(slider('Velocity curve')).toBeTruthy());
 }
 
 function slider(label: string): HTMLInputElement {
@@ -91,25 +86,22 @@ test('the middle of the curve slider is the straight line', () => {
   expect(positionOf(curveOf(20))).toBe(20);
 });
 
-test('every slider reaches the running engine as it moves, with nothing to apply', async () => {
+// Each write is what reaches the running engine: the Rust side sends the whole remap as it stores
+// one of its three keys.
+test('every slider writes as it moves, and one never undoes another', async () => {
   await open();
 
   await move('Minimum velocity', '40');
-  expect(written).toContainEqual(['velocity_min', 40]);
-  expect(rust.argsOf('audio_set_velocity_curve')).toContainEqual({ min: 40, max: 127, curve: 1 });
+  expect(written()).toContainEqual(['velocity_min', 40]);
 
   await move('Maximum velocity', '90');
-  expect(written).toContainEqual(['velocity_max', 90]);
-  expect(rust.argsOf('audio_set_velocity_curve')).toContainEqual({ min: 40, max: 90, curve: 1 });
+  expect(written()).toContainEqual(['velocity_max', 90]);
 
-  // The curve carries the two ends that were just set, so one slider never undoes another.
+  // The curve carries the two ends that were just set.
   await move('Velocity curve', '20');
-  expect(written).toContainEqual(['velocity_curve', curveOf(20)]);
-  expect(rust.argsOf('audio_set_velocity_curve')).toContainEqual({
-    min: 40,
-    max: 90,
-    curve: curveOf(20),
-  });
+  expect(written()).toContainEqual(['velocity_curve', curveOf(20)]);
+  expect(slider('Minimum velocity').value).toBe('40');
+  expect(slider('Maximum velocity').value).toBe('90');
 });
 
 test('the minimum cannot be dragged past the maximum, nor the maximum under it', async () => {
@@ -117,11 +109,11 @@ test('the minimum cannot be dragged past the maximum, nor the maximum under it',
 
   await move('Maximum velocity', '60');
   await move('Minimum velocity', '100');
-  expect(written).toContainEqual(['velocity_min', 60]);
+  expect(written()).toContainEqual(['velocity_min', 60]);
   expect(slider('Minimum velocity').value).toBe('60');
 
   await move('Maximum velocity', '20');
-  expect(written).toContainEqual(['velocity_max', 60]);
+  expect(written()).toContainEqual(['velocity_max', 60]);
   expect(slider('Maximum velocity').value).toBe('60');
 });
 

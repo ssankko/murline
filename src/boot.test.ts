@@ -1,55 +1,50 @@
 import type { CommandName } from '@/rust';
-import { DEFAULT_ANSWERS, fakeRust, type Answers, type FakeRust } from '@/rust.fake';
+import { DEFAULT_ANSWERS, fakeRust, fakeSettings, type Answers } from '@/rust.fake';
 import { beforeEach, expect, test, vi } from 'vitest';
 import type { BootLine } from './boot';
 
-let settings = {
+/** The stored settings a boot starts from, put in the fake's table before every test. */
+const STORED: Record<string, unknown> = {
   theme: 'dark',
   onboarding_done: true,
   library_folder: '/scores',
   audio_output_device: 'Scarlett',
   audio_buffer_frames: 128,
   instruments_folder: '/instruments',
-  instrument_id: 'grand' as string | null,
+  instrument_id: 'grand',
 };
 let engineReason: string | null = null;
-/** A command that answers with this reason instead of doing what it was asked. */
-let refuses: string | null = null;
 /** What the engine answers for its instrument list while it is set. */
 let listed: { id: string; name: string }[] = [];
 /** While it is set, the scan waits on it, so a step can be watched in flight. */
 let heldScan: Promise<void> | null = null;
-let rust: FakeRust;
 
-vi.mock('@/db/db', () => ({
-  getDb: async () => ({}),
-  readSettings: async () => settings,
-  setSetting: async () => {},
-  getSettingOr: async () => ({}),
-}));
-vi.mock('@/look/use-dark', () => ({ setTheme: () => {} }));
+vi.mock('@/db/db', () => ({ getDb: async () => ({}) }));
+// The paper is the window's, and this test has none.
+vi.mock('@/look/use-dark', () => ({ useDark: () => false }));
 vi.mock('@/library/scan', () => ({
   scanLibrary: async (folder: string) => {
     if (folder === '/gone') throw new Error('folder is gone');
     if (heldScan) await heldScan;
   },
 }));
-/** Every command answers the way a refusing or an absent engine would. */
+/** Every command but the settings answers the way a refusing or an absent engine would. */
 const answers = Object.fromEntries(
-  (Object.keys(DEFAULT_ANSWERS) as CommandName[]).map((command) => [
-    command,
-    () => {
-      if (command === 'audio_start' && engineReason) throw engineReason;
-      if (command === refuses) throw `${command} would not`;
-      // Nothing but the instrument list answers without the engine, and every failure is alike.
-      if (engineReason && command !== 'audio_instruments') throw engineReason;
-      if (command === 'audio_instruments') return listed;
-    },
-  ]),
+  (Object.keys(DEFAULT_ANSWERS) as CommandName[])
+    .filter((command) => command !== 'settings_read' && command !== 'settings_write')
+    .map((command) => [
+      command,
+      () => {
+        // Nothing but the instrument list answers without the engine, and every failure is alike.
+        if (engineReason && command !== 'audio_instruments') throw engineReason;
+        if (command === 'audio_instruments') return listed;
+      },
+    ]),
 ) as Partial<Answers>;
 
 beforeEach(() => {
-  rust = fakeRust(answers);
+  fakeRust(answers);
+  for (const [key, value] of Object.entries(STORED)) fakeSettings.set(key, value);
 });
 
 const { boot, lineText, START_LINE } = await import('./boot');
@@ -78,7 +73,7 @@ test('every step names itself while it runs, in the order the steps run', async 
   await boot((lines) => printed.push(lines));
   expect(printed[printed.length - 1]).toEqual(landedLog);
   // A step's line appears alone and lands in place: the two prints for one step hold the same count.
-  expect(printed.map((lines) => lines.length)).toEqual([1, 2, 2, 3, 4, 5, 5, 6, 6, 7, 7]);
+  expect(printed.map((lines) => lines.length)).toEqual([1, 2, 2, 3, 3, 4, 5, 5, 6, 6, 7, 7]);
   listed = [];
 });
 
@@ -101,7 +96,7 @@ test('a step in flight reads with no tail, and its tail flips when the step land
 });
 
 test('a step that fails shows the reason as its tail, and the steps after it still run', async () => {
-  settings = { ...settings, library_folder: '/gone' };
+  fakeSettings.set('library_folder', '/gone');
   const printed: BootLine[][] = [];
   await boot((lines) => printed.push(lines));
   const last = printed[printed.length - 1]!;
@@ -110,28 +105,11 @@ test('a step that fails shows the reason as its tail, and the steps after it sti
     state: 'failed',
     reason: 'folder is gone',
   });
-  settings = { ...settings, library_folder: '/scores' };
 });
 
-test('a setting the engine refuses still leaves the chain applied, and prints why', async () => {
-  refuses = 'audio_set_buffer_frames';
-  const printed: BootLine[][] = [];
-  await boot((lines) => printed.push(lines));
-  refuses = null;
-
-  expect(printed[printed.length - 1]![4]).toEqual({
-    label: 'starting sound engine',
-    state: 'failed',
-    reason: 'audio_set_buffer_frames would not',
-  });
-  // The buffer is what failed; the instrument and the chain after it went in all the same.
-  const asked = rust.calls.map((one) => one.name);
-  expect(asked).toContain('audio_set_chain');
-  expect(asked).toContain('audio_instruments');
-});
-
+// The engine puts its own settings back, so what the boot log carries is the one reason it
+// answers with; the steps after it run whatever it was.
 test('a sound engine that will not start prints why, and the steps after it still run', async () => {
-  settings = { ...settings, library_folder: '/scores' };
   engineReason = 'No sound engine on this platform';
   const printed: BootLine[][] = [];
   await boot((lines) => printed.push(lines));
@@ -160,10 +138,9 @@ test('the line names the instrument the settings chose, when the list knows it',
 
 test('a first boot names the instrument the restore falls back to', async () => {
   listed = [{ id: 'grand', name: 'Concert Grand Piano' }];
-  settings = { ...settings, instrument_id: null };
+  fakeSettings.delete('instrument_id');
   const printed: BootLine[][] = [];
   await boot((lines) => printed.push(lines));
   expect(printed[printed.length - 1]![5]!.label).toBe('restoring Concert Grand Piano');
-  settings = { ...settings, instrument_id: 'grand' };
   listed = [];
 });

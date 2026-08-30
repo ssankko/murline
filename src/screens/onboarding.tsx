@@ -1,5 +1,5 @@
 import { Button } from '@/components/ui/button';
-import { setSetting } from '@/db/db';
+import { set } from '@/settings/settings';
 import { Input } from '@/components/ui/input';
 import { useMidiStatus } from '@/midi/use-midi-status';
 import { call } from '@/rust';
@@ -35,8 +35,8 @@ export function Onboarding({ onDone }: { onDone: (folder: string) => void }) {
     setError(null);
     try {
       await call('ensure_dir', { path: folder });
-      await setSetting('library_folder', folder);
-      await setSetting('onboarding_done', true);
+      await set('library_folder', folder);
+      await set('onboarding_done', true);
       onDone(folder);
     } catch (e) {
       setError(String(e));

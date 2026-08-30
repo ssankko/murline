@@ -21,12 +21,23 @@ export type Answers = {
 const nothing = () => {};
 
 /**
+ * The `setting` table: what `settings_write` has stored and `settings_read` answers with. A test
+ * seeds it before it loads the store, and `fakeRust` empties it, so every test starts on the
+ * defaults.
+ */
+export const fakeSettings = new Map<string, unknown>();
+
+/**
  * The studio a test starts in: the sound engine is up on one output device with one file
  * instrument loaded, the effect chain is empty, one MIDI keyboard is listened to and the library
  * folder is empty.
  */
 export const DEFAULT_ANSWERS: Answers = {
   ensure_dir: nothing,
+  settings_read: () => Object.fromEntries(fakeSettings),
+  settings_write: ({ key, value }) => {
+    fakeSettings.set(key, value);
+  },
   audio_start: nothing,
   audio_status: () => ({
     available: true,
@@ -44,26 +55,18 @@ export const DEFAULT_ANSWERS: Answers = {
   }),
   audio_click: nothing,
   audio_note: nothing,
-  audio_set_keyboard_volume: nothing,
-  audio_set_velocity_curve: nothing,
   audio_effects: () => [],
   audio_chain: () => [],
-  // The engine answers with what it made of the chain, and it can load every plugin here.
-  audio_set_chain: ({ chain }) => chain,
   audio_show_effect: nothing,
   audio_output_devices: () => [{ id: 'device-1', name: 'Built-in Output' }],
-  audio_set_output_device: nothing,
-  audio_set_buffer_frames: nothing,
-  audio_set_sample_rate: nothing,
-  audio_set_voices: nothing,
   audio_instruments: () => [
     { id: 'grand', name: 'Concert Grand Piano', kind: 'file', loaded: true, reason: '' },
   ],
   audio_load_instrument: nothing,
   audio_show_instrument: () => null,
   audio_envelope: () => ({ attack: 0.001, decay: 0.5, sustain: 0.7, release: 0.2 }),
-  audio_set_envelope: nothing,
-  audio_set_role_level: nothing,
+  audio_apply_envelope: nothing,
+  audio_apply_role_level: nothing,
   preview_load: nothing,
   preview_play: nothing,
   preview_pause: nothing,
@@ -114,6 +117,7 @@ export interface FakeRust {
  * replaces the one before, so a `beforeEach` can start every test from the same studio.
  */
 export function fakeRust(overrides: Partial<Answers> = {}): FakeRust {
+  fakeSettings.clear();
   const answers = { ...DEFAULT_ANSWERS, ...overrides } as Answers;
   const calls: Called[] = [];
   const handlers = new Map<EventName, Set<(payload: unknown) => void>>();

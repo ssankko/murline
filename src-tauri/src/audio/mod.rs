@@ -3,6 +3,7 @@
 //! platform can sit behind exactly these commands.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::sync::OnceLock;
 use tauri::{AppHandle, Emitter};
 
@@ -174,11 +175,67 @@ pub struct Instrument {
     pub reason: String,
 }
 
-/// Builds the graph and starts it on the output device. The boot screen prints ok or the reason,
-/// and a failure leaves every later step running.
+/// The settings the engine owns, in the order a start puts them in: the output first, then what
+/// the voice engine is built with, then the chain and the levels after it. The velocity remap is
+/// three keys and goes in as one, so `velocity_min` stands for all three.
+const OWNED: [&str; 7] = [
+    "audio_output_device",
+    "audio_buffer_frames",
+    "audio_sample_rate",
+    "audio_voices",
+    "effect_chain",
+    "keyboard_volume",
+    "velocity_min",
+];
+
+/// Puts one global setting on the running engine, and answers with the engine's refusal when it
+/// will not take it. The whole set is passed because the velocity remap is three keys read as one.
+/// A key the engine does not own, and one never written, changes nothing.
+pub fn apply(key: &str, all: &crate::settings::Stored) -> Result<(), String> {
+    let number = |name: &str, or: f64| all.get(name).and_then(Value::as_f64).unwrap_or(or);
+    // The remap goes in whole, at the map that changes nothing for a key nobody has written.
+    if matches!(key, "velocity_min" | "velocity_max" | "velocity_curve") {
+        engine::set_velocity_curve(
+            number("velocity_min", 1.0) as u32,
+            number("velocity_max", 127.0) as u32,
+            number("velocity_curve", 1.0),
+        );
+        return Ok(());
+    }
+    let Some(value) = all.get(key) else { return Ok(()) };
+    match key {
+        // Null is the system default, which is where an engine that has been told nothing plays.
+        "audio_output_device" => engine::set_output_device(value.as_str().map(str::to_string)),
+        "audio_buffer_frames" => engine::set_buffer_frames(number(key, 0.0) as u32),
+        "audio_sample_rate" => engine::set_sample_rate(number(key, 0.0) as u32),
+        "audio_voices" => engine::set_voices(number(key, 0.0) as usize),
+        "effect_chain" => engine::set_chain(
+            serde_json::from_value(value.clone()).map_err(|e| e.to_string())?,
+        )
+        .map(|_| ()),
+        "keyboard_volume" => {
+            engine::set_keyboard_volume(number(key, 100.0) as u32);
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Builds the graph, starts it on the output device and puts the stored settings back on it. The
+/// boot screen prints ok or the reason, and a failure leaves every later step running.
+///
+/// Each setting is applied whatever the one before it did: a device that has been unplugged must
+/// not cost the app its effect chain. Only the start itself stops the rest, because nothing can be
+/// applied to an engine that is not there.
 #[tauri::command]
-pub fn audio_start() -> Result<(), String> {
-    engine::start()
+pub async fn audio_start(app: tauri::AppHandle) -> Result<(), String> {
+    engine::start()?;
+    let all = crate::settings::all(&app).await?;
+    let refusals: Vec<String> = OWNED.iter().filter_map(|key| apply(key, &all).err()).collect();
+    match refusals.into_iter().next() {
+        Some(reason) => Err(reason),
+        None => Ok(()),
+    }
 }
 
 #[tauri::command]
@@ -201,25 +258,6 @@ pub fn audio_note(midi: u8, velocity: u8, on: bool, raw: bool) {
     engine::note(midi, velocity, on, raw);
 }
 
-/// The keyboard volume, 0 to 200, where 100 is the sound untouched: a gain after the effect chain,
-/// so it sets how loud what the instrument path has finished making comes out without changing what
-/// the instrument or the effects were given. A no-op where there is no engine, which is silent
-/// anyway.
-#[tauri::command]
-pub fn audio_set_keyboard_volume(percent: u32) {
-    engine::set_keyboard_volume(percent);
-}
-
-/// The velocity remap: input velocity to output velocity, `min` and `max` the output the lightest
-/// and the hardest strike land on and `curve` the exponent between them. It is applied ahead of the
-/// instrument, so the effects and the keyboard fader are untouched by it, and the Preview goes
-/// through it too. The same map is put on the strike the webview is told about, so a grade reads
-/// the output velocity. A no-op where there is no engine.
-#[tauri::command]
-pub fn audio_set_velocity_curve(min: u32, max: u32, curve: f64) {
-    engine::set_velocity_curve(min, max, curve);
-}
-
 /// Every Audio Unit effect installed on the machine, Apple's own included.
 #[tauri::command]
 pub fn audio_effects() -> Vec<Effect> {
@@ -229,13 +267,6 @@ pub fn audio_effects() -> Vec<Effect> {
 #[tauri::command]
 pub fn audio_chain() -> Vec<Slot> {
     engine::chain()
-}
-
-/// Takes the whole chain and answers with the chain as it ended up, so the webview learns which
-/// slots are missing and what the plugins call themselves. Nothing here stops the instrument.
-#[tauri::command]
-pub fn audio_set_chain(chain: Vec<Slot>) -> Result<Vec<Slot>, String> {
-    engine::set_chain(chain)
 }
 
 /// Opens one slot's plugin window. Closing it emits `audio-chain-changed` with the whole chain,
@@ -250,35 +281,6 @@ pub fn audio_show_effect(app: tauri::AppHandle, index: usize) -> Result<(), Stri
 #[tauri::command]
 pub fn audio_output_devices() -> Vec<OutputDevice> {
     engine::output_devices()
-}
-
-/// Moves the output to `id`, or to the system default when it is null. The choice is kept even
-/// when the device is not plugged in, so the engine takes it up again when it comes back.
-#[tauri::command]
-pub fn audio_set_output_device(id: Option<String>) -> Result<(), String> {
-    engine::set_output_device(id)
-}
-
-/// One of the buffer sizes the status lists as the device's, and refused otherwise.
-#[tauri::command]
-pub fn audio_set_buffer_frames(frames: u32) -> Result<(), String> {
-    engine::set_buffer_frames(frames)
-}
-
-/// One of the rates the status lists as the device's, for the voice engine and the device both,
-/// and refused otherwise. Everything sounding stops and the instrument goes with the old rate, so
-/// the webview loads it again.
-#[tauri::command]
-pub fn audio_set_sample_rate(rate: u32) -> Result<(), String> {
-    engine::set_sample_rate(rate)
-}
-
-/// How many voices the engine may hold sounding at once: 128, 256 or 512. Everything sounding
-/// stops. The streaming buffers of a file instrument are allocated with it, two ring slots per
-/// voice, so the webview loads the instrument again for the new count to reach them.
-#[tauri::command]
-pub fn audio_set_voices(count: usize) -> Result<(), String> {
-    engine::set_voices(count)
 }
 
 /// Every instrument the engine can play: Logic's pianos, the files in the folder the webview
@@ -311,7 +313,7 @@ pub fn audio_envelope() -> Option<Envelope> {
 /// Replaces it. The voice engine has it at the next buffer, and every note struck from there on
 /// follows it; whatever is already sounding plays on unchanged.
 #[tauri::command]
-pub fn audio_set_envelope(envelope: Envelope) {
+pub fn audio_apply_envelope(envelope: Envelope) {
     engine::set_envelope(envelope);
 }
 
@@ -321,7 +323,7 @@ pub fn audio_set_envelope(envelope: Envelope) {
 /// load puts every role back to 100, and the webview keeps a level per instrument and sends it
 /// after every load.
 #[tauri::command]
-pub fn audio_set_role_level(role: sampler::Role, percent: u32) {
+pub fn audio_apply_role_level(role: sampler::Role, percent: u32) {
     engine::set_role_level(role, percent);
 }
 

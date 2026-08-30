@@ -20,6 +20,8 @@ quick-xml = "0.42"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "native-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# The same version, and so the same libsqlite3-sys, that tauri-plugin-sql already builds.
+sqlx = { version = "0.8.6", default-features = false, features = ["sqlite", "runtime-tokio"] }
 tar = "0.4"
 tauri = { version = "2.11.5", features = [] }
 tauri-plugin-dialog = "2.7.0"
@@ -30,6 +32,8 @@ zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
 
 [dev-dependencies]
 tempfile = "3"
+# The async tests need a runtime of their own; the app runs on Tauri's.
+tokio = { version = "1", features = ["rt", "macros"] }
 
 # The voice engine renders on the audio thread; unoptimized it costs about fourteen times the
 # release build and drops out past a hundred voices, so a dev build is optimized too.

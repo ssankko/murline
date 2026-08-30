@@ -178,27 +178,24 @@ export interface PreviewProgress {
  */
 export interface Commands {
   ensure_dir: { args: { path: string }; result: void };
+  /** Every stored global setting, by key, as the JSON the window wrote. */
+  settings_read: { args: void; result: Record<string, unknown> };
+  /** One setting. A key the sound engine owns is refused with the engine's reason. */
+  settings_write: { args: { key: string; value: unknown }; result: void };
   audio_start: { args: void; result: void };
   audio_status: { args: void; result: AudioStatus };
   audio_click: { args: { strength: 'strong' | 'weak'; volume: number }; result: void };
   audio_note: { args: { midi: number; velocity: number; on: boolean; raw: boolean }; result: void };
-  audio_set_keyboard_volume: { args: { percent: number }; result: void };
-  audio_set_velocity_curve: { args: { min: number; max: number; curve: number }; result: void };
   audio_effects: { args: void; result: Effect[] };
   audio_chain: { args: void; result: EffectSlot[] };
-  audio_set_chain: { args: { chain: EffectSlot[] }; result: EffectSlot[] };
   audio_show_effect: { args: { index: number }; result: void };
   audio_output_devices: { args: void; result: OutputDevice[] };
-  audio_set_output_device: { args: { id: string | null }; result: void };
-  audio_set_buffer_frames: { args: { frames: number }; result: void };
-  audio_set_sample_rate: { args: { rate: number }; result: void };
-  audio_set_voices: { args: { count: number }; result: void };
   audio_instruments: { args: { folder: string }; result: Instrument[] };
   audio_load_instrument: { args: { id: string; state: string | null }; result: void };
   audio_show_instrument: { args: void; result: string | null };
   audio_envelope: { args: void; result: Envelope | null };
-  audio_set_envelope: { args: { envelope: Envelope }; result: void };
-  audio_set_role_level: { args: { role: Role; percent: number }; result: void };
+  audio_apply_envelope: { args: { envelope: Envelope }; result: void };
+  audio_apply_role_level: { args: { role: Role; percent: number }; result: void };
   preview_load: { args: { notes: PreviewNote[] }; result: void };
   preview_play: { args: void; result: void };
   preview_pause: { args: void; result: void };

@@ -14,10 +14,9 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { getSettingOr, readSettings, setSetting } from "@/db/db";
-import { reasonOf } from "@/library/notice";
 import { numbered, Row, Segmented } from "@/look/rows";
 import { call, on, type AudioStatus, type OutputDevice } from "@/rust";
+import { set, setting, useSetting } from "@/settings/settings";
 import { ChevronDown } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
@@ -30,10 +29,10 @@ const VOICE_CHOICES = [128, 256, 512];
 export function OutputSection({ marked }: { marked?: string | null }) {
   const [devices, setDevices] = useState<OutputDevice[]>([]);
   const [status, setStatus] = useState<AudioStatus | null>(null);
-  const [chosen, setChosen] = useState<string | null>(null);
-  const [frames, setFrames] = useState(64);
-  const [voices, setVoices] = useState(128);
-  /** What went wrong with the last change, shown until the next one works. */
+  const chosen = useSetting("audio_output_device");
+  const frames = useSetting("audio_buffer_frames");
+  const voices = useSetting("audio_voices");
+  /** Why the engine would not take the last change, shown until one it takes. */
   const [failure, setFailure] = useState("");
 
   const readEngine = useCallback(async () => {
@@ -46,64 +45,30 @@ export function OutputSection({ marked }: { marked?: string | null }) {
   }, []);
 
   useEffect(() => {
-    void getSettingOr("audio_output_device").then(setChosen);
-    void getSettingOr("audio_buffer_frames").then(setFrames);
-    void getSettingOr("audio_voices").then(setVoices);
-  }, []);
-
-  useEffect(() => {
     void readEngine();
     return on("audio-devices-changed", () => void readEngine());
   }, [readEngine]);
 
-  /** Writes the setting, applies it to the engine, and reads back what the device now reports. */
-  const change = async (
-    write: () => Promise<void>,
-    apply: () => Promise<unknown>,
-  ) => {
-    await write();
-    try {
-      await apply();
-      setFailure("");
-    } catch (error) {
-      setFailure(reasonOf(error));
-    }
+  /** Writes the setting, which is what applies it to the engine, and reads the device back. */
+  const change = async (write: () => Promise<string>) => {
+    setFailure(await write());
     await readEngine();
   };
 
-  const chooseDevice = (id: string | null) =>
-    change(
-      async () => {
-        setChosen(id);
-        await setSetting("audio_output_device", id);
-      },
-      () => call("audio_set_output_device", { id }),
-    );
+  const chooseDevice = (id: string | null) => change(() => set("audio_output_device", id));
 
-  const chooseFrames = (choice: number) =>
-    change(
-      async () => {
-        setFrames(choice);
-        await setSetting("audio_buffer_frames", choice);
-      },
-      () => call("audio_set_buffer_frames", { frames: choice }),
-    );
+  const chooseFrames = (choice: number) => change(() => set("audio_buffer_frames", choice));
 
   const chooseVoices = (choice: number) =>
-    change(
-      async () => {
-        setVoices(choice);
-        await setSetting("audio_voices", choice);
-      },
-      async () => {
-        await call("audio_set_voices", { count: choice });
-        // A sampled instrument's streaming rings are allocated with it, two slots per voice, so it
-        // is read again at the new count; the envelope and the levels ride back in on the restore.
-        const settings = await readSettings();
-        await restoreInstrument(settings);
-        await restoreRoles(settings.instrument_id);
-      },
-    );
+    change(async () => {
+      const reason = await set("audio_voices", choice);
+      if (reason) return reason;
+      // A sampled instrument's streaming rings are allocated with it, two slots per voice, so it
+      // is read again at the new count; the envelope and the levels ride back in on the restore.
+      await restoreInstrument();
+      await restoreRoles(setting("instrument_id"));
+      return "";
+    });
 
   // A device that is not connected is not in the list, and the picker names it nowhere. It reads as
   // the system default, where the sound is really going. The setting keeps the choice, so the name

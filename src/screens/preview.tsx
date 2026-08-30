@@ -5,7 +5,6 @@
 import { previewNotes, secondsOf, tickAt } from '@/audio/preview';
 import { Button } from '@/components/ui/button';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { readSettings, setSetting } from '@/db/db';
 import { baseNameOf, pathOf, readScoreFile } from '@/library/index-file';
 import { setNotice } from '@/library/notice';
 import { getPiece, updatePieceSettings } from '@/library/queries';
@@ -27,12 +26,13 @@ import { useFrameLoop } from '@/play/use-frame-loop';
 import { barTickOf } from '@/score/beat';
 import { ScoreError, bpmAt, stepSeconds, type Score } from '@/score/types';
 import { BarButton, ICON, TEMPO_STEP, TempoPopover } from '@/screens/bar';
-import { SettingsPanel, SpacingPopup, type SettingChange } from '@/screens/settings';
+import { SettingsPanel, SpacingPopup } from '@/screens/settings';
 import { StatusBar } from '@/screens/status-bar';
 import { useFullscreen } from '@/screens/use-fullscreen';
 import type { Pinch } from '@/sheet/pinch';
 import { PreviewSheet, windowTicksOf } from '@/sheet/preview-sheet';
 import { call, on } from '@/rust';
+import { set, setting, subscribe } from '@/settings/settings';
 import { ArrowLeft, Minus, Pause, Play, Plus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
@@ -192,14 +192,25 @@ export function PreviewScreen({
     updatePieceSettings(path, { tempo_mode: next, tempo_value: value }).catch(console.error);
   }
 
-  /** A global knob the panel or the mixer writes reaches the page already on screen. */
-  function applyGlobal(...[key, value]: SettingChange): void {
-    const sheet = sheetRef.current;
-    if (key === 'sheet_proportional') sheet?.setProportional(value);
-    if (key === 'sheet_spacing') sheet?.setSpacing(value);
-    if (key === 'sheet_harmony') sheet?.setLook({ harmony: value });
-    if (key === 'sheet_colour') sheet?.setLook({ colour: value });
-  }
+  // The four Look settings the page draws, on the sheet already on screen the moment one of them
+  // is written, whether by the panel or by a pinch.
+  useEffect(() => {
+    const stops = [
+      subscribe('sheet_proportional', () =>
+        sheetRef.current?.setProportional(setting('sheet_proportional')),
+      ),
+      subscribe('sheet_spacing', () => sheetRef.current?.setSpacing(setting('sheet_spacing'))),
+      subscribe('sheet_harmony', () =>
+        sheetRef.current?.setLook({ harmony: setting('sheet_harmony') }),
+      ),
+      subscribe('sheet_colour', () =>
+        sheetRef.current?.setLook({ colour: setting('sheet_colour') }),
+      ),
+    ];
+    return () => {
+      for (const stop of stops) stop();
+    };
+  }, []);
 
   useEffect(() => {
     call('audio_status')
@@ -255,24 +266,24 @@ export function PreviewScreen({
       try {
         await reindexIfChanged(folder, path);
         const bytes = await readScoreFile(pathOf(folder, path));
-        const [globals, row] = await Promise.all([readSettings(), getPiece(path).catch(() => null)]);
+        const row = await getPiece(path).catch(() => null);
         const sheet = await PreviewSheet.open(
           hostRef.current!,
           bytes,
           fileName,
           darkRef.current,
-          globals.sheet_proportional,
-          globals.sheet_spacing,
+          setting('sheet_proportional'),
+          setting('sheet_spacing'),
         );
         if (!live) return sheet.dispose();
         sheetRef.current = sheet;
         sheet.onSeek = (target) => seekRef.current(target);
         // A pinch has already spaced the page; this only stores what it settled on.
         sheet.onLook = ({ spacing }) => {
-          setSetting('sheet_spacing', spacing).catch(console.error);
+          void set('sheet_spacing', spacing);
         };
         sheet.onPinch = (moving) => setPinch(moving);
-        sheet.setLook({ harmony: globals.sheet_harmony, colour: globals.sheet_colour });
+        sheet.setLook({ harmony: setting('sheet_harmony'), colour: setting('sheet_colour') });
         notesRef.current = previewNotes(sheet.score);
         startsRef.current = stepSeconds(sheet.score);
         const resolved = resolvePlaySettings(row ?? UNSET_PIECE_SETTINGS);
@@ -423,7 +434,6 @@ export function PreviewScreen({
             setSettingsJump('instrument_id');
             setSettingsOpen(true);
           }}
-          onGlobalChange={applyGlobal}
         />
 
         <SpacingPopup pinch={pinch} />
@@ -435,7 +445,6 @@ export function PreviewScreen({
             setSettingsOpen(false);
             setSettingsJump(null);
           }}
-          onGlobalChange={applyGlobal}
           onOpenMixer={() => setMixerOpen(true)}
           onOpenMidi={() => setMidiOpen(true)}
         />

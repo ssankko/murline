@@ -6,6 +6,7 @@ mod kernscores;
 mod library;
 mod midi;
 mod pdmx;
+mod settings;
 
 /// Creates the library folder, parents included. Already existing is success, so onboarding and a
 /// later folder change both call it without checking first.
@@ -96,27 +97,22 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             ensure_dir,
+            settings::settings_read,
+            settings::settings_write,
             audio::audio_start,
             audio::audio_status,
             audio::audio_click,
             audio::audio_note,
-            audio::audio_set_keyboard_volume,
-            audio::audio_set_velocity_curve,
             audio::audio_effects,
             audio::audio_chain,
-            audio::audio_set_chain,
             audio::audio_show_effect,
             audio::audio_output_devices,
-            audio::audio_set_output_device,
-            audio::audio_set_buffer_frames,
-            audio::audio_set_sample_rate,
-            audio::audio_set_voices,
             audio::audio_instruments,
             audio::audio_load_instrument,
             audio::audio_show_instrument,
             audio::audio_envelope,
-            audio::audio_set_envelope,
-            audio::audio_set_role_level,
+            audio::audio_apply_envelope,
+            audio::audio_apply_role_level,
             audio::preview_load,
             audio::preview_play,
             audio::preview_pause,

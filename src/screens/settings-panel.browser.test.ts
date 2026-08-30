@@ -1,6 +1,7 @@
 import { NO_STATUS, type Role } from '@/rust';
-import { fakeRust } from '@/rust.fake';
+import { fakeRust, fakeSettings } from '@/rust.fake';
 import { SettingsPanel } from '@/screens/settings';
+import { load } from '@/settings/settings';
 import { userEvent } from 'vitest/browser';
 import { createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -9,14 +10,11 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 /** Set by the PDMX test so the archive is still coming while it looks at the row. */
 let fetching: { promise: Promise<void>; release: () => void } | null = null;
 
-/** Set by the jump test so the settings read is still coming while the panel opens. */
-let reading: { promise: Promise<void>; release: () => void } | null = null;
-
 /** What the engine says the instrument offers: a sampled piano, until a test says otherwise. */
 const OFFERED: Role[] = ['release', 'key_off', 'sympathetic', 'pedal_noise'];
 let roles = [...OFFERED];
 
-beforeEach(() => {
+beforeEach(async () => {
   fakeRust({
     pdmx_fetch: async () => {
       await fetching?.promise;
@@ -30,20 +28,16 @@ beforeEach(() => {
     audio_output_devices: () => [],
     audio_instruments: () => [],
   });
+  await load();
 });
 
-// Clicking a control writes it, so the panel needs a database that swallows the write.
-vi.mock('@tauri-apps/plugin-sql', () => ({
-  default: {
-    load: async () => ({
-      select: async () => {
-        await reading?.promise;
-        return [];
-      },
-      execute: async () => {},
-    }),
-  },
-}));
+// The app's stylesheet is Tailwind's and is not built for a test, so the column is given here the
+// height and the scroll its classes carry in the app.
+document.head.append(
+  Object.assign(document.createElement('style'), {
+    textContent: '[role="dialog"] .overflow-y-auto.px-4 { height: 220px; overflow-y: auto; }',
+  }),
+);
 
 let root: Root | null = null;
 let host: HTMLElement | null = null;
@@ -54,7 +48,6 @@ afterEach(() => {
   host?.remove();
   host = null;
   roles = [...OFFERED];
-  reading = null;
   vi.restoreAllMocks();
 });
 
@@ -553,15 +546,13 @@ test('a grade knob is a slider of its own, found by search and stepped by the ar
   expect(readout()).toBe('0.71');
 });
 
-// What the mixer's "Sound settings…" does: the mark is set before the settings read lands, so the
-// row it names is not on the page yet when the mark arrives.
-test('a panel opened at a row scrolls to it however late the settings arrive', async () => {
+// What the mixer's "Sound settings…" does: the panel opens with one row named, and the column is
+// scrolled to it.
+test('a panel opened at a row scrolls to it', async () => {
   const scrolled: string[] = [];
   vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (this: Element) {
     scrolled.push(this.id);
   });
-  let release = (): void => {};
-  reading = { promise: new Promise<void>((done) => (release = done)), release: () => release() };
 
   host = document.createElement('div');
   document.body.append(host);
@@ -569,8 +560,6 @@ test('a panel opened at a row scrolls to it however late the settings arrive', a
   root.render(
     createElement(SettingsPanel, { open: true, onClose: () => {}, jumpTo: 'instrument_id' }),
   );
-  await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeTruthy());
-  reading.release();
 
   await vi.waitFor(() => expect(marked('instrument_id')).toBe(true));
   await vi.waitFor(() => expect(scrolled).toContain('setting-row-instrument_id'));
@@ -623,4 +612,99 @@ test('a reopened panel carries no results over from the last one', async () => {
   expect(document.querySelector('[role="dialog"] ul')).toBe(null);
   const box = document.querySelector<HTMLInputElement>('input[aria-label="Search settings"]')!;
   expect(box.value).toBe('');
+});
+
+// The panel opens where it was left: a real column that scrolls, and a settings table that keeps
+// what is written to it, so a second mount after a fresh read is the next launch.
+
+/** What one setting is stored as, or undefined for one never written. */
+function stored(key: string): unknown {
+  return fakeSettings.get(key);
+}
+
+/** The scrolling column, which is what holds the open tab's rows. */
+function column(): HTMLElement {
+  return document.querySelector('[role="tabpanel"]')!.parentElement!;
+}
+
+/** Mounts an open panel and waits for the rows of whatever tab it opens on. */
+async function openAnyTab(props: Record<string, unknown> = {}): Promise<void> {
+  host = document.createElement('div');
+  document.body.append(host);
+  root = createRoot(host);
+  root.render(createElement(SettingsPanel, { open: true, onClose: () => {}, ...props }));
+  await vi.waitFor(() => expect(document.querySelector('[role="tabpanel"]')).toBeTruthy());
+}
+
+/** Shuts the app down: the panel goes, the settings stay. */
+function quit(): void {
+  root?.unmount();
+  root = null;
+  host?.remove();
+  host = null;
+}
+
+/** The next launch: the panel is gone and the settings are read again. */
+async function relaunch(): Promise<void> {
+  quit();
+  await load();
+  await openAnyTab();
+}
+
+test('the panel opens on the tab and the place it was left', async () => {
+  await open();
+  expect(activeTab()).toBe('Sound');
+
+  await openTab('Look');
+  const box = column();
+  const room = box.scrollHeight - box.clientHeight;
+  expect(room, 'the Look tab is longer than the panel is tall').toBeGreaterThan(40);
+  const offset = Math.round(room / 2);
+  box.scrollTop = offset;
+
+  // The write rests behind the scrolling, so the value lands about 300 ms after the last move.
+  await vi.waitFor(() => expect(stored('settings_scroll')).toBe(offset));
+  expect(stored('settings_tab')).toBe('look');
+
+  await relaunch();
+  await vi.waitFor(() => expect(activeTab()).toBe('Look'));
+  await vi.waitFor(() => expect(column().scrollTop).toBe(offset));
+});
+
+test('another tab opens at the top', async () => {
+  await open();
+  await openTab('Look');
+  const box = column();
+  box.scrollTop = box.scrollHeight - box.clientHeight;
+  await vi.waitFor(() => expect(stored('settings_scroll')).toBeGreaterThan(0));
+
+  await openTab('Playing');
+  expect(column().scrollTop).toBe(0);
+  expect(stored('settings_scroll')).toBe(0);
+  expect(stored('settings_tab')).toBe('playing');
+});
+
+test('a row to open on wins over the place the panel was left', async () => {
+  fakeSettings.set('settings_tab', 'look');
+  fakeSettings.set('settings_scroll', 120);
+  await load();
+
+  await openAnyTab({ jumpTo: 'library_folder' });
+  await vi.waitFor(() => expect(activeTab()).toBe('Library'));
+  expect(marked('library_folder')).toBe(true);
+});
+
+// The write rests 300 ms behind the scrolling and a tab switch writes 0 at once, so what is left
+// stored has to be the new tab's top rather than the old tab's offset.
+test('a scroll write still resting when the tab changes never lands', async () => {
+  await open();
+  await openTab('Look');
+  const box = column();
+  box.scrollTop = box.scrollHeight - box.clientHeight;
+  await new Promise((done) => setTimeout(done, 100));
+
+  await openTab('Playing');
+  await new Promise((done) => setTimeout(done, 500));
+  expect(stored('settings_scroll')).toBe(0);
+  expect(column().scrollTop).toBe(0);
 });

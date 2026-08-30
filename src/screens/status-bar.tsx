@@ -5,10 +5,8 @@
 
 import { Mixer, SoundPopover } from '@/audio/mixer';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { readSettings } from '@/db/db';
 import { MidiLight } from '@/midi/midi-light';
 import { useMidiStatus } from '@/midi/use-midi-status';
-import type { SettingChange } from '@/screens/settings';
 import {
   call,
   on,
@@ -17,6 +15,7 @@ import {
   type EffectSlot,
   type Meter,
 } from '@/rust';
+import { useSetting } from '@/settings/settings';
 import { AudioLines, Cpu, Gauge, Metronome, Piano, Settings } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
@@ -78,7 +77,6 @@ export function StatusBar({
   onMixerOpen,
   onOpenSettings,
   onSoundSettings,
-  onGlobalChange,
 }: {
   /** The two popovers are opened from the settings panel's search as well, so the screen holds
    * whether they are open and the bar is only where they hang. */
@@ -89,7 +87,6 @@ export function StatusBar({
   onOpenSettings: () => void;
   /** The Sound tab at the instrument row, which the link in either popover asks for. */
   onSoundSettings: () => void;
-  onGlobalChange?: (...change: SettingChange) => void;
 }) {
   const { devices, error } = useMidiStatus();
   const [engine, setEngine] = useState<{ status: AudioStatus | null; chain: EffectSlot[] }>({
@@ -97,7 +94,8 @@ export function StatusBar({
     chain: [],
   });
   const [meter, setMeter] = useState<Meter | null>(null);
-  const [volumes, setVolumes] = useState<{ keyboard: number; click: number } | null>(null);
+  const keyboardVolume = useSetting('keyboard_volume');
+  const clickVolume = useSetting('click_volume');
   /** The sound popover hangs off the sound cell and nothing else reaches it, so the bar holds it. */
   const [soundOpen, setSoundOpen] = useState(false);
 
@@ -127,20 +125,6 @@ export function StatusBar({
 
   // Four a second while a graph is playing, and nothing at all while there is none.
   useEffect(() => on('audio-load', setMeter), []);
-
-  // The mixer is the only place either volume is written, so one read at boot and the mixer's own
-  // word after that keep the two cells true.
-  useEffect(() => {
-    let live = true;
-    readSettings().then(
-      (settings) =>
-        live && setVolumes({ keyboard: settings.keyboard_volume, click: settings.click_volume }),
-      console.error,
-    );
-    return () => {
-      live = false;
-    };
-  }, []);
 
   const settings = useRef(onOpenSettings);
   settings.current = onOpenSettings;
@@ -210,15 +194,6 @@ export function StatusBar({
             open={mixerOpen}
             onOpenChange={onMixerOpen}
             onSoundSettings={onSoundSettings}
-            onGlobalChange={(...change) => {
-              const [key, value] = change;
-              if (key === 'keyboard_volume') {
-                setVolumes((held) => held && { ...held, keyboard: value });
-              } else if (key === 'click_volume') {
-                setVolumes((held) => held && { ...held, click: value });
-              }
-              onGlobalChange?.(...change);
-            }}
             trigger={
               <button
                 aria-label="Volume"
@@ -228,7 +203,7 @@ export function StatusBar({
                   <span className="flex items-center gap-1">
                     <Piano {...ICON} />
                     <span className="min-w-[3ch] tabular-nums">
-                      {volumes ? volumes.keyboard : '—'}
+                      {keyboardVolume}
                     </span>
                   </span>
                 </Tip>
@@ -236,7 +211,7 @@ export function StatusBar({
                   <span className="flex items-center gap-1">
                     <Metronome {...ICON} />
                     <span className="min-w-[3ch] tabular-nums">
-                      {volumes ? volumes.click : '—'}
+                      {clickVolume}
                     </span>
                   </span>
                 </Tip>

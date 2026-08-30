@@ -4,9 +4,8 @@ import type { MidiStatus } from '@/midi/use-midi-status';
 import { createElement, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { fakeRust } from '@/rust.fake';
+import { load } from '@/settings/settings';
 import { beforeEach, expect, test, vi } from 'vitest';
-
-const written: [string, unknown][] = [];
 
 const connected: Omit<MidiStatus, 'defaultId' | 'hidden'> = {
   devices: ['Roland', 'IAC'],
@@ -21,14 +20,15 @@ const connected: Omit<MidiStatus, 'defaultId' | 'hidden'> = {
 // The MIDI store starts once for the whole file and keeps the handlers it registered, so one
 // fake stands behind every test here.
 const rust = fakeRust({ midi_status: () => connected });
-beforeEach(() => rust.install());
+beforeEach(async () => {
+  rust.install();
+  await load();
+});
 
-vi.mock('@/db/db', () => ({
-  getSettingOr: async (key: string) => (key === 'midi_device' ? null : []),
-  setSetting: async (key: string, value: unknown) => {
-    written.push([key, value]);
-  },
-}));
+/** Every setting written so far, oldest first, in the shape the store sent it. */
+function written(): [string, unknown][] {
+  return rust.argsOf('settings_write').map(({ key, value }) => [key, value]);
+}
 
 /** The one open popover on the page. Radix puts it in a portal, so ask the whole page. */
 function popover(): HTMLElement | null {
@@ -89,7 +89,7 @@ test('the popover says what is listened to and takes Use, Default, Hide and Show
   // Use: this session only, so nothing is written.
   button('Use Roland').click();
   expect(sent()).toEqual({ pinned: '1', hidden: [] });
-  expect(written).toEqual([]);
+  expect(written()).toEqual([]);
   relisted(['Roland'], '1');
   await vi.waitFor(() => expect(button('Use Roland').textContent).toBe('In use'));
   expect(button('Use Roland').getAttribute('aria-pressed')).toBe('true');
@@ -97,7 +97,7 @@ test('the popover says what is listened to and takes Use, Default, Hide and Show
 
   // Default: written, and in force at once.
   button('Default IAC').click();
-  expect(written).toEqual([['midi_device', '2']]);
+  expect(written()).toEqual([['midi_device', '2']]);
   expect(sent()).toEqual({ pinned: '2', hidden: [] });
   await vi.waitFor(() => expect(button('Default IAC').getAttribute('aria-pressed')).toBe('true'));
   relisted(['IAC'], '2');

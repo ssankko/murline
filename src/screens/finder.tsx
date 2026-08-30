@@ -4,7 +4,7 @@
 
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
-import { getSetting } from '@/db/db';
+import { setting } from '@/settings/settings';
 import { importFiles } from '@/library/import';
 import { reasonOf } from '@/library/notice';
 import { Collapse } from '@/look/collapse';
@@ -79,13 +79,13 @@ export function Finder({
   const [searchError, setSearchError] = useState<string | null>(null);
   const list = useRef<HTMLDivElement>(null);
 
-  // A setting the database will not give up leaves the folder empty, which a PDMX download reports.
+  // Whether the folder holds unpacked scores; Rust answers off the disk, not off the setting.
   useEffect(() => {
-    void (async () => {
-      const held = await getSetting('pdmx_folder').catch(() => null);
-      setPdmxFolder(held);
-      setPdmx(await call('pdmx_status', { folder: held ?? '' }).catch(() => false));
-    })();
+    const held = setting('pdmx_folder');
+    setPdmxFolder(held);
+    void call('pdmx_status', { folder: held })
+      .catch(() => false)
+      .then(setPdmx);
   }, []);
 
   // Every keystroke searches; Rust answers in under 20 ms. A late answer to an older query is

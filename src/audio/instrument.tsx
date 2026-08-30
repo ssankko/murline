@@ -13,10 +13,10 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { getSettingOr, readSettings, setSetting, type Settings } from "@/db/db";
 import { reasonOf } from "@/library/notice";
 import { Loading } from "@/look/loading";
 import { call, type AudioStatus, type Instrument } from "@/rust";
+import { set, setting, useSetting } from "@/settings/settings";
 import { open } from "@tauri-apps/plugin-dialog";
 import { ChevronDown } from "lucide-react";
 import { Fragment, useEffect, useState } from "react";
@@ -49,20 +49,14 @@ function listInstruments(folder: string): Promise<Instrument[]> {
  * engine can no longer find still goes in, so its reason reaches the status line instead of
  * silence with no explanation.
  */
-export async function restoreInstrument(
-  settings: Settings,
-): Promise<string | null> {
-  const all = await listInstruments(settings.instruments_folder);
-  const chosen =
-    settings.instrument_id ??
-    all.find((one) => one.name === DEFAULT_NAME)?.id ??
-    null;
+export async function restoreInstrument(): Promise<string | null> {
+  const kept = setting("instrument_id");
+  const all = await listInstruments(setting("instruments_folder"));
+  const chosen = kept ?? all.find((one) => one.name === DEFAULT_NAME)?.id ?? null;
   if (!chosen) return null;
-  if (chosen !== settings.instrument_id)
-    await setSetting("instrument_id", chosen);
+  if (chosen !== kept) await set("instrument_id", chosen);
   // The stored state belongs to the stored instrument, so a fresh default starts at its own.
-  const state =
-    chosen === settings.instrument_id ? settings.instrument_state : null;
+  const state = chosen === kept ? setting("instrument_state") : null;
   await call("audio_load_instrument", { id: chosen, state });
   await restoreEnvelope(chosen);
   return all.find((one) => one.id === chosen)?.name ?? null;
@@ -79,11 +73,11 @@ export function InstrumentSection({
   onChanged?: () => void;
 }) {
   const [all, setAll] = useState<Instrument[]>([]);
-  const [chosen, setChosen] = useState<string>("");
-  const [folder, setFolder] = useState("");
+  const chosen = useSetting("instrument_id") ?? "";
+  const folder = useSetting("instruments_folder");
   const [failure, setFailure] = useState("");
   const [loading, setLoading] = useState(false);
-  const [rate, setRate] = useState(44100);
+  const rate = useSetting("audio_sample_rate");
   /** The engine's answer after the last load, for the rate the instrument was recorded at. */
   const [status, setStatus] = useState<AudioStatus | null>(null);
 
@@ -91,28 +85,19 @@ export function InstrumentSection({
     call("audio_status").then(setStatus, console.error);
 
   useEffect(() => {
-    void getSettingOr("audio_sample_rate").then(setRate);
     void readEngine();
-  }, []);
-
-  useEffect(() => {
     let live = true;
-    readSettings()
-      .then(async (settings) => {
-        const found = await listInstruments(settings.instruments_folder);
+    listInstruments(folder)
+      .then((found) => {
         if (!live) return;
-        setFolder(settings.instruments_folder);
-        setChosen(settings.instrument_id ?? "");
         setAll(found);
-        setFailure(
-          found.find((one) => one.id === settings.instrument_id)?.reason ?? "",
-        );
+        setFailure(found.find((one) => one.id === chosen)?.reason ?? "");
       })
       .catch((error: unknown) => live && setFailure(reasonOf(error)));
     return () => {
       live = false;
     };
-  }, []);
+  }, [folder]);
 
   // The rate must never sit above the instrument's own, so an instrument recorded lower than the
   // rate in force drags it down to the highest rate it and the device both take.
@@ -127,11 +112,10 @@ export function InstrumentSection({
    * Logic piano takes seconds to load, so the picker beats until the engine answers.
    */
   async function choose(id: string): Promise<void> {
-    setChosen(id);
     setFailure("");
     setLoading(true);
-    await setSetting("instrument_id", id);
-    await setSetting("instrument_state", null);
+    await set("instrument_id", id);
+    await set("instrument_state", null);
     try {
       await call("audio_load_instrument", { id, state: null });
       await restoreEnvelope(id);
@@ -149,16 +133,15 @@ export function InstrumentSection({
    * envelope and the levels ride back in on the restore.
    */
   async function chooseRate(choice: number): Promise<void> {
-    setRate(choice);
-    await setSetting("audio_sample_rate", choice);
-    try {
-      await call("audio_set_sample_rate", { rate: choice });
-      const settings = await readSettings();
-      await restoreInstrument(settings);
-      await restoreRoles(settings.instrument_id);
-      setFailure("");
-    } catch (error) {
-      setFailure(reasonOf(error));
+    const reason = await set("audio_sample_rate", choice);
+    setFailure(reason);
+    if (!reason) {
+      try {
+        await restoreInstrument();
+        await restoreRoles(setting("instrument_id"));
+      } catch (error) {
+        setFailure(reasonOf(error));
+      }
     }
     await readEngine();
     onChanged?.();
@@ -170,15 +153,14 @@ export function InstrumentSection({
       defaultPath: folder || undefined,
     });
     if (typeof picked !== "string") return;
-    await setSetting("instruments_folder", picked);
-    setFolder(picked);
-    setAll(await listInstruments(picked));
+    // The list follows the folder: the effect above reads it again.
+    await set("instruments_folder", picked);
   }
 
   /** The plugin's own window, which hands back the state it was left in when the user closes it. */
   async function show(): Promise<void> {
     const state = await call("audio_show_instrument");
-    await setSetting("instrument_state", state);
+    await set("instrument_state", state);
   }
 
   const shown = all.find((one) => one.id === chosen);

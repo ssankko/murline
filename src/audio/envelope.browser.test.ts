@@ -1,6 +1,7 @@
 import { EnvelopeSection, travelled } from '@/audio/envelope';
 import type { Envelope } from '@/rust';
-import { fakeRust, type FakeRust } from '@/rust.fake';
+import { fakeRust, fakeSettings, type FakeRust } from '@/rust.fake';
+import { load } from '@/settings/settings';
 import type { Sounding } from '@/audio/sounding';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -12,24 +13,18 @@ const OWN: Envelope = { attack: 0.01, decay: 0.5, sustain: 0.8, release: 0.2 };
 let answer: Envelope | null = OWN;
 let rust: FakeRust;
 
-let kept: Record<string, Envelope> = {};
-let written: [string, unknown][] = [];
-
-vi.mock('@/db/db', () => ({
-  getSettingOr: async () => kept,
-  setSetting: async (key: string, value: unknown) => {
-    written.push([key, value]);
-  },
-}));
+/** Every setting written so far, in the shape the store sent it. */
+function written(): [string, unknown][] {
+  return rust.argsOf('settings_write').map(({ key, value }) => [key, value]);
+}
 
 let close: (() => void) | null = null;
 let host: HTMLElement | null = null;
 
-beforeEach(() => {
+beforeEach(async () => {
   answer = OWN;
-  written = [];
-  kept = {};
   rust = fakeRust({ audio_envelope: () => answer });
+  await load();
 });
 
 afterEach(() => {
@@ -104,26 +99,27 @@ test('the plot and the engine both follow the slider as it moves', async () => {
   await move('Release', '2000');
   expect(line()).not.toBe(before);
   await vi.waitFor(() =>
-    expect(rust.argsOf('audio_set_envelope')).toContainEqual({ envelope: { ...OWN, release: 2 } }),
+    expect(rust.argsOf('audio_apply_envelope')).toContainEqual({ envelope: { ...OWN, release: 2 } }),
   );
 
   // Still moving, and still heard: nothing waits for the hand to come off the slider, and nothing
   // warns of a silence.
   await move('Release', '3000');
   await vi.waitFor(() =>
-    expect(rust.argsOf('audio_set_envelope')).toContainEqual({ envelope: { ...OWN, release: 3 } }),
+    expect(rust.argsOf('audio_apply_envelope')).toContainEqual({ envelope: { ...OWN, release: 3 } }),
   );
   expect(host!.textContent).not.toContain('going in');
 });
 
 test('the envelope is kept under the instrument it was shaped for', async () => {
-  kept = { 'other.sf2': OWN };
+  fakeSettings.set('instrument_envelopes', { 'other.sf2': OWN });
+  await load();
   await open();
 
   await move('Sustain', '40');
   await vi.waitFor(
     () =>
-      expect(written).toContainEqual([
+      expect(written()).toContainEqual([
         'instrument_envelopes',
         { 'other.sf2': OWN, 'sine.sf2': { ...OWN, sustain: 0.4 } },
       ]),

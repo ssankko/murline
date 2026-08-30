@@ -1,4 +1,4 @@
-// The velocity remap's arithmetic, kept clear of React and the database so that anything can read
+// The velocity remap's arithmetic, kept clear of React and the settings so that anything can read
 // it: the plot draws with it, and the grading tests hold it up against what a grade sees.
 
 /** How far each end of the curve slider bends the exponent, either side of the straight line. */

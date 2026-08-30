@@ -2,7 +2,7 @@ import { beforeEach, expect, test, vi } from 'vitest';
 
 let attempts = 0;
 let failures = 0;
-let rows: { key: string; value: string }[] = [];
+let rows: unknown[] = [];
 
 vi.mock('@tauri-apps/plugin-sql', () => ({
   default: {
@@ -14,12 +14,11 @@ vi.mock('@tauri-apps/plugin-sql', () => ({
   },
 }));
 
-const { getDb, readSettings } = await import('./db');
+const { getDb } = await import('./db');
 
 beforeEach(() => {
   attempts = 0;
   failures = 0;
-  rows = [];
 });
 
 test('an open that failed once is tried again on the next call', async () => {
@@ -33,9 +32,4 @@ test('an open that worked is shared, not repeated', async () => {
   const first = await getDb();
   expect(await getDb()).toBe(first);
   expect(attempts).toBe(0);
-});
-
-test('a keyboard preset held as a number is read back as it was written', async () => {
-  rows = [{ key: 'keyboard_preset', value: '61' }];
-  expect((await readSettings()).keyboard_preset).toBe(61);
 });

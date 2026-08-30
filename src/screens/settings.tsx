@@ -5,7 +5,12 @@
 import { SoundTab } from "@/audio/sound-tab";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { getSettingOr, readSettings, setSetting, type Settings } from "@/db/db";
+import {
+  set,
+  setting,
+  useSettings,
+  type Settings,
+} from "@/settings/settings";
 import { type LaneHarmony, LOOKAHEAD_MAX, LOOKAHEAD_MIN } from "@/lane/lane";
 import {
   cancelPdmx,
@@ -17,7 +22,7 @@ import { clamp, rowId } from "@/lib/utils";
 import { noteName } from "@/score/pitch";
 import { Loading } from "@/look/loading";
 import { Row, Rows, Segmented, Toggle } from "@/look/rows";
-import { setTheme, type Theme } from "@/look/use-dark";
+import type { Theme } from "@/look/use-dark";
 import { useMidiStatus } from "@/midi/use-midi-status";
 import {
   INACTIVE_HAND_LEVEL,
@@ -84,11 +89,6 @@ const GRADE_KNOBS: [
   ["grade_release_zero_lo", "Release zero below", 0, 10, 0.01],
   ["grade_release_zero_hi", "Release zero above", 0, 10, 0.01],
 ];
-
-/** One global setting as it was just written: a key, with a value of that key's own type. */
-export type SettingChange = {
-  [K in keyof Settings]: [key: K, value: Settings[K]];
-}[keyof Settings];
 
 export type SettingsTab = "sound" | "look" | "playing" | "library";
 
@@ -522,20 +522,18 @@ function searchRows(
  * animating while a control is moved. It reads nothing the play clock owns and writes nothing to
  * it.
  *
- * A knob the running play reads is handed to `onGlobalChange` as it is written, so a change
+ * A knob the running play reads reaches the live objects through the store, so a change
  * mid-practice applies at once.
  */
 export function SettingsPanel({
   open,
   onClose,
-  onGlobalChange,
   jumpTo,
   onOpenMixer,
   onOpenMidi,
 }: {
   open: boolean;
   onClose: () => void;
-  onGlobalChange?: (...change: SettingChange) => void;
   /** The way to the two faders, which are the mixer's and not the panel's. A search result naming
    * one closes the panel and opens the mixer over the button it belongs to. */
   onOpenMixer?: () => void;
@@ -545,7 +543,7 @@ export function SettingsPanel({
    * open the panel at one row rather than at the top. */
   jumpTo?: string | null;
 }) {
-  const [values, setValues] = useState<Settings | null>(null);
+  const values = useSettings();
   const [tab, setTab] = useState<SettingsTab>("sound");
   const [query, setQuery] = useState("");
   /** Which search result the arrow keys are on. */
@@ -569,14 +567,11 @@ export function SettingsPanel({
   const scrollWrite = useRef<ReturnType<typeof setTimeout>>(undefined);
   const pdmx = usePdmxDownload();
   const downloading = pdmx.progress !== null;
-  /** Whether the rows are on the page, which every effect that reaches for one has to wait for. */
-  const ready = values !== null;
 
-  // Read again at every open, so the panel is in step with the popovers and with a finished PDMX
-  // download, which writes the folder itself while nothing is listening.
+  // What the loaded instrument offers is asked at every open, so the search reaches the rows the
+  // engine is putting on the page now.
   useEffect(() => {
-    if (open) readSettings().then(setValues, console.error);
-    else {
+    if (!open) {
       setMarked(null);
       setQuery("");
       setSel(0);
@@ -606,36 +601,24 @@ export function SettingsPanel({
   // stored one is passed over for that open.
   useEffect(() => {
     if (!open || jumpTo) return;
-    let live = true;
-    Promise.all([
-      getSettingOr("settings_tab"),
-      getSettingOr("settings_scroll"),
-    ]).then(([last, offset]) => {
-      if (!live) return;
-      setTab(last);
-      setOpensAt(offset);
-    }, console.error);
-    return () => {
-      live = false;
-    };
+    setTab(setting("settings_tab"));
+    setOpensAt(setting("settings_scroll"));
   }, [open, jumpTo]);
 
-  // The rows arrive with `values` and the offset on its own read, in either order, and the column
-  // can take the offset only once both are here.
+  // The column takes the offset once it is on the page, which is the render after the open.
   useEffect(() => {
-    if (values && column.current && opensAt !== null) {
+    if (column.current && opensAt !== null) {
       column.current.scrollTop = opensAt;
       setOpensAt(null);
     }
-  }, [values, opensAt]);
+  }, [opensAt]);
 
   // Nothing of this panel writes once it is gone.
   useEffect(() => () => clearTimeout(scrollWrite.current), []);
 
   // Whether the folder in force holds unpacked scores. Rust answers off the disk, not the setting.
   useEffect(() => {
-    const folder = values?.pdmx_folder;
-    if (folder === undefined) return;
+    const folder = values.pdmx_folder;
     let live = true;
     const hold = (ready: boolean) => {
       if (live) setPdmxReady(ready);
@@ -644,19 +627,18 @@ export function SettingsPanel({
     return () => {
       live = false;
     };
-  }, [values?.pdmx_folder]);
+  }, [values.pdmx_folder]);
 
-  // The tab switch and the mark land in one render, and the rows themselves land with `values`, so
-  // a mark set before the settings read lands is scrolled to once the row is on the page. A row on
-  // a tab nobody has built yet is not in `SEARCH_ROWS`, so there is nothing to miss.
+  // The tab switch and the mark land in one render, so a mark set as the panel opens is scrolled
+  // to once the row is on the page. A row on a tab nobody has built yet is not in `SEARCH_ROWS`,
+  // so there is nothing to miss.
   useEffect(() => {
-    if (!ready) return;
     if (marked)
       document
         .getElementById(rowId(marked))
         ?.scrollIntoView({ block: markScroll.current });
     markScroll.current = "center";
-  }, [marked, ready]);
+  }, [marked]);
 
   useEffect(() => {
     list.current
@@ -672,27 +654,23 @@ export function SettingsPanel({
     setMarked(null);
     setOpensAt(null);
     if (column.current) column.current.scrollTop = 0;
-    setSetting("settings_tab", next).catch(console.error);
-    setSetting("settings_scroll", 0).catch(console.error);
+    void set("settings_tab", next);
+    void set("settings_scroll", 0);
   }
 
-  // Scrolling writes far more often than the database is worth, so only the place a scroll rests
+  // Scrolling writes far more often than the setting is worth, so only the place a scroll rests
   // at is kept.
   function onScroll(event: React.UIEvent<HTMLDivElement>): void {
     const top = event.currentTarget.scrollTop;
     clearTimeout(scrollWrite.current);
     scrollWrite.current = setTimeout(() => {
-      setSetting("settings_scroll", top).catch(console.error);
+      void set("settings_scroll", top);
     }, 300);
   }
 
+  /** Every row writes through here: the store shows it at once and tells whatever draws it. */
   function write<K extends keyof Settings>(key: K, value: Settings[K]): void {
-    setValues((held) => held && { ...held, [key]: value });
-    setSetting(key, value).catch(console.error);
-    // The theme paints the whole app, so it is applied here rather than by whatever is behind.
-    if (key === "theme") setTheme(value as Theme);
-    // The pair comes straight out of this function's own key type, so it is one of the union.
-    onGlobalChange?.(...([key, value] as SettingChange));
+    void set(key, value);
   }
 
   /** One line for the PDMX row: how far the download has got, or what is on disk. */
@@ -709,7 +687,7 @@ export function SettingsPanel({
   ): Promise<void> {
     const picked = await openDialog({
       directory: true,
-      defaultPath: values?.[key] || undefined,
+      defaultPath: values[key] || undefined,
     });
     if (typeof picked === "string") write(key, picked);
   }
@@ -892,8 +870,7 @@ export function SettingsPanel({
             onScroll={onScroll}
             className="flex min-w-0 flex-1 flex-col overflow-y-auto px-4 py-4"
           >
-            {values && (
-              <>
+            <>
                 {/* Radix makes every tab panel focusable, so a click in the body focuses the panel and
                   the next key rings every row at once. Its rows are all controls, so the
                   panel itself needs no place in the tab order. */}
@@ -902,9 +879,7 @@ export function SettingsPanel({
                   className="flex flex-col gap-7"
                   tabIndex={undefined}
                 >
-                  {/* The sound engine's own settings write straight to it, not through `write`:
-                    each one has to reach the running engine as well as the database. The two
-                    volumes are not here at all; they are the mixer's two faders. */}
+                  {/* The two volumes are not here at all; they are the mixer's two faders. */}
                   <SoundTab marked={marked} />
                 </Tabs.Content>
 
@@ -1342,8 +1317,7 @@ export function SettingsPanel({
                     </Row>
                   </Rows>
                 </Tabs.Content>
-              </>
-            )}
+            </>
           </div>
         </Tabs.Root>
 

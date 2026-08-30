@@ -2,7 +2,7 @@
 // closes. Its progress therefore lives here, outside React, so reopening the dialog picks the
 // running download back up.
 
-import { setSetting } from '@/db/db';
+import { set as writeSetting } from '@/settings/settings';
 import { reasonOf } from '@/library/notice';
 import { call, type PdmxProgress } from '@/rust';
 import { useSyncExternalStore } from 'react';
@@ -37,7 +37,7 @@ export async function downloadPdmx(): Promise<void> {
     const folder = await call('pdmx_fetch', {
       progress: (at) => set({ progress: at, error: null }),
     });
-    await setSetting('pdmx_folder', folder);
+    await writeSetting('pdmx_folder', folder);
     set({ progress: null, error: null });
   } catch (error) {
     const reason = reasonOf(error);

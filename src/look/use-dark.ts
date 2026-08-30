@@ -1,3 +1,4 @@
+import { setting, subscribe as onSetting } from '@/settings/settings';
 import { useSyncExternalStore } from 'react';
 
 /** System reads `prefers-color-scheme`; the other two pin the paper against it. */
@@ -26,8 +27,11 @@ export function useDark(): boolean {
   return useSyncExternalStore(subscribe, dark);
 }
 
+/** The theme setting paints the app: the read at start and every write after it come this way. */
+onSetting('theme', () => setTheme(setting('theme')));
+
 /** Paints the app in a theme. The class pins the CSS variables; System takes both classes off. */
-export function setTheme(next: Theme): void {
+function setTheme(next: Theme): void {
   theme = next;
   const root = document.documentElement.classList;
   root.toggle('dark', next === 'dark');

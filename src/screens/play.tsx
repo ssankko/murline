@@ -6,9 +6,11 @@ import {
   ENGINE_KNOBS,
   knobValues,
   LANE_KNOBS,
-  readSettings,
-  setSetting,
-} from '@/db/db';
+  set,
+  setting,
+  subscribe,
+  type SettingKey,
+} from '@/settings/settings';
 import { DEFAULT_SPLIT, Lane, SPLIT_MAX, SPLIT_MIN, TOP_BAR } from '@/lane/lane';
 import { baseNameOf, pathOf, readScoreFile } from '@/library/index-file';
 import { setNotice } from '@/library/notice';
@@ -53,7 +55,7 @@ import { keyAt, type Key } from '@/score/key';
 import { bpmAt, ScoreError, type Measure } from '@/score/types';
 import { Button } from '@/components/ui/button';
 import { BarButton, ICON, KeyPopover, TEMPO_STEP, TempoPopover } from '@/screens/bar';
-import { SettingsPanel, SpacingPopup, type SettingChange } from '@/screens/settings';
+import { SettingsPanel, SpacingPopup } from '@/screens/settings';
 import { StatusBar } from '@/screens/status-bar';
 import { useFullscreen } from '@/screens/use-fullscreen';
 import { Sheet, type Pinch } from '@/sheet/sheet';
@@ -72,6 +74,18 @@ import {
   Tally4,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+
+/** Every global setting a play already on screen answers to. */
+const WATCHED = [
+  ...(Object.keys(ENGINE_KNOBS) as SettingKey[]),
+  ...(Object.keys(LANE_KNOBS) as SettingKey[]),
+  'sheet_harmony',
+  'sheet_colour',
+  'click_volume',
+  'sheet_split',
+  'sheet_proportional',
+  'sheet_spacing',
+] as const satisfies readonly SettingKey[];
 
 /** The order the hands button cycles in. */
 const NEXT_HANDS: Record<HandsSetting, HandsSetting> = {
@@ -167,15 +181,15 @@ export function PlayScreen({
       try {
         await reindexIfChanged(folder, path);
         const bytes = await readScoreFile(pathOf(folder, path));
-        const [globals, row] = await Promise.all([readSettings(), getPiece(path).catch(() => null)]);
+        const row = await getPiece(path).catch(() => null);
         const resolved = resolvePlaySettings(row ?? UNSET_PIECE_SETTINGS);
         const sheet = await Sheet.open(
           hostRef.current!,
           bytes,
           fileName,
           darkRef.current,
-          globals.sheet_proportional,
-          globals.sheet_spacing,
+          setting('sheet_proportional'),
+          setting('sheet_spacing'),
         );
         if (!live) return sheet.dispose();
         sheetRef.current = sheet;
@@ -191,7 +205,7 @@ export function PlayScreen({
         // global knobs (the grade windows, the keyboard size) between the two.
         const engine = new Engine(sheet.score, {
           ...DEFAULT_PLAY_SETTINGS,
-          ...knobValues(globals, ENGINE_KNOBS),
+          ...knobValues(ENGINE_KNOBS),
           ...settings,
         });
         if (intent === 'performance') engine.arm();
@@ -200,7 +214,7 @@ export function PlayScreen({
         sheet.onSeek = (target) => engine.seek(target);
         // A pinch has already spaced the sheet; this only stores what it settled on.
         sheet.onLook = ({ spacing }) => {
-          setSetting('sheet_spacing', spacing).catch(console.error);
+          void set('sheet_spacing', spacing);
         };
         sheet.onPinch = (moving) => setPinch(moving);
         sheet.onSection = (picked) => {
@@ -208,15 +222,15 @@ export function PlayScreen({
           changeSection(picked && clampSection(sheet.score.measures, picked));
         };
         setMeasures(sheet.score.measures);
-        sheet.setLook({ harmony: globals.sheet_harmony, colour: globals.sheet_colour });
-        const lane = knobValues(globals, LANE_KNOBS);
+        sheet.setLook({ harmony: setting('sheet_harmony'), colour: setting('sheet_colour') });
+        const lane = knobValues(LANE_KNOBS);
         laneRef.current = new Lane(canvasRef.current!, engine, lane, darkRef.current);
         laneRef.current.onSeek = (target) => engine.seek(target);
         // A pinch has already scaled the lane; this only writes down the beats it settled on.
         laneRef.current.onLook = ({ lookaheadBeats }) => {
-          if (lookaheadBeats !== undefined) changeLook('lane_lookahead', lookaheadBeats);
+          if (lookaheadBeats !== undefined) void set('lane_lookahead', lookaheadBeats);
         };
-        setSplit(clamp(globals.sheet_split, SPLIT_MIN, SPLIT_MAX));
+        setSplit(clamp(setting('sheet_split'), SPLIT_MIN, SPLIT_MAX));
         setOneStaff(sheet.score.staffCount < 2);
         show(settings, kept);
         setOpening(false);
@@ -227,7 +241,7 @@ export function PlayScreen({
         if (intent === 'practice' && typeof at === 'number' && at < engine.endTick) {
           engine.seek({ tick: at });
         }
-        setClickVolume(globals.click_volume);
+        setClickVolume(setting('click_volume'));
         setWritten({
           bpm: sheet.score.hasTempo ? Math.round(bpmAt(sheet.score, 0)) : 120,
           constant: sheet.score.constantTempo,
@@ -395,33 +409,32 @@ export function PlayScreen({
     persist({ section_from: next?.from ?? null, section_to: next?.to ?? null });
   }
 
-  /** A look knob a pinch turned: the next frame reads the same object the lane holds. */
-  function changeLook(key: keyof typeof LANE_KNOBS, value: number | boolean): void {
-    showLook(key, value);
-    setSetting(key, value as never).catch(console.error);
-  }
-
-  /** The lane's look as the panel just wrote it, on the lane the next frame draws. */
-  function showLook(key: keyof typeof LANE_KNOBS, value: number | boolean): void {
-    Object.assign(laneRef.current?.look ?? {}, { [LANE_KNOBS[key]]: value });
-  }
-
-  /** A global knob the dialog writes reaches the running play through the same live objects. */
-  function applyGlobal(...[key, value]: SettingChange): void {
-    const engineField = ENGINE_KNOBS[key as keyof typeof ENGINE_KNOBS];
-    if (engineField && engineRef.current) {
-      Object.assign(engineRef.current.settings, { [engineField]: value });
-      // The keyboard size is the one engine knob the lane lays itself out from.
-      if (key.startsWith('keyboard_')) laneRef.current?.setRange();
-    }
-    if (key in LANE_KNOBS) showLook(key as keyof typeof LANE_KNOBS, value as number | boolean);
-    if (key === 'sheet_harmony') sheetRef.current?.setLook({ harmony: value });
-    if (key === 'sheet_colour') sheetRef.current?.setLook({ colour: value });
-    if (key === 'click_volume') setClickVolume(value);
-    if (key === 'sheet_split') setSplit(value);
-    if (key === 'sheet_proportional') sheetRef.current?.setProportional(value);
-    if (key === 'sheet_spacing') sheetRef.current?.setSpacing(value);
-  }
+  // Every global knob a running play reads, on the live objects the moment it is written: the
+  // engine's settings, the lane's look, the sheet and the click. A pinch and the panel come the
+  // same way, because both write the setting.
+  useEffect(() => {
+    const stops = WATCHED.map((key) =>
+      subscribe(key, () => {
+        const engineField = ENGINE_KNOBS[key as keyof typeof ENGINE_KNOBS];
+        if (engineField && engineRef.current) {
+          Object.assign(engineRef.current.settings, { [engineField]: setting(key) });
+          // The keyboard size is the one engine knob the lane lays itself out from.
+          if (key.startsWith('keyboard_')) laneRef.current?.setRange();
+        }
+        const laneField = LANE_KNOBS[key as keyof typeof LANE_KNOBS];
+        if (laneField) Object.assign(laneRef.current?.look ?? {}, { [laneField]: setting(key) });
+        if (key === 'sheet_harmony') sheetRef.current?.setLook({ harmony: setting(key) });
+        if (key === 'sheet_colour') sheetRef.current?.setLook({ colour: setting(key) });
+        if (key === 'click_volume') setClickVolume(setting(key));
+        if (key === 'sheet_split') setSplit(setting(key));
+        if (key === 'sheet_proportional') sheetRef.current?.setProportional(setting(key));
+        if (key === 'sheet_spacing') sheetRef.current?.setSpacing(setting(key));
+      }),
+    );
+    return () => {
+      for (const stop of stops) stop();
+    };
+  }, []);
 
   useFrameLoop((delta, now) => {
     const engine = engineRef.current;
@@ -712,7 +725,6 @@ export function PlayScreen({
             setSettingsJump('instrument_id');
             setSettingsOpen(true);
           }}
-          onGlobalChange={applyGlobal}
         />
 
         <SpacingPopup pinch={pinch} />
@@ -724,7 +736,6 @@ export function PlayScreen({
             setSettingsOpen(false);
             setSettingsJump(null);
           }}
-          onGlobalChange={applyGlobal}
           onOpenMixer={() => setMixerOpen(true)}
           onOpenMidi={() => setMidiOpen(true)}
         />
@@ -818,7 +829,7 @@ function Split({ value, onChange }: { value: number; onChange: (value: number) =
         drag(event);
       }}
       onPointerMove={drag}
-      onPointerUp={() => setSetting('sheet_split', value).catch(console.error)}
+      onPointerUp={() => void set('sheet_split', value)}
     >
       <i className="bg-edge-soft absolute inset-x-0 top-1 block h-px" />
       <i className="bg-edge group-hover:bg-muted-ink absolute top-[2px] left-1/2 block h-[5px] w-9 -translate-x-1/2 rounded-full transition-colors duration-150" />

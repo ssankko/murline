@@ -9,7 +9,7 @@ import { OutputSection } from "@/audio/output";
 import { RolesSection } from "@/audio/roles";
 import { sounded, type Sounding } from "@/audio/sounding";
 import { VelocitySection } from "@/audio/velocity";
-import { getSettingOr } from "@/db/db";
+import { useSetting } from "@/settings/settings";
 import { useMidiStatus } from "@/midi/use-midi-status";
 import { call, on, NO_STATUS, type AudioStatus } from "@/rust";
 import { useEffect, useState } from "react";
@@ -70,21 +70,10 @@ export function SoundControls({
   // A section that changed something another one reads asks for this to go round again.
   const [round, setRound] = useState(0);
   const status = useAudioStatus(round);
-  const [instrument, setInstrument] = useState<string | null>(null);
-  const sounding = useSounding();
-
   // The envelope and the roles are kept under the instrument's id, so this has to know which one
   // is playing.
-  useEffect(() => {
-    let live = true;
-    getSettingOr("instrument_id").then(
-      (id) => live && setInstrument(id),
-      console.error,
-    );
-    return () => {
-      live = false;
-    };
-  }, [round]);
+  const instrument = useSetting("instrument_id");
+  const sounding = useSounding();
 
   return (
     <>

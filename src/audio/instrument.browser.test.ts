@@ -1,7 +1,7 @@
 import { InstrumentSection, restoreInstrument } from '@/audio/instrument';
-import type { Settings } from '@/db/db';
 import { NO_STATUS, type AudioStatus } from '@/rust';
-import { fakeRust, type FakeRust } from '@/rust.fake';
+import { fakeRust, fakeSettings, type FakeRust } from '@/rust.fake';
+import { load, type Settings } from '@/settings/settings';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -48,26 +48,28 @@ function hold(): { promise: Promise<void>; release: () => void } {
   return { promise, release };
 }
 
-let written: [string, unknown][] = [];
+/** Every setting written so far, in the shape the store sent it. */
+function written(): [string, unknown][] {
+  return rust.argsOf('settings_write').map(({ key, value }) => [key, value]);
+}
 
-vi.mock('@/db/db', () => ({
-  readSettings: async () => ({ instruments_folder: '/instruments', instrument_id: null }),
-  setSetting: async (key: string, value: unknown) => {
-    written.push([key, value]);
-  },
-  // No instrument here has been given an envelope, so restoring one after a load does nothing.
-  getSettingOr: async (key: string) => (key === 'audio_sample_rate' ? rateSetting : {}),
-}));
+/** The settings a launch finds. No instrument here has been given an envelope. */
+async function stored(settings: Partial<Settings> = {}): Promise<void> {
+  fakeSettings.clear();
+  fakeSettings.set('instruments_folder', '/instruments');
+  fakeSettings.set('audio_sample_rate', rateSetting);
+  for (const [key, value] of Object.entries(settings)) fakeSettings.set(key, value);
+  await load();
+}
 
 let close: (() => void) | null = null;
 
-beforeEach(() => {
+beforeEach(async () => {
   listed = [HOSTED, CONCERT, BROKEN];
   status = NO_STATUS;
   rateSetting = 44100;
   refusal = null;
   held = null;
-  written = [];
   rust = fakeRust({
     audio_instruments: () => listed,
     audio_status: () => status,
@@ -76,6 +78,7 @@ beforeEach(() => {
       if (refusal) throw new Error(refusal);
     },
   });
+  await stored();
 });
 
 afterEach(() => {
@@ -84,7 +87,7 @@ afterEach(() => {
 });
 
 /** Mounts the section and hands back the text the user can read and the section's host. */
-async function open(): Promise<[() => string, HTMLElement]> {
+async function open(named = 'None'): Promise<[() => string, HTMLElement]> {
   const host = document.createElement('div');
   document.body.append(host);
   const root = createRoot(host);
@@ -95,7 +98,7 @@ async function open(): Promise<[() => string, HTMLElement]> {
   };
   // The rows are a portal beside the section, so what the user can read is the whole page.
   const text = (): string => document.body.textContent ?? '';
-  await vi.waitFor(() => expect(trigger().textContent).toContain('None'));
+  await vi.waitFor(() => expect(trigger().textContent).toContain(named));
   return [text, host];
 }
 
@@ -145,7 +148,7 @@ test('choosing writes the setting, loads at once, and marks the row it is on', a
   await vi.waitFor(() =>
     expect(rust.argsOf('audio_load_instrument')).toEqual([{ id: CONCERT.id, state: null }]),
   );
-  expect(written).toContainEqual(['instrument_id', CONCERT.id]);
+  expect(written()).toContainEqual(['instrument_id', CONCERT.id]);
   await vi.waitFor(() => expect(trigger().textContent).toContain('Concert Grand Piano'));
 
   openPicker();
@@ -201,35 +204,27 @@ test('an instrument recorded at 44.1 kHz leaves no higher rate to pick', async (
 
 test('an instrument recorded below the rate in force drags the rate down to its own', async () => {
   rateSetting = 96000;
+  await stored({ instrument_id: CONCERT.id });
   status = { ...NO_STATUS, instrument: 'Concert Grand Piano', instrument_rate: 44100 };
-  await open();
-  await vi.waitFor(() => expect(written).toContainEqual(['audio_sample_rate', 44100]));
+  await open('Concert Grand Piano');
+  await vi.waitFor(() => expect(written()).toContainEqual(['audio_sample_rate', 44100]));
 });
 
-/** Boot reads these three and nothing else of the settings. */
-function stored(settings: Partial<Settings>): Settings {
-  return {
-    instruments_folder: '',
-    instrument_id: null,
-    instrument_state: null,
-    ...settings,
-  } as Settings;
-}
-
 test('a first launch plays Logic Concert Grand without being asked', async () => {
-  await restoreInstrument(stored({}));
+  await restoreInstrument();
   expect(rust.argsOf('audio_load_instrument')).toEqual([{ id: CONCERT.id, state: null }]);
-  expect(written).toEqual([['instrument_id', CONCERT.id]]);
+  expect(written()).toEqual([['instrument_id', CONCERT.id]]);
 });
 
 test('a launch after a choice puts that one back, with the state it was left in', async () => {
-  await restoreInstrument(stored({ instrument_id: BROKEN.id, instrument_state: 'YmxvYg==' }));
+  await stored({ instrument_id: BROKEN.id, instrument_state: 'YmxvYg==' });
+  await restoreInstrument();
   expect(rust.argsOf('audio_load_instrument')).toEqual([{ id: BROKEN.id, state: 'YmxvYg==' }]);
-  expect(written).toEqual([]);
+  expect(written()).toEqual([]);
 });
 
 test('a Mac with no instrument at all loads none', async () => {
   listed = [];
-  await restoreInstrument(stored({}));
+  await restoreInstrument();
   expect(rust.argsOf('audio_load_instrument')).toEqual([]);
 });

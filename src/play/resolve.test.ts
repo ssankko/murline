@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SETTING_DEFAULTS } from '@/db/db';
+import { SETTING_DEFAULTS } from '@/settings/settings';
 import { PIECE_SETTING_COLUMNS, type PieceSettingRow } from '@/library/queries';
 import { resolvePlaySettings, UNSET_PIECE_SETTINGS } from '@/play/resolve';
 

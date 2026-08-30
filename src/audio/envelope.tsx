@@ -9,7 +9,7 @@
 
 import { Knob } from '@/audio/knob';
 import type { Sounding } from '@/audio/sounding';
-import { getSettingOr, setSetting } from '@/db/db';
+import { set, setting } from '@/settings/settings';
 import { colorOf } from '@/look/color';
 import { useDark } from '@/look/use-dark';
 import { call, type Envelope } from '@/rust';
@@ -21,8 +21,8 @@ import { useEffect, useRef, useState } from 'react';
  * given one keeps the envelope its file asks for.
  */
 export async function restoreEnvelope(id: string): Promise<void> {
-  const kept = (await getSettingOr('instrument_envelopes'))[id];
-  if (kept) await call('audio_set_envelope', { envelope: kept });
+  const kept = setting('instrument_envelopes')[id];
+  if (kept) await call('audio_apply_envelope', { envelope: kept });
 }
 
 /**
@@ -76,7 +76,7 @@ export function EnvelopeSection({
     frame.current = requestAnimationFrame(() => {
       frame.current = 0;
       const envelope = next.current!;
-      void call('audio_set_envelope', { envelope }).catch(console.error);
+      void call('audio_apply_envelope', { envelope }).catch(console.error);
       if (instrument) void keep(instrument, envelope).catch(console.error);
     });
   }
@@ -147,8 +147,7 @@ function seconds(value: number): string {
 
 /** Merges one instrument's envelope into the map the whole set is kept in. */
 async function keep(instrument: string, envelope: Envelope): Promise<void> {
-  const all = await getSettingOr('instrument_envelopes');
-  await setSetting('instrument_envelopes', { ...all, [instrument]: envelope });
+  await set('instrument_envelopes', { ...setting('instrument_envelopes'), [instrument]: envelope });
 }
 
 /** Seconds of held note the plot draws between the decay and the release. */

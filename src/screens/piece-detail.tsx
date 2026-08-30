@@ -38,35 +38,12 @@ export function Detail({
   return (
     <div className="flex-1 overflow-y-auto px-12 py-10">
       <div className="flex max-w-[640px] flex-col select-text">
+        {/* The title line holds the title alone; the composer and the meta line span the column
+            under it, so the path has the whole width to be cut at. */}
         <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-[28px] leading-tight font-semibold tracking-tight">
-              {piece.title ?? piece.path}
-              {piece.composer && (
-                <span className="text-muted-ink ml-2.5 text-[15px] font-normal">
-                  {piece.composer}
-                </span>
-              )}
-            </h2>
-            <div className="text-muted-ink mt-2 flex gap-2.5 text-[12px]">
-              {(piece.part_count ?? 1) > 1 && (
-                <span>
-                  {piece.part_name}, 1 of {piece.part_count} parts
-                </span>
-              )}
-              <code className="text-[11.5px]">{fullPath}</code>
-              <button
-                onClick={() =>
-                  void invoke('reveal_in_finder', { path: fullPath }).catch((error) =>
-                    setNotice(`Could not reveal ${piece.title ?? piece.path}: ${reasonOf(error)}`),
-                  )
-                }
-                className="hover:text-ink underline underline-offset-2"
-              >
-                Reveal in Finder
-              </button>
-            </div>
-          </div>
+          <h2 className="min-w-0 text-[28px] leading-tight font-semibold tracking-tight break-words">
+            {piece.title ?? piece.path}
+          </h2>
           <div className="flex flex-none gap-1">
             <Button
               variant={piece.favorite ? 'default' : 'outline'}
@@ -81,6 +58,29 @@ export function Detail({
               Delete
             </Button>
           </div>
+        </div>
+
+        {piece.composer && (
+          <p className="text-muted-ink mt-1 text-[15px] font-normal">{piece.composer}</p>
+        )}
+
+        <div className="text-muted-ink mt-2 flex min-w-0 items-baseline gap-2.5 text-[12px]">
+          {(piece.part_count ?? 1) > 1 && (
+            <span className="flex-none">
+              {piece.part_name}, 1 of {piece.part_count} parts
+            </span>
+          )}
+          <code className="min-w-0 truncate text-[11.5px]">{fullPath}</code>
+          <button
+            onClick={() =>
+              void invoke('reveal_in_finder', { path: fullPath }).catch((error) =>
+                setNotice(`Could not reveal ${piece.title ?? piece.path}: ${reasonOf(error)}`),
+              )
+            }
+            className="hover:text-ink flex-none whitespace-nowrap underline underline-offset-2"
+          >
+            Reveal in Finder
+          </button>
         </div>
 
         {broken ? (
@@ -224,10 +224,12 @@ function Facts({ piece, keyAt }: { piece: PieceRow; keyAt: Key | null }) {
     ],
     [
       'Key',
-      <span key="key" className="flex items-center gap-1.5">
-        {keyAt && <TonicDot midi={60 + keyAt.tonic} />}
-        {keyAt?.name}
-      </span>,
+      keyAt && (
+        <span key="key" className="flex items-center gap-1.5">
+          <TonicDot midi={60 + keyAt.tonic} />
+          {keyAt.name}
+        </span>
+      ),
     ],
     ['Tempo', tempoText(piece)],
   ];

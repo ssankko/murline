@@ -91,6 +91,13 @@
   #root {
     height: 100%;
   }
+  /* The window is a screen, never a page. WKWebView bounces the document itself even when it holds
+     nothing to scroll, and a pane that reaches its end hands the rest of the gesture up to it. */
+  html,
+  body {
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
   body {
     @apply bg-paper text-ink font-sans select-none;
     font-size: 13px;

@@ -5,6 +5,7 @@
 // always roll to a new place instead of jumping there. Everything here is drawing; the play itself
 // lives in src/play/engine.ts.
 
+import { DEFAULT_SPLIT, type LaneLook } from '@/lane/look';
 import {
   KEYBOARD_H,
   drawKeyboard,
@@ -14,6 +15,7 @@ import {
   type KeyLayout,
 } from '@/lane/keyboard';
 import { clamp } from '@/lib/utils';
+import { set } from '@/settings/settings';
 import {
   INK,
   PAPER,
@@ -26,43 +28,23 @@ import {
   type Palette,
 } from '@/look/color';
 import { easeInOut, reducedMotion } from '@/look/motion';
-import { C_MAJOR, type Key } from '@/score/key';
+import { C_MAJOR, keyAt, type Key } from '@/score/key';
 import { FIFTHS, SHARP_NAMES, isBlackKey, pitchClass } from '@/score/pitch';
-import type { Engine, LoopSpan, PlayEvent, SeekTarget, Snapshot } from '@/play/engine';
+import type { LoopSpan, PlayEvent, Snapshot } from '@/play/engine';
+import type { PlayView } from '@/play/view';
 import type { Section } from '@/play/section';
 import { isInactiveHand, type HandsSetting } from '@/play/settings';
 import { barsOfWalk, beatOf } from '@/score/beat';
 import { TICKS_PER_QUARTER, type ChordEvent, type PlayStep, type Score } from '@/score/types';
 
-/** Look knobs, all global settings the Look tab writes to. */
-export type LaneHarmony = 'panels' | 'wheel' | 'off';
-
-export interface LaneLook {
-  lookaheadBeats: number;
-  /** Width of a block as a percent of its key. */
-  noteWidthPct: number;
-  gapPx: number;
-  keyLabels: boolean;
-  /** How the harmony shows at the lane's top right: as the chord panels, as the wheel, or not at all. */
-  harmony: LaneHarmony;
-  /** Whether the keys outside the scale in force wear a ghosted face and a dotted border. */
-  scaleMarks: boolean;
-  /** Whether a block wears the pitch colour of its note, against one neutral ink for every note. */
-  colour: boolean;
-  /** Whether a block carries the name of its note, sharps and no octave, at its landing edge. */
-  names: boolean;
-}
-
-export const DEFAULT_LANE_LOOK: LaneLook = {
-  lookaheadBeats: 8,
-  noteWidthPct: 80,
-  gapPx: 2,
-  keyLabels: true,
-  harmony: 'panels',
-  scaleMarks: false,
-  colour: true,
-  names: false,
-};
+export {
+  DEFAULT_LANE_LOOK,
+  DEFAULT_SPLIT,
+  SPLIT_MAX,
+  SPLIT_MIN,
+  type LaneHarmony,
+  type LaneLook,
+} from '@/lane/look';
 
 /** The span the Look tab offers for the lookahead, which a pinch zoom stays inside. */
 export const LOOKAHEAD_MIN = 1;
@@ -78,11 +60,6 @@ const LOOK_SETTLE_MS = 300;
 interface GestureEvent extends UIEvent {
   readonly scale: number;
 }
-
-/** Share of the window height the sheet takes by default; the beat scale is fixed against it. */
-export const DEFAULT_SPLIT = 0.35;
-export const SPLIT_MIN = 0.2;
-export const SPLIT_MAX = 0.6;
 
 /** Height of the top bar, which is not part of the split. */
 export const TOP_BAR = 48;
@@ -370,20 +347,16 @@ export class Lane {
   readonly look: LaneLook;
   /** Shown over the keys while the app has no MIDI input. */
   notice: string | null = null;
-  /** Where a click in the lane asks the play to go; the screen decides what a seek means. */
-  onSeek: ((target: SeekTarget) => void) | null = null;
-  /** Where the lane says a pinch has changed its look, once the pinch has stood still. */
-  onLook: ((look: Partial<LaneLook>) => void) | null = null;
-
-  private readonly canvas: HTMLCanvasElement;
-  private readonly ctx: CanvasRenderingContext2D;
-  private readonly engine: Engine;
-  private readonly resize: ResizeObserver;
+  private canvas!: HTMLCanvasElement;
+  private ctx!: CanvasRenderingContext2D;
+  /** The play the lane draws; every read of the clock and the notes goes through it. */
+  private play!: PlayView;
+  private resize!: ResizeObserver;
   /** Takes the mouse wheel and click listeners off the canvas again. */
   private readonly listeners = new AbortController();
-  private bars: LaneBar[];
-  private jumps: LaneJump[];
-  private chords: LaneChord[];
+  private bars!: LaneBar[];
+  private jumps!: LaneJump[];
+  private chords!: LaneChord[];
   /** The key in force at the clock, re-read when the key changes. */
   private scale: Key | null = null;
   /** The key the wheel cross-fades from, and when it set off; a seek and reduced motion snap. */
@@ -392,14 +365,14 @@ export class Lane {
   /** The ghosted face of each of the keyboard's two base greys, mixed once and kept. */
   private readonly dimmed = new Map<string, string>();
   /** The walk the bars and the dividers were read from; Loop swaps it for the linear one. */
-  private walk: PlayStep[];
-  private range: [number, number];
+  private walk!: PlayStep[];
+  private range!: [number, number];
   /** The layout of the range in force, the one the keys travel from, and when they set off. */
-  private layout: KeyLayout;
+  private layout!: KeyLayout;
   private layoutFrom: KeyLayout | null = null;
   private layoutAt = -Infinity;
   /** The layout every key and block is drawn on: part way between the two while they travel. */
-  private shownLayout: KeyLayout;
+  private shownLayout!: KeyLayout;
   private dark: boolean;
   private effects: Effect[] = [];
   private particles: Speck[] = [];
@@ -448,8 +421,8 @@ export class Lane {
    */
   private readonly countLines = new Map<number, { y: number; label: string; spentAt: number }>();
   /** What the engine's counters and its motion read last frame, which is how a seek is spotted. */
-  private lastResets: number;
-  private lastWraps: number;
+  private lastResets!: number;
+  private lastWraps!: number;
   private lastRunning = false;
   /** The clock and the wall of the frame before this one, which is what a step is measured over. */
   private before = 0;
@@ -459,8 +432,8 @@ export class Lane {
   /** `reducedMotion()`, read once a frame: it asks the system, so no draw has to ask again. */
   private reduced = false;
   /** The hands setting the blocks are drawn for, the one before it, and when it changed. */
-  private hands: HandsSetting;
-  private handsBefore: HandsSetting;
+  private hands!: HandsSetting;
+  private handsBefore!: HandsSetting;
   private handsAt = -Infinity;
   /**
    * The Section the band is drawn for, which a clear leaves in place while it fades out, whether
@@ -495,22 +468,26 @@ export class Lane {
    */
   private size = { width: 0, height: 0, windowHeight: 0 };
 
-  constructor(canvas: HTMLCanvasElement, engine: Engine, look: LaneLook, dark: boolean) {
-    this.canvas = canvas;
-    this.ctx = canvas.getContext('2d')!;
-    this.engine = engine;
+  constructor(look: LaneLook, dark: boolean) {
     this.look = look;
     this.dark = dark;
-    this.walk = engine.walk;
-    this.bars = barsOf(engine.score, this.walk);
-    this.jumps = jumpsOf(engine.score, this.walk);
-    this.chords = chordsOf(engine.score.harmony, this.walk);
-    this.hands = engine.settings.hands;
+  }
+
+  /** Takes the canvas and the play it draws: the lane lays the keyboard out and starts listening. */
+  open(play: PlayView, canvas: HTMLCanvasElement): void {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d')!;
+    this.play = play;
+    this.walk = play.walk;
+    this.bars = barsOf(play.score, this.walk);
+    this.jumps = jumpsOf(play.score, this.walk);
+    this.chords = chordsOf(play.score.harmony, this.walk);
+    this.hands = play.settings.hands;
     this.handsBefore = this.hands;
-    this.lastResets = engine.resets;
-    this.lastWraps = engine.wraps;
+    this.lastResets = play.resets;
+    this.lastWraps = play.wraps;
     // The range spans both hands, so a change of hands never re-lays the keyboard out.
-    this.range = keyRange(engine.notes, engine.settings);
+    this.range = keyRange(play.notes, play.settings);
     this.measure();
     this.layout = keyLayout(this.range[0], this.range[1], this.size.width || 1);
     this.shownLayout = this.layout;
@@ -560,10 +537,10 @@ export class Lane {
         if (this.pxPerTick <= 0 || this.laneH <= 0) return;
         const y = event.clientY - canvas.getBoundingClientRect().top;
         if (y >= this.laneH) return;
-        const resets = this.engine.resets;
-        this.onSeek?.({ tick: this.view + (this.laneH - y) / this.pxPerTick });
+        const resets = this.play.resets;
+        this.play.seek({ tick: this.view + (this.laneH - y) / this.pxPerTick });
         // Only a seek the play took holds the view: a performance turns the click down.
-        this.holdView = this.engine.resets !== resets;
+        this.holdView = this.play.resets !== resets;
       },
       { signal: this.listeners.signal },
     );
@@ -592,7 +569,7 @@ export class Lane {
   setRange(): void {
     this.layoutFrom = this.reduced ? null : this.layout;
     this.layoutAt = performance.timeOrigin + performance.now();
-    this.range = keyRange(this.engine.notes, this.engine.settings);
+    this.range = keyRange(this.play.notes, this.play.settings);
     this.layout = keyLayout(this.range[0], this.range[1], this.size.width || 1);
   }
 
@@ -604,7 +581,7 @@ export class Lane {
     if (event.verdict !== 'hit' && event.verdict !== 'extra') return;
     // The hit's ring is anchored where its block stood, so it must be measured as the key goes
     // down; the clock of the last frame is near enough over one frame.
-    const note = event.verdict === 'hit' ? this.engine.notes[event.noteIndex] : undefined;
+    const note = event.verdict === 'hit' ? this.play.notes[event.noteIndex] : undefined;
     this.effects.push({
       kind: event.verdict,
       midi: event.midi,
@@ -615,12 +592,15 @@ export class Lane {
   }
 
   /**
-   * One frame, drawn in the key the play screen hands in. Nothing is kept between frames but the
-   * effects still playing out. `now` is the engine's wall clock, not the raw animation clock: the
-   * age of every mark is read against `resolvedAt`, which the engine stamps from the strike that
-   * settled the note.
+   * One frame, drawn in the key the play stands in. Nothing is kept between frames but the
+   * effects still playing out. The lane draws on `wall`, not on the animation clock: the age of
+   * every mark is read against `resolvedAt`, which the engine stamps from the strike that settled
+   * the note. A caller with one clock of its own hands it in as `animation` alone.
    */
-  frame(snap: Snapshot, key: Key, windowTicks: number, now: number): void {
+  frame(snap: Snapshot, animation: number, wall: number = animation): void {
+    const key = keyAt(this.play.score, snap.measureIndex);
+    const windowTicks = this.play.windowTicks;
+    const now = wall;
     this.now = now;
     this.playedTick = snap.playedTick;
     this.reduced = reducedMotion();
@@ -631,12 +611,12 @@ export class Lane {
     this.before = now;
     this.beforeTick = snap.playedTick;
     this.stepView(snap, sinceTick, wallStep, windowTicks);
-    if (this.engine.settings.hands !== this.hands) {
+    if (this.play.settings.hands !== this.hands) {
       this.handsBefore = this.hands;
-      this.hands = this.engine.settings.hands;
+      this.hands = this.play.settings.hands;
       this.handsAt = this.reduced ? -Infinity : now;
     }
-    const section = this.engine.section;
+    const section = this.play.section;
     // A band already up travels to its new bars; the first band of all fades in where it belongs.
     if (section && this.sectionOn && this.shownSection && !sameSpan(section, this.shownSection)) {
       this.sectionFrom = this.reduced ? null : this.shownSection;
@@ -706,23 +686,23 @@ export class Lane {
     ctx.fillStyle = tone(PAPER, this.dark);
     ctx.fillRect(0, 0, width, height);
 
-    if (this.engine.walk !== this.walk) {
-      this.walk = this.engine.walk;
-      this.bars = barsOf(this.engine.score, this.walk);
-      this.jumps = jumpsOf(this.engine.score, this.walk);
-      this.chords = chordsOf(this.engine.score.harmony, this.walk);
+    if (this.play.walk !== this.walk) {
+      this.walk = this.play.walk;
+      this.bars = barsOf(this.play.score, this.walk);
+      this.jumps = jumpsOf(this.play.score, this.walk);
+      this.chords = chordsOf(this.play.score.harmony, this.walk);
       this.walkAt = now;
     }
     this.readScale(key);
 
-    const loop = this.engine.loopSpan();
+    const loop = this.play.loopSpan();
     ctx.save();
     ctx.beginPath();
     ctx.rect(0, 0, width, laneH);
     ctx.clip();
     this.drawGrid(width, laneH, pxPerTick, -Infinity, loop?.to ?? Infinity);
     this.drawSection(width, laneH, pxPerTick);
-    this.drawCountIn(width, laneH, pxPerTick, this.engine.countInBeats);
+    this.drawCountIn(width, laneH, pxPerTick, this.play.countInBeats);
     this.drawNotes(laneH, pxPerTick, -Infinity, loop?.to ?? Infinity, true);
     if (loop) this.drawNextLap(width, laneH, pxPerTick, loop);
     this.drawJumps(width, laneH, pxPerTick, loop);
@@ -761,15 +741,15 @@ export class Lane {
    * after a scroll all set the view rolling back onto the clock.
    */
   private stepView(snap: Snapshot, sinceTick: number, wallStep: number, windowTicks: number): void {
-    const engine = this.engine;
+    const play = this.play;
     // Ticks the clock could have covered in this frame's own time, at twice the tempo it stands at
     // so a tempo change inside the frame never reads as a seek.
-    const rate = windowTicks / Math.max(engine.settings.matchingWindowMs, 1);
+    const rate = windowTicks / Math.max(play.settings.matchingWindowMs, 1);
     const reach = Math.max(wallStep, 0) * rate * 2 + 1;
-    const reset = engine.resets !== this.lastResets;
-    const wrapped = engine.wraps !== this.lastWraps;
-    this.lastResets = engine.resets;
-    this.lastWraps = engine.wraps;
+    const reset = play.resets !== this.lastResets;
+    const wrapped = play.wraps !== this.lastWraps;
+    this.lastResets = play.resets;
+    this.lastWraps = play.wraps;
     const jump = jumpOf(sinceTick, snap.playedTick, reach, reset, wrapped);
     if (jump !== 0) this.jumpedAt = this.now;
     this.offset += jump;
@@ -829,7 +809,7 @@ export class Lane {
     const shown = Math.round(this.look.lookaheadBeats * 10) / 10;
     clearTimeout(this.lookTimer);
     this.lookTimer = window.setTimeout(() => {
-      this.onLook?.({ lookaheadBeats: shown });
+      void set('lane_lookahead', shown);
     }, LOOK_SETTLE_MS);
   }
 
@@ -995,7 +975,7 @@ export class Lane {
     // A looping Section walks its bars linearly, so the wrap is the only divider. Loop over the
     // whole piece keeps the written repeats, so their dividers fall as well as the wrap.
     const jumps = loop
-      ? this.engine.section
+      ? this.play.section
         ? [this.wrapDivider(loop)]
         : [...this.jumps, this.wrapDivider(loop)]
       : this.jumps;
@@ -1033,13 +1013,13 @@ export class Lane {
     live: boolean,
   ): void {
     const ctx = this.ctx;
-    const engine = this.engine;
+    const play = this.play;
     const top = Math.min(this.view + laneH / pxPerTick, ceiling);
     const fade = Math.min(1, (this.now - this.handsAt) / HANDS_FADE_MS);
     // A beat of the bar the clock stands in is how far ahead a block begins to brighten.
     const beatTicks = barAt(this.bars, this.playedTick)?.beatTicks ?? TICKS_PER_QUARTER;
-    for (let i = 0; i < engine.notes.length; i++) {
-      const note = engine.notes[i]!;
+    for (let i = 0; i < play.notes.length; i++) {
+      const note = play.notes[i]!;
       if (note.tick >= top) break;
       // The note that starts a tie carries the whole chain, so its continuations fall as nothing.
       if (note.tick < floor || !note.strikeable) continue;
@@ -1051,9 +1031,9 @@ export class Lane {
       // A note hanging over the wrap is cut at the bar line the lap ends on.
       const y = this.y(Math.min(note.tick + note.durationTicks, ceiling), laneH, pxPerTick);
       if (y > laneH) continue;
-      const state = live ? engine.noteState(i) : 'pending';
+      const state = live ? play.noteState(i) : 'pending';
       // A strike stamped a moment after the last frame would age negative, which no curve wants.
-      const age = live ? Math.max(this.now - engine.resolvedAt(i), 0) : Infinity;
+      const age = live ? Math.max(this.now - play.resolvedAt(i), 0) : Infinity;
       // A struck block pulses out and back about its bottom edge, which is on the now-line at the
       // strike, so the block reads as taking the blow rather than growing sideways.
       const beat = state === 'hit' && !this.reduced ? bounceAt(age / POP_MS) : 1;
@@ -1065,13 +1045,13 @@ export class Lane {
       // How far a miss has gone grey. It sinks and dims as it goes and stays that way in view.
       // A note the engine skipped past carries no stamp: it is grey from the frame it appears in.
       const missed = state === 'miss';
-      const played = engine.resolvedAt(i) > 0;
+      const played = play.resolvedAt(i) > 0;
       const gone = missed ? (this.reduced || !played ? 1 : clamp(age / MISS_MS, 0, 1)) : 0;
       const blockY = y + full - height + MISS_SINK * gone;
       // A missed block grinds sparks off the keys for as long as it is crossing them, which is
       // where the view has it; a skipped one was never played at, so it only lies there.
       const crossing = note.tick <= this.view && this.view < note.tick + note.durationTicks;
-      if (missed && played && !this.reduced && (crossing || engine.resolvedAt(i) > this.sinceWall)) {
+      if (missed && played && !this.reduced && (crossing || play.resolvedAt(i) > this.sinceWall)) {
         this.grind(x, width, laneH);
       }
       // How much of a ghost the note is now: a change of hands cross-fades it over the two looks.
@@ -1249,14 +1229,14 @@ export class Lane {
     const due = Math.floor(this.owed);
     this.owed -= due;
     for (const key of this.shownLayout.keys) {
-      const state = this.engine.keyState(key.midi);
+      const state = this.play.keyState(key.midi);
       const down = state !== 'base';
       if (down !== (this.presses.get(key.midi)?.down ?? false)) {
         this.presses.set(key.midi, { down, at: this.now });
       }
-      const index = this.engine.heldNote(key.midi);
+      const index = this.play.heldNote(key.midi);
       if (index < 0) continue;
-      const note = this.engine.notes[index]!;
+      const note = this.play.notes[index]!;
       const end = note.tick + note.durationTicks;
       if (sinceTick < end && end <= this.playedTick) this.blinks.set(key.midi, this.now);
       if (state !== 'color') continue;
@@ -1360,7 +1340,7 @@ export class Lane {
    * release blink.
    */
   private readonly keyFill = (midi: number, base: string): string => {
-    const state = this.engine.keyState(midi);
+    const state = this.play.keyState(midi);
     let face = base;
     // A key outside the scale in force rests washed toward the paper while the marks are on, the
     // dotted border over it saying what the wash whispers. Every strike and press below paints its
@@ -1388,12 +1368,12 @@ export class Lane {
     this.look.scaleMarks &&
     this.scale !== null &&
     !this.scale.has(midi) &&
-    this.engine.keyState(midi) === 'base';
+    this.play.keyState(midi) === 'base';
 
   /** A sounding key's face, drained toward its base as its note's written duration runs out. */
   private sounding(midi: number, base: string): string {
     const color = colorOf(midi, 'muted', this.dark);
-    const note = this.engine.notes[this.engine.heldNote(midi)];
+    const note = this.play.notes[this.play.heldNote(midi)];
     if (!note || note.durationTicks <= 0) return color;
     const over = (DRAIN_RUSH * (this.playedTick - note.tick)) / note.durationTicks;
     return mix(color, base, clamp(over, 0, 1) * DRAIN_FLOOR);

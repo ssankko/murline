@@ -5,15 +5,14 @@
 import { previewNotes, secondsOf, tickAt } from '@/audio/preview';
 import { Button } from '@/components/ui/button';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { baseNameOf, pathOf, readScoreFile } from '@/library/index-file';
+import { baseNameOf } from '@/library/index-file';
 import { setNotice } from '@/library/notice';
 import { getPiece, updatePieceSettings } from '@/library/queries';
-import { reindexIfChanged } from '@/library/scan';
+import { openPiece } from '@/library/open-piece';
 import { clamp } from '@/lib/utils';
 import { Opening } from '@/look/loading';
 import { useDark } from '@/look/use-dark';
 import type { SeekTarget } from '@/play/engine';
-import { UNSET_PIECE_SETTINGS, resolvePlaySettings } from '@/play/resolve';
 import {
   DEFAULT_PLAY_SETTINGS,
   stepTempo,
@@ -255,18 +254,15 @@ export function PreviewScreen({
     [],
   );
 
-  // Opening a piece: bring its index up to date in case the file changed, read the bytes and draw
-  // them with the Look settings and the piece's own tempo. Any failure goes back to the library,
-  // which says what went wrong.
+  // Opening a piece: the bytes and the piece's own row, drawn with the Look settings and the
+  // piece's own tempo. Any failure goes back to the library, which says what went wrong.
   useEffect(() => {
     let live = true;
     const fileName = baseNameOf(path);
     setOpening(true);
     void (async () => {
       try {
-        await reindexIfChanged(folder, path);
-        const bytes = await readScoreFile(pathOf(folder, path));
-        const row = await getPiece(path).catch(() => null);
+        const { bytes, resolved } = await openPiece(folder, path);
         const sheet = await PreviewSheet.open(
           hostRef.current!,
           bytes,
@@ -277,16 +273,15 @@ export function PreviewScreen({
         );
         if (!live) return sheet.dispose();
         sheetRef.current = sheet;
-        sheet.onSeek = (target) => seekRef.current(target);
+        sheet.seekTo = (target) => seekRef.current(target);
         // A pinch has already spaced the page; this only stores what it settled on.
-        sheet.onLook = ({ spacing }) => {
+        sheet.spacedTo = (spacing) => {
           void set('sheet_spacing', spacing);
         };
-        sheet.onPinch = (moving) => setPinch(moving);
+        sheet.pinching = (moving) => setPinch(moving);
         sheet.setLook({ harmony: setting('sheet_harmony'), colour: setting('sheet_colour') });
         notesRef.current = previewNotes(sheet.score);
         startsRef.current = stepSeconds(sheet.score);
-        const resolved = resolvePlaySettings(row ?? UNSET_PIECE_SETTINGS);
         setWritten({
           bpm: sheet.score.hasTempo ? Math.round(bpmAt(sheet.score, 0)) : 120,
           constant: sheet.score.constantTempo,

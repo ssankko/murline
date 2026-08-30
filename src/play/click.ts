@@ -8,15 +8,21 @@ import { call } from '@/rust';
 /** The two clicks: strong on the beat a bar opens with, weak on every other. */
 export type ClickStrength = 'strong' | 'weak';
 
-/** The `click_volume` global setting, 0 to 100. */
-let volume = 70;
+/** One play's metronome: the `click_volume` global setting, and the clicks it owes. */
+export class Click {
+  private volume: number;
 
-export function setClickVolume(percent: number): void {
-  volume = clamp(percent, 0, 100);
-}
+  constructor(volume = 70) {
+    this.volume = clamp(volume, 0, 100);
+  }
 
-/** One click now. Silent at volume 0, and on a build without a sound engine. */
-export function click(strength: ClickStrength): void {
-  if (volume === 0) return;
-  call('audio_click', { strength, volume }).catch(console.error);
+  setVolume(percent: number): void {
+    this.volume = clamp(percent, 0, 100);
+  }
+
+  /** One click now. Silent at volume 0, and on a build without a sound engine. */
+  play(strength: ClickStrength): void {
+    if (this.volume === 0) return;
+    call('audio_click', { strength, volume: this.volume }).catch(console.error);
+  }
 }

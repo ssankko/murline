@@ -232,7 +232,7 @@ test('the band stands at the Onset the tick names, glides within a system, snaps
 test('a click on a rest seeks into its bar, and on a notehead to its Onset', async () => {
   const { sheet, host } = await open(1000, RESTS);
   const hits: SeekTarget[] = [];
-  sheet.onSeek = (target) => hits.push(target);
+  sheet.seekTo = (target) => hits.push(target);
   const onsets = sheet.score.onsets;
   const head = noteheadEl(sheet.osmd, onsets[2]!.notes[0]!.source)!.getBoundingClientRect();
   const click = (clientX: number, clientY: number) =>

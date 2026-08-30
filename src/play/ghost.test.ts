@@ -1,5 +1,5 @@
 import { Engine } from '@/play/engine';
-import { ghost, ghostStrike, silenceGhosts } from '@/play/ghost';
+import { Ghosts } from '@/play/ghost';
 import { DEFAULT_PLAY_SETTINGS, type PlaySettings } from '@/play/settings';
 import {
   TICKS_PER_QUARTER,
@@ -13,9 +13,10 @@ import { fakeRust, type FakeRust } from '@/rust.fake';
 import { beforeEach, expect, test } from 'vitest';
 
 let rust: FakeRust;
+let ghosts: Ghosts;
 
 beforeEach(() => {
-  silenceGhosts();
+  ghosts = new Ghosts();
   rust = fakeRust();
 });
 
@@ -150,17 +151,17 @@ test('the setting off owes nothing, and turning it on starts from where the cloc
   expect(play.ghosts()).toEqual([{ midi: 48, velocity: 100, on: true }]);
 });
 
-/** The two Playing settings, over the defaults, as the play screen hands them to `ghost`. */
+/** The two Playing settings, over the defaults, as the Play hands them to the ghosts. */
 function sounding(velocity: 'score' | 'follow', level: number): PlaySettings {
   return { ...DEFAULT_PLAY_SETTINGS, inactiveHandVelocity: velocity, inactiveHandLevel: level };
 }
 
 test('each owed note is one call of the note command, and a silence lets go of what is down', () => {
   const settings = sounding('score', 100);
-  ghost({ midi: 48, velocity: 80, on: true }, settings);
-  ghost({ midi: 50, velocity: 64, on: true }, settings);
-  ghost({ midi: 48, velocity: 0, on: false }, settings);
-  silenceGhosts();
+  ghosts.note({ midi: 48, velocity: 80, on: true }, settings);
+  ghosts.note({ midi: 50, velocity: 64, on: true }, settings);
+  ghosts.note({ midi: 48, velocity: 0, on: false }, settings);
+  ghosts.silence();
 
   expect(rust.argsOf('audio_note')).toEqual([
     { midi: 48, velocity: 80, on: true, raw: false },
@@ -177,24 +178,24 @@ function sent(): { velocity: number; raw: boolean } {
 }
 
 test('from the score plays the written velocity at the level, through the velocity curve', () => {
-  ghost({ midi: 48, velocity: 80, on: true }, sounding('score', 80));
+  ghosts.note({ midi: 48, velocity: 80, on: true }, sounding('score', 80));
   expect(sent()).toEqual({ velocity: 64, raw: false });
 });
 
 test('the strikes the player makes are what follow plays at, and they are not remapped again', () => {
-  for (const velocity of [40, 40, 40]) ghostStrike(velocity);
-  ghost({ midi: 48, velocity: 100, on: true }, sounding('follow', 100));
+  for (const velocity of [40, 40, 40]) ghosts.strike(velocity);
+  ghosts.note({ midi: 48, velocity: 100, on: true }, sounding('follow', 100));
   expect(sent()).toEqual({ velocity: 40, raw: true });
 });
 
 test('follow before the first strike plays the written velocity, through the velocity curve', () => {
-  ghost({ midi: 48, velocity: 100, on: true }, sounding('follow', 50));
+  ghosts.note({ midi: 48, velocity: 100, on: true }, sounding('follow', 50));
   expect(sent()).toEqual({ velocity: 50, raw: false });
 });
 
 test('a silence forgets the strikes, so the next play follows its own', () => {
-  ghostStrike(40);
-  silenceGhosts();
-  ghost({ midi: 48, velocity: 100, on: true }, sounding('follow', 100));
+  ghosts.strike(40);
+  ghosts.silence();
+  ghosts.note({ midi: 48, velocity: 100, on: true }, sounding('follow', 100));
   expect(sent()).toEqual({ velocity: 100, raw: false });
 });

@@ -2,12 +2,7 @@
 // at start. A read is a lookup, a write goes to memory first and to the Rust side after, and
 // whoever draws a setting subscribes to the one key it draws.
 
-import {
-  DEFAULT_LANE_LOOK,
-  DEFAULT_SPLIT,
-  type LaneHarmony,
-  type LaneLook,
-} from '@/lane/lane';
+import { DEFAULT_LANE_LOOK, DEFAULT_SPLIT, type LaneHarmony, type LaneLook } from '@/lane/look';
 import { reasonOf } from '@/library/notice';
 import type { SortOrder } from '@/library/queries';
 import type { Theme } from '@/look/use-dark';
@@ -19,7 +14,7 @@ import {
 } from '@/play/settings';
 import { call, type EffectSlot, type Envelope, type Role } from '@/rust';
 import type { SettingsTab } from '@/screens/settings';
-import { DEFAULT_SPACING } from '@/sheet/sheet';
+import { DEFAULT_SPACING } from '@/sheet/pinch';
 import { useSyncExternalStore } from 'react';
 
 /** Global settings, one row each in the Rust side's `setting` table, stored as JSON. */

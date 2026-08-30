@@ -13,9 +13,9 @@ import {
 } from '@/lane/lane';
 import { KEYBOARD_H, keyLayout, type KeyLayout } from '@/lane/keyboard';
 import { PAPER, colorOf, tone } from '@/look/color';
+import { setting, subscribe } from '@/settings/settings';
 import { Engine } from '@/play/engine';
 import { DEFAULT_PLAY_SETTINGS } from '@/play/settings';
-import { keyAt, keyOf } from '@/score/key';
 import { MAJOR_TRIAD } from '@/score/shape';
 import { TICKS_PER_QUARTER, type ChordEvent, type Note, type Score } from '@/score/types';
 import { expect, test, vi } from 'vitest';
@@ -89,12 +89,10 @@ function mount(
     keyboardPreset: 'piece',
   });
   engine.start();
-  const lane = new Lane(canvas, engine, { ...DEFAULT_LANE_LOOK, ...options.look }, false);
+  const lane = new Lane({ ...DEFAULT_LANE_LOOK, ...options.look }, false);
+  lane.open(engine, canvas);
   return { engine, lane, canvas, ctx: canvas.getContext('2d')! };
 }
-
-/** The key the play screen hands the lane: the one in force at the measure the clock stands in. */
-const inForce = (engine: Engine) => keyAt(engine.score, engine.snapshot().measureIndex);
 
 /** The hex at a point of a lane's canvas. */
 function hex(ctx: CanvasRenderingContext2D, x: number, y: number): string {
@@ -116,7 +114,7 @@ test('a hit stamped on another clock leaves the frame and the keyboard standing'
   // A curve handed an age it was never drawn for used to throw part way down the lane, and every
   // frame died there: no keyboard, and the shadow of the block that threw left over everything.
   expect(() =>
-    lane.frame(engine.snapshot(), inForce(engine), engine.windowTicks, 1000),
+    lane.frame(engine.snapshot(), 1000),
   ).not.toThrow();
 
   // The keyboard is painted, and middle C wears the colour of the note the strike matched.
@@ -133,7 +131,7 @@ test('the wheel takes the view off the clock and the detach window brings it bac
   // The lane ages the detach window against the wall clock, so the frames run on it.
   let wall = performance.timeOrigin + performance.now();
   const frame = (at: number) =>
-    lane.frame(engine.snapshot(), inForce(engine), engine.windowTicks, wall + at);
+    lane.frame(engine.snapshot(), wall + at);
   frame(0);
   expect(line()).not.toBe(tone(PAPER, false));
 
@@ -175,11 +173,12 @@ test('a click up the lane seeks to the step it points at and the view stands sti
   const { engine, lane, canvas } = mount();
   const wall = performance.timeOrigin + performance.now();
   const frame = (at: number) =>
-    lane.frame(engine.snapshot(), inForce(engine), engine.windowTicks, wall + at);
+    lane.frame(engine.snapshot(), wall + at);
   const asked: number[] = [];
-  lane.onSeek = (target) => {
+  const seek = engine.seek.bind(engine);
+  engine.seek = (target) => {
     if ('tick' in target) asked.push(target.tick);
-    engine.seek(target);
+    seek(target);
   };
   frame(0);
   const view = viewOf(lane);
@@ -223,8 +222,7 @@ test('a click up the lane glides the now-line to the tick it named', () => {
   const bare = WIDTH / 2;
   const wall = performance.timeOrigin + performance.now();
   const frame = (at: number) =>
-    lane.frame(engine.snapshot(), inForce(engine), engine.windowTicks, wall + at);
-  lane.onSeek = (target) => engine.seek(target);
+    lane.frame(engine.snapshot(), wall + at);
   frame(0);
   const foot = nowRow(ctx, bare, laneH);
   expect(foot).toBeGreaterThan(0);
@@ -257,7 +255,7 @@ test('a spent count-in line fades out where it stood', () => {
   const { engine, lane, ctx } = mount();
   const wall = performance.timeOrigin + performance.now();
   const frame = (at: number) =>
-    lane.frame(engine.snapshot(), inForce(engine), engine.windowTicks, wall + at);
+    lane.frame(engine.snapshot(), wall + at);
   frame(0);
   // One beat to count in, half a beat above the keyboard line, where no beat line of the grid is.
   const row = Math.round(laneH - (TICKS_PER_QUARTER / 2) * scaleOf(lane));
@@ -285,7 +283,7 @@ test('the count-in number pops on the beat the clock crosses', () => {
   const { engine, lane } = mount();
   const wall = performance.timeOrigin + performance.now();
   const frame = (at: number) =>
-    lane.frame(engine.snapshot(), inForce(engine), engine.windowTicks, wall + at);
+    lane.frame(engine.snapshot(), wall + at);
   // Every scale the frame asks of the canvas; with no harmony and no hit, only a pop makes one.
   const scale = vi.spyOn(CanvasRenderingContext2D.prototype, 'scale');
 
@@ -312,7 +310,7 @@ test('the notice over the keys fades in and out', () => {
   const { engine, lane, ctx } = mount();
   const wall = performance.timeOrigin + performance.now();
   const frame = (at: number) =>
-    lane.frame(engine.snapshot(), inForce(engine), engine.windowTicks, wall + at);
+    lane.frame(engine.snapshot(), wall + at);
   const key = () => level(ctx, 20, laneH + 20);
   frame(0);
   const bare = key();
@@ -344,10 +342,10 @@ test('a click on the keyboard asks for nothing', () => {
   const { engine, lane, canvas } = mount();
   const wall = performance.timeOrigin + performance.now();
   let asked = 0;
-  lane.onSeek = () => {
+  engine.seek = () => {
     asked++;
   };
-  lane.frame(engine.snapshot(), inForce(engine), engine.windowTicks, wall);
+  lane.frame(engine.snapshot(), wall);
 
   clickAt(canvas, laneH + 10);
   expect(asked).toBe(0);
@@ -363,7 +361,7 @@ function keyX(lane: Lane, midi: number): number {
 test('a range change carries the keys to their new places', () => {
   const { engine, lane } = mount();
   const wall = performance.timeOrigin + performance.now();
-  lane.frame(engine.snapshot(), inForce(engine), engine.windowTicks, wall);
+  lane.frame(engine.snapshot(), wall);
   const from = keyX(lane, 60);
 
   // Two octaves join the keyboard under middle C, which sends middle C off to the right.
@@ -371,7 +369,7 @@ test('a range change carries the keys to their new places', () => {
   lane.setRange();
   const set = performance.timeOrigin + performance.now();
   const frame = (at: number) =>
-    lane.frame(engine.snapshot(), inForce(engine), engine.windowTicks, set + at);
+    lane.frame(engine.snapshot(), set + at);
   const to = keyLayout(36, 71, WIDTH).byMidi.get(60)!.x;
   expect(to).toBeGreaterThan(from);
 
@@ -395,7 +393,7 @@ test('the marks ghost the keys outside the scale in force', () => {
   const laneH = HEIGHT - KEYBOARD_H;
   const { engine, lane, ctx } = mount({ score: scoreInD() });
   const wall = performance.timeOrigin + performance.now();
-  lane.frame(engine.snapshot(), inForce(engine), engine.windowTicks, wall);
+  lane.frame(engine.snapshot(), wall);
   // Middle C is off the D major scale, D is its tonic: the resting faces say so. The samples sit
   // where the white faces show, clear of the black keys standing over their seams.
   expect(hex(ctx, keyX(lane, 60) + 20, laneH + 40)).toBe('#dedede');
@@ -406,11 +404,7 @@ test('the marks ghost the keys outside the scale in force', () => {
   lane.dispose();
 
   const marks = mount({ score: scoreInD(), look: { scaleMarks: true } });
-  marks.lane.frame(
-    marks.engine.snapshot(),
-    inForce(marks.engine),
-    marks.engine.windowTicks,
-    performance.timeOrigin + performance.now(),
+  marks.lane.frame(marks.engine.snapshot(), performance.timeOrigin + performance.now(),
   );
   // The marked key washes toward the paper, and the quiet dots run along its top edge.
   expect(hex(marks.ctx, keyX(marks.lane, 60) + 20, laneH + 40)).toBe('#eaeaea');
@@ -419,11 +413,7 @@ test('the marks ghost the keys outside the scale in force', () => {
   expect(dotInk(marks.ctx, marked + 2, marked + 18, laneH)).toBeGreaterThan(0);
   // A strike takes its key back: D sharp struck wrong wears the grey face, and no border.
   marks.engine.strike({ midi: 63, velocity: 100, time: performance.timeOrigin + performance.now(), on: true });
-  marks.lane.frame(
-    marks.engine.snapshot(),
-    inForce(marks.engine),
-    marks.engine.windowTicks,
-    performance.timeOrigin + performance.now(),
+  marks.lane.frame(marks.engine.snapshot(), performance.timeOrigin + performance.now(),
   );
   expect(hex(marks.ctx, keyX(marks.lane, 63) + 14, laneH + 40)).not.toBe('#eaeaea');
   const struck = keyX(marks.lane, 63);
@@ -469,7 +459,7 @@ test('the Section band travels from the bars it had to the bars it takes', () =>
   const bare = WIDTH / 2;
   const wall = performance.timeOrigin + performance.now();
   const frame = (at: number) =>
-    lane.frame(engine.snapshot(), inForce(engine), engine.windowTicks, wall + at);
+    lane.frame(engine.snapshot(), wall + at);
   engine.setSection({ from: 0, to: 0 });
   frame(0);
   frame(200);
@@ -520,8 +510,8 @@ test('the wheel faces the scale in force, and covers nothing while the setting n
   const wall = performance.timeOrigin + performance.now();
   const on = mount({ height: WHEEL_HEIGHT, look: { harmony: 'wheel' } });
   // The first key of all fades in, so the band stands whole a slide after the frame it opens on.
-  on.lane.frame(on.engine.snapshot(), inForce(on.engine), on.engine.windowTicks, wall);
-  on.lane.frame(on.engine.snapshot(), inForce(on.engine), on.engine.windowTicks, wall + 250);
+  on.lane.frame(on.engine.snapshot(), wall);
+  on.lane.frame(on.engine.snapshot(), wall + 250);
   const colours = panelColours(on.ctx);
   for (const pc of IN_C) expect(colours.has(colorOf(pc, 'muted', false))).toBe(true);
   // A pitch class off the scale is hollow, so its face stands nowhere in the panel.
@@ -529,8 +519,8 @@ test('the wheel faces the scale in force, and covers nothing while the setting n
   on.lane.dispose();
 
   const off = mount({ height: WHEEL_HEIGHT });
-  off.lane.frame(off.engine.snapshot(), inForce(off.engine), off.engine.windowTicks, wall);
-  off.lane.frame(off.engine.snapshot(), inForce(off.engine), off.engine.windowTicks, wall + 250);
+  off.lane.frame(off.engine.snapshot(), wall);
+  off.lane.frame(off.engine.snapshot(), wall + 250);
   const bare = panelColours(off.ctx);
   for (const pc of IN_C) expect(bare.has(colorOf(pc, 'muted', false))).toBe(false);
   off.lane.dispose();
@@ -556,7 +546,7 @@ test('a key change cross-fades the band, and a seek snaps it', () => {
   });
   const wall = performance.timeOrigin + performance.now();
   const frame = (at: number) =>
-    lane.frame(engine.snapshot(), inForce(engine), engine.windowTicks, wall + at);
+    lane.frame(engine.snapshot(), wall + at);
   // F sharp belongs to D major alone, and B flat to E flat major alone.
   const sharp = colorOf(6, 'muted', false);
   const flat = colorOf(10, 'muted', false);
@@ -583,19 +573,6 @@ test('a key change cross-fades the band, and a seek snaps it', () => {
   const landed = panelColours(ctx);
   expect(landed.has(flat)).toBe(true);
   expect(landed.has(sharp)).toBe(false);
-  lane.dispose();
-});
-
-test('the band cross-fades to the key the frame is handed', () => {
-  const { engine, lane, ctx } = mount({ height: WHEEL_HEIGHT, look: { harmony: 'wheel' } });
-  const wall = performance.timeOrigin + performance.now();
-  // The piece writes no key signature, so only the key the frame carries can face F sharp.
-  const sharp = colorOf(6, 'muted', false);
-  lane.frame(engine.snapshot(), keyOf(0, 0), engine.windowTicks, wall);
-  lane.frame(engine.snapshot(), keyOf(2, 0), engine.windowTicks, wall + 16);
-  expect(panelColours(ctx).has(sharp)).toBe(false);
-  lane.frame(engine.snapshot(), keyOf(2, 0), engine.windowTicks, wall + 266);
-  expect(panelColours(ctx).has(sharp)).toBe(true);
   lane.dispose();
 });
 
@@ -664,7 +641,7 @@ test('a chord tone outside the key wears a dashed outline of its own and no face
   const wall = performance.timeOrigin + performance.now();
   const settle = (at: number) => {
     for (const step of [0, 300, 600]) {
-      lane.frame(engine.snapshot(), inForce(engine), engine.windowTicks, wall + at + step);
+      lane.frame(engine.snapshot(), wall + at + step);
     }
   };
   // The tonic chord first: a root the key holds keeps the face size means "now" is painted in.
@@ -695,7 +672,7 @@ test('a chord tone outside the key wears a dashed outline of its own and no face
 test('a pinch writes the lookahead it settled on once the fingers stop', async () => {
   const { lane, canvas } = mount();
   const written: number[] = [];
-  lane.onLook = ({ lookaheadBeats }) => written.push(lookaheadBeats!);
+  const stop = subscribe('lane_lookahead', () => written.push(setting('lane_lookahead')));
 
   // A trackpad pinch reaches the page as a wheel with ctrl held, one event per step.
   for (let i = 0; i < 3; i++) {
@@ -708,5 +685,6 @@ test('a pinch writes the lookahead it settled on once the fingers stop', async (
   expect(written).toEqual([]);
   await vi.waitFor(() => expect(written.length).toBe(1));
   expect(written[0]).toBeLessThan(DEFAULT_LANE_LOOK.lookaheadBeats);
+  stop();
   lane.dispose();
 });

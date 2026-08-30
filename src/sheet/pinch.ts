@@ -12,6 +12,14 @@ export const SPACING_MIN = 80;
 export const SPACING_MAX = 300;
 
 /**
+ * Paper a sheet spaced by time takes over the tightest measure's pixels per tick, as a percent. The
+ * slack is what carries the notes of a crowded bar to their own time; a bar still too crowded for
+ * the width it gets keeps VexFlow's packing. The whole sheet grows with the percent, and OSMD
+ * breaks its one line into systems past 32767 px.
+ */
+export const DEFAULT_SPACING = 150;
+
+/**
  * Per trackpad pixel a pinch reports, how much it scales the spacing: `exp(-deltaY * ZOOM_K)`. A
  * spread across the whole trackpad reports about seventy pixels, so it roughly doubles the paper.
  */
@@ -33,8 +41,8 @@ export interface PinchOptions {
   spacing: () => number;
   /** Whether the sheet has a spacing to pinch: one spaced by its engraving stands still. */
   active: () => boolean;
-  /** Every step of a live pinch, and `null` once it is over: the screen shows what it is choosing. */
-  onPinch: (pinch: Pinch | null) => void;
+  /** Every step of a live pinch, and `null` once it is over: the sheet shows what it is choosing. */
+  moving: (pinch: Pinch | null) => void;
   /** The pinch settled on a spacing other than the drawn one: the sheet draws it and stores it. */
   onSettle: (spacing: number) => void;
 }
@@ -129,7 +137,7 @@ export class SpacingPinch {
   private pinch(percent: number): void {
     if (!this.options.active()) return;
     this.zoomTo = clampSpacing(percent);
-    this.options.onPinch({ ...this.pointer, spacing: this.zoomTo });
+    this.options.moving({ ...this.pointer, spacing: this.zoomTo });
     clearTimeout(this.lookTimer);
     this.lookTimer = window.setTimeout(() => this.settle(), LOOK_MS);
   }
@@ -144,6 +152,6 @@ export class SpacingPinch {
     clearTimeout(this.lookTimer);
     this.lookTimer = 0;
     if (this.zoomTo !== this.options.spacing()) this.options.onSettle(this.zoomTo);
-    this.options.onPinch(null);
+    this.options.moving(null);
   }
 }

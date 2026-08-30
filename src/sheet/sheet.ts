@@ -5,8 +5,10 @@
 import { clamp } from '@/lib/utils';
 import { CURSOR, INK, PAPER, colorOf, tone } from '@/look/color';
 import { EASE, easeInOut, reducedMotion } from '@/look/motion';
-import type { NoteState, SeekTarget, Snapshot } from '@/play/engine';
+import type { NoteState, Snapshot } from '@/play/engine';
 import type { Section } from '@/play/section';
+import type { PlayView } from '@/play/view';
+import { set } from '@/settings/settings';
 import { isInactiveHand, type HandsSetting } from '@/play/settings';
 import { buildScore } from '@/score/build';
 import { loadInto } from '@/score/load';
@@ -14,7 +16,7 @@ import { analyzeHarmony } from '@/score/harmony';
 import type { ChordEvent, Note, PlayStep, Score } from '@/score/types';
 import { OpenSheetMusicDisplay, type Note as OsmdNote } from 'opensheetmusicdisplay';
 import { applyTheme, applyTiers, noteheadEl, paintHead } from './paint';
-import { SpacingPinch, type Pinch } from './pinch';
+import { DEFAULT_SPACING, SpacingPinch, type Pinch } from './pinch';
 import {
   bandWidth,
   hitAt,
@@ -27,7 +29,7 @@ import {
 import { projectStates, type Play } from './project';
 import { setTimed } from './spacing';
 
-export { SPACING_MAX, SPACING_MIN, type Pinch } from './pinch';
+export { DEFAULT_SPACING, SPACING_MAX, SPACING_MIN, type Pinch } from './pinch';
 
 /** Paper kept above the top staff line, the strip the chord bubbles sit in. */
 export const BUBBLE_STRIP = 28;
@@ -81,14 +83,6 @@ const RUNNER_W = 2;
 /** How long the cursor takes to slide when it is not being moved by the clock. */
 export const GLIDE_MS = 220;
 
-/**
- * Paper a sheet spaced by time takes over the tightest measure's pixels per tick, as a percent. The
- * slack is what carries the notes of a crowded bar to their own time; a bar still too crowded for
- * the width it gets keeps VexFlow's packing. The whole sheet grows with the percent, and OSMD
- * breaks its one line into systems past 32767 px.
- */
-export const DEFAULT_SPACING = 150;
-
 /** How long the cursor band takes to grow or shrink into a new size, as the Section's tint fades. */
 const EASE_MS = 200;
 
@@ -123,21 +117,18 @@ export interface SheetLook {
 }
 
 /**
- * One loaded sheet: its OSMD instance, its Score, the DOM it draws into and the cursor.
- * `open` gives all of it; the screen then only calls `frame` once a frame and `setDark` on a
- * theme change.
+ * One loaded sheet: its OSMD instance, its Score, the DOM it draws into and the cursor. `load`
+ * gives all of it, `open` says which play it draws, and from there the Play only calls `frame`
+ * once a frame and `setDark` on a theme change.
  */
 export class Sheet {
   readonly osmd: OpenSheetMusicDisplay;
   score!: Score;
-  /** A click on the paper that picked no Section: the screen decides what a seek does. */
-  onSeek: ((target: SeekTarget) => void) | null = null;
-  /** A drag picked or resized the Section, or the × cleared it. */
-  onSection: ((section: Section | null) => void) | null = null;
-  /** A pinch has settled on a spacing: the screen stores it. */
-  onLook: ((look: { spacing: number }) => void) | null = null;
-  /** Every step of a live pinch, and `null` once it is over: the screen shows what it is choosing. */
-  onPinch: ((pinch: Pinch | null) => void) | null = null;
+  /** What a pinch is choosing while it lasts, and `null` once it is over. */
+  pinching: Pinch | null = null;
+
+  /** The play the paper draws; every read of the clock and the Section goes through it. */
+  private play!: PlayView;
 
   private dark: boolean;
   /** Whether the measures take their width from their duration rather than from their engraving. */
@@ -288,17 +279,19 @@ export class Sheet {
     this.pinch = new SpacingPinch(host, {
       spacing: () => this.spacing,
       active: () => this.proportional,
-      onPinch: (pinch) => this.onPinch?.(pinch),
+      moving: (pinch) => {
+        this.pinching = pinch;
+      },
       onSettle: (spacing) => {
         this.spacing = spacing;
         this.reflow();
-        this.onLook?.({ spacing });
+        void set('sheet_spacing', spacing);
       },
     });
   }
 
   /** Loads the bytes, renders them on one line and builds the Score of what was rendered. */
-  static async open(
+  static async load(
     host: HTMLElement,
     bytes: Uint8Array,
     fileName: string,
@@ -323,12 +316,20 @@ export class Sheet {
     return sheet;
   }
 
+  /** The play this paper draws from here on. Nothing is drawn until a frame arrives. */
+  open(play: PlayView): void {
+    this.play = play;
+  }
+
+  /** The paper draws the note states, not the strikes: one event changes nothing it shows. */
+  effect(): void {}
+
   /** Left edge of an Onset in pixels of the unscaled content. */
   xOfOnset(index: number): number {
     return this.placement.placed[index]?.x ?? 0;
   }
 
-  /** Follows the engine's walk, so the cursor slides along the timeline the clock runs. */
+  /** Follows the play's walk, so the cursor slides along the timeline the clock runs. */
   setWalk(walk: PlayStep[]): void {
     if (walk === this.walk) return;
     this.walk = walk;
@@ -336,7 +337,7 @@ export class Sheet {
     this.drawn.step = -1;
   }
 
-  /** Draws the Section, or takes it off the paper. The screen owns whether there is one. */
+  /** Draws the Section, or takes it off the paper. The play owns whether there is one. */
   setSection(section: Section | null): void {
     this.section = section;
     this.drawSection();
@@ -501,7 +502,17 @@ export class Sheet {
    * One frame: the cursor to its interpolated x, the current Onset outlined, the jump marker while
    * it lasts, and the scroll that keeps the cursor about 30 % from the left edge.
    */
-  frame(snap: Snapshot, windowTicks: number, now: number): void {
+  frame(snap: Snapshot, now: number): void {
+    const play = this.play;
+    this.setWalk(play.walk);
+    this.setHands(play.settings.hands);
+    const section = play.section;
+    if (section?.from !== this.section?.from || section?.to !== this.section?.to) {
+      this.setSection(section);
+    }
+    // The sheet is a projection of the play: it draws the note states, never a copy of them.
+    this.project(play, snap.playedTick);
+    const windowTicks = play.windowTicks;
     this.fit();
     // A count-in stands the cursor where it leads, and sends the runner over the bars it counts.
     const counting = snap.state === 'counting-in';
@@ -686,7 +697,7 @@ export class Sheet {
   private down(event: PointerEvent): void {
     if (event.button !== 0) return;
     if (event.target === this.clear) {
-      this.onSection?.(null);
+      this.play.setSection(null);
       return;
     }
     const hit = this.hitAt(event.clientX);
@@ -717,13 +728,13 @@ export class Sheet {
     drag.moved = true;
     const hit = this.hitAt(event.clientX);
     if (!hit) return;
-    this.onSection?.({ from: drag.anchor, to: hit.measure });
+    this.play.setSection({ from: drag.anchor, to: hit.measure });
   }
 
   private up(event: PointerEvent): void {
     const drag = this.drag;
     this.drag = null;
-    if (drag && !drag.moved && event.target !== this.clear) this.onSeek?.(drag.hit.seek);
+    if (drag && !drag.moved && event.target !== this.clear) this.play.seek(drag.hit.seek);
   }
 
   /** The tinted band over the Section's bars, with a handle at each end of it. */

@@ -73,11 +73,11 @@ export class PreviewSheet {
   readonly osmd: OpenSheetMusicDisplay;
   score!: Score;
   /** A click on the paper: the screen decides what a seek does. */
-  onSeek: ((target: SeekTarget) => void) | null = null;
+  seekTo: ((target: SeekTarget) => void) | null = null;
   /** A pinch has settled on a spacing: the screen stores it. */
-  onLook: ((look: { spacing: number }) => void) | null = null;
+  spacedTo: ((spacing: number) => void) | null = null;
   /** Every step of a live pinch, and `null` once it is over: the screen shows what it is choosing. */
-  onPinch: ((pinch: Pinch | null) => void) | null = null;
+  pinching: ((pinch: Pinch | null) => void) | null = null;
   /**
    * The matching window in played ticks, which the band takes its width from. Opens at the global
    * window at the piece's written tempo; the screen writes it again as the tempo changes.
@@ -180,11 +180,11 @@ export class PreviewSheet {
     this.pinch = new SpacingPinch(host, {
       spacing: () => this.spacing,
       active: () => this.proportional,
-      onPinch: (pinch) => this.onPinch?.(pinch),
+      moving: (pinch) => this.pinching?.(pinch),
       onSettle: (spacing) => {
         this.spacing = spacing;
         this.draw();
-        this.onLook?.({ spacing });
+        this.spacedTo?.(spacing);
       },
     });
   }
@@ -471,7 +471,7 @@ export class PreviewSheet {
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
     const hit = hitAt(x, this.score.onsets, this.placement, this.systemAt(y));
-    if (hit) this.onSeek?.(hit.seek);
+    if (hit) this.seekTo?.(hit.seek);
   }
 
   /** The system a y of the paper falls in, or the nearest one when it falls between two. */

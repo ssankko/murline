@@ -9,6 +9,8 @@ import type { Note as OsmdNote } from 'opensheetmusicdisplay';
 import { expect, test } from 'vitest';
 import { noteheadEl } from './paint';
 import type { Play } from './project';
+import type { PlayView } from '@/play/view';
+import { setting, subscribe } from '@/settings/settings';
 import { DEFAULT_SPACING, SPACING_MAX, SPACING_MIN, Sheet, type Pinch } from './sheet';
 
 // Vite serves the fixture files as URLs, the closest a browser test gets to the bytes the app
@@ -41,7 +43,39 @@ function hostEl(): HTMLElement {
 }
 
 async function open(file = BACH, host = hostEl(), dark = false): Promise<Sheet> {
-  return Sheet.open(host, await bytesOf(file), file, dark);
+  const sheet = await Sheet.load(host, await bytesOf(file), file, dark);
+  stub = playOf(sheet);
+  sheet.open(stub);
+  return sheet;
+}
+
+/** The play the sheet last opened on, which a test writes what it wants the sheet to read. */
+let stub: StubPlay;
+
+/** What the sheet reads of a play; nothing here moves by itself. */
+type StubPlay = { -readonly [K in keyof PlayView]: PlayView[K] };
+
+function playOf(sheet: Sheet): StubPlay {
+  return {
+    score: sheet.score,
+    walk: sheet.score.playOrder,
+    notes: [],
+    noteState: () => 'pending',
+    resolvedAt: () => 0,
+    keyState: () => 'base',
+    heldNote: () => -1,
+    section: null,
+    loopSpan: () => null,
+    settings: DEFAULT_PLAY_SETTINGS,
+    countInBeats: [],
+    windowTicks: 100,
+    resets: 0,
+    version: 0,
+    wraps: 0,
+    finishes: 0,
+    seek: () => {},
+    setSection: () => {},
+  };
 }
 
 test('the sheet renders the piece on one horizontal line', async () => {
@@ -188,7 +222,7 @@ test('a chord bubble stands over every chord event and dims once the cursor is p
   const tickOf = (onsetIndex: number) =>
     sheet.score.playOrder.find((step) => step.onsetIndex === onsetIndex)!.tick;
   const at = (tickOf(events[2]!.onsetIndex) + tickOf(events[3]!.onsetIndex)) / 2;
-  sheet.frame(snapshot(at), 100, 0);
+  sheet.frame(snapshot(at), 0);
 
   expect(bubbles.filter((el) => el.classList.contains('past')).length).toBe(3);
   for (const el of bubbles.slice(0, 3)) expect(el.classList.contains('past')).toBe(true);
@@ -213,7 +247,7 @@ test('the harmony switch takes the chord bubbles off the paper and prints them a
 test('the lift keeps the highest ink of the sheet on the paper', async () => {
   const host = hostEl();
   const sheet = await open(MAZURKA, host);
-  sheet.frame(snapshot(0), 100, 0);
+  sheet.frame(snapshot(0), 0);
 
   const drawn = [...host.querySelectorAll('svg path, svg rect, svg text')];
   const ink = Math.min(...drawn.map((el) => el.getBoundingClientRect().top));
@@ -256,8 +290,8 @@ test('a sheet opened over one still in flight is the only one left on the paper'
   const bytes = await bytesOf(BACH);
   // What StrictMode does: one host, two opens in flight at once, and the sheet of the mount React
   // threw away is dropped as soon as its open lands.
-  const flying = Sheet.open(host, bytes, BACH, false);
-  const live = await Sheet.open(host, bytes, BACH, false);
+  const flying = Sheet.load(host, bytes, BACH, false);
+  const live = await Sheet.load(host, bytes, BACH, false);
   (await flying).dispose();
 
   expect(host.querySelectorAll('svg').length).toBe(1);
@@ -279,7 +313,7 @@ test('the cursor band stands over the first Onset', async () => {
   const host = hostEl();
   const sheet = await open(BACH, host);
 
-  sheet.frame(snapshot(0), 100, 0);
+  sheet.frame(snapshot(0), 0);
   const cursor = host.querySelector<HTMLElement>('.sheet-cursor')!;
 
   // Screen pixels, so the band is read where the eye finds it whatever moves it there.
@@ -327,11 +361,11 @@ test('the cursor band eases into a new size and takes its first one flat', async
   const sheet = await open(BACH, host);
   const cursor = host.querySelector<HTMLElement>('.sheet-cursor')!;
 
-  sheet.frame(snapshot(0), 100, 0);
+  sheet.frame(snapshot(0), 0);
   expect(getComputedStyle(cursor).transitionProperty).toBe('none');
 
   // The clock runs forward, so the x is written every frame and only the size eases.
-  sheet.frame(snapshot(0), 100, 16);
+  sheet.frame(snapshot(0), 16);
   expect(getComputedStyle(cursor).transitionProperty).toBe('width, height, top');
   expect(getComputedStyle(cursor).transitionDuration).toBe('0.2s, 0.2s, 0.2s');
   expect(getComputedStyle(cursor).transitionTimingFunction).toBe(
@@ -347,7 +381,7 @@ test('the view glides back to the cursor slowest at both ends of the glide', asy
   const scroll = host.firstElementChild as HTMLElement;
   // One tick far enough along the line that holding the cursor 30 % from the left edge scrolls.
   const at = (now: number) => {
-    sheet.frame(snapshot(sheet.score.playOrder[200]!.tick, { stepIndex: 200 }), 100, now);
+    sheet.frame(snapshot(sheet.score.playOrder[200]!.tick, { stepIndex: 200 }), now);
     return scroll.scrollLeft;
   };
 
@@ -369,7 +403,7 @@ test('a seek while the play runs glides the cursor band either way', async () =>
   const sheet = await open(BACH, host);
   const cursor = host.querySelector<HTMLElement>('.sheet-cursor')!;
   const run = (step: number, now: number) =>
-    sheet.frame(snapshot(sheet.score.playOrder[step]!.tick, { stepIndex: step }), 100, now);
+    sheet.frame(snapshot(sheet.score.playOrder[step]!.tick, { stepIndex: step }), now);
 
   // The clock walking from one step to the next writes the x flat, so the band keeps the beat.
   run(0, 0);
@@ -396,7 +430,7 @@ test('a seek while the play is still glides the view only when the cursor lands 
   const scroll = host.firstElementChild as HTMLElement;
   const idle = (step: number, now: number) => {
     const at = snapshot(sheet.score.playOrder[step]!.tick, { state: 'idle', stepIndex: step });
-    sheet.frame(at, 100, now);
+    sheet.frame(at, now);
     return scroll.scrollLeft;
   };
 
@@ -439,7 +473,7 @@ test('a resize scales the sheet around the cursor and never moves it on screen',
   };
   const step = 200;
   const frame = (now: number, state: Snapshot['state']) =>
-    sheet.frame(snapshot(sheet.score.playOrder[step]!.tick, { state, stepIndex: step }), 100, now);
+    sheet.frame(snapshot(sheet.score.playOrder[step]!.tick, { state, stepIndex: step }), now);
 
   // A bar mid-piece, the view glided onto it: paper stands on both sides of the cursor.
   frame(0, 'idle');
@@ -480,7 +514,7 @@ test('a click seeks to the nearest Onset, over a bar line and far from any noteh
   const host = hostEl();
   const sheet = await open(BACH, host);
   let sought: SeekTarget | null = null;
-  sheet.onSeek = (target) => {
+  stub.seek = (target) => {
     sought = target;
   };
 
@@ -513,7 +547,7 @@ test('a click on a rest seeks to its place in the bar, and a notehead still to i
   const host = hostEl();
   const sheet = await open(RESTS, host);
   let sought: SeekTarget | null = null;
-  sheet.onSeek = (target) => {
+  stub.seek = (target) => {
     sought = target;
   };
 
@@ -560,7 +594,7 @@ test('the cursor stands on the rest a bar opens with, not on the Onset after it'
 
   engine.seek({ measure: 0, into: 0 });
   expect(engine.snapshot().playedTick).toBe(0);
-  sheet.frame(engine.snapshot(), 100, 0);
+  sheet.frame(engine.snapshot(), 0);
 
   // Engraved, a moment stands at the middle of the glyph that draws it.
   const engraved = restBox(sheet);
@@ -569,7 +603,7 @@ test('the cursor stands on the rest a bar opens with, not on the Onset after it'
 
   // Spaced by time, a moment stands at the notehead VexFlow drew, which opens the glyph's box.
   sheet.setProportional(true);
-  sheet.frame(engine.snapshot(), 100, 16);
+  sheet.frame(engine.snapshot(), 16);
   expect(Math.abs(middle() - restBox(sheet).x)).toBeLessThan(1);
 
   sheet.dispose();
@@ -597,14 +631,14 @@ test('the count-in runs a line towards the cursor, which stands where the count-
 
   // A count-in into the first Onset counts at ticks before the walk, so the runner comes in from
   // the left of it rather than parking on it.
-  sheet.frame(countIn(-480), 100, 0);
+  sheet.frame(countIn(-480), 0);
   const far = middleOf(runner);
   const stood = cursor.style.transform;
   expect(runner.style.display).toBe('block');
   expect(far).toBeGreaterThan(0);
   expect(far).toBeLessThan(sheet.xOfOnset(0) - 1);
 
-  sheet.frame(countIn(-120), 100, 16);
+  sheet.frame(countIn(-120), 16);
   const near = middleOf(runner);
   expect(near).toBeGreaterThan(far);
   expect(near).toBeLessThan(sheet.xOfOnset(0));
@@ -613,11 +647,11 @@ test('the count-in runs a line towards the cursor, which stands where the count-
   expect(middleOf(cursor)).toBeCloseTo(sheet.xOfOnset(0), 0);
 
   // A count-in longer than the paper left of the first Onset holds the runner at the edge.
-  sheet.frame(countIn(-19200), 100, 32);
+  sheet.frame(countIn(-19200), 32);
   expect(middleOf(runner)).toBe(0);
 
   // Motion takes the runner off the paper.
-  sheet.frame(snapshot(0), 100, 48);
+  sheet.frame(snapshot(0), 48);
   expect(runner.style.display).toBe('none');
 
   sheet.dispose();
@@ -627,7 +661,7 @@ test('a drag that starts outside the Section picks a fresh one there', async () 
   const host = hostEl();
   const sheet = await open(BACH, host);
   let picked: Section | null = null;
-  sheet.onSection = (section) => {
+  stub.setSection = (section) => {
     picked = section;
     sheet.setSection(section);
   };
@@ -652,7 +686,7 @@ test('a fast resize chases the last bar line and never queues the ones before it
   const tint = host.querySelector<HTMLElement>('.sheet-section')!;
   const at = () => parseFloat(getComputedStyle(tint).left);
   const settle = () => new Promise((resolve) => setTimeout(resolve, 320));
-  sheet.onSection = (section) => sheet.setSection(section);
+  stub.setSection = (section) => sheet.setSection(section);
 
   sheet.setSection({ from: 0, to: 1 });
   await settle();
@@ -742,7 +776,8 @@ function fillOf(sheet: Sheet, source: OsmdNote): string | null | undefined {
 test("the play's note states are projected over the whole sheet, the outline with them", async () => {
   const sheet = await open();
   // The cursor stands at the first Onset, which the frame outlines.
-  sheet.frame(snapshot(0), 0, 0);
+  stub.windowTicks = 0;
+  sheet.frame(snapshot(0), 0);
   const notes = sheet.score.onsets.flatMap((onset) => onset.notes);
   const first = notes[0]!;
   const last = notes[notes.length - 1]!;
@@ -794,6 +829,7 @@ for (const file of [BACH, VOLTA]) {
   test(`every notehead of ${file} reads what the engine gives the lane`, async () => {
     const sheet = await open(file);
     const engine = new Engine(sheet.score, { ...DEFAULT_PLAY_SETTINGS, countInBars: 0 });
+    sheet.open(engine);
     const repeated = engine.notes.some(
       ({ note }, i) => engine.notes.findIndex((other) => other.note === note) !== i,
     );
@@ -816,8 +852,7 @@ for (const file of [BACH, VOLTA]) {
 
     const agrees = (): number => {
       const snap = engine.snapshot();
-      sheet.project(engine, snap.playedTick);
-      sheet.frame(snap, engine.windowTicks, 0);
+      sheet.frame(snap, 0);
       const colours = wanted(snap.playedTick);
       for (const [source, colour] of colours) expect(fillOf(sheet, source)).toBe(colour);
       return colours.size;
@@ -1039,16 +1074,16 @@ test('a pinch draws once the fingers stop, at what they settled on, around the c
   const host = hostEl();
   const sheet = await open(HORSEMAN, host);
   const scroll = host.firstElementChild as HTMLElement;
-  const stored: { spacing: number }[] = [];
+  const stored: number[] = [];
   const shown: (Pinch | null)[] = [];
-  sheet.onLook = (look) => void stored.push(look);
-  sheet.onPinch = (at) => void shown.push(at);
+  const stop = subscribe('sheet_spacing', () => stored.push(setting('sheet_spacing')));
+  const watch = () => shown.push(sheet.pinching);
   sheet.setProportional(true);
 
   const step = 60;
   const tick = sheet.score.playOrder[step]!.tick;
   const frame = (now: number) =>
-    sheet.frame(snapshot(tick, { state: 'idle', stepIndex: step }), 100, now);
+    sheet.frame(snapshot(tick, { state: 'idle', stepIndex: step }), now);
   /** Where the cursor stands in the block the reader sees. */
   const standing = () => sheet.cursorAt(tick, step, 100).x * scaleOf(host) - scroll.scrollLeft;
   const width = () => sheet.xOfOnset(sheet.score.onsets.length - 1);
@@ -1065,7 +1100,10 @@ test('a pinch draws once the fingers stop, at what they settled on, around the c
   // The fingers travel: every step is shown at the fingers and nothing is drawn. A render here
   // holds the main thread for hundreds of milliseconds, and WebKit drops the events it takes.
   gesture(host, 'gesturestart', 1);
-  for (let i = 1; i <= 20; i++) gesture(host, 'gesturechange', 1 + i / 40);
+  for (let i = 1; i <= 20; i++) {
+    gesture(host, 'gesturechange', 1 + i / 40);
+    watch();
+  }
   expect(renders()).toBe(0);
   expect(width()).toBe(tight);
   expect(shown.length).toBe(20);
@@ -1074,8 +1112,9 @@ test('a pinch draws once the fingers stop, at what they settled on, around the c
   // However much of the travel arrived, the end of the gesture carries all of it: one render, at
   // 150 % of the spacing the fingers started from, and the panel goes away.
   expect(gesture(host, 'gestureend', 1.5).defaultPrevented).toBe(true);
+  watch();
   expect(renders()).toBe(1);
-  expect(stored).toEqual([{ spacing: DEFAULT_SPACING * 1.5 }]);
+  expect(stored).toEqual([DEFAULT_SPACING * 1.5]);
   expect(shown[shown.length - 1]).toBe(null);
   expect(width()).toBeGreaterThan(tight);
   // The paper opened up around the cursor, which never moved in the block the reader sees.
@@ -1095,16 +1134,15 @@ test('a pinch draws once the fingers stop, at what they settled on, around the c
   expect(width()).toBe(tightest);
   expect(tightest).toBeLessThan(widest);
 
+  stop();
   sheet.dispose();
 }, 60_000);
 
 test('a pinch leaves a sheet spaced by its engraving alone', async () => {
   const host = hostEl();
   const sheet = await open(BACH, host);
-  const stored: { spacing: number }[] = [];
-  const shown: (Pinch | null)[] = [];
-  sheet.onLook = (look) => void stored.push(look);
-  sheet.onPinch = (at) => void shown.push(at);
+  const stored: number[] = [];
+  const stop = subscribe('sheet_spacing', () => stored.push(setting('sheet_spacing')));
   const engraved = sheet.xOfOnset(sheet.score.onsets.length - 1);
 
   // The page must never zoom under the fingers, whatever the sheet does with them.
@@ -1114,8 +1152,9 @@ test('a pinch leaves a sheet spaced by its engraving alone', async () => {
   await wait(400);
   expect(sheet.xOfOnset(sheet.score.onsets.length - 1)).toBe(engraved);
   expect(stored).toEqual([]);
-  expect(shown).toEqual([]);
+  expect(sheet.pinching).toBe(null);
 
+  stop();
   sheet.dispose();
 }, 60_000);
 

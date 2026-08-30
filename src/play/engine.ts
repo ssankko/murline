@@ -1,5 +1,5 @@
 // The play engine: the clock of one play and where it stands in the Score. Pure TypeScript, no
-// DOM, no React, no timer of its own. The screen owns the frame loop and feeds it wall time.
+// DOM, no React, no timer of its own. The Play owns the frame loop and feeds it wall time.
 
 import type { ClickStrength } from '@/play/click';
 import { playGrade, type NoteStrike, type PlayGrade } from '@/play/grade';
@@ -61,8 +61,8 @@ export interface PlayEvent {
 }
 
 /**
- * One inactive-hand note the sound engine is told to start or to let go. The play screen sends
- * these; nothing here reaches the matcher, Wait mode or the Grade.
+ * One inactive-hand note the sound engine is told to start or to let go. The Play sends these;
+ * nothing here reaches the matcher, Wait mode or the Grade.
  */
 export interface GhostEvent {
   midi: number;
@@ -123,7 +123,7 @@ interface Struck {
 export type NoteState = 'pending' | 'hit' | 'miss';
 
 /** How a key reads on the keyboard: its pitch colour, grey while held wrong, or unheld. */
-type KeyState = 'base' | 'grey' | 'color';
+export type KeyState = 'base' | 'grey' | 'color';
 
 /** Everything a frame needs to draw. Read once per frame; never held across frames. */
 export interface Snapshot {
@@ -209,7 +209,7 @@ export class Engine {
   private beatGrid: Beat[];
   /** First beat of the grid the clock has not passed yet. */
   private beatNext = 0;
-  /** Clicks owed to the screen in the order the clock crossed them, taken by `beats()`. */
+  /** Clicks owed to the metronome in the order the clock crossed them, taken by `beats()`. */
   private clicks: ClickStrength[] = [];
   /** First count-in beat the clock has not passed yet. */
   private countInNext = 0;

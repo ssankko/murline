@@ -6,6 +6,7 @@ use std::process::Command;
 use std::time::UNIX_EPOCH;
 
 use serde::Serialize;
+#[cfg(target_os = "macos")]
 use trash::macos::TrashContextExtMacos;
 
 const EXTENSIONS: [&str; 3] = ["musicxml", "xml", "mxl"];
@@ -77,12 +78,14 @@ pub async fn reveal_in_finder(path: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Moves the file to the macOS Trash, which is the only undo a delete has. `NSFileManager` does the
-/// move instead of the Finder, so deleting never asks the user for automation rights; the cost is
-/// that the Trash may not offer "Put Back" for the file.
+/// Moves the file to the system Trash, which is the only undo a delete has. On macOS `NSFileManager`
+/// does the move instead of the Finder, so deleting never asks the user for automation rights; the
+/// cost is that the Trash may not offer "Put Back" for the file.
 #[tauri::command]
 pub async fn trash_file(path: String) -> Result<(), String> {
+    #[allow(unused_mut)]
     let mut context = trash::TrashContext::default();
+    #[cfg(target_os = "macos")]
     context.set_delete_method(trash::macos::DeleteMethod::NsFileManager);
     context.delete(&path).map_err(|e| e.to_string())
 }

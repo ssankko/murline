@@ -23,8 +23,11 @@ jobs:
       - run: pnpm test
       # The Rust build embeds dist/, so the frontend is built before any cargo step.
       - run: pnpm build
+      # The toolchain matches rust-version in src-tauri/Cargo.toml, so clippy here and clippy on a
+      # laptop agree on the lint set.
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: '1.96'
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
@@ -49,6 +52,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.96'
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri

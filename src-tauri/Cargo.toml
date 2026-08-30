@@ -24,7 +24,7 @@ tar = "0.4"
 tauri = { version = "2.11.5", features = [] }
 tauri-plugin-dialog = "2.7.0"
 tauri-plugin-sql = { version = "2.4.0", features = ["sqlite"] }
-trash = { version = "5", default-features = false }
+trash = { version = "5", default-features = false, features = ["coinit_apartmentthreaded"] }
 unicode-normalization = "0.1"
 zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
 

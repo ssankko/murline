@@ -221,6 +221,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn a_symlink_that_points_back_up_the_tree_does_not_loop() {
         let root = tempfile::tempdir().unwrap();
         write(root.path(), "sub/piece.musicxml", "bytes");

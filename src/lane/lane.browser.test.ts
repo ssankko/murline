@@ -130,8 +130,8 @@ test('the wheel takes the view off the clock and the detach window brings it bac
   // A column with no key of the piece under it, so only the now-line can colour it.
   const bare = WIDTH / 2;
   const line = () => hex(ctx, bare, laneH - 1);
-  // The lane ages the detach window against the engine's wall clock, so the frames run on it.
-  const wall = performance.timeOrigin + performance.now();
+  // The lane ages the detach window against the wall clock, so the frames run on it.
+  let wall = performance.timeOrigin + performance.now();
   const frame = (at: number) =>
     lane.frame(engine.snapshot(), inForce(engine), engine.windowTicks, wall + at);
   frame(0);
@@ -141,6 +141,9 @@ test('the wheel takes the view off the clock and the detach window brings it bac
   const wheel = new WheelEvent('wheel', { deltaY: 200, cancelable: true, bubbles: true });
   canvas.dispatchEvent(wheel);
   expect(wheel.defaultPrevented).toBe(true);
+  // The window is measured from the wheel's own stamp, so the frames after it count from there,
+  // however long the frames before it took to draw.
+  wall = (lane as unknown as { scrolledAt: number }).scrolledAt;
   frame(10);
   expect(line()).toBe(tone(PAPER, false));
 

@@ -22,6 +22,11 @@ pub fn note(_midi: u8, velocity: u8, _on: bool, _raw: bool) -> u8 {
 
 pub fn set_keyboard_volume(_percent: u32) {}
 
+pub fn pedal(_value: u8) {}
+
+/// Nothing is sounding, so a lost MIDI port has nothing to let go of.
+pub fn release_all() {}
+
 pub fn set_velocity_curve(_min: u32, _max: u32, _curve: f64) {}
 
 pub fn effects() -> Vec<Effect> {

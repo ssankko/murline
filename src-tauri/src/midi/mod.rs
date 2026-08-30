@@ -2,13 +2,12 @@
 //! pedal to the sound engine, and only then tells the webview what was played, so the sound never
 //! waits on a round trip through JavaScript.
 //!
-//! What crosses into the webview is the same shape it has always used: a strike of MIDI number,
-//! velocity, on or off, and a Unix-millisecond time. Nothing here names CoreMIDI.
+//! What crosses into the webview is a strike of MIDI number, velocity, on or off, and a
+//! Unix-millisecond time: one shape on every platform, none of it naming a MIDI system.
 
 use serde::Serialize;
 
-#[cfg(target_os = "macos")]
-pub mod mac;
+mod input;
 
 /// The sustain pedal's controller number. The only controller that reaches the instrument: soft
 /// pedal, sostenuto, pitch bend and the rest are dropped where they are parsed.
@@ -65,7 +64,7 @@ impl Message {
     }
 }
 
-/// Reads the byte stream one port sends. Kept apart from CoreMIDI so the whole of the reading is
+/// Reads the byte stream one port sends. Kept apart from the ports so the whole of the reading is
 /// testable without a keyboard: a port hands its bytes to `feed` and gets messages back.
 ///
 /// Running status is why this is a state machine and not a match on three bytes: a keyboard is free
@@ -152,22 +151,12 @@ fn relisten(
 /// Opens the ports and keeps them open for as long as the app runs. Called once at setup, before
 /// the webview asks anything, so a key pressed on the boot screen already sounds.
 pub fn start(app: tauri::AppHandle) {
-    #[cfg(target_os = "macos")]
-    mac::start(app);
-    #[cfg(not(target_os = "macos"))]
-    let _ = app;
+    input::start(app);
 }
 
 #[tauri::command]
 pub fn midi_status() -> Status {
-    #[cfg(target_os = "macos")]
-    {
-        mac::status()
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        Status { error: Some("No MIDI input on this platform".into()), ..Status::default() }
-    }
+    input::status()
 }
 
 /// The rule the ports follow: listen on the pinned port alone, or on every port outside the hidden
@@ -175,10 +164,7 @@ pub fn midi_status() -> Status {
 /// sends them whole at every change.
 #[tauri::command]
 pub fn midi_listen(pinned: Option<String>, hidden: Vec<String>) {
-    #[cfg(target_os = "macos")]
-    mac::listen(pinned, hidden);
-    #[cfg(not(target_os = "macos"))]
-    let _ = (pinned, hidden);
+    input::listen(pinned, hidden);
 }
 
 #[cfg(test)]

@@ -22,9 +22,9 @@ pub mod sampler;
 pub mod stub;
 
 #[cfg(target_os = "macos")]
-use mac as engine;
+pub(crate) use mac as engine;
 #[cfg(not(target_os = "macos"))]
-use stub as engine;
+pub(crate) use stub as engine;
 
 use preview::PreviewNote;
 
@@ -380,6 +380,10 @@ mod tests {
         stub::set_envelope(Envelope::default());
         assert!(stub::envelope().is_none());
         stub::set_role_level(sampler::Role::Release, 50);
+        stub::pedal(64);
+        stub::release_all();
+        // A key still answers with a velocity, because the caller reports the one that sounded.
+        assert_eq!(stub::note(60, 100, true, false), 100);
 
         assert!(stub::effects().is_empty());
         assert!(stub::chain().is_empty());

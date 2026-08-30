@@ -161,6 +161,17 @@ describe('the index', () => {
   });
 });
 
+describe('a pitch written twice at one moment', () => {
+  test('two voices in unison ask for one strike', async () => {
+    const built = await score('unison.musicxml');
+    const unison = built.onsets[0]!.notes.filter((n) => n.midi === 60);
+    expect(unison).toHaveLength(2);
+    expect(unison.filter((n) => n.strikeable)).toHaveLength(1);
+    const strikeable = built.onsets.flatMap((o) => o.notes).filter((n) => n.strikeable);
+    expect(strikeable.map((n) => n.midi)).toEqual([60, 62, 64, 65]);
+  });
+});
+
 describe('a sheet with nothing to play', () => {
   test('a sheet with no part carries the same reason as a sheet with no note', () => {
     const sheet = { Instruments: [] } as unknown as Parameters<typeof buildScore>[0];

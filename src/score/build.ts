@@ -86,6 +86,15 @@ export function buildScore(sheet: MusicSheet): Score {
           });
         }
       }
+      // One key strikes once: a pitch a hand writes twice at one moment (two voices in unison) is
+      // expected once, and the twin is carried like a tie continuation.
+      const struck = new Set<string>();
+      for (const note of notes) {
+        if (!note.strikeable || note.grace) continue;
+        const key = `${note.hand}:${note.midi}`;
+        if (struck.has(key)) note.strikeable = false;
+        else struck.add(key);
+      }
       // A container of rests only is no moment of playing, so it becomes neither an Onset nor a step.
       if (notes.length === 0) {
         it.moveToNext();

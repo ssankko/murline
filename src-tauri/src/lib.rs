@@ -81,7 +81,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_sql::Builder::default()
-                .add_migrations("sqlite:piano.db", migrations())
+                .add_migrations("sqlite:murline.db", migrations())
                 .build(),
         )
         .setup(|app| {

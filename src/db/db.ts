@@ -252,7 +252,7 @@ let opening: Promise<Database> | undefined;
  * forgotten, so the next call opens again and a transient failure is one the user can retry.
  */
 export function getDb(): Promise<Database> {
-  opening ??= Database.load("sqlite:piano.db").catch((error: unknown) => {
+  opening ??= Database.load("sqlite:murline.db").catch((error: unknown) => {
     opening = undefined;
     throw error;
   });

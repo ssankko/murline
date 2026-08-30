@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Piano",
+  "productName": "Murline",
   "version": "0.1.0",
-  "identifier": "com.piano.app",
+  "identifier": "com.ssankko.murline",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Piano",
+        "title": "Murline",
         "width": 1400,
         "height": 1000,
         "titleBarStyle": "Overlay",

@@ -16,7 +16,7 @@ export function Onboarding({ onDone }: { onDone: (folder: string) => void }) {
 
   // A home directory the app cannot read leaves the field empty for the user to fill or choose.
   useEffect(() => {
-    void homeDir().then((home) => setFolder(`${home}/Music/Piano`), () => {});
+    void homeDir().then((home) => setFolder(`${home}/Music/Murline`), () => {});
   }, []);
 
   async function choose() {
@@ -48,7 +48,7 @@ export function Onboarding({ onDone }: { onDone: (folder: string) => void }) {
     <div className="flex h-full items-center justify-center">
       <div className="flex w-[520px] flex-col gap-6">
         <div className="flex flex-col gap-2">
-          <h1 className="text-[28px] leading-tight font-semibold tracking-tight">Piano</h1>
+          <h1 className="text-[28px] leading-tight font-semibold tracking-tight">Murline</h1>
           <p className="text-muted-ink text-[13px]">
             Pick the folder that holds your scores. The app reads and writes MusicXML files there
             and touches nothing else.

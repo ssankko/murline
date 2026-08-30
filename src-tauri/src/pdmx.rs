@@ -82,7 +82,7 @@ pub fn pdmx_cancel() {
 /// Zenodo answers 403 to a request without a `User-Agent`, and reqwest sends none by itself.
 fn client() -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
-        .user_agent(concat!("piano/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("murline/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(READ_TIMEOUT)
         .build()

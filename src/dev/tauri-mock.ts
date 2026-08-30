@@ -30,7 +30,7 @@ export function installTauriMock(): void {
     transformCallback: (cb) => cb,
     isTauri: true,
     invoke: async (cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === 'plugin:sql|load') return 'sqlite:piano.db';
+      if (cmd === 'plugin:sql|load') return 'sqlite:murline.db';
       if (cmd === 'plugin:sql|select') return rows(String(args?.query ?? ''));
       if (cmd === 'plugin:sql|execute') return [0, 0];
       if (cmd === 'list_library') return [];

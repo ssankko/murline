@@ -1,12 +1,12 @@
 [package]
-name = "piano"
+name = "murline"
 version = "0.1.0"
 description = "Practise piano from sheet music with a MIDI keyboard"
 edition = "2024"
 rust-version = "1.96"
 
 [lib]
-name = "piano_lib"
+name = "murline_lib"
 crate-type = ["rlib"]
 
 [build-dependencies]

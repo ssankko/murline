@@ -1,4 +1,4 @@
-# Piano
+# Murline
 
 A desktop app that helps one person practise piano from imported sheet music with a MIDI keyboard.
 

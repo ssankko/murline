@@ -2,7 +2,7 @@
 
 ### Issue tracker
 
-Issues live as local markdown files under `.scratch/<feature-slug>/`. See `docs/agents/issue-tracker.md`.
+Issues live in GitHub Issues of `ssankko/murline`, through the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

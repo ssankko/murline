@@ -130,7 +130,7 @@ There is much to fix and improve yet, so if you encounter some bug or frustratin
 No release builds yet. You need macOS, [Rust](https://rustup.rs) 1.96 or newer, and [pnpm](https://pnpm.io).
 
 ```sh
-git clone <repo-url> murline
+git clone https://github.com/ssankko/murline.git
 cd murline
 pnpm install
 pnpm dev             # run with hot reload
@@ -146,7 +146,7 @@ Nobody asked me questions yet, so go ahead.
 
 ## How it is built
 
-Rust handles the machine: the library folder, the score finder, CoreMIDI input and the sound engine with its EXS/SoundFont sampler and Audio Unit hosting through `objc2`. React 19 and TypeScript handle the visuals and MusicXML parsing, since [OpenSheetMusicDisplay](https://opensheetmusicdisplay.org) is picky on the input side.
+Rust handles the machine: the library folder, the score finder, MIDI input through `midir` and the sound engine with its EXS/SoundFont sampler and Audio Unit hosting through `objc2`. React 19 and TypeScript handle the visuals and MusicXML parsing, since [OpenSheetMusicDisplay](https://opensheetmusicdisplay.org) is picky on the input side.
 
 `CONTEXT.md` is the glossary. Every term in the code has one name there.
 
@@ -188,3 +188,9 @@ Nothing here is promised, just a short list of ideas I find amusing.
 ## License
 
 [AGPL-3.0-or-later](LICENSE). Use it, change it, share it, and share the source of what you built with it.
+
+## Data sources
+
+The score finder searches two indexes I build and commit: `src-tauri/index/kernscores.json` from [KernScores](https://kern.ccarh.org) listings and `src-tauri/index/pdmx.tsv` from the [PDMX](https://zenodo.org/records/15571083) dataset. The scores themselves download from those sites, not from this repo, and each file keeps the licence its collection gives it. Check the collection before you publish anything you made from a download.
+
+The test scores under `src/score/fixtures/` and `src-tauri/fixtures/` are encodings of public-domain works: three from the [OpenSheetMusicDisplay](https://github.com/opensheetmusicdisplay/opensheetmusicdisplay) demo (Bach BWV 846, Clementi Op. 36 No. 1, Joplin's The Entertainer), the rest exported from KernScores and PDMX, plus a few bars I wrote by hand.

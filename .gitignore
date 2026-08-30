@@ -1,12 +1,13 @@
 node_modules/
 dist/
 .DS_Store
-# Throwaway prototypes, 4.7 GB of node_modules, cargo targets and PDMX data
-.scratch/piano-v1-spec/proto/
 test-results/
 .vitest-attachments/
 __screenshots__/
 scripts/cache/
 .worktrees/
-.impeccable/hook.cache.json
 .claude/worktrees/
+# Local-only agent state: issue tracker, session memory, design-tool config
+.scratch/
+.memory/
+.impeccable/

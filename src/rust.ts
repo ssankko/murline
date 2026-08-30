@@ -1,7 +1,7 @@
 // The one door between the window and the Rust side. Every command and every event is named here
 // once, with the shape it takes and the shape it answers, and this is the only module in `src/`
-// that imports the Tauri API. Tests and the `?mocktauri` dev mode put `src/rust.fake.ts` behind
-// `setRust`, so the door has a second adapter rather than a mocked import.
+// that imports `invoke` and `listen`. Tests and the `?mocktauri` dev mode put `src/rust.fake.ts`
+// behind `setRust`, so the door has a second adapter rather than a mocked import.
 
 import type { PreviewNote } from '@/audio/preview';
 import type {
@@ -173,7 +173,7 @@ export interface Meter {
   load: number;
 }
 
-/** Where Preview playback stands, sent about thirty times a second. */
+/** Where the Preview's transport stands, sent about thirty times a second. */
 export interface PreviewProgress {
   seconds: number;
   playing: boolean;

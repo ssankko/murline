@@ -107,9 +107,8 @@ export type Settings = {
   /** What a plugin instrument's own window was last left set to. */
   instrument_state: string | null;
   /** The envelope each sampler instrument has been given, under the instrument's own opaque id.
-   * One missing from here plays with the envelope its file asks for, which is why this holds only
-   * the instruments the user has actually shaped. Plugins never appear: they have their own
-   * window for it. */
+   * An instrument missing from here plays the envelope its file asks for, and a plugin never
+   * appears because its own window holds that. */
   instrument_envelopes: Record<string, Envelope>;
   /** The level of each role, 0 to 100, under the instrument's own opaque id. A role missing from an
    * instrument's map sounds at 100, which is why this holds only what the user has moved. */

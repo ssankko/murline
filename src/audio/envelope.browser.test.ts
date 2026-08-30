@@ -13,11 +13,6 @@ const OWN: Envelope = { attack: 0.01, decay: 0.5, sustain: 0.8, release: 0.2 };
 let answer: Envelope | null = OWN;
 let rust: FakeRust;
 
-/** Every setting written so far, in the shape the store sent it. */
-function written(): [string, unknown][] {
-  return rust.argsOf('settings_write').map(({ key, value }) => [key, value]);
-}
-
 let close: (() => void) | null = null;
 let host: HTMLElement | null = null;
 
@@ -119,7 +114,7 @@ test('the envelope is kept under the instrument it was shaped for', async () => 
   await move('Sustain', '40');
   await vi.waitFor(
     () =>
-      expect(written()).toContainEqual([
+      expect(rust.written()).toContainEqual([
         'instrument_envelopes',
         { 'other.sf2': OWN, 'sine.sf2': { ...OWN, sustain: 0.4 } },
       ]),

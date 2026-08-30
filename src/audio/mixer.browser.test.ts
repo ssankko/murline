@@ -18,18 +18,13 @@ const PLAYING: AudioStatus = {
 let status: AudioStatus = PLAYING;
 let rust: FakeRust;
 
-/** The two faders as the last session left them. */
+/** The two faders as the last launch left them. */
 const STORED: Record<string, unknown> = {
   keyboard_volume: 80,
   click_volume: 40,
   instruments_folder: '/instruments',
   instrument_id: 'grand',
 };
-
-/** Every setting written so far, in the shape the store sent it. */
-function written(): [string, unknown][] {
-  return rust.argsOf('settings_write').map(({ key, value }) => [key, value]);
-}
 
 let root: Root | null = null;
 let host: HTMLElement | null = null;
@@ -98,7 +93,7 @@ test('the keyboard fader writes the setting and reaches the running engine', asy
   await open();
   await userEvent.fill(fader('Keyboard'), '30');
 
-  expect(written()).toContainEqual(['keyboard_volume', 30]);
+  expect(rust.written()).toContainEqual(['keyboard_volume', 30]);
 });
 
 test('the keyboard fader goes to 200 and the metronome stops at 100', async () => {
@@ -107,7 +102,7 @@ test('the keyboard fader goes to 200 and the metronome stops at 100', async () =
   expect(fader('Metronome').max).toBe('100');
 
   await userEvent.fill(fader('Keyboard'), '200');
-  expect(written()).toContainEqual(['keyboard_volume', 200]);
+  expect(rust.written()).toContainEqual(['keyboard_volume', 200]);
 });
 
 test('the metronome fader is the click volume and touches the engine gain not at all', async () => {
@@ -115,7 +110,7 @@ test('the metronome fader is the click volume and touches the engine gain not at
   await userEvent.fill(fader('Metronome'), '0');
 
   // The click volume is the app's own, so the keyboard fader is left where it was.
-  expect(written()).toEqual([['click_volume', 0]]);
+  expect(rust.written()).toEqual([['click_volume', 0]]);
 });
 
 test('the mixer carries the two faders and nothing that makes the sound', async () => {

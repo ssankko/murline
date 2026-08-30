@@ -20,11 +20,6 @@ async function keep(all: Record<string, Partial<Record<Role, number>> | Role[]>)
   await load();
 }
 
-/** Every setting written so far, in the shape the store sent it. */
-function written(): [string, unknown][] {
-  return rust.argsOf('settings_write').map(({ key, value }) => [key, value]);
-}
-
 /** What the engine was asked, the settings aside. */
 function asked(): string[] {
   return rust.calls.map(({ name }) => name).filter((name) => !name.startsWith('settings_'));
@@ -92,7 +87,7 @@ test('moving a role keeps its level and sends it to the engine', async () => {
 
   await userEvent.fill(slider('Key-off noise')!, '40');
   await vi.waitFor(() =>
-    expect(written()).toContainEqual([
+    expect(rust.written()).toContainEqual([
       'instrument_roles',
       { 'other.exs': { release: 0 }, 'grand.exs': { key_off: 40 } },
     ]),

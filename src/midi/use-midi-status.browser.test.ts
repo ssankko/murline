@@ -33,11 +33,6 @@ beforeEach(async () => {
   await load();
 });
 
-/** Every setting written so far, oldest first, in the shape the store sent it. */
-function written(): [string, unknown][] {
-  return rust.argsOf('settings_write').map(({ key, value }) => [key, value]);
-}
-
 const struck: StrikeEvent[] = [];
 let shown: MidiStatus = {
   devices: [],
@@ -95,17 +90,17 @@ test('every choice sends the rule again and only the lasting ones are written', 
   // For this session alone: nothing is written, so the next launch is on the default again.
   useDevice('2');
   expect(sent()).toEqual({ pinned: '2', hidden: [] });
-  expect(written()).toEqual([]);
+  expect(rust.written()).toEqual([]);
 
   // For good, and now: the session pin steps aside so the new default is what is listened to.
   setDefaultDevice('2');
-  expect(written()).toEqual([['midi_device', '2']]);
+  expect(rust.written()).toEqual([['midi_device', '2']]);
   expect(sent()).toEqual({ pinned: '2', hidden: [] });
   await vi.waitFor(() => expect(shown.defaultId).toBe('2'));
 
   // Hiding the default clears it, or the rule would open the port that was just put away.
   hideDevice('2');
-  expect(written().slice(1)).toEqual([
+  expect(rust.written().slice(1)).toEqual([
     ['midi_device', null],
     ['midi_hidden', ['2']],
   ]);

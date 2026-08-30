@@ -32,11 +32,6 @@ const STORED: Record<string, unknown> = {
   instruments_folder: "/instruments",
 };
 
-/** Every setting written so far, in the shape the store sent it. */
-function written(): [string, unknown][] {
-  return rust.argsOf("settings_write").map(({ key, value }) => [key, value]);
-}
-
 let close: (() => void) | null = null;
 
 beforeEach(async () => {
@@ -127,7 +122,7 @@ test("choosing a device writes the setting and moves the engine", async () => {
   clickText("MacBook Pro Speakers");
 
   await vi.waitFor(() =>
-    expect(written()).toContainEqual(["audio_output_device", "BuiltInSpeakerDevice"]),
+    expect(rust.written()).toContainEqual(["audio_output_device", "BuiltInSpeakerDevice"]),
   );
 });
 
@@ -137,7 +132,7 @@ test("choosing a buffer size writes the setting and applies it", async () => {
 
   clickText("128", document.querySelector("#setting-row-audio_buffer_frames")!);
 
-  await vi.waitFor(() => expect(written()).toContainEqual(["audio_buffer_frames", 128]));
+  await vi.waitFor(() => expect(rust.written()).toContainEqual(["audio_buffer_frames", 128]));
   // The readout is asked again, because the buffer is most of what the latency is.
   await vi.waitFor(() =>
     expect(rust.argsOf("audio_status").length).toBeGreaterThan(1),
@@ -150,7 +145,7 @@ test("choosing a voice limit writes the setting and loads the instrument again a
 
   clickText("512", document.querySelector("#setting-row-audio_voices")!);
 
-  await vi.waitFor(() => expect(written()).toContainEqual(["audio_voices", 512]));
+  await vi.waitFor(() => expect(rust.written()).toContainEqual(["audio_voices", 512]));
   // The streaming rings are allocated with the instrument, so it goes in again at the new count.
   await vi.waitFor(() =>
     expect(rust.calls.map((one) => one.name)).toContain("audio_load_instrument"),

@@ -221,12 +221,9 @@ pub fn apply(key: &str, all: &crate::settings::Stored) -> Result<(), String> {
     }
 }
 
-/// Builds the graph, starts it on the output device and puts the stored settings back on it. The
-/// boot screen prints ok or the reason, and a failure leaves every later step running.
-///
-/// Each setting is applied whatever the one before it did: a device that has been unplugged must
-/// not cost the app its effect chain. Only the start itself stops the rest, because nothing can be
-/// applied to an engine that is not there.
+/// Builds the graph, starts it on the output device and puts the stored settings back on it. Each
+/// setting is applied whatever the one before it did, so an unplugged device does not cost the app
+/// its effect chain; only a failed start stops the rest.
 #[tauri::command]
 pub async fn audio_start(app: tauri::AppHandle) -> Result<(), String> {
     engine::start()?;

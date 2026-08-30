@@ -25,11 +25,6 @@ beforeEach(async () => {
   await load();
 });
 
-/** Every setting written so far, oldest first, in the shape the store sent it. */
-function written(): [string, unknown][] {
-  return rust.argsOf('settings_write').map(({ key, value }) => [key, value]);
-}
-
 /** The one open popover on the page. Radix puts it in a portal, so ask the whole page. */
 function popover(): HTMLElement | null {
   return document.querySelector('[data-slot="popover-content"]');
@@ -89,7 +84,7 @@ test('the popover says what is listened to and takes Use, Default, Hide and Show
   // Use: this session only, so nothing is written.
   button('Use Roland').click();
   expect(sent()).toEqual({ pinned: '1', hidden: [] });
-  expect(written()).toEqual([]);
+  expect(rust.written()).toEqual([]);
   relisted(['Roland'], '1');
   await vi.waitFor(() => expect(button('Use Roland').textContent).toBe('In use'));
   expect(button('Use Roland').getAttribute('aria-pressed')).toBe('true');
@@ -97,7 +92,7 @@ test('the popover says what is listened to and takes Use, Default, Hide and Show
 
   // Default: written, and in force at once.
   button('Default IAC').click();
-  expect(written()).toEqual([['midi_device', '2']]);
+  expect(rust.written()).toEqual([['midi_device', '2']]);
   expect(sent()).toEqual({ pinned: '2', hidden: [] });
   await vi.waitFor(() => expect(button('Default IAC').getAttribute('aria-pressed')).toBe('true'));
   relisted(['IAC'], '2');

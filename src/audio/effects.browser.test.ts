@@ -12,8 +12,8 @@ const GONE = 'aumf:FR2p:FabF';
 let rust: FakeRust;
 
 /** Every chain written so far, oldest first. */
-function written(): EffectSlot[][] {
-  return rust.argsOf('settings_write').map(({ value }) => value as EffectSlot[]);
+function chains(): EffectSlot[][] {
+  return rust.written().map(([, value]) => value as EffectSlot[]);
 }
 
 let close: (() => void) | null = null;
@@ -76,21 +76,21 @@ test('a slot switched off writes the whole chain and keeps every other slot as i
   expect(button('On').getAttribute('aria-pressed')).toBe('true');
   button('Off').click();
 
-  await vi.waitFor(() => expect(written()).toHaveLength(1));
-  expect(written()[0]).toEqual([
+  await vi.waitFor(() => expect(chains()).toHaveLength(1));
+  expect(chains()[0]).toEqual([
     { id: REVERB, name: 'AUReverb2', bypass: true, state: '' },
     { id: GONE, name: 'Pro-R 2', bypass: false, state: 'AAAA' },
   ]);
   // What is stored is the user's chain, never the engine's word about this Mac.
-  expect(written()[0]![1]).not.toHaveProperty('missing');
+  expect(chains()[0]![1]).not.toHaveProperty('missing');
 });
 
 test('removing a slot writes the chain without it', async () => {
   const text = await open();
   button('Remove').click();
 
-  await vi.waitFor(() => expect(written()).toHaveLength(1));
-  expect(written()[0]!.map((slot) => slot.id)).toEqual([GONE]);
+  await vi.waitFor(() => expect(chains()).toHaveLength(1));
+  expect(chains()[0]!.map((slot) => slot.id)).toEqual([GONE]);
   await vi.waitFor(() => expect(text()).not.toContain('AUReverb2'));
 });
 
@@ -117,6 +117,6 @@ test('an effect picked from the list lands at the end of the chain', async () =>
   )!;
   (item as HTMLElement).click();
 
-  await vi.waitFor(() => expect(written()).toHaveLength(1));
-  expect(written()[0]!.map((slot) => slot.id)).toEqual([REVERB, GONE, REVERB]);
+  await vi.waitFor(() => expect(chains()).toHaveLength(1));
+  expect(chains()[0]!.map((slot) => slot.id)).toEqual([REVERB, GONE, REVERB]);
 });

@@ -10,11 +10,6 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 let rust: FakeRust;
 
-/** Every setting written so far, in the shape the store sent it. */
-function written(): [string, unknown][] {
-  return rust.argsOf('settings_write').map(({ key, value }) => [key, value]);
-}
-
 let close: (() => void) | null = null;
 let host: HTMLElement | null = null;
 
@@ -92,14 +87,14 @@ test('every slider writes as it moves, and one never undoes another', async () =
   await open();
 
   await move('Minimum velocity', '40');
-  expect(written()).toContainEqual(['velocity_min', 40]);
+  expect(rust.written()).toContainEqual(['velocity_min', 40]);
 
   await move('Maximum velocity', '90');
-  expect(written()).toContainEqual(['velocity_max', 90]);
+  expect(rust.written()).toContainEqual(['velocity_max', 90]);
 
   // The curve carries the two ends that were just set.
   await move('Velocity curve', '20');
-  expect(written()).toContainEqual(['velocity_curve', curveOf(20)]);
+  expect(rust.written()).toContainEqual(['velocity_curve', curveOf(20)]);
   expect(slider('Minimum velocity').value).toBe('40');
   expect(slider('Maximum velocity').value).toBe('90');
 });
@@ -109,11 +104,11 @@ test('the minimum cannot be dragged past the maximum, nor the maximum under it',
 
   await move('Maximum velocity', '60');
   await move('Minimum velocity', '100');
-  expect(written()).toContainEqual(['velocity_min', 60]);
+  expect(rust.written()).toContainEqual(['velocity_min', 60]);
   expect(slider('Minimum velocity').value).toBe('60');
 
   await move('Maximum velocity', '20');
-  expect(written()).toContainEqual(['velocity_max', 60]);
+  expect(rust.written()).toContainEqual(['velocity_max', 60]);
   expect(slider('Maximum velocity').value).toBe('60');
 });
 

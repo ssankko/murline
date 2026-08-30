@@ -48,11 +48,6 @@ function hold(): { promise: Promise<void>; release: () => void } {
   return { promise, release };
 }
 
-/** Every setting written so far, in the shape the store sent it. */
-function written(): [string, unknown][] {
-  return rust.argsOf('settings_write').map(({ key, value }) => [key, value]);
-}
-
 /** The settings a launch finds. No instrument here has been given an envelope. */
 async function stored(settings: Partial<Settings> = {}): Promise<void> {
   fakeSettings.clear();
@@ -148,7 +143,7 @@ test('choosing writes the setting, loads at once, and marks the row it is on', a
   await vi.waitFor(() =>
     expect(rust.argsOf('audio_load_instrument')).toEqual([{ id: CONCERT.id, state: null }]),
   );
-  expect(written()).toContainEqual(['instrument_id', CONCERT.id]);
+  expect(rust.written()).toContainEqual(['instrument_id', CONCERT.id]);
   await vi.waitFor(() => expect(trigger().textContent).toContain('Concert Grand Piano'));
 
   openPicker();
@@ -207,20 +202,20 @@ test('an instrument recorded below the rate in force drags the rate down to its 
   await stored({ instrument_id: CONCERT.id });
   status = { ...NO_STATUS, instrument: 'Concert Grand Piano', instrument_rate: 44100 };
   await open('Concert Grand Piano');
-  await vi.waitFor(() => expect(written()).toContainEqual(['audio_sample_rate', 44100]));
+  await vi.waitFor(() => expect(rust.written()).toContainEqual(['audio_sample_rate', 44100]));
 });
 
 test('a first launch plays Logic Concert Grand without being asked', async () => {
   await restoreInstrument();
   expect(rust.argsOf('audio_load_instrument')).toEqual([{ id: CONCERT.id, state: null }]);
-  expect(written()).toEqual([['instrument_id', CONCERT.id]]);
+  expect(rust.written()).toEqual([['instrument_id', CONCERT.id]]);
 });
 
 test('a launch after a choice puts that one back, with the state it was left in', async () => {
   await stored({ instrument_id: BROKEN.id, instrument_state: 'YmxvYg==' });
   await restoreInstrument();
   expect(rust.argsOf('audio_load_instrument')).toEqual([{ id: BROKEN.id, state: 'YmxvYg==' }]);
-  expect(written()).toEqual([]);
+  expect(rust.written()).toEqual([]);
 });
 
 test('a Mac with no instrument at all loads none', async () => {

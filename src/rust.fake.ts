@@ -279,6 +279,8 @@ export interface FakeRust {
   calls: Called[];
   /** The arguments of every call of one command. */
   argsOf<K extends CommandName>(name: K): Commands[K]['args'][];
+  /** Every setting written so far, oldest first, in the shape the store sent it. */
+  written(): [string, unknown][];
   /** Sends an event, as the Rust side would. */
   emit<K extends EventName>(name: K, payload: Events[K]): void;
   /** Puts this fake back behind the door, for a test file whose module under test subscribes to
@@ -315,6 +317,11 @@ export function fakeRust(overrides: Partial<Answers> = {}): FakeRust {
   return {
     calls,
     argsOf: (name) => calls.filter((c) => c.name === name).map((c) => c.args) as never,
+    written: () =>
+      calls
+        .filter((c) => c.name === 'settings_write')
+        .map((c) => c.args as { key: string; value: unknown })
+        .map(({ key, value }) => [key, value]),
     emit: (name, payload) => {
       for (const handler of handlers.get(name) ?? []) handler(payload);
     },

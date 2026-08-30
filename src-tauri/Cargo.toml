@@ -3,6 +3,7 @@ name = "murline"
 version = "0.1.0"
 description = "Practise piano from sheet music with a MIDI keyboard"
 edition = "2024"
+license = "AGPL-3.0-or-later"
 rust-version = "1.96"
 
 [lib]

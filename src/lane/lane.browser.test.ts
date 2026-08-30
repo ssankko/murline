@@ -200,6 +200,29 @@ test('a click up the lane seeks to the step it points at and the view stands sti
   lane.dispose();
 });
 
+test('the end of a practice rolls the notes back to the start with the clock', () => {
+  const { engine, lane } = mount();
+  const wall = performance.timeOrigin + performance.now();
+  const frame = (at: number) =>
+    lane.frame(engine.snapshot(), wall + at);
+  frame(0);
+  // The bar runs out at 60 BPM in steps of a frame, as the play screen drives it.
+  let at = 0;
+  while (engine.snapshot().state === 'running' && at < 6000) {
+    at += 100;
+    engine.advance(100, wall + at);
+    frame(at);
+  }
+  expect(engine.snapshot()).toMatchObject({ state: 'idle', playedTick: 0 });
+
+  // The clock parks at the start point, and the notes stand where the piece ended and glide down
+  // to it rather than being there the next frame.
+  expect(viewOf(lane)).toBeGreaterThan(TICKS_PER_QUARTER);
+  frame(at + GLIDE_MS);
+  expect(viewOf(lane)).toBe(0);
+  lane.dispose();
+});
+
 /**
  * Where the now-line's ink centres in a column with no key and no block under it, as a lane row.
  * Only the line is near black there, so weighting the rows by darkness finds it whatever the beat

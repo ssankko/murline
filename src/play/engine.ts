@@ -172,7 +172,7 @@ export class Engine {
   /** Played ticks of the beats being counted in, before the tick the count-in leads to. */
   countInBeats: number[] = [];
   kind: PlayKind = 'practice';
-  /** Bumped every time the notes are opened again, which is what tells the lane the clock jumped. */
+  /** Bumped every time the clock moves by itself rather than by time, which the lane holds still under. */
   resets = 0;
   /** Bumped on every write to a note state, so the sheet knows its projection is stale. */
   version = 0;
@@ -444,6 +444,9 @@ export class Engine {
     this.performance = null;
     this.state = 'idle';
     this.tick = this.startTick;
+    // The clock lands back at the start point, so the lane rolls the notes there instead of standing
+    // at the tick the play left off at.
+    this.resets++;
     this.stopStep = null;
     this.countInBeats = [];
     this.syncClock();

@@ -288,8 +288,11 @@ describe('the lifecycle', () => {
     play.seek({ measure: 0 });
     expect(play.resets).toBeGreaterThan(opened);
 
+    // Running off the end parks the clock at the start point, which is a jump like any seek.
+    const before = play.resets;
     play.advance(60_000);
     expect(play.finishes).toBe(1);
+    expect(play.resets).toBeGreaterThan(before);
   });
 
   test('the end tick holds the last written duration plus the matching window', () => {

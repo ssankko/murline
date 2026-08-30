@@ -9,15 +9,14 @@ import {
   type Onset,
   type Score,
 } from '@/score/types';
-import { invoke } from '@tauri-apps/api/core';
-import { beforeEach, expect, test, vi } from 'vitest';
+import { fakeRust, type FakeRust } from '@/rust.fake';
+import { beforeEach, expect, test } from 'vitest';
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(() => Promise.resolve()) }));
+let rust: FakeRust;
 
 beforeEach(() => {
-  vi.mocked(invoke).mockClear();
   silenceGhosts();
-  vi.mocked(invoke).mockClear();
+  rust = fakeRust();
 });
 
 const BAR = 4 * TICKS_PER_QUARTER;
@@ -163,20 +162,17 @@ test('each owed note is one call of the note command, and a silence lets go of w
   ghost({ midi: 48, velocity: 0, on: false }, settings);
   silenceGhosts();
 
-  expect(vi.mocked(invoke).mock.calls).toEqual([
-    ['audio_note', { midi: 48, velocity: 80, on: true, raw: false }],
-    ['audio_note', { midi: 50, velocity: 64, on: true, raw: false }],
-    ['audio_note', { midi: 48, velocity: 0, on: false, raw: false }],
-    ['audio_note', { midi: 50, velocity: 0, on: false, raw: false }],
+  expect(rust.argsOf('audio_note')).toEqual([
+    { midi: 48, velocity: 80, on: true, raw: false },
+    { midi: 50, velocity: 64, on: true, raw: false },
+    { midi: 48, velocity: 0, on: false, raw: false },
+    { midi: 50, velocity: 0, on: false, raw: false },
   ]);
 });
 
 /** The velocity of the one note the calls hold, and whether the velocity curve was kept off it. */
 function sent(): { velocity: number; raw: boolean } {
-  const { velocity, raw } = vi.mocked(invoke).mock.calls.at(-1)![1] as {
-    velocity: number;
-    raw: boolean;
-  };
+  const { velocity, raw } = rust.argsOf('audio_note').at(-1)!;
   return { velocity, raw };
 }
 

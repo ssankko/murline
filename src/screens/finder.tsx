@@ -9,35 +9,9 @@ import { importFiles } from '@/library/import';
 import { reasonOf } from '@/library/notice';
 import { Collapse } from '@/look/collapse';
 import { Loading } from '@/look/loading';
-import { invoke } from '@tauri-apps/api/core';
+import { call, type FinderRow, type SearchResult } from '@/rust';
 import { Download, Search } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-
-/** One search hit, as `finder_search` returns it. */
-export interface FinderRow {
-  provider: 'KernScores' | 'PDMX';
-  /** Composer heading, shared by both providers after normalisation. */
-  heading: string;
-  title: string;
-  opus: string | null;
-  number: string | null;
-  movement: number | null;
-  movementName: string | null;
-  key: string | null;
-  time: string | null;
-  bars: number | null;
-  ratings: number;
-  /** The uploader's own title when it differs from the site's title field. */
-  alt: string | null;
-  file: string;
-  fileName: string;
-}
-
-interface SearchResult {
-  rows: FinderRow[];
-  /** Matches beyond the rows returned. */
-  more: number;
-}
 
 const norm = (s: string) => s.toLowerCase().replace(/[.,\s]/g, '');
 
@@ -110,7 +84,7 @@ export function Finder({
     void (async () => {
       const held = await getSetting('pdmx_folder').catch(() => null);
       setPdmxFolder(held);
-      setPdmx(await invoke<boolean>('pdmx_status', { folder: held ?? '' }).catch(() => false));
+      setPdmx(await call('pdmx_status', { folder: held ?? '' }).catch(() => false));
     })();
   }, []);
 
@@ -123,7 +97,7 @@ export function Finder({
       return;
     }
     let live = true;
-    void invoke<SearchResult>('finder_search', { query, pdmx }).then(
+    void call('finder_search', { query, pdmx }).then(
       (r) => {
         if (!live) return;
         setResult(r);
@@ -162,7 +136,7 @@ export function Finder({
     setDl({ state: 'downloading' });
     let tempPath: string | null = null;
     try {
-      tempPath = await invoke<string>('finder_download', { row, pdmxFolder });
+      tempPath = await call('finder_download', { row, pdmxFolder });
       // The name is free: an owned row never gets here. Keep both covers a file the index missed.
       const { imported, failures } = await importFiles(folder, [tempPath], async () => 'keep-both');
       if (failures.length || !imported[0]) throw new Error(failures[0]?.reason ?? 'Import failed');
@@ -170,7 +144,7 @@ export function Finder({
     } catch (error) {
       setDl({ state: 'failed', provider: row.provider, reason: reasonOf(error) });
     } finally {
-      if (tempPath) await invoke('remove_temp_file', { path: tempPath }).catch(() => {});
+      if (tempPath) await call('remove_temp_file', { path: tempPath }).catch(() => {});
     }
   }
 

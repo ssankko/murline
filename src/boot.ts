@@ -8,7 +8,7 @@ import { getDb, readSettings, type Settings } from "@/db/db";
 import { reasonOf } from "@/library/notice";
 import { scanLibrary } from "@/library/scan";
 import { setTheme } from "@/look/use-dark";
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "@/rust";
 
 /** One line of the boot log. */
 export interface BootLine {
@@ -90,36 +90,36 @@ export async function boot(
   say({ label: `theme: ${settings.theme}`, state: "note" });
 
   await step("starting sound engine", async () => {
-    await invoke("audio_start");
+    await call("audio_start");
     // Every setting is applied whatever the one before it did: a device that has been unplugged
     // must not cost the app its effect chain. Only the start itself stops the rest, because
     // nothing can be applied to an engine that is not there.
     const reasons = [
       await failure(() =>
-        invoke("audio_set_output_device", { id: settings.audio_output_device }),
+        call("audio_set_output_device", { id: settings.audio_output_device }),
       ),
       await failure(() =>
-        invoke("audio_set_buffer_frames", {
+        call("audio_set_buffer_frames", {
           frames: settings.audio_buffer_frames,
         }),
       ),
       await failure(() =>
-        invoke("audio_set_sample_rate", { rate: settings.audio_sample_rate }),
+        call("audio_set_sample_rate", { rate: settings.audio_sample_rate }),
       ),
       // Before the instrument goes in, so its streaming rings are allocated at this count.
       await failure(() =>
-        invoke("audio_set_voices", { count: settings.audio_voices }),
+        call("audio_set_voices", { count: settings.audio_voices }),
       ),
       await failure(() =>
-        invoke("audio_set_chain", { chain: settings.effect_chain }),
+        call("audio_set_chain", { chain: settings.effect_chain }),
       ),
       await failure(() =>
-        invoke("audio_set_keyboard_volume", {
+        call("audio_set_keyboard_volume", {
           percent: settings.keyboard_volume,
         }),
       ),
       await failure(() =>
-        invoke("audio_set_velocity_curve", {
+        call("audio_set_velocity_curve", {
           min: settings.velocity_min,
           max: settings.velocity_max,
           curve: settings.velocity_curve,

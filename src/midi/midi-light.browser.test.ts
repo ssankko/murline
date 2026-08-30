@@ -3,11 +3,10 @@ import { MidiLight } from '@/midi/midi-light';
 import type { MidiStatus } from '@/midi/use-midi-status';
 import { createElement, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { expect, test, vi } from 'vitest';
+import { fakeRust } from '@/rust.fake';
+import { beforeEach, expect, test, vi } from 'vitest';
 
-const invoked: { command: string; args: unknown }[] = [];
 const written: [string, unknown][] = [];
-const emit = new Map<string, (event: { payload: unknown }) => void>();
 
 const connected: Omit<MidiStatus, 'defaultId' | 'hidden'> = {
   devices: ['Roland', 'IAC'],
@@ -19,21 +18,10 @@ const connected: Omit<MidiStatus, 'defaultId' | 'hidden'> = {
   error: null,
 };
 
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: async (command: string, args: unknown) => {
-    invoked.push({ command, args });
-    if (command === 'midi_status') return connected;
-    if (command === 'midi_listen') return null;
-    throw new Error(`unexpected command ${command}`);
-  },
-}));
-
-vi.mock('@tauri-apps/api/event', () => ({
-  listen: async (name: string, handler: (event: { payload: unknown }) => void) => {
-    emit.set(name, handler);
-    return () => emit.delete(name);
-  },
-}));
+// The MIDI store starts once for the whole file and keeps the handlers it registered, so one
+// fake stands behind every test here.
+const rust = fakeRust({ midi_status: () => connected });
+beforeEach(() => rust.install());
 
 vi.mock('@/db/db', () => ({
   getSettingOr: async (key: string) => (key === 'midi_device' ? null : []),
@@ -49,7 +37,7 @@ function popover(): HTMLElement | null {
 
 /** The rule the last `midi_listen` carried. */
 function sent(): unknown {
-  return invoked.filter((each) => each.command === 'midi_listen').at(-1)!.args;
+  return rust.argsOf('midi_listen').at(-1)!;
 }
 
 /** What the popover offers to listen on, in the order it lists them. */
@@ -65,7 +53,7 @@ function button(label: string): HTMLButtonElement {
 
 /** Rust answering the last change: what it opened, and the pin it opened on. */
 function relisted(devices: string[], pinned: string | null): void {
-  emit.get('midi-ports')!({ payload: { ...connected, devices, pinned } });
+  rust.emit('midi-ports', { ...connected, devices, pinned });
 }
 
 function Screen() {
@@ -146,7 +134,7 @@ function disclosure(): HTMLButtonElement {
 }
 
 test('an error from Rust is what the light and the popover both say', async () => {
-  emit.get('midi-ports')!({ payload: { ...connected, devices: [], error: 'CoreMIDI is down' } });
+  rust.emit('midi-ports', { ...connected, devices: [], error: 'CoreMIDI is down' });
   await vi.waitFor(() =>
     expect(document.querySelector('button')!.getAttribute('aria-label')).toBe('CoreMIDI is down'),
   );

@@ -1,8 +1,10 @@
+import { NO_STATUS, type Role } from '@/rust';
+import { fakeRust } from '@/rust.fake';
 import { SettingsPanel } from '@/screens/settings';
 import { userEvent } from 'vitest/browser';
 import { createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 /** Set by the PDMX test so the archive is still coming while it looks at the row. */
 let fetching: { promise: Promise<void>; release: () => void } | null = null;
@@ -11,34 +13,24 @@ let fetching: { promise: Promise<void>; release: () => void } | null = null;
 let reading: { promise: Promise<void>; release: () => void } | null = null;
 
 /** What the engine says the instrument offers: a sampled piano, until a test says otherwise. */
-const OFFERED = ['release', 'key_off', 'sympathetic', 'pedal_noise'];
+const OFFERED: Role[] = ['release', 'key_off', 'sympathetic', 'pedal_noise'];
 let roles = [...OFFERED];
 
-vi.mock('@tauri-apps/api/core', () => ({
-  Channel: class {},
-  invoke: async (command: string) => {
-    if (command === 'pdmx_status') return false;
-    if (command === 'pdmx_fetch') {
+beforeEach(() => {
+  fakeRust({
+    pdmx_fetch: async () => {
       await fetching?.promise;
       return '/pdmx';
-    }
-    // The Sound tab asks the engine about itself the moment it is on the page. `roles` is what the
-    // loaded instrument offers beyond its tone, which is what puts the four level rows on the tab.
-    if (command === 'audio_status') return { available: true, reason: '', fallback: '', roles };
-    if (command === 'audio_set_role_level') return null;
+    },
+    // `roles` is what the loaded instrument offers beyond its tone, which is what puts the four
+    // level rows on the Sound tab.
+    audio_status: () => ({ ...NO_STATUS, available: true, roles }),
     // A file instrument with an envelope, which is what puts the four envelope rows on the tab.
-    if (command === 'audio_envelope') return { attack: 0.01, decay: 0.5, sustain: 0.8, release: 0.4 };
-    if (command === 'audio_set_envelope') return null;
-    if (command === 'audio_set_velocity_curve') return null;
-    if (command === 'audio_output_devices') return [];
-    if (command === 'audio_instruments') return [];
-    if (command === 'audio_effects') return [];
-    if (command === 'audio_set_chain') return [];
-    throw new Error(`unexpected command ${command}`);
-  },
-}));
-
-vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }));
+    audio_envelope: () => ({ attack: 0.01, decay: 0.5, sustain: 0.8, release: 0.4 }),
+    audio_output_devices: () => [],
+    audio_instruments: () => [],
+  });
+});
 
 // Clicking a control writes it, so the panel needs a database that swallows the write.
 vi.mock('@tauri-apps/plugin-sql', () => ({

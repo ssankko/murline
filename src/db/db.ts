@@ -1,6 +1,3 @@
-import type { EffectSlot } from "@/audio/effects";
-import type { Envelope } from "@/audio/envelope";
-import type { Role } from "@/audio/roles";
 import {
   DEFAULT_LANE_LOOK,
   DEFAULT_SPLIT,
@@ -9,6 +6,7 @@ import {
 } from "@/lane/lane";
 import type { SortOrder } from "@/library/queries";
 import type { Theme } from "@/look/use-dark";
+import type { EffectSlot, Envelope, Role } from "@/rust";
 import {
   DEFAULT_PLAY_SETTINGS,
   type InactiveHandVelocity,

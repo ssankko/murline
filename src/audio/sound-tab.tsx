@@ -6,54 +6,13 @@ import { EffectsSection } from "@/audio/effects";
 import { EnvelopeSection } from "@/audio/envelope";
 import { InstrumentSection } from "@/audio/instrument";
 import { OutputSection } from "@/audio/output";
-import { RolesSection, type Role } from "@/audio/roles";
+import { RolesSection } from "@/audio/roles";
 import { sounded, type Sounding } from "@/audio/sounding";
 import { VelocitySection } from "@/audio/velocity";
 import { getSettingOr } from "@/db/db";
 import { useMidiStatus } from "@/midi/use-midi-status";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { call, on, NO_STATUS, type AudioStatus } from "@/rust";
 import { useEffect, useState } from "react";
-
-/** What the engine answers about itself: whether sound can come out, and why not when it cannot. */
-export interface AudioStatus {
-  available: boolean;
-  reason: string;
-  /** Opaque id of the device playing now; null while the engine plays through none. */
-  device: string | null;
-  device_name: string;
-  /** What is playing now; empty when nothing is loaded, which `reason` then explains. */
-  instrument: string;
-  /** Why the device playing is not the one chosen; empty while the choice is honoured. */
-  fallback: string;
-  buffer_frames: number;
-  sample_rate: number;
-  /** The buffer sizes the device playing takes, ascending; empty when there is no engine to ask. */
-  buffer_choices: number[];
-  /** The sample rates the device playing takes, ascending; empty when there is no engine to ask. */
-  /** The rate the loaded instrument's samples were recorded at; 0 for a plugin or nothing. */
-  instrument_rate: number;
-  /** What the device reports the buffer costs, in milliseconds. */
-  latency_ms: number;
-  /** The roles beyond the tone the loaded instrument offers; empty for a plugin or a plain file. */
-  roles: Role[];
-}
-
-/** A status with nothing in it, which is what an engine that cannot even be asked answers. */
-export const NO_STATUS: AudioStatus = {
-  available: false,
-  reason: "",
-  device: null,
-  device_name: "",
-  instrument: "",
-  fallback: "",
-  buffer_frames: 0,
-  sample_rate: 0,
-  buffer_choices: [],
-  instrument_rate: 0,
-  latency_ms: 0,
-  roles: [],
-};
 
 /** The one line the tab says about the engine: why there is no sound at all, or where the sound
  * had to go when the chosen device was not there. Never both, because silence is the bigger thing
@@ -74,17 +33,17 @@ export function useAudioStatus(round = 0): AudioStatus | null {
   useEffect(() => {
     let live = true;
     const read = () =>
-      invoke<AudioStatus>("audio_status").then(
+      call("audio_status").then(
         (answer) => live && setStatus(answer),
         (error: unknown) =>
           live && setStatus({ ...NO_STATUS, reason: String(error) }),
       );
     void read();
     // Unplugging the chosen device is the other way the answer changes while nothing is touched.
-    const listening = listen("audio-devices-changed", () => void read());
+    const stop = on("audio-devices-changed", () => void read());
     return () => {
       live = false;
-      void listening.then((stop) => stop());
+      stop();
     };
   }, [round]);
 

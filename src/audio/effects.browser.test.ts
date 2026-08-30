@@ -1,5 +1,6 @@
 import { EffectsSection } from '@/audio/effects';
-import type { EffectSlot } from '@/audio/effects';
+import type { EffectSlot } from '@/rust';
+import { fakeRust, type FakeRust } from '@/rust.fake';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -9,7 +10,7 @@ const GONE = 'aumf:FR2p:FabF';
 
 let held: EffectSlot[] = [];
 let written: EffectSlot[][] = [];
-let shown: number[] = [];
+let rust: FakeRust;
 
 vi.mock('@/db/db', () => ({
   getSettingOr: async () => held,
@@ -17,25 +18,6 @@ vi.mock('@/db/db', () => ({
     written.push(value);
   },
 }));
-
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: async (command: string, args: { chain?: EffectSlot[]; index?: number }) => {
-    if (command === 'audio_effects') {
-      return [{ id: REVERB, name: 'AUReverb2', manufacturer: 'Apple' }];
-    }
-    // The engine answers with what it made of the chain: a plugin it does not have is missing.
-    if (command === 'audio_set_chain') {
-      return args.chain!.map((slot) => ({ ...slot, missing: slot.id === GONE }));
-    }
-    if (command === 'audio_show_effect') {
-      shown.push(args.index!);
-      return null;
-    }
-    throw new Error(`unexpected command ${command}`);
-  },
-}));
-
-vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }));
 
 let close: (() => void) | null = null;
 
@@ -45,7 +27,11 @@ beforeEach(() => {
     { id: GONE, name: 'Pro-R 2', bypass: false, state: 'AAAA' },
   ];
   written = [];
-  shown = [];
+  rust = fakeRust({
+    audio_effects: () => [{ id: REVERB, name: 'AUReverb2', manufacturer: 'Apple' }],
+    // The engine answers with what it made of the chain: a plugin it does not have is missing.
+    audio_set_chain: ({ chain }) => chain.map((slot) => ({ ...slot, missing: slot.id === GONE })),
+  });
 });
 
 afterEach(() => {
@@ -115,7 +101,7 @@ test('Show asks the engine for that slot, and a missing plugin has nothing to sh
   expect(buttons[1]!.disabled, 'the missing plugin cannot be shown').toBe(true);
 
   buttons[0]!.click();
-  await vi.waitFor(() => expect(shown).toEqual([0]));
+  await vi.waitFor(() => expect(rust.argsOf('audio_show_effect')).toEqual([{ index: 0 }]));
 });
 
 test('an effect picked from the list lands at the end of the chain', async () => {

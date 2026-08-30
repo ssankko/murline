@@ -1,4 +1,6 @@
-import { Finder, type FinderRow } from '@/screens/finder';
+import { Finder } from '@/screens/finder';
+import type { FinderRow } from '@/rust';
+import { fakeRust } from '@/rust.fake';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -25,20 +27,6 @@ const ROW: FinderRow = {
 let held: { promise: Promise<void>; release: () => void } | null = null;
 let refusal: string | null = null;
 
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: async (command: string) => {
-    if (command === 'pdmx_status') return true;
-    if (command === 'finder_search') return { rows: [ROW], more: 0 };
-    if (command === 'remove_temp_file') return null;
-    if (command === 'finder_download') {
-      if (held) await held.promise;
-      if (refusal) throw new Error(refusal);
-      return '/tmp/prelude28-4.musicxml';
-    }
-    throw new Error(`unexpected command ${command}`);
-  },
-}));
-
 vi.mock('@/db/db', () => ({ getSetting: async () => '/pdmx' }));
 
 vi.mock('@/library/import', () => ({
@@ -50,6 +38,15 @@ let close: (() => void) | null = null;
 beforeEach(() => {
   held = null;
   refusal = null;
+  fakeRust({
+    pdmx_status: () => true,
+    finder_search: () => ({ rows: [ROW], more: 0 }),
+    finder_download: async () => {
+      if (held) await held.promise;
+      if (refusal) throw new Error(refusal);
+      return '/tmp/prelude28-4.musicxml';
+    },
+  });
 });
 
 afterEach(() => {

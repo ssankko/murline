@@ -1,25 +1,14 @@
 import { getSettingOr, setSetting } from '@/db/db';
 import type { StrikeEvent } from '@/play/engine';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { call, on, type MidiPorts } from '@/rust';
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 
-/** One MIDI input port as the MIDI popover lists it. */
-export type MidiPort = { id: string; name: string };
-
-export type MidiStatus = {
-  /** Display names of every input port being listened to, in the order Rust lists them. */
-  devices: string[];
-  /** Every input port the machine has, the hidden ones included. */
-  ports: MidiPort[];
-  /** The port being listened on alone, or null while every port outside `hidden` is open. */
-  pinned: string | null;
+/** What the MIDI popover shows: the Rust side's ports, and the two rules the window keeps. */
+export type MidiStatus = MidiPorts & {
   /** The port the next launch starts on, out of `midi_device`. */
   defaultId: string | null;
   /** Ids of the ports "Any device" passes over. */
   hidden: string[];
-  /** Set when MIDI is unreachable, which outside the Tauri window is always. */
-  error: string | null;
 };
 
 /**
@@ -105,7 +94,7 @@ function publish(next: Partial<MidiStatus>): void {
 /** The listening rule as it stands, sent whole because Rust keeps no settings of its own. */
 function send(): Promise<void> {
   const pinned = session === undefined ? status.defaultId : session;
-  return invoke<void>('midi_listen', { pinned, hidden: status.hidden }).catch((error: unknown) =>
+  return call('midi_listen', { pinned, hidden: status.hidden }).catch((error: unknown) =>
     publish({ error: String(error) }),
   );
 }
@@ -120,16 +109,16 @@ function start(): void {
   if (started) return;
   started = true;
   void (async () => {
-    await listen<StrikeEvent>('midi-strike', ({ payload }) => {
-      for (const strike of strikes) strike(payload);
+    on('midi-strike', (strike) => {
+      for (const handler of strikes) handler(strike);
     });
-    await listen<MidiStatus>('midi-ports', ({ payload }) => publish(payload));
+    on('midi-ports', publish);
     publish({
       defaultId: await getSettingOr('midi_device'),
       hidden: await getSettingOr('midi_hidden'),
     });
     // The rule goes out before the first look at the ports, so what comes back is the rule's.
     await send();
-    publish(await invoke<MidiStatus>('midi_status'));
+    publish(await call('midi_status'));
   })().catch((error: unknown) => publish({ error: String(error) }));
 }

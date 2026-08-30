@@ -4,6 +4,12 @@ A desktop app that helps one person practise piano from imported sheet music wit
 
 ## Language
 
+### App
+
+**Rust side**:
+The half of the app that runs outside the window: it keeps the global settings and the library's rows, reads and writes the disk, runs the sound engine and listens to the MIDI keyboard. The window asks it for everything it cannot do itself and hears from it when something changes.
+_Avoid_: Backend, native side, core, IPC
+
 ### Library
 
 **Piece**:
@@ -46,7 +52,7 @@ The settings that belong to one piece and are set on the play toolbar while prac
 _Avoid_: Per-piece settings, overrides, piece defaults
 
 **Global settings**:
-The settings that apply to the whole app rather than to any one piece: sound, look, MIDI, grading, keyboard size and the library folders. The library page's order and its selected piece are kept beside them, remembered for the next launch rather than set in the panel.
+The settings that apply to the whole app rather than to any one piece: sound, look, MIDI, grading, keyboard size and the library folders. The library page's order and its selected piece are kept beside them, remembered for the next launch rather than set in the panel. The Rust side keeps them all and hands them over once at start.
 _Avoid_: Preferences, defaults
 
 **Settings panel**:

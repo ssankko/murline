@@ -2,7 +2,6 @@
 // general. What the open piece does right now is the play toolbar's. Every control writes on
 // change; there is no Save.
 
-import type { Envelope } from "@/audio/envelope";
 import { SoundTab } from "@/audio/sound-tab";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -26,7 +25,7 @@ import {
   type KeyboardPreset,
 } from "@/play/settings";
 import { SPACING_MAX, SPACING_MIN, type Pinch } from "@/sheet/sheet";
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "@/rust";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Search } from "lucide-react";
 import { Tabs } from "radix-ui";
@@ -583,12 +582,12 @@ export function SettingsPanel({
       setSel(0);
     }
     if (open) {
-      invoke<Envelope | null>("audio_envelope").then(
+      call("audio_envelope").then(
         (one) => setEnvelope(one !== null),
         () => setEnvelope(false),
       );
-      invoke<{ roles?: string[] }>("audio_status").then(
-        (status) => setRoles(!!status.roles?.length),
+      call("audio_status").then(
+        (status) => setRoles(status.roles.length > 0),
         () => setRoles(false),
       );
     }
@@ -641,7 +640,7 @@ export function SettingsPanel({
     const hold = (ready: boolean) => {
       if (live) setPdmxReady(ready);
     };
-    invoke<boolean>("pdmx_status", { folder }).then(hold, () => hold(false));
+    call("pdmx_status", { folder }).then(hold, () => hold(false));
     return () => {
       live = false;
     };

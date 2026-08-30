@@ -3,12 +3,12 @@
 // way out and both hold the link into the rest of the Sound tab.
 
 import { Knob } from '@/audio/knob';
-import { SoundControls, useAudioStatus, type AudioStatus } from '@/audio/sound-tab';
+import { SoundControls, useAudioStatus } from '@/audio/sound-tab';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { readSettings, setSetting } from '@/db/db';
 import { sticky } from '@/lib/utils';
 import type { SettingChange } from '@/screens/settings';
-import { invoke } from '@tauri-apps/api/core';
+import { call, type AudioStatus } from '@/rust';
 import { useEffect, useState } from 'react';
 
 /** What the line under a popover says: the sound's way out, or why there is none. */
@@ -61,7 +61,7 @@ export function Mixer({
     setSetting('keyboard_volume', percent).catch(console.error);
     // In place in the running graph: nothing is reconnected, so a note ringing while the fader
     // moves keeps ringing.
-    invoke('audio_set_keyboard_volume', { percent }).catch(console.error);
+    call('audio_set_keyboard_volume', { percent }).catch(console.error);
     onGlobalChange?.('keyboard_volume', percent);
   }
 

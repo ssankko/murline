@@ -12,7 +12,7 @@ import { useDark } from '@/look/use-dark';
 import { tempoLabel } from '@/play/settings';
 import { keyOf, modeOf, type Key } from '@/score/key';
 import { RangeStrip } from '@/screens/range-strip';
-import { invoke } from '@tauri-apps/api/core';
+import { call } from '@/rust';
 import { useEffect, useState } from 'react';
 
 /** Title, facts, the keys the piece uses, the buttons that open it and its history. */
@@ -73,7 +73,7 @@ export function Detail({
           <code className="min-w-0 truncate text-[11.5px]">{fullPath}</code>
           <button
             onClick={() =>
-              void invoke('reveal_in_finder', { path: fullPath }).catch((error) =>
+              void call('reveal_in_finder', { path: fullPath }).catch((error) =>
                 setNotice(`Could not reveal ${piece.title ?? piece.path}: ${reasonOf(error)}`),
               )
             }

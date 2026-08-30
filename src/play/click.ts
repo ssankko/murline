@@ -3,7 +3,7 @@
 // loud. The play engine decides which beats those are.
 
 import { clamp } from '@/lib/utils';
-import { invoke } from '@tauri-apps/api/core';
+import { call } from '@/rust';
 
 /** The two clicks: strong on the beat a bar opens with, weak on every other. */
 export type ClickStrength = 'strong' | 'weak';
@@ -18,5 +18,5 @@ export function setClickVolume(percent: number): void {
 /** One click now. Silent at volume 0, and on a build without a sound engine. */
 export function click(strength: ClickStrength): void {
   if (volume === 0) return;
-  invoke('audio_click', { strength, volume }).catch(console.error);
+  call('audio_click', { strength, volume }).catch(console.error);
 }

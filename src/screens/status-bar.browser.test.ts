@@ -1,4 +1,5 @@
-import { NO_STATUS } from "@/audio/sound-tab";
+import { NO_STATUS } from "@/rust";
+import { fakeRust, type FakeRust } from "@/rust.fake";
 import {
   audioDot,
   latencyLabel,
@@ -9,7 +10,7 @@ import {
 } from "@/screens/status-bar";
 import { createElement, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 
 const PLAYING = {
@@ -92,48 +93,31 @@ test("the settings shortcut stands back for a text field and for an open dialog"
 });
 
 /** The event handlers the bar subscribed with, so a test can be the engine. */
-const emit = new Map<string, (event: { payload: unknown }) => void>();
-
 /** What `audio_status` answers, which one test moves to see the latency cell hold one line. */
 let latencyMs = 12;
+let rust: FakeRust;
 
-vi.mock("@tauri-apps/api/core", () => ({
-  invoke: async (command: string) => {
-    if (command === "audio_status")
-      return { ...PLAYING, latency_ms: latencyMs };
-    if (command === "audio_chain")
-      return [{ id: "reverb", name: "AUMatrixReverb" }];
-    if (command === "midi_status")
-      return { devices: ["Roland"], ports: [], pinned: null };
-    if (command === "midi_listen") return null;
-    // What the sound popover's sections ask for once it is opened.
-    if (command === "audio_instruments")
-      return [
-        {
-          id: "grand",
-          name: "Concert Grand Piano",
-          kind: "file",
-          loaded: true,
-          reason: "",
-        },
-      ];
-    if (command === "audio_effects") return [];
-    if (command === "audio_set_chain") return [];
-    if (command === "audio_envelope")
-      return { attack: 0.01, decay: 0.2, sustain: 0.8, release: 0.4 };
-    throw new Error(`unexpected command ${command}`);
-  },
-}));
-
-vi.mock("@tauri-apps/api/event", () => ({
-  listen: async (
-    name: string,
-    handler: (event: { payload: unknown }) => void,
-  ) => {
-    emit.set(name, handler);
-    return () => emit.delete(name);
-  },
-}));
+beforeEach(() => {
+  rust = fakeRust({
+    audio_status: () => ({ ...PLAYING, latency_ms: latencyMs }),
+    audio_chain: () => [
+      { id: "reverb", name: "AUMatrixReverb", bypass: false, state: "" },
+    ],
+    midi_status: () => ({
+      devices: ["Roland"],
+      ports: [],
+      pinned: null,
+      error: null,
+    }),
+    audio_effects: () => [],
+    audio_envelope: () => ({
+      attack: 0.01,
+      decay: 0.2,
+      sustain: 0.8,
+      release: 0.4,
+    }),
+  });
+});
 
 vi.mock("@/db/db", () => ({
   readSettings: async () => ({
@@ -272,12 +256,12 @@ test("the meters stand at a dash until the engine reports, and the load reddens 
   expect(num(3).textContent).toBe("—");
   expect(num(4).textContent).toBe("—");
 
-  emit.get("audio-load")!({ payload: { voices: 41, limit: 128, load: 12 } });
+  rust.emit("audio-load", { voices: 41, limit: 128, load: 12 });
   await vi.waitFor(() => expect(num(4).textContent).toBe("12%"));
   expect(num(3).textContent).toBe("41 / 128");
   expect(num(4).className).not.toContain("red");
 
-  emit.get("audio-load")!({ payload: { voices: 40, limit: 128, load: 94 } });
+  rust.emit("audio-load", { voices: 40, limit: 128, load: 94 });
   await vi.waitFor(() => expect(num(4).className).toContain("red"));
 });
 

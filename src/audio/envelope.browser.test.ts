@@ -1,4 +1,6 @@
-import { EnvelopeSection, travelled, type Envelope } from '@/audio/envelope';
+import { EnvelopeSection, travelled } from '@/audio/envelope';
+import type { Envelope } from '@/rust';
+import { fakeRust, type FakeRust } from '@/rust.fake';
 import type { Sounding } from '@/audio/sounding';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -8,16 +10,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 const OWN: Envelope = { attack: 0.01, decay: 0.5, sustain: 0.8, release: 0.2 };
 
 let answer: Envelope | null = OWN;
-let sent: [string, unknown][] = [];
-
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: async (command: string, args: Record<string, unknown>) => {
-    sent.push([command, args]);
-    if (command === 'audio_envelope') return answer;
-    if (command === 'audio_set_envelope') return null;
-    throw new Error(`unexpected command ${command}`);
-  },
-}));
+let rust: FakeRust;
 
 let kept: Record<string, Envelope> = {};
 let written: [string, unknown][] = [];
@@ -34,9 +27,9 @@ let host: HTMLElement | null = null;
 
 beforeEach(() => {
   answer = OWN;
-  sent = [];
   written = [];
   kept = {};
+  rust = fakeRust({ audio_envelope: () => answer });
 });
 
 afterEach(() => {
@@ -100,7 +93,7 @@ test('the section reads what the instrument is playing with', async () => {
 test('an instrument with no envelope of its own is not offered one', async () => {
   answer = null;
   mount();
-  await vi.waitFor(() => expect(sent).toContainEqual(['audio_envelope', undefined]));
+  await vi.waitFor(() => expect(rust.argsOf('audio_envelope')).toHaveLength(1));
   expect(host!.textContent).toBe('');
 });
 
@@ -111,14 +104,14 @@ test('the plot and the engine both follow the slider as it moves', async () => {
   await move('Release', '2000');
   expect(line()).not.toBe(before);
   await vi.waitFor(() =>
-    expect(sent).toContainEqual(['audio_set_envelope', { envelope: { ...OWN, release: 2 } }]),
+    expect(rust.argsOf('audio_set_envelope')).toContainEqual({ envelope: { ...OWN, release: 2 } }),
   );
 
   // Still moving, and still heard: nothing waits for the hand to come off the slider, and nothing
   // warns of a silence.
   await move('Release', '3000');
   await vi.waitFor(() =>
-    expect(sent).toContainEqual(['audio_set_envelope', { envelope: { ...OWN, release: 3 } }]),
+    expect(rust.argsOf('audio_set_envelope')).toContainEqual({ envelope: { ...OWN, release: 3 } }),
   );
   expect(host!.textContent).not.toContain('going in');
 });

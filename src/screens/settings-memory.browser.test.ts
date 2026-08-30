@@ -1,26 +1,22 @@
 // The panel opens where it was left: a real column that scrolls, and a database that keeps what is
 // written to it, so a second mount is the next launch.
 
+import { NO_STATUS } from '@/rust';
+import { fakeRust } from '@/rust.fake';
 import { SettingsPanel } from '@/screens/settings';
 import { userEvent } from 'vitest/browser';
 import { createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-vi.mock('@tauri-apps/api/core', () => ({
-  Channel: class {},
-  invoke: async (command: string) => {
-    if (command === 'pdmx_status') return false;
-    if (command === 'audio_status') return { available: true, reason: '', fallback: '' };
-    if (command === 'audio_output_devices') return [];
-    if (command === 'audio_instruments') return [];
-    if (command === 'audio_effects') return [];
-    if (command === 'audio_set_chain') return [];
-    throw new Error(`unexpected command ${command}`);
-  },
-}));
-
-vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }));
+// A Mac with the engine up and nothing installed on it, so the panel's rows are its own.
+beforeEach(() => {
+  fakeRust({
+    audio_status: () => ({ ...NO_STATUS, available: true }),
+    audio_output_devices: () => [],
+    audio_instruments: () => [],
+  });
+});
 
 /** The `setting` table, as JSON under each key. */
 const stored = new Map<string, string>();

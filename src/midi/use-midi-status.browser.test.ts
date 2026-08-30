@@ -9,11 +9,10 @@ import {
 } from '@/midi/use-midi-status';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
-import { expect, test, vi } from 'vitest';
+import { fakeRust } from '@/rust.fake';
+import { beforeEach, expect, test, vi } from 'vitest';
 
-const invoked: { command: string; args: unknown }[] = [];
 const written: [string, unknown][] = [];
-const emit = new Map<string, (event: { payload: unknown }) => void>();
 
 /** What Rust answers with. The default and the hidden list are settings the store holds itself. */
 let ports: Omit<MidiStatus, 'defaultId' | 'hidden'> = {
@@ -26,21 +25,10 @@ let ports: Omit<MidiStatus, 'defaultId' | 'hidden'> = {
   error: null,
 };
 
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: async (command: string, args: unknown) => {
-    invoked.push({ command, args });
-    if (command === 'midi_status') return ports;
-    if (command === 'midi_listen') return null;
-    throw new Error(`unexpected command ${command}`);
-  },
-}));
-
-vi.mock('@tauri-apps/api/event', () => ({
-  listen: async (name: string, handler: (event: { payload: unknown }) => void) => {
-    emit.set(name, handler);
-    return () => emit.delete(name);
-  },
-}));
+// The store starts once for the whole file and keeps the handlers it registered, so one fake
+// stands behind every test here.
+const rust = fakeRust({ midi_status: () => ports });
+beforeEach(() => rust.install());
 
 vi.mock('@/db/db', () => ({
   getSettingOr: async (key: string) => (key === 'midi_device' ? '1' : []),
@@ -66,7 +54,7 @@ function Probe() {
 
 /** The rule the last `midi_listen` carried. */
 function sent(): unknown {
-  return invoked.filter((each) => each.command === 'midi_listen').at(-1)!.args;
+  return rust.argsOf('midi_listen').at(-1)!;
 }
 
 test('the ports and every strike come off the Rust events in the shape they always had', async () => {
@@ -81,17 +69,20 @@ test('the ports and every strike come off the Rust events in the shape they alwa
   ]);
   expect(shown.error).toBe(null);
   // Rust keeps no settings, so the rule goes out before the first look at the ports.
-  expect(invoked[0]).toEqual({ command: 'midi_listen', args: { pinned: '1', hidden: [] } });
+  expect(rust.calls[0]).toEqual({ name: 'midi_listen', args: { pinned: '1', hidden: [] } });
   expect(shown.defaultId).toBe('1');
 
   const strike: StrikeEvent = { midi: 60, velocity: 100, time: 1735689600123.5, on: true };
-  emit.get('midi-strike')!({ payload: strike });
-  emit.get('midi-strike')!({ payload: { ...strike, velocity: 0, on: false } });
+  rust.emit('midi-strike', strike);
+  rust.emit('midi-strike', { ...strike, velocity: 0, on: false });
   expect(struck).toEqual([strike, { ...strike, velocity: 0, on: false }]);
 
   // A keyboard unplugged: Rust re-lists and says so, and the popover's list follows without asking.
-  emit.get('midi-ports')!({
-    payload: { devices: [], ports: [{ id: '2', name: 'IAC' }], pinned: '1', error: null },
+  rust.emit('midi-ports', {
+    devices: [],
+    ports: [{ id: '2', name: 'IAC' }],
+    pinned: '1',
+    error: null,
   });
   await vi.waitFor(() => expect(shown.devices).toEqual([]));
   expect(shown.ports).toEqual([{ id: '2', name: 'IAC' }]);

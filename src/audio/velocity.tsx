@@ -13,7 +13,7 @@ import type { Sounding } from '@/audio/sounding';
 import { readSettings, setSetting } from '@/db/db';
 import { colorOf } from '@/look/color';
 import { useDark } from '@/look/use-dark';
-import { invoke } from '@tauri-apps/api/core';
+import { call } from '@/rust';
 import { useEffect, useState } from 'react';
 
 type Remap = { min: number; max: number; curve: number };
@@ -52,7 +52,7 @@ export function VelocitySection({
   /** Straight into the running engine, so the next strike answers the control that just moved. */
   function apply(next: Remap): void {
     setValues(next);
-    invoke('audio_set_velocity_curve', next).catch(console.error);
+    call('audio_set_velocity_curve', next).catch(console.error);
   }
 
   // Two independent controls can cross, and a minimum above the maximum is a map that runs

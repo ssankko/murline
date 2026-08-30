@@ -1,4 +1,6 @@
-import { expect, test, vi } from 'vitest';
+import type { CommandName } from '@/rust';
+import { DEFAULT_ANSWERS, fakeRust, type Answers, type FakeRust } from '@/rust.fake';
+import { beforeEach, expect, test, vi } from 'vitest';
 import type { BootLine } from './boot';
 
 let settings = {
@@ -17,7 +19,7 @@ let refuses: string | null = null;
 let listed: { id: string; name: string }[] = [];
 /** While it is set, the scan waits on it, so a step can be watched in flight. */
 let heldScan: Promise<void> | null = null;
-const sent: [string, unknown][] = [];
+let rust: FakeRust;
 
 vi.mock('@/db/db', () => ({
   getDb: async () => ({}),
@@ -32,16 +34,23 @@ vi.mock('@/library/scan', () => ({
     if (heldScan) await heldScan;
   },
 }));
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: async (command: string, args: unknown) => {
-    sent.push([command, args]);
-    if (command === 'audio_start' && engineReason) throw engineReason;
-    if (command === refuses) throw `${command} would not`;
-    // Nothing but the instrument list answers without the engine, and every failure answers alike.
-    if (engineReason && command !== 'audio_instruments') throw engineReason;
-    if (command === 'audio_instruments') return listed;
-  },
-}));
+/** Every command answers the way a refusing or an absent engine would. */
+const answers = Object.fromEntries(
+  (Object.keys(DEFAULT_ANSWERS) as CommandName[]).map((command) => [
+    command,
+    () => {
+      if (command === 'audio_start' && engineReason) throw engineReason;
+      if (command === refuses) throw `${command} would not`;
+      // Nothing but the instrument list answers without the engine, and every failure is alike.
+      if (engineReason && command !== 'audio_instruments') throw engineReason;
+      if (command === 'audio_instruments') return listed;
+    },
+  ]),
+) as Partial<Answers>;
+
+beforeEach(() => {
+  rust = fakeRust(answers);
+});
 
 const { boot, lineText, START_LINE } = await import('./boot');
 
@@ -105,7 +114,6 @@ test('a step that fails shows the reason as its tail, and the steps after it sti
 });
 
 test('a setting the engine refuses still leaves the chain applied, and prints why', async () => {
-  sent.length = 0;
   refuses = 'audio_set_buffer_frames';
   const printed: BootLine[][] = [];
   await boot((lines) => printed.push(lines));
@@ -117,8 +125,9 @@ test('a setting the engine refuses still leaves the chain applied, and prints wh
     reason: 'audio_set_buffer_frames would not',
   });
   // The buffer is what failed; the instrument and the chain after it went in all the same.
-  expect(sent.map(([command]) => command)).toContain('audio_set_chain');
-  expect(sent.map(([command]) => command)).toContain('audio_instruments');
+  const asked = rust.calls.map((one) => one.name);
+  expect(asked).toContain('audio_set_chain');
+  expect(asked).toContain('audio_instruments');
 });
 
 test('a sound engine that will not start prints why, and the steps after it still run', async () => {

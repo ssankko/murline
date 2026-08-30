@@ -1,17 +1,8 @@
+import { fakeRust, type FakeRust } from '@/rust.fake';
 import { beforeEach, expect, test, vi } from 'vitest';
 import { scanLibrary } from './scan';
 
-let listed: string[] = [];
-
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: async (command: string, args: Record<string, string>) => {
-    if (command === 'list_library') {
-      listed.push(args.folder!);
-      return [];
-    }
-    throw new Error(`unexpected command ${command}`);
-  },
-}));
+let rust: FakeRust;
 
 vi.mock('./queries', () => ({
   knownFiles: async () => [],
@@ -21,7 +12,7 @@ vi.mock('./queries', () => ({
 }));
 
 beforeEach(() => {
-  listed = [];
+  rust = fakeRust();
 });
 
 test('the folder is walked once, and again only when the library points elsewhere', async () => {
@@ -29,5 +20,5 @@ test('the folder is walked once, and again only when the library points elsewher
   await scanLibrary('/scores');
   await scanLibrary('/other');
   await scanLibrary('/other');
-  expect(listed).toEqual(['/scores', '/other']);
+  expect(rust.argsOf('list_library')).toEqual([{ folder: '/scores' }, { folder: '/other' }]);
 });

@@ -6,7 +6,6 @@
 
 import { restoreInstrument } from "@/audio/instrument";
 import { restoreRoles } from "@/audio/roles";
-import type { AudioStatus } from "@/audio/sound-tab";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -18,16 +17,9 @@ import {
 import { getSettingOr, readSettings, setSetting } from "@/db/db";
 import { reasonOf } from "@/library/notice";
 import { numbered, Row, Segmented } from "@/look/rows";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { call, on, type AudioStatus, type OutputDevice } from "@/rust";
 import { ChevronDown } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-
-/** One device the engine can play through: an opaque id and the name to show. */
-export interface OutputDevice {
-  id: string;
-  name: string;
-}
 
 /** The buffer sizes the engine takes, smallest first. A device offers a subset of them. */
 const FRAME_CHOICES = [32, 64, 128, 256, 512];
@@ -46,8 +38,8 @@ export function OutputSection({ marked }: { marked?: string | null }) {
 
   const readEngine = useCallback(async () => {
     const [list, answer] = await Promise.all([
-      invoke<OutputDevice[]>("audio_output_devices"),
-      invoke<AudioStatus>("audio_status"),
+      call("audio_output_devices"),
+      call("audio_status"),
     ]);
     setDevices(list);
     setStatus(answer);
@@ -61,10 +53,7 @@ export function OutputSection({ marked }: { marked?: string | null }) {
 
   useEffect(() => {
     void readEngine();
-    const listening = listen("audio-devices-changed", () => void readEngine());
-    return () => {
-      void listening.then((stop) => stop());
-    };
+    return on("audio-devices-changed", () => void readEngine());
   }, [readEngine]);
 
   /** Writes the setting, applies it to the engine, and reads back what the device now reports. */
@@ -88,7 +77,7 @@ export function OutputSection({ marked }: { marked?: string | null }) {
         setChosen(id);
         await setSetting("audio_output_device", id);
       },
-      () => invoke("audio_set_output_device", { id }),
+      () => call("audio_set_output_device", { id }),
     );
 
   const chooseFrames = (choice: number) =>
@@ -97,7 +86,7 @@ export function OutputSection({ marked }: { marked?: string | null }) {
         setFrames(choice);
         await setSetting("audio_buffer_frames", choice);
       },
-      () => invoke("audio_set_buffer_frames", { frames: choice }),
+      () => call("audio_set_buffer_frames", { frames: choice }),
     );
 
   const chooseVoices = (choice: number) =>
@@ -107,7 +96,7 @@ export function OutputSection({ marked }: { marked?: string | null }) {
         await setSetting("audio_voices", choice);
       },
       async () => {
-        await invoke("audio_set_voices", { count: choice });
+        await call("audio_set_voices", { count: choice });
         // A sampled instrument's streaming rings are allocated with it, two slots per voice, so it
         // is read again at the new count; the envelope and the levels ride back in on the restore.
         const settings = await readSettings();

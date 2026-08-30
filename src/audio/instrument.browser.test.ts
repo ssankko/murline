@@ -1,5 +1,7 @@
 import { InstrumentSection, restoreInstrument } from '@/audio/instrument';
 import type { Settings } from '@/db/db';
+import { NO_STATUS, type AudioStatus } from '@/rust';
+import { fakeRust, type FakeRust } from '@/rust.fake';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -27,13 +29,13 @@ const HOSTED = {
 };
 
 /** What the engine answers about itself, of which this section reads the rates. */
-let status: Record<string, unknown> = { instrument: '', instrument_rate: 0 };
+let status: AudioStatus = NO_STATUS;
 /** The rate setting in force, which an instrument recorded lower than it drags down. */
 let rateSetting = 44100;
 
 let listed = [HOSTED, CONCERT, BROKEN];
 let refusal: string | null = null;
-let loads: unknown[] = [];
+let rust: FakeRust;
 /** Set by a test that wants the load to stand still until it releases it. */
 let held: { promise: Promise<void>; release: () => void } | null = null;
 
@@ -45,21 +47,6 @@ function hold(): { promise: Promise<void>; release: () => void } {
   });
   return { promise, release };
 }
-
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: async (command: string, args: Record<string, unknown>) => {
-    if (command === 'audio_instruments') return listed;
-    if (command === 'audio_status') return status;
-    if (command === 'audio_set_sample_rate') return null;
-    if (command === 'audio_load_instrument') {
-      loads.push(args);
-      if (held) await held.promise;
-      if (refusal) throw new Error(refusal);
-      return null;
-    }
-    throw new Error(`unexpected command ${command}`);
-  },
-}));
 
 let written: [string, unknown][] = [];
 
@@ -76,12 +63,19 @@ let close: (() => void) | null = null;
 
 beforeEach(() => {
   listed = [HOSTED, CONCERT, BROKEN];
-  status = { instrument: '', instrument_rate: 0 };
+  status = NO_STATUS;
   rateSetting = 44100;
   refusal = null;
   held = null;
-  loads = [];
   written = [];
+  rust = fakeRust({
+    audio_instruments: () => listed,
+    audio_status: () => status,
+    audio_load_instrument: async () => {
+      if (held) await held.promise;
+      if (refusal) throw new Error(refusal);
+    },
+  });
 });
 
 afterEach(() => {
@@ -148,7 +142,9 @@ test('the picker groups what the engine found, and names the folder it read', as
 test('choosing writes the setting, loads at once, and marks the row it is on', async () => {
   await open();
   await pick('Concert Grand Piano');
-  await vi.waitFor(() => expect(loads).toEqual([{ id: CONCERT.id, state: null }]));
+  await vi.waitFor(() =>
+    expect(rust.argsOf('audio_load_instrument')).toEqual([{ id: CONCERT.id, state: null }]),
+  );
   expect(written).toContainEqual(['instrument_id', CONCERT.id]);
   await vi.waitFor(() => expect(trigger().textContent).toContain('Concert Grand Piano'));
 
@@ -191,7 +187,7 @@ function rateButtons(): HTMLButtonElement[] {
 }
 
 test('an instrument recorded at 44.1 kHz leaves no higher rate to pick', async () => {
-  status = { instrument: 'Concert Grand Piano', instrument_rate: 44100 };
+  status = { ...NO_STATUS, instrument: 'Concert Grand Piano', instrument_rate: 44100 };
   await open();
   await vi.waitFor(() =>
     expect(rateButtons().map((button) => [button.textContent, button.disabled])).toEqual([
@@ -205,7 +201,7 @@ test('an instrument recorded at 44.1 kHz leaves no higher rate to pick', async (
 
 test('an instrument recorded below the rate in force drags the rate down to its own', async () => {
   rateSetting = 96000;
-  status = { instrument: 'Concert Grand Piano', instrument_rate: 44100 };
+  status = { ...NO_STATUS, instrument: 'Concert Grand Piano', instrument_rate: 44100 };
   await open();
   await vi.waitFor(() => expect(written).toContainEqual(['audio_sample_rate', 44100]));
 });
@@ -222,18 +218,18 @@ function stored(settings: Partial<Settings>): Settings {
 
 test('a first launch plays Logic Concert Grand without being asked', async () => {
   await restoreInstrument(stored({}));
-  expect(loads).toEqual([{ id: CONCERT.id, state: null }]);
+  expect(rust.argsOf('audio_load_instrument')).toEqual([{ id: CONCERT.id, state: null }]);
   expect(written).toEqual([['instrument_id', CONCERT.id]]);
 });
 
 test('a launch after a choice puts that one back, with the state it was left in', async () => {
   await restoreInstrument(stored({ instrument_id: BROKEN.id, instrument_state: 'YmxvYg==' }));
-  expect(loads).toEqual([{ id: BROKEN.id, state: 'YmxvYg==' }]);
+  expect(rust.argsOf('audio_load_instrument')).toEqual([{ id: BROKEN.id, state: 'YmxvYg==' }]);
   expect(written).toEqual([]);
 });
 
 test('a Mac with no instrument at all loads none', async () => {
   listed = [];
   await restoreInstrument(stored({}));
-  expect(loads).toEqual([]);
+  expect(rust.argsOf('audio_load_instrument')).toEqual([]);
 });

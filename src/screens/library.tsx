@@ -40,7 +40,7 @@ import { Detail } from '@/screens/piece-detail';
 import { SettingsPanel } from '@/screens/settings';
 import { StatusBar } from '@/screens/status-bar';
 import { useFullscreen } from '@/screens/use-fullscreen';
-import { invoke } from '@tauri-apps/api/core';
+import { call } from '@/rust';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open } from '@tauri-apps/plugin-dialog';
 import { ArrowUpDown, Search } from 'lucide-react';
@@ -229,7 +229,7 @@ export function Library({
   async function remove(target: PieceRow): Promise<void> {
     if (!folder) return;
     try {
-      await invoke('trash_file', { path: pathOf(folder, target.path) });
+      await call('trash_file', { path: pathOf(folder, target.path) });
     } catch (error) {
       // A file already gone from disk still drops its piece; any other refusal keeps the row.
       if (!isMissingFile(error)) {

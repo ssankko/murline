@@ -1,11 +1,10 @@
 // Import: a file from anywhere on disk becomes a piece of the library folder. Every check runs
 // before the copy, so a file the app cannot read never lands in the folder.
 
+import { call } from '@/rust';
 import { ScoreError } from '@/score/types';
-import { invoke } from '@tauri-apps/api/core';
-import { baseNameOf, indexBytes, pathOf, readScoreFile } from './index-file';
+import { baseNameOf, indexBytes, listLibrary, pathOf, readScoreFile } from './index-file';
 import { upsertIndex } from './queries';
-import type { FileEntry } from './scan';
 
 /** The extensions the app reads, as the file picker and the drop handler both filter on. */
 export const SCORE_EXTENSIONS = ['musicxml', 'xml', 'mxl'];
@@ -69,10 +68,7 @@ async function importOne(
 
   // APFS is case-insensitive, so a name that differs only in case is the same file to the folder.
   const taken = new Map(
-    (await invoke<FileEntry[]>('list_library', { folder })).map((file) => [
-      file.relPath.toLowerCase(),
-      file.relPath,
-    ]),
+    (await listLibrary(folder)).map((file) => [file.relPath.toLowerCase(), file.relPath]),
   );
   const isTaken = (name: string) => taken.has(name.toLowerCase());
   let relPath = fileName;
@@ -85,7 +81,7 @@ async function importOne(
       choice === 'keep-both' ? freeName(fileName, isTaken) : taken.get(fileName.toLowerCase())!;
   }
 
-  const stamp = await invoke<{ mtime: number; size: number }>('copy_file', {
+  const stamp = await call('copy_file', {
     src: path,
     dst: pathOf(folder, relPath),
   });

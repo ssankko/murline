@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest';
-import { planScan, type FileEntry } from './scan';
+import type { FileEntry } from '@/rust';
+import { planScan } from './scan';
 import type { KnownFile } from './queries';
 
 const file = (path: string, mtime = 100, size = 10): FileEntry => ({

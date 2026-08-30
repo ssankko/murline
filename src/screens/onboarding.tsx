@@ -2,7 +2,7 @@ import { Button } from '@/components/ui/button';
 import { setSetting } from '@/db/db';
 import { Input } from '@/components/ui/input';
 import { useMidiStatus } from '@/midi/use-midi-status';
-import { invoke } from '@tauri-apps/api/core';
+import { call } from '@/rust';
 import { homeDir } from '@tauri-apps/api/path';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useEffect, useState } from 'react';
@@ -34,7 +34,7 @@ export function Onboarding({ onDone }: { onDone: (folder: string) => void }) {
     setBusy(true);
     setError(null);
     try {
-      await invoke('ensure_dir', { path: folder });
+      await call('ensure_dir', { path: folder });
       await setSetting('library_folder', folder);
       await setSetting('onboarding_done', true);
       onDone(folder);

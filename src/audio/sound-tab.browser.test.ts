@@ -1,26 +1,25 @@
 import { SoundTab } from '@/audio/sound-tab';
 import type { StrikeEvent } from '@/play/engine';
+import { NO_STATUS, type AudioStatus, type Envelope } from '@/rust';
+import { fakeRust } from '@/rust.fake';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-let answer: unknown = { available: false, reason: 'No instrument chosen' };
-let envelope: unknown = null;
+const SILENT: AudioStatus = { ...NO_STATUS, reason: 'No instrument chosen' };
 
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: async (command: string) => {
-    if (command === 'audio_status') return answer;
-    if (command === 'audio_envelope') return envelope;
-    if (command === 'audio_output_devices') return [];
-    if (command === 'audio_set_output_device' || command === 'audio_set_buffer_frames') return;
-    if (command === 'audio_instruments') return [];
-    if (command === 'audio_effects') return [];
-    if (command === 'audio_set_chain') return [];
-    throw new Error(`unexpected command ${command}`);
-  },
-}));
-// The Output section follows the engine's device-list event; nothing here plugs anything in.
-vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }));
+let answer: AudioStatus = SILENT;
+let envelope: Envelope | null = null;
+
+beforeEach(() => {
+  // A Mac with nothing installed: no device, no instrument, no effect to add.
+  fakeRust({
+    audio_status: () => answer,
+    audio_envelope: () => envelope,
+    audio_output_devices: () => [],
+    audio_instruments: () => [],
+  });
+});
 
 /** The tab's own ear on the keyboard, which a test plays by hand. */
 let strike: ((event: StrikeEvent) => void) | undefined;
@@ -38,7 +37,7 @@ afterEach(() => {
   close?.();
   close = null;
   host = null;
-  answer = { available: false, reason: 'No instrument chosen' };
+  answer = SILENT;
   envelope = null;
 });
 
@@ -66,22 +65,21 @@ test('the tab holds its three sections and the reason there is no sound', async 
 });
 
 test('an engine that can play says nothing about why it cannot', async () => {
-  answer = { available: true, reason: '', fallback: '' };
+  answer = { ...NO_STATUS, available: true };
   const text = await open();
   expect(text()).not.toContain('No instrument chosen');
 });
 
 test('an engine playing somewhere other than the chosen device says so on the same line', async () => {
   const moved = 'Your chosen output device is not connected; playing through the system default';
-  answer = { available: true, reason: '', fallback: moved };
+  answer = { ...NO_STATUS, available: true, fallback: moved };
   const text = await open();
   await vi.waitFor(() => expect(text()).toContain(moved));
 });
 
 test('silence outranks a fallback, so the line says why there is no sound', async () => {
   answer = {
-    available: false,
-    reason: 'No instrument chosen',
+    ...SILENT,
     fallback: 'Your chosen output device is not connected; playing through the system default',
   };
   const text = await open();
@@ -90,7 +88,7 @@ test('silence outranks a fallback, so the line says why there is no sound', asyn
 });
 
 test('a search result marks the row it named, wherever in the tab it lives', async () => {
-  answer = { available: true, reason: '', fallback: '' };
+  answer = { ...NO_STATUS, available: true };
   const host = document.createElement('div');
   document.body.append(host);
   const root = createRoot(host);
@@ -111,7 +109,7 @@ test('a search result marks the row it named, wherever in the tab it lives', asy
 });
 
 test('both plots let go of a key together, once the envelope has finished with it', async () => {
-  answer = { available: true, reason: '', fallback: '' };
+  answer = { ...NO_STATUS, available: true };
   envelope = { attack: 0.01, decay: 0.05, sustain: 0.8, release: 0.3 };
   const text = await open();
   await vi.waitFor(() => expect(text()).toContain('Envelope'));

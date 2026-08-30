@@ -4,7 +4,6 @@
 import { restoreEnvelope } from "@/audio/envelope";
 import { numbered, Row, Segmented } from "@/look/rows";
 import { restoreRoles } from "@/audio/roles";
-import type { AudioStatus } from "@/audio/sound-tab";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -17,21 +16,10 @@ import {
 import { getSettingOr, readSettings, setSetting, type Settings } from "@/db/db";
 import { reasonOf } from "@/library/notice";
 import { Loading } from "@/look/loading";
-import { invoke } from "@tauri-apps/api/core";
+import { call, type AudioStatus, type Instrument } from "@/rust";
 import { open } from "@tauri-apps/plugin-dialog";
 import { ChevronDown } from "lucide-react";
 import { Fragment, useEffect, useState } from "react";
-
-/** One line of the picker. The id is opaque; only the engine knows what it names. */
-export interface Instrument {
-  id: string;
-  name: string;
-  /** `file` for one the engine's sampler loads, `plugin` for a hosted Audio Unit. */
-  kind: string;
-  loaded: boolean;
-  /** Why this instrument is silent, when it is the chosen one and its load failed. */
-  reason: string;
-}
 
 /** The sample rates the engine renders at, in Hz. Each voice costs in proportion. */
 const RATE_CHOICES = [44100, 48000, 88200, 96000];
@@ -52,7 +40,7 @@ export function allowedRates(status: AudioStatus | null): number[] {
 const DEFAULT_NAME = "Concert Grand Piano";
 
 function listInstruments(folder: string): Promise<Instrument[]> {
-  return invoke<Instrument[]>("audio_instruments", { folder });
+  return call("audio_instruments", { folder });
 }
 
 /**
@@ -75,7 +63,7 @@ export async function restoreInstrument(
   // The stored state belongs to the stored instrument, so a fresh default starts at its own.
   const state =
     chosen === settings.instrument_id ? settings.instrument_state : null;
-  await invoke("audio_load_instrument", { id: chosen, state });
+  await call("audio_load_instrument", { id: chosen, state });
   await restoreEnvelope(chosen);
   return all.find((one) => one.id === chosen)?.name ?? null;
 }
@@ -100,7 +88,7 @@ export function InstrumentSection({
   const [status, setStatus] = useState<AudioStatus | null>(null);
 
   const readEngine = () =>
-    invoke<AudioStatus>("audio_status").then(setStatus, console.error);
+    call("audio_status").then(setStatus, console.error);
 
   useEffect(() => {
     void getSettingOr("audio_sample_rate").then(setRate);
@@ -145,7 +133,7 @@ export function InstrumentSection({
     await setSetting("instrument_id", id);
     await setSetting("instrument_state", null);
     try {
-      await invoke("audio_load_instrument", { id, state: null });
+      await call("audio_load_instrument", { id, state: null });
       await restoreEnvelope(id);
     } catch (error) {
       setFailure(reasonOf(error));
@@ -164,7 +152,7 @@ export function InstrumentSection({
     setRate(choice);
     await setSetting("audio_sample_rate", choice);
     try {
-      await invoke("audio_set_sample_rate", { rate: choice });
+      await call("audio_set_sample_rate", { rate: choice });
       const settings = await readSettings();
       await restoreInstrument(settings);
       await restoreRoles(settings.instrument_id);
@@ -189,7 +177,7 @@ export function InstrumentSection({
 
   /** The plugin's own window, which hands back the state it was left in when the user closes it. */
   async function show(): Promise<void> {
-    const state = await invoke<string | null>("audio_show_instrument");
+    const state = await call("audio_show_instrument");
     await setSetting("instrument_state", state);
   }
 

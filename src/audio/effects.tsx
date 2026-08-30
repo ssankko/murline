@@ -13,29 +13,9 @@ import {
 import { getSettingOr, setSetting } from '@/db/db';
 import { rowId } from '@/lib/utils';
 import { Toggle } from '@/look/rows';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { call, on, type Effect, type EffectSlot } from '@/rust';
 import { Plus } from 'lucide-react';
 import { useEffect, useState } from 'react';
-
-/** One place in the chain. `missing` is the engine's word about this Mac, so it is never stored. */
-export interface EffectSlot {
-  /** Opaque here: the engine's name for the plugin, the same on every Mac that has it. */
-  id: string;
-  /** What the plugin was called when it was last seen, which is how a missing slot is named. */
-  name: string;
-  bypass: boolean;
-  /** The plugin's own settings, base64, read out when the user closes its window. */
-  state: string;
-  missing?: boolean;
-}
-
-/** One installed effect, as the Add menu lists it. */
-interface Effect {
-  id: string;
-  name: string;
-  manufacturer: string;
-}
 
 /** A slot as it is stored: what the user chose, without the engine's word about it. */
 function stored(slot: EffectSlot): EffectSlot {
@@ -51,7 +31,7 @@ export function EffectsSection({ marked }: { marked?: string | null }) {
   async function push(chain: EffectSlot[]): Promise<void> {
     setSlots(chain);
     try {
-      setSlots(await invoke<EffectSlot[]>('audio_set_chain', { chain: chain.map(stored) }));
+      setSlots(await call('audio_set_chain', { chain: chain.map(stored) }));
     } catch {
       // No engine: the chain is still the user's to build, it simply plays through nothing.
     }
@@ -65,17 +45,18 @@ export function EffectsSection({ marked }: { marked?: string | null }) {
 
   useEffect(() => {
     getSettingOr('effect_chain').then(push, console.error);
-    invoke<Effect[]>('audio_effects').then(setAvailable, () => setAvailable([]));
+    call('audio_effects').then(setAvailable, () => setAvailable([]));
   }, []);
 
   // Closing a plugin's window is the other way the chain changes: the engine has read the plugin's
   // settings out of it and hands the whole chain back to be written.
-  useEffect(() => {
-    const stop = listen<EffectSlot[]>('audio-chain-changed', (event) => {
-      change(event.payload).catch(console.error);
-    }).catch(() => () => {});
-    return () => void stop.then((off) => off());
-  }, []);
+  useEffect(
+    () =>
+      on('audio-chain-changed', (chain) => {
+        change(chain).catch(console.error);
+      }),
+    [],
+  );
 
   function edit(at: number, slot: EffectSlot): void {
     change(slots.map((held, index) => (index === at ? slot : held))).catch(console.error);
@@ -125,7 +106,7 @@ export function EffectsSection({ marked }: { marked?: string | null }) {
             size="sm"
             className="h-6 flex-none px-2 text-[11.5px]"
             disabled={slot.missing}
-            onClick={() => void invoke('audio_show_effect', { index: at }).catch(console.error)}
+            onClick={() => void call('audio_show_effect', { index: at }).catch(console.error)}
           >
             Show
           </Button>

@@ -1,30 +1,21 @@
 import { Mixer } from '@/audio/mixer';
+import { NO_STATUS, type AudioStatus } from '@/rust';
+import { fakeRust, type FakeRust } from '@/rust.fake';
 import { createElement, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { userEvent } from 'vitest/browser';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-const PLAYING = {
+const PLAYING: AudioStatus = {
+  ...NO_STATUS,
   available: true,
-  reason: '',
   device: 'uid:babyface',
   device_name: 'Babyface Pro',
   instrument: 'Concert Grand Piano',
-  fallback: '',
 };
 
-let status: unknown = PLAYING;
-let sent: [string, unknown][] = [];
-
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: async (command: string, args: Record<string, unknown>) => {
-    sent.push([command, args]);
-    if (command === 'audio_status') return status;
-    if (command === 'audio_set_keyboard_volume') return null;
-    throw new Error(`unexpected command ${command}`);
-  },
-}));
-vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }));
+let status: AudioStatus = PLAYING;
+let rust: FakeRust;
 
 let stored: Record<string, unknown> = {
   keyboard_volume: 80,
@@ -52,7 +43,7 @@ let changed: [string, unknown][] = [];
 
 beforeEach(() => {
   status = PLAYING;
-  sent = [];
+  rust = fakeRust({ audio_status: () => status });
   written = [];
   changed = [];
   stored = {
@@ -121,7 +112,7 @@ test('the keyboard fader writes the setting and reaches the running engine', asy
   await userEvent.fill(fader('Keyboard'), '30');
 
   expect(written).toContainEqual(['keyboard_volume', 30]);
-  expect(sent).toContainEqual(['audio_set_keyboard_volume', { percent: 30 }]);
+  expect(rust.argsOf('audio_set_keyboard_volume')).toContainEqual({ percent: 30 });
 });
 
 test('the keyboard fader goes to 200 and the metronome stops at 100', async () => {
@@ -131,7 +122,7 @@ test('the keyboard fader goes to 200 and the metronome stops at 100', async () =
 
   await userEvent.fill(fader('Keyboard'), '200');
   expect(written).toContainEqual(['keyboard_volume', 200]);
-  expect(sent).toContainEqual(['audio_set_keyboard_volume', { percent: 200 }]);
+  expect(rust.argsOf('audio_set_keyboard_volume')).toContainEqual({ percent: 200 });
 });
 
 test('the metronome fader is the click volume and touches the engine gain not at all', async () => {
@@ -141,7 +132,7 @@ test('the metronome fader is the click volume and touches the engine gain not at
   expect(written).toContainEqual(['click_volume', 0]);
   // The play screen's metronome reads it live, so the change has to be handed on.
   expect(changed).toContainEqual(['click_volume', 0]);
-  expect(sent.map(([command]) => command)).not.toContain('audio_set_keyboard_volume');
+  expect(rust.argsOf('audio_set_keyboard_volume')).toEqual([]);
 });
 
 test('the mixer carries the two faders and nothing that makes the sound', async () => {

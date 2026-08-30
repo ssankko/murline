@@ -3,7 +3,6 @@
 // the note list, sends the transport commands and walks the band down the page at its clock.
 
 import { previewNotes, secondsOf, tickAt } from '@/audio/preview';
-import type { AudioStatus } from '@/audio/sound-tab';
 import { Button } from '@/components/ui/button';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { readSettings, setSetting } from '@/db/db';
@@ -33,8 +32,7 @@ import { StatusBar } from '@/screens/status-bar';
 import { useFullscreen } from '@/screens/use-fullscreen';
 import type { Pinch } from '@/sheet/pinch';
 import { PreviewSheet, windowTicksOf } from '@/sheet/preview-sheet';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { call, on } from '@/rust';
 import { ArrowLeft, Minus, Pause, Play, Plus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
@@ -135,8 +133,8 @@ export function PreviewScreen({
   const load = async (): Promise<void> => {
     if (loadedRef.current) return;
     loadedRef.current = true;
-    await invoke('preview_load', { notes: notesRef.current });
-    await invoke('preview_rate', { percent });
+    await call('preview_load', { notes: notesRef.current });
+    await call('preview_rate', { percent });
   };
 
   const toggle = async (): Promise<void> => {
@@ -144,13 +142,13 @@ export function PreviewScreen({
     if (playing) {
       setPlaying(false);
       restartClock(secondsNow(), false);
-      await invoke('preview_pause');
+      await call('preview_pause');
       return;
     }
     setPlaying(true);
     restartClock(secondsNow(), true);
     await load();
-    await invoke('preview_play');
+    await call('preview_play');
   };
 
   /** Back to the start, with the note list gone from Rust: the next play loads it again. */
@@ -158,7 +156,7 @@ export function PreviewScreen({
     setPlaying(false);
     restartClock(0, false);
     loadedRef.current = false;
-    void invoke('preview_stop');
+    void call('preview_stop');
   };
 
   const seek = async (target: SeekTarget, near = 0): Promise<void> => {
@@ -170,7 +168,7 @@ export function PreviewScreen({
     // for the engine to report back.
     restartClock(seconds);
     await load();
-    await invoke('preview_seek', { seconds });
+    await call('preview_seek', { seconds });
   };
   seekRef.current = (target) => void seek(target);
 
@@ -204,7 +202,7 @@ export function PreviewScreen({
   }
 
   useEffect(() => {
-    invoke<AudioStatus>('audio_status')
+    call('audio_status')
       .then((status) => setReason(status.available ? '' : status.reason))
       .catch((error: unknown) => setReason(String(error)));
   }, []);
@@ -215,22 +213,18 @@ export function PreviewScreen({
     const sheet = sheetRef.current;
     if (sheet) sheet.windowTicks = windowTicksOf(sheet.score, percent);
     restartClock();
-    if (loadedRef.current) void invoke('preview_rate', { percent });
+    if (loadedRef.current) void call('preview_rate', { percent });
   }, [percent]);
 
   // Where the playback stands, about thirty times a second. The end of the piece arrives as one
   // more report with the time back at zero and nothing playing.
   useEffect(() => {
-    const listening = listen<{ seconds: number; playing: boolean }>(
-      'preview-progress',
-      ({ payload }) => {
-        clockRef.current = { ...clockRef.current, ...payload, at: performance.now() };
-        if (payload.playing) return;
-        if (payload.seconds === 0) sheetRef.current?.finish();
-        setPlaying(false);
-      },
-    );
-    return () => void listening.then((stop) => stop());
+    return on('preview-progress', (at) => {
+      clockRef.current = { ...clockRef.current, ...at, at: performance.now() };
+      if (at.playing) return;
+      if (at.seconds === 0) sheetRef.current?.finish();
+      setPlaying(false);
+    });
   }, []);
 
   // One frame: the clock read on from the last report, and the band on the tick it names.
@@ -245,7 +239,7 @@ export function PreviewScreen({
   useEffect(
     () => () => {
       loadedRef.current = false;
-      void invoke('preview_stop');
+      void call('preview_stop');
     },
     [],
   );

@@ -5,7 +5,7 @@
 import type { GhostEvent } from '@/play/engine';
 import type { PlaySettings } from '@/play/settings';
 import { clamp } from '@/lib/utils';
-import { invoke } from '@tauri-apps/api/core';
+import { call } from '@/rust';
 
 /** The pitches sounding now, so nothing is left ringing. */
 const held = new Set<number>();
@@ -33,13 +33,13 @@ export function ghost({ midi, velocity, on }: GhostEvent, settings: PlaySettings
   if (on) held.add(midi);
   else held.delete(midi);
   const sent = { midi, velocity: on ? level : 0, on, raw: on && player !== null };
-  invoke('audio_note', sent).catch(console.error);
+  call('audio_note', sent).catch(console.error);
 }
 
 /** Lets go of every note still sounding, at once, and forgets how hard the player was striking. */
 export function silenceGhosts(): void {
   for (const midi of held) {
-    invoke('audio_note', { midi, velocity: 0, on: false, raw: false }).catch(console.error);
+    call('audio_note', { midi, velocity: 0, on: false, raw: false }).catch(console.error);
   }
   held.clear();
   recent = null;

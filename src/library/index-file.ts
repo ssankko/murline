@@ -2,9 +2,9 @@
 
 import { buildScore } from '@/score/build';
 import { loadSheet } from '@/score/load';
+import { call, type FileEntry } from '@/rust';
 import { summarize, type PieceIndex } from '@/score/summarize';
 import { ScoreError } from '@/score/types';
-import { invoke } from '@tauri-apps/api/core';
 
 /** Summarises the bytes of a score file. The file name only fills in a missing title or composer. */
 export async function indexBytes(bytes: Uint8Array, fileName: string): Promise<PieceIndex> {
@@ -21,9 +21,14 @@ export function pathOf(folder: string, relPath: string): string {
   return `${folder.replace(/\/+$/, '')}/${relPath}`;
 }
 
+/** Every score file under the library folder, at any depth, in no particular order. */
+export function listLibrary(folder: string): Promise<FileEntry[]> {
+  return call('list_library', { folder });
+}
+
 export async function readScoreFile(path: string): Promise<Uint8Array> {
   try {
-    return new Uint8Array(await invoke<ArrayBuffer>('read_file', { path }));
+    return new Uint8Array(await call('read_file', { path }));
   } catch (error) {
     const reason = isMissingFile(error) ? 'File not found' : 'Could not read the file';
     throw new ScoreError(reason, String(error));

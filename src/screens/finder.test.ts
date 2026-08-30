@@ -1,7 +1,8 @@
 import { expect, test } from 'vitest';
 import { reasonOf } from '@/library/notice';
 import { progressLabel } from '@/library/pdmx';
-import { metaLine, titleLine, type FinderRow } from './finder';
+import type { FinderRow } from '@/rust';
+import { metaLine, titleLine } from './finder';
 
 function row(fields: Partial<FinderRow>): FinderRow {
   return {

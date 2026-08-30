@@ -3,16 +3,20 @@
 // playing through; on the right the volumes, which are the mixer's button, and what the sound
 // engine costs.
 
-import type { EffectSlot } from '@/audio/effects';
 import { Mixer, SoundPopover } from '@/audio/mixer';
-import { NO_STATUS, type AudioStatus } from '@/audio/sound-tab';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { readSettings } from '@/db/db';
 import { MidiLight } from '@/midi/midi-light';
 import { useMidiStatus } from '@/midi/use-midi-status';
 import type { SettingChange } from '@/screens/settings';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import {
+  call,
+  on,
+  NO_STATUS,
+  type AudioStatus,
+  type EffectSlot,
+  type Meter,
+} from '@/rust';
 import { AudioLines, Cpu, Gauge, Metronome, Piano, Settings } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
@@ -27,14 +31,6 @@ const READ_MS = 2000;
 
 /** One icon size and stroke for the whole bar. */
 const ICON = { size: 12, strokeWidth: 1.75 } as const;
-
-/** What the render block last reported about itself. */
-interface Meter {
-  voices: number;
-  /** The most voices the engine holds sounding at once. */
-  limit: number;
-  load: number;
-}
 
 /** Green while a keyboard is listened to, red when MIDI itself is unreachable. */
 export function midiDot(devices: string[], error: string | null): Dot {
@@ -113,29 +109,24 @@ export function StatusBar({
     let live = true;
     const read = async () => {
       const [status, chain] = await Promise.all([
-        invoke<AudioStatus>('audio_status').catch(() => NO_STATUS),
-        invoke<EffectSlot[]>('audio_chain').catch(() => []),
+        call('audio_status').catch(() => NO_STATUS),
+        call('audio_chain').catch(() => []),
       ]);
       if (live) setEngine({ status, chain });
     };
     reread.current = () => void read();
     void read();
     const timer = setInterval(() => void read(), READ_MS);
-    const listening = listen('audio-devices-changed', () => void read()).catch(() => () => {});
+    const stop = on('audio-devices-changed', () => void read());
     return () => {
       live = false;
       clearInterval(timer);
-      void listening.then((stop) => stop());
+      stop();
     };
   }, []);
 
   // Four a second while a graph is playing, and nothing at all while there is none.
-  useEffect(() => {
-    const listening = listen<Meter>('audio-load', ({ payload }) => setMeter(payload)).catch(
-      () => () => {},
-    );
-    return () => void listening.then((stop) => stop());
-  }, []);
+  useEffect(() => on('audio-load', setMeter), []);
 
   // The mixer is the only place either volume is written, so one read at boot and the mixer's own
   // word after that keep the two cells true.

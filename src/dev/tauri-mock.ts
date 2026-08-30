@@ -1,6 +1,9 @@
 // A stand-in for the Tauri runtime, loaded before the app when the address carries ?mocktauri.
-// A plain browser then runs the whole start-up — database, sound engine, library — against faked
-// answers, so the screens can be watched without `tauri dev`.
+// A plain browser then runs the whole start-up against faked answers, so the screens can be
+// watched without `tauri dev`. Commands and events come from the same in-memory Rust side the
+// tests use; only `@tauri-apps/plugin-sql`, which still goes through the runtime, is faked here.
+
+import { fakeRust } from '@/rust.fake';
 
 type TauriMock = {
   invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -23,6 +26,7 @@ function rows(sql: string): Record<string, string>[] {
 }
 
 export function installTauriMock(): void {
+  fakeRust();
   const w = window as unknown as { __TAURI_INTERNALS__?: TauriMock };
   if (w.__TAURI_INTERNALS__) return;
   w.__TAURI_INTERNALS__ = {
@@ -33,9 +37,6 @@ export function installTauriMock(): void {
       if (cmd === 'plugin:sql|load') return 'sqlite:murline.db';
       if (cmd === 'plugin:sql|select') return rows(String(args?.query ?? ''));
       if (cmd === 'plugin:sql|execute') return [0, 0];
-      if (cmd === 'list_library') return [];
-      if (cmd === 'audio_instruments') return [{ id: 'mock', name: 'Concert Grand Piano' }];
-      if (cmd === 'audio_chain') return [];
       return 0;
     },
   };

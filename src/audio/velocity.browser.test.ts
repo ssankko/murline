@@ -1,20 +1,13 @@
 import { curveOf, curved, positionOf } from '@/audio/curve';
 import type { Sounding } from '@/audio/sounding';
 import { VelocitySection } from '@/audio/velocity';
+import { fakeRust, type FakeRust } from '@/rust.fake';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { userEvent } from 'vitest/browser';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-let sent: [string, unknown][] = [];
-
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: async (command: string, args: Record<string, unknown>) => {
-    sent.push([command, args]);
-    if (command === 'audio_set_velocity_curve') return null;
-    throw new Error(`unexpected command ${command}`);
-  },
-}));
+let rust: FakeRust;
 
 let stored: Record<string, number> = { velocity_min: 1, velocity_max: 127, velocity_curve: 1 };
 let written: [string, unknown][] = [];
@@ -30,7 +23,7 @@ let close: (() => void) | null = null;
 let host: HTMLElement | null = null;
 
 beforeEach(() => {
-  sent = [];
+  rust = fakeRust();
   written = [];
   stored = { velocity_min: 1, velocity_max: 127, velocity_curve: 1 };
 });
@@ -103,19 +96,20 @@ test('every slider reaches the running engine as it moves, with nothing to apply
 
   await move('Minimum velocity', '40');
   expect(written).toContainEqual(['velocity_min', 40]);
-  expect(sent).toContainEqual(['audio_set_velocity_curve', { min: 40, max: 127, curve: 1 }]);
+  expect(rust.argsOf('audio_set_velocity_curve')).toContainEqual({ min: 40, max: 127, curve: 1 });
 
   await move('Maximum velocity', '90');
   expect(written).toContainEqual(['velocity_max', 90]);
-  expect(sent).toContainEqual(['audio_set_velocity_curve', { min: 40, max: 90, curve: 1 }]);
+  expect(rust.argsOf('audio_set_velocity_curve')).toContainEqual({ min: 40, max: 90, curve: 1 });
 
   // The curve carries the two ends that were just set, so one slider never undoes another.
   await move('Velocity curve', '20');
   expect(written).toContainEqual(['velocity_curve', curveOf(20)]);
-  expect(sent).toContainEqual([
-    'audio_set_velocity_curve',
-    { min: 40, max: 90, curve: curveOf(20) },
-  ]);
+  expect(rust.argsOf('audio_set_velocity_curve')).toContainEqual({
+    min: 40,
+    max: 90,
+    curve: curveOf(20),
+  });
 });
 
 test('the minimum cannot be dragged past the maximum, nor the maximum under it', async () => {

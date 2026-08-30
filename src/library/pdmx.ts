@@ -4,18 +4,12 @@
 
 import { setSetting } from '@/db/db';
 import { reasonOf } from '@/library/notice';
-import { Channel, invoke } from '@tauri-apps/api/core';
+import { call, type PdmxProgress } from '@/rust';
 import { useSyncExternalStore } from 'react';
-
-/** Bytes read so far and the size of the archive, which the server does not always declare. */
-export interface Progress {
-  done: number;
-  total: number | null;
-}
 
 export interface PdmxDownload {
   /** Non-null while the archive is downloading. */
-  progress: Progress | null;
+  progress: PdmxProgress | null;
   /** Why the last download stopped, cleared by a new one. A cancel leaves it null. */
   error: string | null;
 }
@@ -24,7 +18,7 @@ const MB = 1e6;
 const GB = 1e9;
 
 /** The running download as one line: "0.8 of 1.9 GB", or "812 MB" when the size is not declared. */
-export function progressLabel({ done, total }: Progress): string {
+export function progressLabel({ done, total }: PdmxProgress): string {
   // The unit comes from the whole archive, so the number climbs without the unit changing under it.
   const gb = (total ?? done) >= GB;
   const amount = (bytes: number) => (gb ? (bytes / GB).toFixed(1) : String(Math.round(bytes / MB)));
@@ -38,13 +32,11 @@ export function progressLabel({ done, total }: Progress): string {
  */
 export async function downloadPdmx(): Promise<void> {
   if (held.progress) return;
-  const progress = new Channel<Progress>();
-  progress.onmessage = (at) => {
-    set({ progress: at, error: null });
-  };
   set({ progress: { done: 0, total: null }, error: null });
   try {
-    const folder = await invoke<string>('pdmx_fetch', { progress });
+    const folder = await call('pdmx_fetch', {
+      progress: (at) => set({ progress: at, error: null }),
+    });
     await setSetting('pdmx_folder', folder);
     set({ progress: null, error: null });
   } catch (error) {
@@ -56,7 +48,7 @@ export async function downloadPdmx(): Promise<void> {
 
 /** Asks Rust to stop; the download then rejects with "cancelled". */
 export function cancelPdmx(): void {
-  invoke('pdmx_cancel').catch(() => {});
+  call('pdmx_cancel').catch(() => {});
 }
 
 /** The download as it stands, for as long as the component asking is on screen. */

@@ -12,16 +12,8 @@ import type { Sounding } from '@/audio/sounding';
 import { getSettingOr, setSetting } from '@/db/db';
 import { colorOf } from '@/look/color';
 import { useDark } from '@/look/use-dark';
-import { invoke } from '@tauri-apps/api/core';
+import { call, type Envelope } from '@/rust';
 import { useEffect, useRef, useState } from 'react';
-
-/** Seconds, except `sustain`, which is the fraction of full loudness a held note settles at. */
-export interface Envelope {
-  attack: number;
-  decay: number;
-  sustain: number;
-  release: number;
-}
 
 /**
  * Puts the envelope kept for an instrument back on the engine. Called after every load, because a
@@ -30,7 +22,7 @@ export interface Envelope {
  */
 export async function restoreEnvelope(id: string): Promise<void> {
   const kept = (await getSettingOr('instrument_envelopes'))[id];
-  if (kept) await invoke('audio_set_envelope', { envelope: kept });
+  if (kept) await call('audio_set_envelope', { envelope: kept });
 }
 
 /**
@@ -60,7 +52,7 @@ export function EnvelopeSection({
   // Null is the answer for a plugin and for no instrument at all, and it is what hides the section.
   useEffect(() => {
     let live = true;
-    invoke<Envelope | null>('audio_envelope').then(
+    call('audio_envelope').then(
       (answer) => live && setValues(answer),
       () => live && setValues(null),
     );
@@ -84,7 +76,7 @@ export function EnvelopeSection({
     frame.current = requestAnimationFrame(() => {
       frame.current = 0;
       const envelope = next.current!;
-      void invoke('audio_set_envelope', { envelope }).catch(console.error);
+      void call('audio_set_envelope', { envelope }).catch(console.error);
       if (instrument) void keep(instrument, envelope).catch(console.error);
     });
   }

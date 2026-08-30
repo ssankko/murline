@@ -1,9 +1,9 @@
 // The launch scan: what the library folder holds against what the database knows. Runs once at
 // launch and again for one piece when it opens. No watcher.
 
+import type { FileEntry } from '@/rust';
 import { ScoreError } from '@/score/types';
-import { invoke } from '@tauri-apps/api/core';
-import { baseNameOf, indexBytes, pathOf, readScoreFile } from './index-file';
+import { baseNameOf, indexBytes, listLibrary, pathOf, readScoreFile } from './index-file';
 import {
   knownFiles,
   markError,
@@ -11,13 +11,6 @@ import {
   upsertIndex,
   type KnownFile,
 } from './queries';
-
-/** One score file of the library folder, as Rust reports it. */
-export interface FileEntry {
-  relPath: string;
-  mtime: number;
-  size: number;
-}
 
 export type ScanAction =
   | { kind: 'index'; file: FileEntry }
@@ -56,14 +49,14 @@ let scanned: string | null = null;
  */
 export async function scanLibrary(folder: string): Promise<void> {
   if (scanned === folder) return;
-  const files = await invoke<FileEntry[]>('list_library', { folder });
+  const files = await listLibrary(folder);
   await apply(folder, planScan(files, await knownFiles()));
   scanned = folder;
 }
 
 /** Brings one piece up to date before it opens, in case the file changed under the app. */
 export async function reindexIfChanged(folder: string, relPath: string): Promise<void> {
-  const files = await invoke<FileEntry[]>('list_library', { folder });
+  const files = await listLibrary(folder);
   const known = await knownFiles();
   await apply(
     folder,

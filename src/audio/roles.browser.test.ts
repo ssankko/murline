@@ -1,4 +1,6 @@
-import { RolesSection, restoreRoles, type Role } from '@/audio/roles';
+import { RolesSection, restoreRoles } from '@/audio/roles';
+import { NO_STATUS, type Role } from '@/rust';
+import { fakeRust, type FakeRust } from '@/rust.fake';
 import { createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { userEvent } from 'vitest/browser';
@@ -7,18 +9,9 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 /** Every role a Logic piano offers beyond its tone. */
 const ALL: Role[] = ['release', 'key_off', 'sympathetic', 'pedal_noise'];
 
-let sent: [string, unknown][] = [];
+let rust: FakeRust;
 /** What the engine answers `audio_status` with, for the roles it names there. */
 let offered: Role[] = ALL;
-
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: async (command: string, args: Record<string, unknown>) => {
-    sent.push([command, args]);
-    if (command === 'audio_status') return { roles: offered };
-    if (command === 'audio_set_role_level') return null;
-    throw new Error(`unexpected command ${command}`);
-  },
-}));
 
 let kept: Record<string, Partial<Record<Role, number>> | Role[]> = {};
 let written: [string, unknown][] = [];
@@ -34,10 +27,10 @@ let root: Root | null = null;
 let host: HTMLElement | null = null;
 
 beforeEach(() => {
-  sent = [];
   written = [];
   kept = {};
   offered = ALL;
+  rust = fakeRust({ audio_status: () => ({ ...NO_STATUS, roles: offered }) });
 });
 
 afterEach(() => {
@@ -62,18 +55,13 @@ function slider(label: string): HTMLInputElement | null {
 
 /** The levels the engine was given, role by role, in the order they were sent. */
 function put(): [Role, number][] {
-  return sent
-    .filter(([command]) => command === 'audio_set_role_level')
-    .map(([, args]) => {
-      const { role, percent } = args as { role: Role; percent: number };
-      return [role, percent];
-    });
+  return rust.argsOf('audio_set_role_level').map(({ role, percent }) => [role, percent]);
 }
 
 test('an instrument with no roles to offer has no section', async () => {
   show([]);
   await vi.waitFor(() => expect(host!.textContent).toBe(''));
-  expect(sent).toHaveLength(0);
+  expect(rust.calls).toHaveLength(0);
 });
 
 test('every role the instrument offers gets a slider, all at 100 by default', async () => {
@@ -151,5 +139,5 @@ test('a set of roles switched off reads as those roles at 0', async () => {
 test('an instrument with nothing moved is left as the load left it', async () => {
   await restoreRoles('grand.exs');
   await restoreRoles(null);
-  expect(sent).toHaveLength(0);
+  expect(rust.calls).toHaveLength(0);
 });

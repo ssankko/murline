@@ -1,3 +1,5 @@
+import { NO_STATUS, type AudioStatus } from '@/rust';
+import { fakeRust, type FakeRust } from '@/rust.fake';
 import { PreviewScreen } from '@/screens/preview';
 import { createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -12,50 +14,22 @@ const FIXTURES = import.meta.glob('../score/fixtures/*', {
 });
 const FILE = 'test_repeat_volta_simple.musicxml';
 
-let status = { available: true, reason: '' };
-let sent: { command: string; args: Record<string, unknown> }[] = [];
-/** The progress handler the screen subscribed with, so a test can be the engine. */
-let progress: ((event: { payload: { seconds: number; playing: boolean } }) => void) | null = null;
+let status: AudioStatus = { ...NO_STATUS, available: true };
+let rust: FakeRust;
 
-vi.mock('@tauri-apps/api/core', () => ({
-  // The settings panel's PDMX row reaches for a Channel at import time, never at mount.
-  Channel: class {},
-  invoke: async (command: string, args: Record<string, unknown> = {}) => {
-    sent.push({ command, args });
-    if (command === 'audio_status') return status;
-    if (command === 'read_file') {
-      const url = FIXTURES[`../score/fixtures/${FILE}`] as string;
-      return await (await fetch(url)).arrayBuffer();
-    }
-    if (command.startsWith('preview_')) return undefined;
-    // What the settings panel asks the engine the moment it is on the page.
-    if (command === 'pdmx_status') return false;
-    if (command === 'audio_envelope') return null;
-    if (command.startsWith('audio_')) return [];
-    throw new Error(`unexpected command ${command}`);
-  },
-}));
+// The window is fullscreen only inside Tauri, so the test drives the top bar's hook itself.
+let setFullscreen: ((full: boolean) => void) | null = null;
 
-vi.mock('@tauri-apps/api/event', () => ({
-  listen: async (name: string, handler: (event: { payload: unknown }) => void) => {
-    if (name === 'preview-progress') progress = handler as typeof progress;
-    return () => {};
-  },
-}));
-
-// The fullscreen state the top bar's hook reads, flipped by the resize handler it subscribed with.
-let fullscreen = false;
-let resized: (() => void) | null = null;
-
-vi.mock('@tauri-apps/api/window', () => ({
-  getCurrentWindow: () => ({
-    isFullscreen: async () => fullscreen,
-    onResized: async (handler: () => void) => {
-      resized = handler;
-      return () => {};
+vi.mock('@/screens/use-fullscreen', async () => {
+  const { useState } = await import('react');
+  return {
+    useFullscreen: () => {
+      const [full, set] = useState(false);
+      setFullscreen = set;
+      return full;
     },
-  }),
-}));
+  };
+});
 
 /** Every row the screen writes: the piece's tempo, and the settings the panel changes. */
 let written: { sql: string; values: unknown[] }[] = [];
@@ -80,12 +54,18 @@ let root: Root | null = null;
 let host: HTMLElement | null = null;
 
 beforeEach(() => {
-  status = { available: true, reason: '' };
-  sent = [];
+  status = { ...NO_STATUS, available: true };
   written = [];
-  progress = null;
-  fullscreen = false;
-  resized = null;
+  setFullscreen = null;
+  rust = fakeRust({
+    audio_status: () => status,
+    read_file: async () => {
+      const url = FIXTURES[`../score/fixtures/${FILE}`] as string;
+      return await (await fetch(url)).arrayBuffer();
+    },
+    // The settings panel comes up with the screen and asks the engine what it has.
+    audio_envelope: () => null,
+  });
 });
 
 afterEach(() => {
@@ -116,7 +96,7 @@ async function open(onBack: () => void = () => {}): Promise<void> {
 }
 
 function commands(): string[] {
-  return sent.filter((call) => call.command.startsWith('preview_')).map((call) => call.command);
+  return rust.calls.map((one) => one.name).filter((name) => name.startsWith('preview_'));
 }
 
 function button(label: string): HTMLButtonElement {
@@ -155,7 +135,7 @@ test('play hands the engine the note list and starts it', async () => {
   await vi.waitFor(() => expect(commands()).toContain('preview_play'));
 
   expect(commands()).toEqual(['preview_load', 'preview_rate', 'preview_play']);
-  const notes = sent.find((call) => call.command === 'preview_load')!.args.notes as {
+  const notes = rust.argsOf('preview_load')[0]!.notes as {
     midi: number;
     on: number;
     off: number;
@@ -188,16 +168,16 @@ test('a click seeks to the Onset the progress event then puts the band back on',
   );
 
   await vi.waitFor(() => expect(commands()).toContain('preview_seek'));
-  const seconds = sent.find((call) => call.command === 'preview_seek')!.args.seconds as number;
+  const seconds = rust.argsOf('preview_seek')[0]!.seconds;
   expect(seconds).toBeGreaterThan(0);
   const clicked = band();
 
   // The engine reports the start of the piece, then the time the click sought to: the band leaves
   // the clicked Onset on the next frame and comes back to it on the frame after.
-  progress!({ payload: { seconds: 0, playing: false } });
+  rust.emit('preview-progress', { seconds: 0, playing: false });
   await vi.waitFor(() => expect(band().x).not.toBeCloseTo(clicked.x, 0));
 
-  progress!({ payload: { seconds, playing: false } });
+  rust.emit('preview-progress', { seconds, playing: false });
   await vi.waitFor(() => expect(band().x).toBeCloseTo(clicked.x, 0));
   expect(band().top).toBe(clicked.top);
 }, 60_000);
@@ -214,7 +194,7 @@ test('leaving the screen stops the engine', async () => {
 }, 60_000);
 
 test('with no engine the transport is dead and says why', async () => {
-  status = { available: false, reason: 'No instrument chosen' };
+  status = { ...NO_STATUS, reason: 'No instrument chosen' };
   await open();
 
   await vi.waitFor(() => expect(button('Play').getAttribute('aria-disabled')).toBe('true'));
@@ -254,19 +234,14 @@ test('Escape rewinds off the start of the piece and leaves from it', async () =>
 }, 60_000);
 
 test('fullscreen folds the traffic-light gap down to the bar\'s own padding', async () => {
-  // The hook answers only inside Tauri, so the page has to carry the internals a webview does.
-  (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
   await open();
 
   const bar = () => host!.querySelector<HTMLElement>('[data-tauri-drag-region]')!;
   expect(bar().className).toContain('pl-20');
 
-  fullscreen = true;
-  resized!();
+  setFullscreen!(true);
   await vi.waitFor(() => expect(bar().className).not.toContain('pl-20'));
   expect(bar().className).toMatch(/\bpl-2\b/);
-
-  delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
 }, 60_000);
 
 test('the tempo stepper writes the piece row and reads back on the bar', async () => {

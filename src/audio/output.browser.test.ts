@@ -1,54 +1,26 @@
 import { OutputSection } from "@/audio/output";
+import { NO_STATUS, type AudioStatus, type OutputDevice } from "@/rust";
+import { fakeRust, type FakeRust } from "@/rust.fake";
 import { createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
-let devices = [
+let devices: OutputDevice[] = [
   { id: "BuiltInSpeakerDevice", name: "MacBook Pro Speakers" },
   { id: "Scarlett", name: "Scarlett 2i2" },
 ];
-let status = {
+let status: AudioStatus = {
+  ...NO_STATUS,
   available: true,
-  reason: "",
   device: "Scarlett",
   device_name: "Scarlett 2i2",
-  fallback: "",
   buffer_frames: 64,
   sample_rate: 48000,
   buffer_choices: [32, 64, 128, 256, 512],
   instrument_rate: 44100,
   latency_ms: 1.9,
 };
-const sent: [string, unknown][] = [];
-
-vi.mock("@tauri-apps/api/core", () => ({
-  invoke: async (command: string, args: unknown) => {
-    sent.push([command, args]);
-    if (command === "audio_output_devices") return devices;
-    if (command === "audio_status") return status;
-    if (
-      command === "audio_set_output_device" ||
-      command === "audio_set_buffer_frames"
-    )
-      return;
-    // The voice limit reloads the instrument, because its streaming rings come with it.
-    if (command === "audio_set_voices" || command === "audio_load_instrument")
-      return;
-    if (command === "audio_instruments") return [];
-    throw new Error(`unexpected command ${command}`);
-  },
-}));
-
-/** The engine's devices-changed handler, so a test can plug something in. */
-let announce: (() => void) | null = null;
-vi.mock("@tauri-apps/api/event", () => ({
-  listen: async (_name: string, handler: () => void) => {
-    announce = handler;
-    return () => {
-      announce = null;
-    };
-  },
-}));
+let rust: FakeRust;
 
 let settings: Record<string, unknown> = {
   audio_output_device: "Scarlett",
@@ -72,8 +44,13 @@ vi.mock("@/db/db", () => ({
 let close: (() => void) | null = null;
 
 beforeEach(() => {
-  sent.length = 0;
   written.length = 0;
+  rust = fakeRust({
+    audio_output_devices: () => devices,
+    audio_status: () => status,
+    // The section's own list is never shown, so the engine may report none.
+    audio_instruments: () => [],
+  });
 });
 
 afterEach(() => {
@@ -138,7 +115,7 @@ test("a device plugged in while the tab is open appears in the picker", async ()
   await vi.waitFor(() => expect(text()).toContain("Scarlett 2i2"));
 
   devices = [...devices, { id: "Headphones", name: "External Headphones" }];
-  announce?.();
+  rust.emit("audio-devices-changed", undefined);
 
   openPicker();
   await vi.waitFor(() => expect(text()).toContain("External Headphones"));
@@ -153,10 +130,9 @@ test("choosing a device writes the setting and moves the engine", async () => {
   clickText("MacBook Pro Speakers");
 
   await vi.waitFor(() =>
-    expect(sent).toContainEqual([
-      "audio_set_output_device",
-      { id: "BuiltInSpeakerDevice" },
-    ]),
+    expect(rust.argsOf("audio_set_output_device")).toContainEqual({
+      id: "BuiltInSpeakerDevice",
+    }),
   );
   expect(written).toContainEqual([
     "audio_output_device",
@@ -171,14 +147,12 @@ test("choosing a buffer size writes the setting and applies it", async () => {
   clickText("128", document.querySelector("#setting-row-audio_buffer_frames")!);
 
   await vi.waitFor(() =>
-    expect(sent).toContainEqual(["audio_set_buffer_frames", { frames: 128 }]),
+    expect(rust.argsOf("audio_set_buffer_frames")).toContainEqual({ frames: 128 }),
   );
   expect(written).toContainEqual(["audio_buffer_frames", 128]);
   // The readout is asked again, because the buffer is most of what the latency is.
   await vi.waitFor(() =>
-    expect(
-      sent.filter(([command]) => command === "audio_status").length,
-    ).toBeGreaterThan(1),
+    expect(rust.argsOf("audio_status").length).toBeGreaterThan(1),
   );
 });
 
@@ -189,11 +163,11 @@ test("choosing a voice limit writes the setting and loads the instrument again a
   clickText("512", document.querySelector("#setting-row-audio_voices")!);
 
   await vi.waitFor(() =>
-    expect(sent).toContainEqual(["audio_set_voices", { count: 512 }]),
+    expect(rust.argsOf("audio_set_voices")).toContainEqual({ count: 512 }),
   );
   expect(written).toContainEqual(["audio_voices", 512]);
   // The streaming rings are allocated with the instrument, so it goes in again at the new count.
-  expect(sent.map(([command]) => command)).toContain("audio_load_instrument");
+  expect(rust.calls.map((one) => one.name)).toContain("audio_load_instrument");
 });
 
 test("a device that takes only the big buffers leaves the small ones dead", async () => {
@@ -250,7 +224,7 @@ test("a chosen device that is not connected reads as the system default until it
 
   // The setting kept the choice, so plugging the device back in shows its name again.
   devices = [...devices, { id: "Scarlett", name: "Scarlett 2i2" }];
-  announce?.();
+  rust.emit("audio-devices-changed", undefined);
 
   await vi.waitFor(() => expect(checkedRow()).toBe("Scarlett 2i2"));
 });

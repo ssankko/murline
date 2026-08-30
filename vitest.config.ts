@@ -13,6 +13,7 @@ export default defineConfig({
         test: {
           name: 'node',
           environment: 'node',
+          setupFiles: ['./src/rust.setup.ts'],
           include: ['src/**/*.test.ts'],
           exclude: ['src/**/*.browser.test.ts'],
         },
@@ -22,6 +23,7 @@ export default defineConfig({
         test: {
           name: 'browser',
           include: ['src/**/*.browser.test.ts'],
+          setupFiles: ['./src/rust.setup.ts'],
           browser: {
             enabled: true,
             provider: playwright(),

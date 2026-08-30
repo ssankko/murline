@@ -152,6 +152,7 @@ const SEARCH_ROWS: {
     id: "audio_output_device",
     tab: "sound",
     label: "Output device",
+    group: "Output",
     words: [
       "speakers",
       "headphones",
@@ -164,12 +165,14 @@ const SEARCH_ROWS: {
     id: "audio_buffer_frames",
     tab: "sound",
     label: "Buffer (frames)",
+    group: "Output",
     words: ["latency", "delay", "lag", "block size", "samples"],
   },
   {
     id: "audio_sample_rate",
     tab: "sound",
     label: "Sample rate (Hz)",
+    group: "Instrument",
     words: [
       "khz",
       "44.1",
@@ -185,18 +188,21 @@ const SEARCH_ROWS: {
     id: "audio_voices",
     tab: "sound",
     label: "Voices",
+    group: "Output",
     words: ["polyphony", "notes at once", "voice limit", "memory", "streaming"],
   },
   {
     id: "instrument_id",
     tab: "sound",
     label: "Instrument",
+    group: "Instrument",
     words: ["patch", "preset", "voice", "sound font", "synth", "piano sound"],
   },
   {
     id: "instruments_folder",
     tab: "sound",
     label: "Instruments folder",
+    group: "Instrument",
     words: ["sf2", "exs", "sound fonts", "samples"],
   },
   {
@@ -231,18 +237,21 @@ const SEARCH_ROWS: {
     id: "velocity_min",
     tab: "sound",
     label: "Minimum velocity",
+    group: "Touch",
     words: ["quiet", "floor", "softest", "soft", "dynamics", "touch"],
   },
   {
     id: "velocity_max",
     tab: "sound",
     label: "Maximum velocity",
+    group: "Touch",
     words: ["loud", "ceiling", "hardest", "top", "dynamics", "touch"],
   },
   {
     id: "velocity_curve",
     tab: "sound",
     label: "Velocity curve",
+    group: "Touch",
     words: [
       "touch",
       "response",
@@ -257,24 +266,28 @@ const SEARCH_ROWS: {
     id: "envelope_attack",
     tab: "sound",
     label: "Attack",
+    group: "Envelope",
     words: ["envelope", "adsr", "onset", "fade in", "swell"],
   },
   {
     id: "envelope_decay",
     tab: "sound",
     label: "Decay",
+    group: "Envelope",
     words: ["envelope", "adsr", "fall", "settle"],
   },
   {
     id: "envelope_sustain",
     tab: "sound",
     label: "Sustain",
+    group: "Envelope",
     words: ["envelope", "adsr", "hold", "level", "body"],
   },
   {
     id: "envelope_release",
     tab: "sound",
     label: "Release",
+    group: "Envelope",
     words: [
       "envelope",
       "adsr",
@@ -337,21 +350,21 @@ const SEARCH_ROWS: {
   {
     id: "lane_lookahead",
     tab: "look",
-    label: "Lookahead (beats)",
+    label: "Lookahead",
     group: "Falling notes",
     words: ["zoom", "pinch", "speed", "ahead"],
   },
   {
     id: "lane_note_width",
     tab: "look",
-    label: "Note width (%)",
+    label: "Note width",
     group: "Falling notes",
     words: ["block", "bar", "thickness"],
   },
   {
     id: "lane_gap",
     tab: "look",
-    label: "Gap (px)",
+    label: "Gap",
     group: "Falling notes",
     words: ["block", "space", "padding"],
   },
@@ -379,7 +392,7 @@ const SEARCH_ROWS: {
     id: "keyboard_scale_marks",
     tab: "look",
     label: "Mark keys off the scale",
-    group: "Falling notes",
+    group: "Keyboard",
     words: ["out of scale", "scale marks", "scale keyboard", "restrict"],
   },
   {
@@ -393,13 +406,14 @@ const SEARCH_ROWS: {
     id: "keyboard_labels",
     tab: "look",
     label: "Note names on keys",
-    group: "Falling notes",
+    group: "Keyboard",
     words: ["letters", "labels", "piano"],
   },
   {
     id: "keyboard_size",
     tab: "look",
     label: "Keyboard size",
+    group: "Keyboard",
     words: ["keys", "range", "octaves", "88", "width", "custom"],
   },
   {
@@ -411,31 +425,36 @@ const SEARCH_ROWS: {
   {
     id: "matching_window_ms",
     tab: "playing",
-    label: "Matching window (ms)",
+    label: "Matching window",
+    group: "Timing",
     words: ["hit window", "tolerance", "timing"],
   },
   {
     id: "togetherness_ms",
     tab: "playing",
-    label: "Togetherness window (ms)",
+    label: "Togetherness window",
+    group: "Timing",
     words: ["chord", "spread", "together"],
   },
   {
     id: "play_inactive_hand",
     tab: "playing",
     label: "Inactive hand sounds",
+    group: "Inactive hand",
     words: ["other hand", "ghost", "left", "right", "accompaniment"],
   },
   {
     id: "play_inactive_hand_velocity",
     tab: "playing",
     label: "Inactive hand velocity",
+    group: "Inactive hand",
     words: ["other hand", "ghost", "dynamics", "follow", "loudness"],
   },
   {
     id: "play_inactive_hand_level",
     tab: "playing",
-    label: "Inactive hand level (%)",
+    label: "Inactive hand level",
+    group: "Inactive hand",
     words: ["other hand", "ghost", "loudness", "softer"],
   },
   ...(import.meta.env.DEV
@@ -551,12 +570,18 @@ export function SettingsPanel({
   const scrollWrite = useRef<ReturnType<typeof setTimeout>>(undefined);
   const pdmx = usePdmxDownload();
   const downloading = pdmx.progress !== null;
+  /** Whether the rows are on the page, which every effect that reaches for one has to wait for. */
+  const ready = values !== null;
 
   // Read again at every open, so the panel is in step with the popovers and with a finished PDMX
   // download, which writes the folder itself while nothing is listening.
   useEffect(() => {
     if (open) readSettings().then(setValues, console.error);
-    else setMarked(null);
+    else {
+      setMarked(null);
+      setQuery("");
+      setSel(0);
+    }
     if (open) {
       invoke<Envelope | null>("audio_envelope").then(
         (one) => setEnvelope(one !== null),
@@ -605,6 +630,9 @@ export function SettingsPanel({
     }
   }, [values, opensAt]);
 
+  // Nothing of this panel writes once it is gone.
+  useEffect(() => () => clearTimeout(scrollWrite.current), []);
+
   // Whether the folder in force holds unpacked scores. Rust answers off the disk, not the setting.
   useEffect(() => {
     const folder = values?.pdmx_folder;
@@ -619,15 +647,17 @@ export function SettingsPanel({
     };
   }, [values?.pdmx_folder]);
 
-  // The tab switch and the mark land in one render, so the row is on the page by the time this
-  // runs. A row on a tab nobody has built yet is not in `SEARCH_ROWS`, so there is nothing to miss.
+  // The tab switch and the mark land in one render, and the rows themselves land with `values`, so
+  // a mark set before the settings read lands is scrolled to once the row is on the page. A row on
+  // a tab nobody has built yet is not in `SEARCH_ROWS`, so there is nothing to miss.
   useEffect(() => {
+    if (!ready) return;
     if (marked)
       document
         .getElementById(rowId(marked))
         ?.scrollIntoView({ block: markScroll.current });
     markScroll.current = "center";
-  }, [marked]);
+  }, [marked, ready]);
 
   useEffect(() => {
     list.current
@@ -635,8 +665,10 @@ export function SettingsPanel({
       ?.scrollIntoView({ block: "nearest" });
   }, [sel, query]);
 
-  /** Every tab opens at the top, so the offset held is the open tab's own. */
+  /** Every tab opens at the top, so the offset held is the open tab's own. A write still resting
+   * behind the old tab's scrolling would land after this one, so it is dropped. */
   function chooseTab(next: SettingsTab): void {
+    clearTimeout(scrollWrite.current);
     setTab(next);
     setMarked(null);
     setOpensAt(null);
@@ -883,7 +915,12 @@ export function SettingsPanel({
                   tabIndex={undefined}
                 >
                   <Rows>
-                    <Row id="theme" marked={marked === "theme"} label="Theme">
+                    <Row
+                      id="theme"
+                      marked={marked === "theme"}
+                      label="Theme"
+                      hint="Light or dark, or whichever the system is in."
+                    >
                       <Segmented
                         options={THEMES}
                         value={values.theme}
@@ -895,14 +932,13 @@ export function SettingsPanel({
                   {/* Sheet and falling notes each carry their own harmony and their own colours, so
                     each heading names the view its rows move and nothing else. */}
                   <section className="flex flex-col gap-1.5">
-                    <h3 className="text-muted-ink text-[11px] tracking-wide uppercase">
-                      Sheet
-                    </h3>
+                    <h3 className="text-[13px] font-semibold">Sheet</h3>
                     <Rows>
                       <Row
                         id="sheet_proportional"
                         marked={marked === "sheet_proportional"}
                         label="Space notes by time"
+                        hint="Draws note spacing from duration, not from the engraving."
                       >
                         <Toggle
                           value={values.sheet_proportional}
@@ -915,10 +951,12 @@ export function SettingsPanel({
                         id="sheet_spacing"
                         marked={marked === "sheet_spacing"}
                         label="Spacing"
+                        hint="How much paper one beat takes; a pinch moves it too."
                       >
                         <Slider
                           label="Sheet spacing in percent"
                           value={values.sheet_spacing}
+                          unit="%"
                           min={SPACING_MIN}
                           max={SPACING_MAX}
                           step={5}
@@ -930,6 +968,7 @@ export function SettingsPanel({
                         id="sheet_harmony"
                         marked={marked === "sheet_harmony"}
                         label="Harmony"
+                        hint="Names the chord at the cursor and the two after it."
                       >
                         <Toggle
                           value={values.sheet_harmony}
@@ -940,6 +979,7 @@ export function SettingsPanel({
                         id="sheet_colour"
                         marked={marked === "sheet_colour"}
                         label="Pitch colours"
+                        hint="Gives every note head the colour of its pitch."
                       >
                         <Toggle
                           value={values.sheet_colour}
@@ -950,18 +990,18 @@ export function SettingsPanel({
                   </section>
 
                   <section className="flex flex-col gap-1.5">
-                    <h3 className="text-muted-ink text-[11px] tracking-wide uppercase">
-                      Falling notes
-                    </h3>
+                    <h3 className="text-[13px] font-semibold">Falling notes</h3>
                     <Rows>
                       <Row
                         id="lane_lookahead"
                         marked={marked === "lane_lookahead"}
-                        label="Lookahead (beats)"
+                        label="Lookahead"
+                        hint="How many beats of the piece are in view at once."
                       >
                         <Slider
                           label="Lane lookahead in beats"
                           value={values.lane_lookahead}
+                          unit=" beats"
                           min={LOOKAHEAD_MIN}
                           max={LOOKAHEAD_MAX}
                           step={0.1}
@@ -971,11 +1011,13 @@ export function SettingsPanel({
                       <Row
                         id="lane_note_width"
                         marked={marked === "lane_note_width"}
-                        label="Note width (%)"
+                        label="Note width"
+                        hint="How wide a block is against the key it falls on."
                       >
                         <Slider
                           label="Note width in percent"
                           value={values.lane_note_width}
+                          unit="%"
                           min={10}
                           max={100}
                           step={1}
@@ -985,11 +1027,13 @@ export function SettingsPanel({
                       <Row
                         id="lane_gap"
                         marked={marked === "lane_gap"}
-                        label="Gap (px)"
+                        label="Gap"
+                        hint="Space cut between two blocks that follow each other."
                       >
                         <Slider
                           label="Gap in pixels"
                           value={values.lane_gap}
+                          unit=" px"
                           min={0}
                           max={20}
                           step={1}
@@ -1000,6 +1044,7 @@ export function SettingsPanel({
                         id="lane_names"
                         marked={marked === "lane_names"}
                         label="Note names on blocks"
+                        hint="Writes each note's name on its own block."
                       >
                         <Toggle
                           value={values.lane_names}
@@ -1010,6 +1055,7 @@ export function SettingsPanel({
                         id="lane_harmony"
                         marked={marked === "lane_harmony"}
                         label="Harmony"
+                        hint="What stands at the lane's top right: panels or the wheel."
                       >
                         <Segmented
                           options={HARMONY}
@@ -1021,16 +1067,25 @@ export function SettingsPanel({
                         id="lane_colour"
                         marked={marked === "lane_colour"}
                         label="Pitch colours"
+                        hint="Gives every block the colour of its pitch."
                       >
                         <Toggle
                           value={values.lane_colour}
                           onChange={(value) => write("lane_colour", value)}
                         />
                       </Row>
+                    </Rows>
+                  </section>
+
+                  {/* The keys drawn under the falling notes, which the sheet knows nothing of. */}
+                  <section className="flex flex-col gap-1.5">
+                    <h3 className="text-[13px] font-semibold">Keyboard</h3>
+                    <Rows>
                       <Row
                         id="keyboard_labels"
                         marked={marked === "keyboard_labels"}
                         label="Note names on keys"
+                        hint="Writes each note's name on its own key."
                       >
                         <Toggle
                           value={values.keyboard_labels}
@@ -1041,6 +1096,7 @@ export function SettingsPanel({
                         id="keyboard_scale_marks"
                         marked={marked === "keyboard_scale_marks"}
                         label="Mark keys off the scale"
+                        hint="Ghosts the keys the key in force does not hold."
                       >
                         <Toggle
                           value={values.keyboard_scale_marks}
@@ -1049,36 +1105,35 @@ export function SettingsPanel({
                           }
                         />
                       </Row>
-                    </Rows>
-                  </section>
-
-                  {/* Keyboard size lays the keys out under the falling notes and changes nothing on
-                    the sheet, so it sits outside that heading rather than under it. */}
-                  <Rows>
-                    <Row
-                      id="keyboard_size"
-                      marked={marked === "keyboard_size"}
-                      label="Keyboard size"
-                    >
-                      <Segmented
-                        options={PRESETS}
-                        value={values.keyboard_preset}
-                        onChange={(value) => write("keyboard_preset", value)}
-                      />
-                    </Row>
-                    {values.keyboard_preset === "custom" && (
-                      <Row label="Custom range">
-                        <CustomRange
-                          lo={values.keyboard_lo}
-                          hi={values.keyboard_hi}
-                          onChange={(lo, hi) => {
-                            write("keyboard_lo", lo);
-                            write("keyboard_hi", hi);
-                          }}
+                      <Row
+                        id="keyboard_size"
+                        marked={marked === "keyboard_size"}
+                        label="Keyboard size"
+                        hint="Keys the lane draws under the falling notes."
+                      >
+                        <Segmented
+                          options={PRESETS}
+                          value={values.keyboard_preset}
+                          onChange={(value) => write("keyboard_preset", value)}
                         />
                       </Row>
-                    )}
-                  </Rows>
+                      {values.keyboard_preset === "custom" && (
+                        <Row
+                          label="Custom range"
+                          hint="The lowest and the highest key to draw."
+                        >
+                          <CustomRange
+                            lo={values.keyboard_lo}
+                            hi={values.keyboard_hi}
+                            onChange={(lo, hi) => {
+                              write("keyboard_lo", lo);
+                              write("keyboard_hi", hi);
+                            }}
+                          />
+                        </Row>
+                      )}
+                    </Rows>
+                  </section>
                 </Tabs.Content>
 
                 <Tabs.Content
@@ -1086,75 +1141,100 @@ export function SettingsPanel({
                   className="flex flex-col gap-7"
                   tabIndex={undefined}
                 >
-                  <Rows>
-                    <Row
-                      id="matching_window_ms"
-                      marked={marked === "matching_window_ms"}
-                      label="Matching window (ms)"
-                    >
-                      <Slider
-                        label="Matching window in milliseconds"
-                        value={values.matching_window_ms}
-                        min={1}
-                        max={1000}
-                        step={1}
-                        onChange={(value) => write("matching_window_ms", value)}
-                      />
-                    </Row>
-                    <Row
-                      id="togetherness_ms"
-                      marked={marked === "togetherness_ms"}
-                      label="Togetherness window (ms)"
-                    >
-                      <Slider
-                        label="Togetherness window in milliseconds"
-                        value={values.togetherness_ms}
-                        min={1}
-                        max={1000}
-                        step={1}
-                        onChange={(value) => write("togetherness_ms", value)}
-                      />
-                    </Row>
-                    <Row
-                      id="play_inactive_hand"
-                      marked={marked === "play_inactive_hand"}
-                      label="Inactive hand sounds"
-                    >
-                      <Toggle
-                        value={values.play_inactive_hand}
-                        onChange={(value) => write("play_inactive_hand", value)}
-                      />
-                    </Row>
-                    <Row
-                      id="play_inactive_hand_velocity"
-                      marked={marked === "play_inactive_hand_velocity"}
-                      label="Inactive hand velocity"
-                    >
-                      <Segmented
-                        options={INACTIVE_HAND_VELOCITIES}
-                        value={values.play_inactive_hand_velocity}
-                        onChange={(value) =>
-                          write("play_inactive_hand_velocity", value)
-                        }
-                      />
-                    </Row>
-                    <Row
-                      id="play_inactive_hand_level"
-                      marked={marked === "play_inactive_hand_level"}
-                      label="Inactive hand level (%)"
-                    >
-                      <Slider
-                        label="Inactive hand level in percent"
-                        value={values.play_inactive_hand_level}
-                        min={INACTIVE_HAND_LEVEL[0]}
-                        max={INACTIVE_HAND_LEVEL[1]}
-                        step={5}
-                        onChange={(value) =>
-                          write("play_inactive_hand_level", value)
-                        }
-                      />
-                    </Row>
-                  </Rows>
+                  <section className="flex flex-col gap-1.5">
+                    <h3 className="text-[13px] font-semibold">Timing</h3>
+                    <Rows>
+                      <Row
+                        id="matching_window_ms"
+                        marked={marked === "matching_window_ms"}
+                        label="Matching window"
+                        hint="How far off the beat a strike still counts."
+                      >
+                        <Slider
+                          label="Matching window in milliseconds"
+                          value={values.matching_window_ms}
+                          unit=" ms"
+                          min={1}
+                          max={1000}
+                          step={1}
+                          onChange={(value) =>
+                            write("matching_window_ms", value)
+                          }
+                        />
+                      </Row>
+                      <Row
+                        id="togetherness_ms"
+                        marked={marked === "togetherness_ms"}
+                        label="Togetherness window"
+                        hint="How far apart the notes of one chord may be struck."
+                      >
+                        <Slider
+                          label="Togetherness window in milliseconds"
+                          value={values.togetherness_ms}
+                          unit=" ms"
+                          min={1}
+                          max={1000}
+                          step={1}
+                          onChange={(value) => write("togetherness_ms", value)}
+                        />
+                      </Row>
+                    </Rows>
+                  </section>
+
+                  {/* The velocity and the level shape a sound nothing makes while the first row is
+                    off, so both stand dead until it is on. */}
+                  <section className="flex flex-col gap-1.5">
+                    <h3 className="text-[13px] font-semibold">Inactive hand</h3>
+                    <Rows>
+                      <Row
+                        id="play_inactive_hand"
+                        marked={marked === "play_inactive_hand"}
+                        label="Inactive hand sounds"
+                        hint="Plays the hand you are not playing as the clock passes it."
+                      >
+                        <Toggle
+                          value={values.play_inactive_hand}
+                          onChange={(value) =>
+                            write("play_inactive_hand", value)
+                          }
+                        />
+                      </Row>
+                      <Row
+                        id="play_inactive_hand_velocity"
+                        marked={marked === "play_inactive_hand_velocity"}
+                        label="Inactive hand velocity"
+                        hint="Loudness from the written dynamics, or from your strikes."
+                      >
+                        <Segmented
+                          options={INACTIVE_HAND_VELOCITIES}
+                          value={values.play_inactive_hand_velocity}
+                          disabled={!values.play_inactive_hand}
+                          onChange={(value) =>
+                            write("play_inactive_hand_velocity", value)
+                          }
+                        />
+                      </Row>
+                      <Row
+                        id="play_inactive_hand_level"
+                        marked={marked === "play_inactive_hand_level"}
+                        label="Inactive hand level"
+                        hint="Part of that loudness the inactive hand sounds at."
+                      >
+                        <Slider
+                          label="Inactive hand level in percent"
+                          value={values.play_inactive_hand_level}
+                          unit="%"
+                          min={INACTIVE_HAND_LEVEL[0]}
+                          max={INACTIVE_HAND_LEVEL[1]}
+                          step={5}
+                          disabled={!values.play_inactive_hand}
+                          onChange={(value) =>
+                            write("play_inactive_hand_level", value)
+                          }
+                        />
+                      </Row>
+                    </Rows>
+                  </section>
 
                   {import.meta.env.DEV && (
                     <details
@@ -1205,6 +1285,7 @@ export function SettingsPanel({
                       id="library_folder"
                       marked={marked === "library_folder"}
                       label="Library folder"
+                      hint="Where the app keeps every piece's file."
                     >
                       <Path
                         value={values.library_folder}
@@ -1217,6 +1298,7 @@ export function SettingsPanel({
                       id="pdmx_folder"
                       marked={marked === "pdmx_folder"}
                       label="PDMX folder"
+                      hint="Where the PDMX archive is unpacked."
                     >
                       <Path
                         value={values.pdmx_folder}
@@ -1229,6 +1311,7 @@ export function SettingsPanel({
                       id="pdmx_scores"
                       marked={marked === "pdmx_scores"}
                       label="PDMX scores"
+                      hint="The score finder needs them to offer PDMX rows."
                     >
                       <span className="flex flex-none flex-col items-end gap-0.5">
                         <span className="flex items-center gap-3">
@@ -1265,9 +1348,20 @@ export function SettingsPanel({
           </div>
         </Tabs.Root>
 
+        {/* Enter belongs to the results list alone; with no list up the keys are the marked row's. */}
         <footer className="border-edge-soft text-muted-ink flex flex-none justify-end gap-3 border-t px-4 py-2 text-[12px]">
-          <span>↑↓ select</span>
-          <span>↩ open</span>
+          {query.trim() === "" ? (
+            <>
+              <span>↑↓ move</span>
+              <span>space change</span>
+              <span>←→ adjust</span>
+            </>
+          ) : (
+            <>
+              <span>↑↓ select</span>
+              <span>↩ open</span>
+            </>
+          )}
           <span>esc close</span>
         </footer>
       </DialogContent>
@@ -1378,7 +1472,7 @@ export function SpacingPopup({ pinch }: { pinch: Pinch | null }) {
         className="accent-ink min-w-0 flex-1"
       />
       <span className="w-10 flex-none text-right tabular-nums">
-        {held.spacing} %
+        {held.spacing}%
       </span>
     </div>
   );
@@ -1402,10 +1496,15 @@ function Path({ value, onChoose }: { value: string; onChoose: () => void }) {
   );
 }
 
-/** A number dragged rather than typed, with its value beside it. A pinch moves one of these. */
+/**
+ * A number dragged rather than typed, with its value beside it. A pinch moves one of these. `unit`
+ * is appended to the readout as it is written, so a per cent carries no space and a millisecond
+ * does.
+ */
 function Slider({
   label,
   value,
+  unit = "",
   min,
   max,
   step,
@@ -1414,6 +1513,7 @@ function Slider({
 }: {
   label: string;
   value: number;
+  unit?: string;
   min: number;
   max: number;
   step: number;
@@ -1433,8 +1533,9 @@ function Slider({
         onChange={(event) => onChange(Number(event.target.value))}
         className="accent-ink w-24 disabled:opacity-30"
       />
-      <span className="text-muted-ink w-8 text-right text-[11px] tabular-nums">
+      <span className="text-muted-ink w-14 flex-none text-right text-[11px] whitespace-nowrap tabular-nums">
         {value}
+        {unit}
       </span>
     </span>
   );

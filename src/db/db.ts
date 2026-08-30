@@ -209,7 +209,7 @@ export function knobValues<M extends Partial<Record<keyof Settings, string>>>(
   ) as { [K in keyof M as M[K] & string]: Settings[K & keyof Settings] };
 }
 
-/** What every setting holds until the user writes it, and what "Reset group" writes back. */
+/** What every setting holds until it is written, and what a read of an unwritten one gives back. */
 export const SETTING_DEFAULTS: Settings = {
   library_folder: "",
   pdmx_folder: "",

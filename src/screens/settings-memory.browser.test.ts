@@ -141,3 +141,18 @@ test('a row to open on wins over the place the panel was left', async () => {
     'true',
   );
 });
+
+// The write rests 300 ms behind the scrolling and a tab switch writes 0 at once, so what the
+// database is left holding has to be the new tab's top rather than the old tab's offset.
+test('a scroll write still resting when the tab changes never lands', async () => {
+  await open();
+  await openTab('Look');
+  const box = column();
+  box.scrollTop = box.scrollHeight - box.clientHeight;
+  await new Promise((done) => setTimeout(done, 100));
+
+  await openTab('Playing');
+  await new Promise((done) => setTimeout(done, 500));
+  expect(setting('settings_scroll')).toBe(0);
+  expect(column().scrollTop).toBe(0);
+});

@@ -7,6 +7,9 @@ import { afterEach, expect, test, vi } from 'vitest';
 /** Set by the PDMX test so the archive is still coming while it looks at the row. */
 let fetching: { promise: Promise<void>; release: () => void } | null = null;
 
+/** Set by the jump test so the settings read is still coming while the panel opens. */
+let reading: { promise: Promise<void>; release: () => void } | null = null;
+
 /** What the engine says the instrument offers: a sampled piano, until a test says otherwise. */
 const OFFERED = ['release', 'key_off', 'sympathetic', 'pedal_noise'];
 let roles = [...OFFERED];
@@ -39,7 +42,15 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }));
 
 // Clicking a control writes it, so the panel needs a database that swallows the write.
 vi.mock('@tauri-apps/plugin-sql', () => ({
-  default: { load: async () => ({ select: async () => [], execute: async () => {} }) },
+  default: {
+    load: async () => ({
+      select: async () => {
+        await reading?.promise;
+        return [];
+      },
+      execute: async () => {},
+    }),
+  },
 }));
 
 let root: Root | null = null;
@@ -51,6 +62,8 @@ afterEach(() => {
   host?.remove();
   host = null;
   roles = [...OFFERED];
+  reading = null;
+  vi.restoreAllMocks();
 });
 
 /** Mounts an open panel and waits for the settings read to land its rows on the page. */
@@ -123,7 +136,7 @@ test('a volume is found whether it is a row here or a fader in the mixer', async
   // A word the panel's own rows hold still points at the tab they are on, not at the mixer.
   const touch = await search('touch');
   expect(labels(touch)).toEqual(['Minimum velocity', 'Maximum velocity', 'Velocity curve']);
-  expect(wheres(touch)).toEqual(['Sound', 'Sound', 'Sound']);
+  expect(wheres(touch)).toEqual(['Sound · Touch', 'Sound · Touch', 'Sound · Touch']);
 });
 
 test('a result naming an input device shuts the panel and opens the MIDI popover', async () => {
@@ -200,7 +213,7 @@ test('the sound engine rows are found and jumped to like any other', async () =>
 
 test('a tab name finds every row on that tab', async () => {
   await open();
-  expect(labels(await search('playing'))).toContain('Matching window (ms)');
+  expect(labels(await search('playing'))).toContain('Matching window');
 });
 
 test('a word for the harmony display finds the sheet row and the falling-notes row', async () => {
@@ -546,4 +559,76 @@ test('a grade knob is a slider of its own, found by search and stepped by the ar
   await vi.waitFor(() => expect(marked('grade_weight_timing')).toBe(false));
   await userEvent.keyboard('{ArrowRight}');
   expect(readout()).toBe('0.71');
+});
+
+// What the mixer's "Sound settings…" does: the mark is set before the settings read lands, so the
+// row it names is not on the page yet when the mark arrives.
+test('a panel opened at a row scrolls to it however late the settings arrive', async () => {
+  const scrolled: string[] = [];
+  vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (this: Element) {
+    scrolled.push(this.id);
+  });
+  let release = (): void => {};
+  reading = { promise: new Promise<void>((done) => (release = done)), release: () => release() };
+
+  host = document.createElement('div');
+  document.body.append(host);
+  root = createRoot(host);
+  root.render(
+    createElement(SettingsPanel, { open: true, onClose: () => {}, jumpTo: 'instrument_id' }),
+  );
+  await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeTruthy());
+  reading.release();
+
+  await vi.waitFor(() => expect(marked('instrument_id')).toBe(true));
+  await vi.waitFor(() => expect(scrolled).toContain('setting-row-instrument_id'));
+});
+
+test('the footer names the keys of the state the panel is in', async () => {
+  await open();
+  const footer = () => document.querySelector('footer')!.textContent!;
+  // With no results up the keys are the marked row's, and Enter does nothing.
+  expect(footer()).toContain('space change');
+  expect(footer()).not.toContain('↩ open');
+
+  await search('theme');
+  expect(footer()).toContain('↩ open');
+  expect(footer()).not.toContain('space change');
+  expect(footer()).toContain('esc close');
+});
+
+/** Whether every button of a row is dead. */
+function dead(id: string): boolean {
+  const buttons = [...document.querySelectorAll<HTMLButtonElement>(`#setting-row-${id} button`)];
+  return buttons.length > 0 && buttons.every((each) => each.disabled);
+}
+
+test('the two inactive-hand rows are dead while the hand does not sound', async () => {
+  await open();
+  await openTab('Playing');
+
+  expect(dead('play_inactive_hand_velocity')).toBe(true);
+  expect(slider('play_inactive_hand_level').disabled).toBe(true);
+
+  const sounds = document.querySelectorAll<HTMLButtonElement>(
+    '#setting-row-play_inactive_hand button',
+  );
+  await userEvent.click([...sounds].find((each) => each.textContent === 'On')!);
+
+  await vi.waitFor(() => expect(dead('play_inactive_hand_velocity')).toBe(false));
+  expect(slider('play_inactive_hand_level').disabled).toBe(false);
+});
+
+test('a reopened panel carries no results over from the last one', async () => {
+  await open();
+  expect(await search('chords')).toHaveLength(2);
+
+  root!.render(createElement(SettingsPanel, { open: false, onClose: () => {} }));
+  await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBe(null));
+
+  root!.render(createElement(SettingsPanel, { open: true, onClose: () => {} }));
+  await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeTruthy());
+  expect(document.querySelector('[role="dialog"] ul')).toBe(null);
+  const box = document.querySelector<HTMLInputElement>('input[aria-label="Search settings"]')!;
+  expect(box.value).toBe('');
 });

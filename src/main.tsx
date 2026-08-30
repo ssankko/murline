@@ -8,6 +8,10 @@ import { createRoot } from 'react-dom/client';
 // can be studied without `tauri dev`.
 if (import.meta.env.DEV && location.search.includes('mocktauri')) installTauriMock();
 
+// The webview's own menu offers Reload and, in a dev build, Inspect Element: nothing a player
+// wants under the right mouse button.
+if (!import.meta.env.DEV) document.addEventListener('contextmenu', (event) => event.preventDefault());
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />

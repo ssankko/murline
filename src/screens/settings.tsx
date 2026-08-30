@@ -17,6 +17,7 @@ import {
 import { clamp, rowId } from "@/lib/utils";
 import { noteName } from "@/score/pitch";
 import { Loading } from "@/look/loading";
+import { Row, Rows, Segmented, Toggle } from "@/look/rows";
 import { setTheme, type Theme } from "@/look/use-dark";
 import { useMidiStatus } from "@/midi/use-midi-status";
 import {
@@ -1383,48 +1384,6 @@ export function SpacingPopup({ pinch }: { pinch: Pinch | null }) {
   );
 }
 
-/** The divided list the panel's rows sit in. */
-function Rows({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="divide-edge-soft border-edge-soft divide-y border-y">
-      {children}
-    </div>
-  );
-}
-
-function Row({
-  id,
-  label,
-  hint,
-  marked,
-  children,
-}: {
-  /** Set on a panel row, so a search result can scroll to it and mark it. */
-  id?: string;
-  label: string;
-  hint?: string;
-  marked?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      id={id && rowId(id)}
-      data-marked={marked || undefined}
-      className={`flex min-h-8 items-center justify-between gap-3 py-1 text-[12px] ${marked ? "bg-ink/8" : ""}`}
-    >
-      <span className={hint ? "flex flex-col gap-0.5" : "flex-none"}>
-        {label}
-        {hint && (
-          <span className="text-muted-ink text-[11px] leading-snug">
-            {hint}
-          </span>
-        )}
-      </span>
-      {children}
-    </div>
-  );
-}
-
 function Path({ value, onChoose }: { value: string; onChoose: () => void }) {
   return (
     <div className="flex min-w-0 items-center gap-2">
@@ -1478,53 +1437,6 @@ function Slider({
         {value}
       </span>
     </span>
-  );
-}
-
-function Toggle({
-  value,
-  onChange,
-}: {
-  value: boolean;
-  onChange: (value: boolean) => void;
-}) {
-  return (
-    <Segmented
-      options={[
-        [true, "On"],
-        [false, "Off"],
-      ]}
-      value={value}
-      onChange={onChange}
-    />
-  );
-}
-
-/** The one shape every choice of a few takes: the active one filled with ink. */
-function Segmented<T extends string | number | boolean>({
-  options,
-  value,
-  onChange,
-}: {
-  options: [T, string][];
-  value: T;
-  onChange: (value: T) => void;
-}) {
-  return (
-    <div className="border-edge flex flex-none border">
-      {options.map(([each, label]) => (
-        <button
-          key={String(each)}
-          aria-pressed={value === each}
-          onClick={() => onChange(each)}
-          className={`h-6 px-2 text-[11.5px] font-medium transition-colors duration-150 ${
-            value === each ? "bg-ink text-paper" : "hover:bg-ink/8"
-          }`}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
   );
 }
 

@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { getSettingOr, readSettings, setSetting } from "@/db/db";
 import { reasonOf } from "@/library/notice";
-import { rowId } from "@/lib/utils";
+import { numbered, Row, Segmented } from "@/look/rows";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ChevronDown } from "lucide-react";
@@ -174,22 +174,22 @@ export function OutputSection({ marked }: { marked?: string | null }) {
         label="Buffer (frames)"
       >
         <Segmented
-          choices={FRAME_CHOICES}
-          chosen={
+          options={numbered(FRAME_CHOICES)}
+          value={
             status?.buffer_choices?.includes(frames) === false
               ? status.buffer_frames
               : frames
           }
           allowed={status?.buffer_choices}
-          onPick={(choice) => void chooseFrames(choice)}
+          onChange={(choice) => void chooseFrames(choice)}
         />
       </Row>
 
       <Row id="audio_voices" marked={marked === "audio_voices"} label="Voices">
         <Segmented
-          choices={VOICE_CHOICES}
-          chosen={voices}
-          onPick={(choice) => void chooseVoices(choice)}
+          options={numbered(VOICE_CHOICES)}
+          value={voices}
+          onChange={(choice) => void chooseVoices(choice)}
         />
       </Row>
 
@@ -209,66 +209,4 @@ export function OutputSection({ marked }: { marked?: string | null }) {
 function latencyLine(status: AudioStatus | null): string {
   if (!status?.latency_ms) return "—";
   return `${status.latency_ms.toFixed(1)} ms at ${(status.sample_rate / 1000).toFixed(1)} kHz`;
-}
-
-/**
- * A row of numbers to pick one of, the one in force filled in. `allowed` is what the engine takes
- * now; every other choice is dimmed and dead. An empty or missing list is the engine saying
- * nothing, so then anything can be picked.
- */
-export function Segmented({
-  choices,
-  chosen,
-  onPick,
-  allowed,
-}: {
-  choices: number[];
-  chosen: number;
-  onPick: (choice: number) => void;
-  allowed?: number[];
-}) {
-  return (
-    <div className="border-edge flex flex-none border">
-      {choices.map((choice) => {
-        const dead = allowed?.length ? !allowed.includes(choice) : false;
-        return (
-          <button
-            key={choice}
-            aria-pressed={chosen === choice}
-            aria-disabled={dead}
-            disabled={dead}
-            onClick={() => onPick(choice)}
-            className={`h-6 px-2 text-[11.5px] font-medium tabular-nums transition-colors duration-150 ${
-              chosen === choice ? "bg-ink text-paper" : "hover:bg-ink/8"
-            } ${dead ? "opacity-35 hover:bg-transparent" : ""}`}
-          >
-            {choice}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-export function Row({
-  id,
-  label,
-  marked,
-  children,
-}: {
-  id?: string;
-  label: string;
-  marked?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      id={id && rowId(id)}
-      data-marked={marked || undefined}
-      className={`flex min-h-8 items-center justify-between gap-3 py-1 text-[12px] ${marked ? "bg-ink/8" : ""}`}
-    >
-      <span className="flex-none">{label}</span>
-      {children}
-    </div>
-  );
 }

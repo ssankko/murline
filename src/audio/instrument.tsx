@@ -2,7 +2,7 @@
 // engine finds them, this picks one, and every control writes its setting on change.
 
 import { restoreEnvelope } from "@/audio/envelope";
-import { Row, Segmented } from "@/audio/output";
+import { numbered, Row, Segmented } from "@/look/rows";
 import { restoreRoles } from "@/audio/roles";
 import type { AudioStatus } from "@/audio/sound-tab";
 import { Button } from "@/components/ui/button";
@@ -288,10 +288,10 @@ export function InstrumentSection({
         label="Sample rate (Hz)"
       >
         <Segmented
-          choices={RATE_CHOICES}
-          chosen={rate}
+          options={numbered(RATE_CHOICES)}
+          value={rate}
           allowed={allowedRates(status)}
-          onPick={(choice) => void chooseRate(choice)}
+          onChange={(choice) => void chooseRate(choice)}
         />
       </Row>
 

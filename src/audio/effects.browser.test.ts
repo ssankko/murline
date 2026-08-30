@@ -83,9 +83,11 @@ test('the chain is listed in order, and a plugin this Mac does not have reads as
   expect(text()).toContain('Pro-R 2 — not installed');
 });
 
-test('a bypass writes the whole chain and keeps every other slot as it was', async () => {
+test('a slot switched off writes the whole chain and keeps every other slot as it was', async () => {
   await open();
-  button('Bypass').click();
+  // On is the slot playing, so Off is what puts the plugin's own bypass on.
+  expect(button('On').getAttribute('aria-pressed')).toBe('true');
+  button('Off').click();
 
   await vi.waitFor(() => expect(written).toHaveLength(1));
   expect(written[0]).toEqual([

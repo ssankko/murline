@@ -2,6 +2,7 @@
 // the sound popover behind the sound cell, with the Sound tab's own controls. Both name the sound's
 // way out and both hold the link into the rest of the Sound tab.
 
+import { Knob } from '@/audio/knob';
 import { SoundControls, useAudioStatus, type AudioStatus } from '@/audio/sound-tab';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { readSettings, setSetting } from '@/db/db';
@@ -75,18 +76,27 @@ export function Mixer({
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       <PopoverContent side="top" align="end" className={`${PANEL} w-96`}>
-        <Fader
+        <Knob
+          id="keyboard_volume"
           label="Keyboard"
-          max={200}
+          hint="100% is the instrument's own; a limiter stops clipping."
+          lo={0}
+          hi={200}
           value={values?.keyboard ?? 100}
+          readout={`${values?.keyboard ?? 100}%`}
           disabled={!values}
-          onChange={writeKeyboard}
+          onChange={(percent) => writeKeyboard(sticky(percent))}
         />
-        <Fader
+        <Knob
+          id="click_volume"
           label="Metronome"
+          hint="The click's own volume, straight to the output."
+          lo={0}
+          hi={100}
           value={values?.click ?? 0}
+          readout={`${values?.click ?? 0}%`}
           disabled={!values}
-          onChange={writeClick}
+          onChange={(percent) => writeClick(sticky(percent))}
         />
         <Foot status={status} onOpenChange={onOpenChange} onSoundSettings={onSoundSettings} />
       </PopoverContent>
@@ -155,40 +165,5 @@ function Foot({
         Sound settings…
       </button>
     </div>
-  );
-}
-
-function Fader({
-  label,
-  max = 100,
-  value,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  /** The top of the range. The keyboard fader goes past unity, the metronome's does not. */
-  max?: number;
-  value: number;
-  disabled: boolean;
-  onChange: (value: number) => void;
-}) {
-  return (
-    <label className="flex items-center gap-2 text-[12px]">
-      <span className="w-20 flex-none">{label}</span>
-      <input
-        type="range"
-        aria-label={label}
-        min={0}
-        max={max}
-        step={1}
-        value={value}
-        disabled={disabled}
-        onChange={(event) => onChange(sticky(Number(event.target.value)))}
-        className="accent-ink min-w-0 flex-1 disabled:opacity-30"
-      />
-      <span className="text-muted-ink w-8 flex-none text-right text-[11px] tabular-nums">
-        {value}
-      </span>
-    </label>
   );
 }

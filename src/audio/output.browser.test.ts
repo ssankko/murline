@@ -254,3 +254,22 @@ test("a chosen device that is not connected reads as the system default until it
 
   await vi.waitFor(() => expect(checkedRow()).toBe("Scarlett 2i2"));
 });
+
+test("a buffer size this device does not take says so and shows the one running", async () => {
+  settings = { ...settings, audio_buffer_frames: 64 };
+  status = { ...status, buffer_choices: [128, 256, 512], buffer_frames: 128 };
+
+  const text = await open();
+  await vi.waitFor(() =>
+    expect(text()).toContain(
+      "This device does not take 64 frames; running at 128.",
+    ),
+  );
+  // The row stands on the size the engine settled on, not the saved one.
+  const pressed = [
+    ...document.querySelectorAll("#setting-row-audio_buffer_frames button"),
+  ]
+    .filter((each) => each.getAttribute("aria-pressed") === "true")
+    .map((each) => each.textContent);
+  expect(pressed).toEqual(["128"]);
+});

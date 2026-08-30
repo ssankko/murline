@@ -16,7 +16,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { getSettingOr, readSettings, setSetting, type Settings } from "@/db/db";
 import { reasonOf } from "@/library/notice";
-import { rowId } from "@/lib/utils";
 import { Loading } from "@/look/loading";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -220,12 +219,12 @@ export function InstrumentSection({
     <section className="flex flex-col gap-2">
       <h3 className="text-[13px] font-semibold">Instrument</h3>
 
-      <div
-        id={rowId("instrument_id")}
-        data-marked={marked === "instrument_id" || undefined}
-        className={`flex min-h-8 items-center justify-between gap-3 py-1 text-[12px] ${marked === "instrument_id" ? "bg-ink/8" : ""}`}
+      <Row
+        id="instrument_id"
+        marked={marked === "instrument_id"}
+        label="Instrument"
+        hint="What the keyboard and the Preview play."
       >
-        <span className="flex-none">Instrument</span>
         <div className="flex min-w-0 items-center gap-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -274,9 +273,12 @@ export function InstrumentSection({
             </Button>
           )}
         </div>
-      </div>
+      </Row>
 
-      <Row label="Recommended sample rate">
+      <Row
+        label="Recommended sample rate"
+        hint="The rate this instrument was recorded at."
+      >
         <span className="text-muted-ink text-[12px] tabular-nums">
           {recordedLine(status)}
         </span>
@@ -286,6 +288,7 @@ export function InstrumentSection({
         id="audio_sample_rate"
         marked={marked === "audio_sample_rate"}
         label="Sample rate (Hz)"
+        hint="Higher costs render load: 96 kHz is twice 48 kHz."
       >
         <Segmented
           options={numbered(RATE_CHOICES)}
@@ -298,17 +301,12 @@ export function InstrumentSection({
       {failure && <p className="text-muted-ink text-[12px]">{failure}</p>}
 
       {showFolder && (
-        <div
-          id={rowId("instruments_folder")}
-          data-marked={marked === "instruments_folder" || undefined}
-          className={`flex min-h-8 items-center justify-between gap-3 py-1 text-[12px] ${marked === "instruments_folder" ? "bg-ink/8" : ""}`}
+        <Row
+          id="instruments_folder"
+          marked={marked === "instruments_folder"}
+          label="Instruments folder"
+          hint="Every .sf2 and .exs file in it is listed above."
         >
-          <span className="flex flex-col gap-0.5">
-            Instruments folder
-            <span className="text-muted-ink text-[11px] leading-snug">
-              Every .sf2 and .exs file in it is listed above.
-            </span>
-          </span>
           <div className="flex min-w-0 items-center gap-2">
             <code className="text-muted-ink truncate text-[11.5px] select-text">
               {folder || "not set"}
@@ -322,7 +320,7 @@ export function InstrumentSection({
               Choose…
             </Button>
           </div>
-        </div>
+        </Row>
       )}
     </section>
   );

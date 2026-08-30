@@ -44,23 +44,26 @@ export function Row({
 
 /**
  * The one shape every choice of a few takes: the active one filled with ink. `allowed` is what may
- * be picked now; every other option is dimmed and dead. An empty or missing list allows everything.
+ * be picked now; every other option is dimmed and dead. An empty or missing list allows everything,
+ * and `disabled` deadens the whole control the same way, for a row another setting switches off.
  */
 export function Segmented<T extends string | number | boolean>({
   options,
   value,
   onChange,
   allowed,
+  disabled,
 }: {
   options: [T, string][];
   value: T;
   onChange: (value: T) => void;
   allowed?: T[];
+  disabled?: boolean;
 }) {
   return (
     <div className="border-edge flex flex-none border">
       {options.map(([each, label]) => {
-        const dead = allowed?.length ? !allowed.includes(each) : false;
+        const dead = disabled || (allowed?.length ? !allowed.includes(each) : false);
         return (
           <button
             key={String(each)}
@@ -81,7 +84,15 @@ export function Segmented<T extends string | number | boolean>({
 }
 
 /** A boolean as a two-way Segmented. */
-export function Toggle({ value, onChange }: { value: boolean; onChange: (value: boolean) => void }) {
+export function Toggle({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: boolean;
+  onChange: (value: boolean) => void;
+  disabled?: boolean;
+}) {
   return (
     <Segmented
       options={[
@@ -90,6 +101,7 @@ export function Toggle({ value, onChange }: { value: boolean; onChange: (value: 
       ]}
       value={value}
       onChange={onChange}
+      disabled={disabled}
     />
   );
 }

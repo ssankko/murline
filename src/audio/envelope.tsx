@@ -101,6 +101,7 @@ export function EnvelopeSection({
             id="envelope_attack"
             marked={marked}
             label="Attack"
+            hint="How fast a note comes in."
             lo={0}
             hi={2000}
             value={Math.round(values.attack * 1000)}
@@ -111,6 +112,7 @@ export function EnvelopeSection({
             id="envelope_decay"
             marked={marked}
             label="Decay"
+            hint="The fall to the sustain."
             lo={0}
             hi={4000}
             value={Math.round(values.decay * 1000)}
@@ -121,6 +123,7 @@ export function EnvelopeSection({
             id="envelope_sustain"
             marked={marked}
             label="Sustain"
+            hint="The level a held key holds at."
             lo={0}
             hi={100}
             value={Math.round(values.sustain * 100)}
@@ -131,6 +134,7 @@ export function EnvelopeSection({
             id="envelope_release"
             marked={marked}
             label="Release"
+            hint="How long a note dies away."
             lo={0}
             hi={4000}
             value={Math.round(values.release * 1000)}

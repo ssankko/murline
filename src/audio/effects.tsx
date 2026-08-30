@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { getSettingOr, setSetting } from '@/db/db';
 import { rowId } from '@/lib/utils';
+import { Toggle } from '@/look/rows';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Plus } from 'lucide-react';
@@ -95,6 +96,9 @@ export function EffectsSection({ marked }: { marked?: string | null }) {
       className={`flex flex-col gap-2 ${marked === 'effect_chain' ? 'bg-ink/8' : ''}`}
     >
       <h3 className="text-[13px] font-semibold">Effect chain</h3>
+      <p className="text-muted-ink text-[11px] leading-snug">
+        Audio Units between the instrument and the output. Drag to reorder.
+      </p>
 
       {slots.map((slot, at) => (
         <div
@@ -109,15 +113,13 @@ export function EffectsSection({ marked }: { marked?: string | null }) {
             {slot.name}
             {slot.missing && <span className="text-muted-ink"> — not installed</span>}
           </span>
-          <button
-            aria-pressed={slot.bypass}
-            onClick={() => edit(at, { ...slot, bypass: !slot.bypass })}
-            className={`border-edge h-6 flex-none border px-2 text-[11.5px] font-medium ${
-              slot.bypass ? 'bg-ink text-paper' : 'hover:bg-ink/8'
-            }`}
-          >
-            Bypass
-          </button>
+          {/* On is the slot playing; Off is the plugin's own bypass, which keeps its place in the
+              chain and its settings. */}
+          <Toggle
+            value={!slot.bypass}
+            disabled={slot.missing}
+            onChange={(on) => edit(at, { ...slot, bypass: !on })}
+          />
           <Button
             variant="outline"
             size="sm"

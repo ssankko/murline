@@ -275,9 +275,9 @@ export function StatusBar({
             <span className="flex items-center gap-1">
               <Cpu {...ICON} />
               <span
-                className={`min-w-[5ch] tabular-nums ${shown && shown.load > HOT ? 'text-red-600 dark:text-red-400' : ''}`}
+                className={`min-w-[4ch] tabular-nums ${shown && shown.load > HOT ? 'text-red-600 dark:text-red-400' : ''}`}
               >
-                {shown ? `${shown.load} %` : '—'}
+                {shown ? `${shown.load}%` : '—'}
               </span>
             </span>
           </Tip>

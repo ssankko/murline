@@ -92,6 +92,7 @@ export function VelocitySection({
             id="velocity_min"
             marked={marked}
             label="Minimum velocity"
+            hint="Velocity 1 lands here."
             lo={1}
             hi={127}
             value={min}
@@ -103,6 +104,7 @@ export function VelocitySection({
             id="velocity_max"
             marked={marked}
             label="Maximum velocity"
+            hint="Velocity 127 lands here."
             lo={1}
             hi={127}
             value={max}
@@ -114,6 +116,7 @@ export function VelocitySection({
             id="velocity_curve"
             marked={marked}
             label="Velocity curve"
+            hint="Over 1.00 makes soft playing softer."
             lo={0}
             hi={100}
             value={positionOf(curve)}

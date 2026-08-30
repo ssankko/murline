@@ -273,7 +273,7 @@ test("the meters stand at a dash until the engine reports, and the load reddens 
   expect(num(4).textContent).toBe("—");
 
   emit.get("audio-load")!({ payload: { voices: 41, limit: 128, load: 12 } });
-  await vi.waitFor(() => expect(num(4).textContent).toBe("12 %"));
+  await vi.waitFor(() => expect(num(4).textContent).toBe("12%"));
   expect(num(3).textContent).toBe("41 / 128");
   expect(num(4).className).not.toContain("red");
 

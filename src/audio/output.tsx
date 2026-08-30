@@ -121,6 +121,13 @@ export function OutputSection({ marked }: { marked?: string | null }) {
   // comes back with the device, and the tab's own line is what says the engine had to move.
   const shown = devices.find((d) => d.id === chosen);
 
+  // A device that does not take the saved size runs at one of its own, so the row shows that size
+  // and its hint says whose it is.
+  const running =
+    status?.buffer_choices?.length && !status.buffer_choices.includes(frames)
+      ? status.buffer_frames
+      : frames;
+
   return (
     <section className="flex flex-col gap-2">
       <h3 className="text-[13px] font-semibold">Output</h3>
@@ -129,6 +136,7 @@ export function OutputSection({ marked }: { marked?: string | null }) {
         id="audio_output_device"
         marked={marked === "audio_output_device"}
         label="Output device"
+        hint="Where the sound goes out."
       >
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -166,26 +174,30 @@ export function OutputSection({ marked }: { marked?: string | null }) {
         </DropdownMenu>
       </Row>
 
-      {/* A saved size this device does not take is not the one running, so the row marks the
-          size the engine settled on instead. */}
       <Row
         id="audio_buffer_frames"
         marked={marked === "audio_buffer_frames"}
         label="Buffer (frames)"
+        hint={
+          running === frames
+            ? "Smaller is quicker; too small crackles."
+            : `This device does not take ${frames} frames; running at ${running}.`
+        }
       >
         <Segmented
           options={numbered(FRAME_CHOICES)}
-          value={
-            status?.buffer_choices?.includes(frames) === false
-              ? status.buffer_frames
-              : frames
-          }
+          value={running}
           allowed={status?.buffer_choices}
           onChange={(choice) => void chooseFrames(choice)}
         />
       </Row>
 
-      <Row id="audio_voices" marked={marked === "audio_voices"} label="Voices">
+      <Row
+        id="audio_voices"
+        marked={marked === "audio_voices"}
+        label="Voices"
+        hint="Most notes sounding at once. More costs memory."
+      >
         <Segmented
           options={numbered(VOICE_CHOICES)}
           value={voices}
@@ -193,7 +205,7 @@ export function OutputSection({ marked }: { marked?: string | null }) {
         />
       </Row>
 
-      <Row label="Latency">
+      <Row label="Latency" hint="The delay between a key press and its sound.">
         <span className="text-muted-ink text-[12px] tabular-nums">
           {latencyLine(status)}
         </span>

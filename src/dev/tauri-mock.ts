@@ -1,9 +1,14 @@
 // A stand-in for the Tauri runtime, loaded before the app when the address carries ?mocktauri.
 // A plain browser then runs the whole start-up against faked answers, so the screens can be
 // watched without `tauri dev`. Every command, event, setting and piece comes from the same
-// in-memory Rust side the tests use, on an empty library.
+// in-memory Rust side the tests use.
+//
+// The address can fill the library and the settings:
+//   ?mocktauri&piece=prelude28-01.musicxml   one fixture from src-tauri/fixtures as the library
+//   &s.keyboard_preset=25&s.sheet_split=0.5   any global setting, as JSON, under an `s.` prefix
+//   &p.position_tick=38400                    any `piece` column, as JSON, under a `p.` prefix
 
-import { fakeRust, fakeSettings } from '@/rust.fake';
+import { DEFAULT_ANSWERS, fakeRust, fakeSettings, type FakeRust } from '@/rust.fake';
 
 type TauriMock = {
   invoke: () => Promise<unknown>;
@@ -13,11 +18,32 @@ type TauriMock = {
 };
 
 export function installTauriMock(): void {
-  fakeRust();
+  const params = new URLSearchParams(location.search);
+  const pieces = params.getAll('piece');
+  const columns = Object.fromEntries(
+    [...params].filter(([key]) => key.startsWith('p.')).map(([key, value]) => [key.slice(2), JSON.parse(value)]),
+  );
+  const fake = fakeRust({
+    piece_get: (args) => {
+      const row = DEFAULT_ANSWERS.piece_get(args);
+      return row && Object.assign(row, columns);
+    },
+    list_library: () => pieces.map((relPath) => ({ relPath, mtime: 1, size: 1 })),
+    read_file: async ({ path }) => {
+      const response = await fetch(`/src-tauri/fixtures/${path.split('/').pop()}`);
+      if (!response.ok) throw new Error(`no such file: ${path}`);
+      return response.arrayBuffer();
+    },
+  });
   // Onboarding done, on one library folder, so the mock opens on the library page.
   fakeSettings.set('onboarding_done', true);
   fakeSettings.set('library_folder', '/Users/mock/Scores');
-  const w = window as unknown as { __TAURI_INTERNALS__?: TauriMock };
+  for (const [key, value] of params) {
+    if (key.startsWith('s.')) fakeSettings.set(key.slice(2), JSON.parse(value));
+  }
+  // The fake's handle on the window, so the console can send events: `__MURLINE_FAKE__.emit(...)`.
+  const w = window as unknown as { __TAURI_INTERNALS__?: TauriMock; __MURLINE_FAKE__?: FakeRust };
+  w.__MURLINE_FAKE__ = fake;
   if (w.__TAURI_INTERNALS__) return;
   w.__TAURI_INTERNALS__ = {
     metadata: { currentWebview: { label: 'main' }, currentWindow: { label: 'main' } },

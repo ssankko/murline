@@ -6,11 +6,10 @@
 
 **Modern ADHD friendly piano practice app for real sheet music**
 
-![macOS](https://img.shields.io/badge/macOS-now-111?logo=apple&logoColor=white)
-![Windows](https://img.shields.io/badge/Windows-silent_for_now-0078D4?logo=windows&logoColor=white)
-![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8D8?logo=tauri&logoColor=white)
-![Rust](https://img.shields.io/badge/Rust-2024-000?logo=rust&logoColor=white)
-![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&logoColor=white)
+[![CI](https://github.com/ssankko/murline/actions/workflows/ci.yml/badge.svg)](https://github.com/ssankko/murline/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/tag/ssankko/murline?label=release&color=bed65c)](https://github.com/ssankko/murline/releases)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-d6625c)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-macOS-111?logo=apple&logoColor=white)
 
 <p align="center">
   <img src="docs/media/look-settings.gif" width="80%" alt="A piece playing while the sheet, the falling notes and the keyboard gain colors, chord names and note names">

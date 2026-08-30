@@ -7,9 +7,6 @@
     "core:default",
     "core:window:allow-destroy",
     "core:window:allow-start-dragging",
-    "dialog:allow-open",
-    "sql:allow-load",
-    "sql:allow-select",
-    "sql:allow-execute"
+    "dialog:allow-open"
   ]
 }

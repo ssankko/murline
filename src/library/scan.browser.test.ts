@@ -1,15 +1,8 @@
 import { fakeRust, type FakeRust } from '@/rust.fake';
-import { beforeEach, expect, test, vi } from 'vitest';
+import { beforeEach, expect, test } from 'vitest';
 import { scanLibrary } from './scan';
 
 let rust: FakeRust;
-
-vi.mock('./queries', () => ({
-  knownFiles: async () => [],
-  markError: async () => {},
-  setPresent: async () => {},
-  upsertIndex: async () => {},
-}));
 
 beforeEach(() => {
   rust = fakeRust();

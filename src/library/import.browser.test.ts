@@ -1,5 +1,5 @@
 import { fakeRust, type FakeRust } from '@/rust.fake';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { beforeEach, describe, expect, test } from 'vitest';
 import { importFiles, isScoreFile } from './import';
 
 // Vite serves the fixture files as URLs, which is the closest a browser test gets to the bytes the
@@ -12,14 +12,7 @@ const FIXTURES = import.meta.glob('../score/fixtures/*', {
 
 /** What the fake library folder holds. The test sets it before each case. */
 let folderFiles: string[] = [];
-const indexed: { path: string; title: string }[] = [];
 let rust: FakeRust;
-
-vi.mock('./queries', () => ({
-  upsertIndex: async (path: string, index: { title: string }) => {
-    indexed.push({ path, title: index.title });
-  },
-}));
 
 const keepBoth = async () => 'keep-both' as const;
 
@@ -29,7 +22,6 @@ async function importOne(fileName: string) {
 
 beforeEach(() => {
   folderFiles = [];
-  indexed.length = 0;
   rust = fakeRust({
     read_file: async ({ path }) => {
       const name = path.split('/').pop()!;
@@ -46,6 +38,10 @@ beforeEach(() => {
 /** Every copy the import asked for, oldest first. */
 const copies = () => rust.argsOf('copy_file');
 
+/** Every piece the import indexed, oldest first. */
+const indexed = () =>
+  rust.argsOf('index_upsert').map(({ path, index }) => ({ path, title: index.title }));
+
 describe('a file the app cannot turn into a Score', () => {
   const cases: [string, string][] = [
     ['not-a-score.txt', 'Not a MusicXML file'],
@@ -61,7 +57,7 @@ describe('a file the app cannot turn into a Score', () => {
     expect(result.failures).toEqual([{ fileName, reason }]);
     expect(result.imported).toEqual([]);
     expect(copies()).toEqual([]);
-    expect(indexed).toEqual([]);
+    expect(indexed()).toEqual([]);
   });
 });
 
@@ -76,7 +72,7 @@ describe('a file the app can read', () => {
         dst: '/library/MuzioClementi_SonatinaOpus36No1_Part1.xml',
       },
     ]);
-    expect(indexed).toEqual([
+    expect(indexed()).toEqual([
       { path: 'MuzioClementi_SonatinaOpus36No1_Part1.xml', title: 'Sonatina Op.36 No 1 Teil 1 Allegro' },
     ]);
   });
@@ -108,7 +104,7 @@ describe('a file the app can read', () => {
     );
     expect(result.imported).toEqual(['Dynamics-And-Tempo.MUSICXML']);
     expect(copies()[0]!.dst).toBe('/library/Dynamics-And-Tempo.MUSICXML');
-    expect(indexed.map((row) => row.path)).toEqual(['Dynamics-And-Tempo.MUSICXML']);
+    expect(indexed().map((row) => row.path)).toEqual(['Dynamics-And-Tempo.MUSICXML']);
   });
 
   test('Cancel at a clash writes nothing and reports no failure', async () => {

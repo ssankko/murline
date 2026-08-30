@@ -19,7 +19,6 @@ let listed: { id: string; name: string }[] = [];
 /** While it is set, the scan waits on it, so a step can be watched in flight. */
 let heldScan: Promise<void> | null = null;
 
-vi.mock('@/db/db', () => ({ getDb: async () => ({}) }));
 // The paper is the window's, and this test has none.
 vi.mock('@/look/use-dark', () => ({ useDark: () => false }));
 vi.mock('@/library/scan', () => ({
@@ -52,7 +51,6 @@ const { boot, lineText, START_LINE } = await import('./boot');
 /** The log of a boot where every step lands, with the settings' instrument named. */
 const landedLog: BootLine[] = [
   { label: 'starting', state: 'ok' },
-  { label: 'opening database', state: 'ok' },
   { label: 'reading settings', state: 'ok' },
   { label: 'theme: dark', state: 'note' },
   { label: 'starting sound engine', state: 'ok' },
@@ -73,7 +71,7 @@ test('every step names itself while it runs, in the order the steps run', async 
   await boot((lines) => printed.push(lines));
   expect(printed[printed.length - 1]).toEqual(landedLog);
   // A step's line appears alone and lands in place: the two prints for one step hold the same count.
-  expect(printed.map((lines) => lines.length)).toEqual([1, 2, 2, 3, 3, 4, 5, 5, 6, 6, 7, 7]);
+  expect(printed.map((lines) => lines.length)).toEqual([1, 2, 2, 3, 4, 4, 5, 5, 6, 6]);
   listed = [];
 });
 
@@ -89,7 +87,7 @@ test('a step in flight reads with no tail, and its tail flips when the step land
     expect(last[last.length - 1]).toEqual({ label: 'scanning /scores', state: 'running' });
     release();
     await done;
-    expect(printed[printed.length - 1]![6]).toEqual({ label: 'scanning /scores', state: 'ok' });
+    expect(printed[printed.length - 1]![5]).toEqual({ label: 'scanning /scores', state: 'ok' });
   } finally {
     heldScan = null;
   }
@@ -113,7 +111,7 @@ test('a sound engine that will not start prints why, and the steps after it stil
   engineReason = 'No sound engine on this platform';
   const printed: BootLine[][] = [];
   await boot((lines) => printed.push(lines));
-  expect(printed[printed.length - 1]!.slice(4)).toEqual([
+  expect(printed[printed.length - 1]!.slice(3)).toEqual([
     {
       label: 'starting sound engine',
       state: 'failed',
@@ -129,7 +127,7 @@ test('the line names the instrument the settings chose, when the list knows it',
   listed = [{ id: 'grand', name: 'Concert Grand Piano' }];
   const printed: BootLine[][] = [];
   await boot((lines) => printed.push(lines));
-  expect(printed[printed.length - 1]![5]).toEqual({
+  expect(printed[printed.length - 1]![4]).toEqual({
     label: 'restoring Concert Grand Piano',
     state: 'ok',
   });
@@ -141,6 +139,6 @@ test('a first boot names the instrument the restore falls back to', async () => 
   fakeSettings.delete('instrument_id');
   const printed: BootLine[][] = [];
   await boot((lines) => printed.push(lines));
-  expect(printed[printed.length - 1]![5]!.label).toBe('restoring Concert Grand Piano');
+  expect(printed[printed.length - 1]![4]!.label).toBe('restoring Concert Grand Piano');
   listed = [];
 });

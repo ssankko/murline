@@ -3,47 +3,19 @@
 //! key at a time; a key the sound engine owns reaches the running engine on its way in.
 
 use crate::audio;
+use crate::db::pool;
 use serde_json::Value;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
-use std::sync::OnceLock;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 /// Every stored setting, by key. A key never written is simply absent, and the window holds the
 /// default for it.
 pub type Stored = HashMap<String, Value>;
 
-static POOL: OnceLock<SqlitePool> = OnceLock::new();
-
-/// The file `tauri-plugin-sql` opens for `sqlite:murline.db`: `murline.db` in the app config
-/// directory. The pool connects on first use, so nothing waits for a connection here.
-fn pool(app: &AppHandle) -> Result<&'static SqlitePool, String> {
-    if let Some(pool) = POOL.get() {
-        return Ok(pool);
-    }
-    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let options = SqliteConnectOptions::new()
-        .filename(dir.join("murline.db"))
-        .create_if_missing(true);
-    Ok(POOL.get_or_init(|| SqlitePoolOptions::new().connect_lazy_with(options)))
-}
-
-/// The same table the window's first migration declares, so a read that runs before the migrations
-/// have been applied still answers.
-async fn table(pool: &SqlitePool) -> Result<(), String> {
-    sqlx::query("CREATE TABLE IF NOT EXISTS setting (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-        .execute(pool)
-        .await
-        .map(|_| ())
-        .map_err(|e| e.to_string())
-}
-
 /// Every stored setting. A value that is not JSON is passed over: the window holds a default for
 /// every key and a row nobody can read is one of them.
 pub async fn read(pool: &SqlitePool) -> Result<Stored, String> {
-    table(pool).await?;
     let rows = sqlx::query("SELECT key, value FROM setting")
         .fetch_all(pool)
         .await
@@ -58,7 +30,6 @@ pub async fn read(pool: &SqlitePool) -> Result<Stored, String> {
 }
 
 async fn store(pool: &SqlitePool, key: &str, value: &Value) -> Result<(), String> {
-    table(pool).await?;
     sqlx::query("INSERT INTO setting (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2")
         .bind(key)
         .bind(value.to_string())
@@ -96,19 +67,20 @@ pub async fn all(app: &AppHandle) -> Result<Stored, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::tests::{migrate_to, open};
     use serde_json::json;
 
-    /// A pool on a database file of this test's own.
-    fn open(file: &std::path::Path) -> SqlitePool {
-        SqlitePoolOptions::new().connect_lazy_with(
-            SqliteConnectOptions::new().filename(file).create_if_missing(true),
-        )
+    /// A migrated database file of this test's own, so the `setting` table is there to read.
+    async fn table() -> (tempfile::TempDir, SqlitePool) {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&dir);
+        migrate_to(&pool, 6).await;
+        (dir, pool)
     }
 
     #[tokio::test]
     async fn a_written_setting_reads_back_as_the_json_it_was_written_as() {
-        let dir = tempfile::tempdir().unwrap();
-        let pool = open(&dir.path().join("murline.db"));
+        let (_dir, pool) = table().await;
         assert!(read(&pool).await.unwrap().is_empty());
 
         store(&pool, "theme", &json!("dark")).await.unwrap();
@@ -127,8 +99,7 @@ mod tests {
     /// refusal is what keeps it out of the table.
     #[tokio::test]
     async fn a_value_the_engine_refuses_is_not_stored() {
-        let dir = tempfile::tempdir().unwrap();
-        let pool = open(&dir.path().join("murline.db"));
+        let (_dir, pool) = table().await;
         assert!(write_one(&pool, "audio_voices", json!(999)).await.is_err());
         assert!(!read(&pool).await.unwrap().contains_key("audio_voices"));
 

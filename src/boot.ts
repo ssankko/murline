@@ -4,7 +4,6 @@
 
 import { restoreInstrument } from "@/audio/instrument";
 import { restoreRoles } from "@/audio/roles";
-import { getDb } from "@/db/db";
 import { reasonOf } from "@/library/notice";
 import { scanLibrary } from "@/library/scan";
 import { call } from "@/rust";
@@ -34,8 +33,8 @@ export function lineText(line: BootLine): string {
 
 /**
  * Runs the start-up steps in order, reporting the log after every print. A step that fails shows
- * its reason and the steps after it still run, so a database that will not open lands on
- * onboarding with the reason on screen.
+ * its reason and the steps after it still run, so a folder that is gone lands on the library with
+ * the reason on screen.
  */
 export async function boot(print: (lines: BootLine[]) => void): Promise<void> {
   const lines: BootLine[] = [];
@@ -71,7 +70,6 @@ export async function boot(print: (lines: BootLine[]) => void): Promise<void> {
   // index.html paints the starting line while the bundle loads and App begins with it; the bundle
   // is up by the time boot runs, so the line only has to land.
   say({ label: START_LINE.label, state: "ok" });
-  await step("opening database", getDb);
   await step("reading settings", load);
   // The theme is on the paper the moment the settings land, through the subscription in
   // `use-dark.ts`; this line only says which one it is.

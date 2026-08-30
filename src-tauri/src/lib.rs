@@ -1,11 +1,11 @@
-use tauri_plugin_sql::{Migration, MigrationKind};
-
 mod audio;
+mod db;
 mod finder;
 mod kernscores;
 mod library;
 mod midi;
 mod pdmx;
+mod pieces;
 mod settings;
 
 /// Creates the library folder, parents included. Already existing is success, so onboarding and a
@@ -13,48 +13,6 @@ mod settings;
 #[tauri::command]
 fn ensure_dir(path: String) -> Result<(), String> {
     std::fs::create_dir_all(&path).map_err(|e| e.to_string())
-}
-
-/// Numbered SQL files applied in order and tracked by `PRAGMA user_version`.
-fn migrations() -> Vec<Migration> {
-    vec![
-        Migration {
-            version: 1,
-            description: "init",
-            sql: include_str!("../migrations/0001_init.sql"),
-            kind: MigrationKind::Up,
-        },
-        Migration {
-            version: 2,
-            description: "no inheritance",
-            sql: include_str!("../migrations/0002_no_inheritance.sql"),
-            kind: MigrationKind::Up,
-        },
-        Migration {
-            version: 3,
-            description: "practice state",
-            sql: include_str!("../migrations/0003_practice_state.sql"),
-            kind: MigrationKind::Up,
-        },
-        Migration {
-            version: 4,
-            description: "velocity remap",
-            sql: include_str!("../migrations/0004_velocity_remap.sql"),
-            kind: MigrationKind::Up,
-        },
-        Migration {
-            version: 5,
-            description: "no velocity offset",
-            sql: include_str!("../migrations/0005_no_velocity_offset.sql"),
-            kind: MigrationKind::Up,
-        },
-        Migration {
-            version: 6,
-            description: "piece position",
-            sql: include_str!("../migrations/0006_piece_position.sql"),
-            kind: MigrationKind::Up,
-        },
-    ]
 }
 
 /// The paper grey the window opens on, dark when macOS is in its dark appearance. The webview
@@ -80,12 +38,10 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(
-            tauri_plugin_sql::Builder::default()
-                .add_migrations("sqlite:murline.db", migrations())
-                .build(),
-        )
         .setup(|app| {
+            // The library's rows and the global settings share one SQLite file; it reaches the
+            // current shape before anything reads it.
+            db::migrate(app.handle())?;
             // The engine sends its device-list and Preview-progress events from its own threads,
             // so it needs a handle.
             audio::remember(app.handle().clone());
@@ -99,6 +55,20 @@ pub fn run() {
             ensure_dir,
             settings::settings_read,
             settings::settings_write,
+            pieces::piece_list,
+            pieces::piece_paths,
+            pieces::piece_get,
+            pieces::piece_update_settings,
+            pieces::piece_update_position,
+            pieces::piece_set_favorite,
+            pieces::piece_recent_plays,
+            pieces::play_insert,
+            pieces::performance_insert,
+            pieces::index_known_files,
+            pieces::index_upsert,
+            pieces::index_mark_error,
+            pieces::index_set_present,
+            pieces::piece_delete,
             audio::audio_start,
             audio::audio_status,
             audio::audio_click,

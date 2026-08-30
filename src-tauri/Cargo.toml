@@ -20,12 +20,10 @@ quick-xml = "0.42"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "native-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-# The same version, and so the same libsqlite3-sys, that tauri-plugin-sql already builds.
-sqlx = { version = "0.8.6", default-features = false, features = ["sqlite", "runtime-tokio"] }
+sqlx = { version = "0.8.6", default-features = false, features = ["derive", "migrate", "runtime-tokio", "sqlite"] }
 tar = "0.4"
 tauri = { version = "2.11.5", features = [] }
 tauri-plugin-dialog = "2.7.0"
-tauri-plugin-sql = { version = "2.4.0", features = ["sqlite"] }
 trash = { version = "5", default-features = false, features = ["coinit_apartmentthreaded"] }
 unicode-normalization = "0.1"
 zip = { version = "8", default-features = false, features = ["deflate-flate2"] }

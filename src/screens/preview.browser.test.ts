@@ -31,31 +31,13 @@ vi.mock('@/screens/use-fullscreen', async () => {
   };
 });
 
-/** Every row the screen writes: the piece's tempo, and the settings the panel changes. */
-let written: { sql: string; values: unknown[] }[] = [];
-
-vi.mock('@tauri-apps/plugin-sql', () => ({
-  default: {
-    load: async () => ({
-      select: async () => [],
-      execute: async (sql: string, values: unknown[]) => void written.push({ sql, values }),
-    }),
-  },
-}));
-
 vi.mock('@/library/scan', () => ({ reindexIfChanged: async () => {} }));
-// Only the one call is stubbed: the settings panel pulls the module's constants in behind it.
-vi.mock('@/library/queries', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/library/queries')>()),
-  getPiece: async () => null,
-}));
 
 let root: Root | null = null;
 let host: HTMLElement | null = null;
 
 beforeEach(() => {
   status = { ...NO_STATUS, available: true };
-  written = [];
   setFullscreen = null;
   rust = fakeRust({
     audio_status: () => status,
@@ -248,9 +230,10 @@ test('the tempo stepper writes the piece row and reads back on the bar', async (
   await open();
 
   button('Faster').click();
-  await vi.waitFor(() => expect(written.some((row) => row.sql.includes('tempo_value'))).toBe(true));
+  const written = () => rust.argsOf('piece_update_settings');
+  await vi.waitFor(() => expect(written().length).toBe(1));
 
-  expect(written.find((row) => row.sql.includes('tempo_value'))!.values).toEqual([FILE, 105]);
+  expect(written()[0]).toEqual({ path: FILE, values: { tempo_value: 105 } });
   expect(button('Tempo').textContent).toBe('105 %');
 }, 60_000);
 

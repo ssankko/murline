@@ -1,8 +1,9 @@
-// Every `piece` query the library page runs. History numbers are read from `play` on the spot;
-// nothing derived is stored.
+// Every `piece` and `play` command the library page runs, and the shapes they answer with. The
+// Rust side holds the rows; nothing here is more than the call and the search the list pane runs
+// over what came back.
 
-import { getDb } from '@/db/db';
 import type { PerformanceRecord } from '@/play/engine';
+import { call } from '@/rust';
 import type { PieceIndex } from '@/score/summarize';
 
 /** A piece as the library page reads it: its index columns, its file facts and its history. */
@@ -59,34 +60,12 @@ export interface KnownFile {
   present: number;
 }
 
-const HISTORY = `
-  (SELECT MAX(grade) FROM play WHERE piece_path = piece.path AND kind = 'performance') AS best_grade,
-  (SELECT MAX(started_at) FROM play WHERE piece_path = piece.path) AS last_played,
-  (SELECT SUM(duration_s) FROM play WHERE piece_path = piece.path) AS practised_s`;
-
 /** How the list pane is ordered. The choice is a global setting, never part of a piece. */
 export type SortOrder = 'recent' | 'title' | 'composer' | 'grade' | 'favorites';
 
-const BY_TITLE = 'title COLLATE NOCASE';
-
-// SQLite sorts NULL below every value, so a descending sort puts the never-played and the
-// ungraded last on its own.
-const SORTS: Record<SortOrder, string> = {
-  recent: `last_played DESC, ${BY_TITLE}`,
-  title: BY_TITLE,
-  composer: `composer COLLATE NOCASE, ${BY_TITLE}`,
-  grade: `best_grade DESC, ${BY_TITLE}`,
-  favorites: BY_TITLE,
-};
-
 /** Every piece whose file is in the folder. A missing file hides its piece until it is back. */
 export async function listPieces(sort: SortOrder = 'title'): Promise<PieceRow[]> {
-  const db = await getDb();
-  const favorites = sort === 'favorites' ? 'AND favorite = 1' : '';
-  return db.select<PieceRow[]>(
-    `SELECT piece.*,${HISTORY}
-     FROM piece WHERE present = 1 ${favorites} ORDER BY ${SORTS[sort]}`,
-  );
+  return call('piece_list', { sort });
 }
 
 /**
@@ -104,9 +83,7 @@ export function matches(row: Pick<PieceRow, 'title' | 'composer'>, query: string
  * finder reads it to know which of its rows are already downloaded.
  */
 export async function allPiecePaths(): Promise<string[]> {
-  const db = await getDb();
-  const rows = await db.select<{ path: string }[]>('SELECT path FROM piece WHERE present = 1');
-  return rows.map((row) => row.path);
+  return call('piece_paths');
 }
 
 /** Every piece setting: the field of a play it sets, and the `piece` column it lives in. */
@@ -131,22 +108,12 @@ export type PieceSettingRow = Pick<
 /** The piece settings as their columns; a column set to null unsets that setting again. */
 export type PieceSettingValues = Partial<PieceSettingRow>;
 
-/** The only columns the SET clause below may name. */
-const SETTING_COLUMNS = Object.values(PIECE_SETTING_COLUMNS);
-
 /** Stores what the play screen just changed. */
 export async function updatePieceSettings(
   path: string,
   values: PieceSettingValues,
 ): Promise<void> {
-  const columns = SETTING_COLUMNS.filter((column) => column in values);
-  if (columns.length === 0) return;
-  const db = await getDb();
-  const set = columns.map((column, at) => `${column} = $${at + 2}`).join(', ');
-  await db.execute(`UPDATE piece SET ${set} WHERE path = $1`, [
-    path,
-    ...columns.map((column) => values[column] ?? null),
-  ]);
+  return call('piece_update_settings', { path, values });
 }
 
 /**
@@ -154,34 +121,21 @@ export async function updatePieceSettings(
  * than a setting: no control shows it and no play reads it out of its settings.
  */
 export async function updatePiecePosition(path: string, tick: number): Promise<void> {
-  const db = await getDb();
-  await db.execute('UPDATE piece SET position_tick = $2 WHERE path = $1', [path, tick]);
+  return call('piece_update_position', { path, tick });
 }
 
 /** The one thing the library writes about a piece. */
 export async function setFavorite(path: string, favorite: boolean): Promise<void> {
-  const db = await getDb();
-  await db.execute('UPDATE piece SET favorite = $2 WHERE path = $1', [path, favorite ? 1 : 0]);
+  return call('piece_set_favorite', { path, favorite });
 }
 
 export async function getPiece(path: string): Promise<PieceRow | null> {
-  const db = await getDb();
-  const rows = await db.select<PieceRow[]>(
-    `SELECT piece.*,${HISTORY}
-     FROM piece WHERE path = $1`,
-    [path],
-  );
-  return rows[0] ?? null;
+  return call('piece_get', { path });
 }
 
 /** The last plays of a piece, newest first: the History ledger of the detail pane. */
 export async function recentPlays(path: string, limit = 6): Promise<PlayRow[]> {
-  const db = await getDb();
-  return db.select<PlayRow[]>(
-    `SELECT id, kind, started_at, duration_s, tempo_mode, tempo_value, hands, grade
-     FROM play WHERE piece_path = $1 ORDER BY started_at DESC LIMIT $2`,
-    [path, limit],
-  );
+  return call('piece_recent_plays', { path, limit });
 }
 
 /** Stores one finished play. Nothing on screen announces it. */
@@ -191,11 +145,7 @@ export async function insertPlay(
   startedAt: number,
   durationS: number,
 ): Promise<void> {
-  const db = await getDb();
-  await db.execute(
-    'INSERT INTO play (piece_path, kind, started_at, duration_s) VALUES ($1, $2, $3, $4)',
-    [path, kind, Math.round(startedAt), durationS],
-  );
+  return call('play_insert', { path, kind, startedAt, durationS });
 }
 
 /**
@@ -203,33 +153,11 @@ export async function insertPlay(
  * leaves the grade columns empty.
  */
 export async function insertPerformance(path: string, run: PerformanceRecord): Promise<void> {
-  const db = await getDb();
-  const g = run.grade;
-  await db.execute(
-    `INSERT INTO play (piece_path, kind, started_at, duration_s, tempo_mode, tempo_value, hands,
-                       grade, expected, matched, extras, mean_timing, mean_velocity, mean_release)
-     VALUES ($1, 'performance', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-    [
-      path,
-      Math.round(run.startedAt),
-      run.seconds,
-      run.tempoMode,
-      run.tempoValue,
-      run.hands,
-      g?.grade ?? null,
-      g?.expected ?? null,
-      g?.matched ?? null,
-      g?.extras ?? null,
-      g?.meanTiming ?? null,
-      g?.meanVelocity ?? null,
-      g?.meanRelease ?? null,
-    ],
-  );
+  return call('performance_insert', { path, run });
 }
 
 export async function knownFiles(): Promise<KnownFile[]> {
-  const db = await getDb();
-  return db.select<KnownFile[]>('SELECT path, mtime, size, present FROM piece');
+  return call('index_known_files');
 }
 
 /** Writes a fresh index. The row's favorite, settings and history survive, and any error clears. */
@@ -239,35 +167,7 @@ export async function upsertIndex(
   mtime: number,
   size: number,
 ): Promise<void> {
-  const db = await getDb();
-  await db.execute(
-    `INSERT INTO piece (path, title, composer, measure_count, duration_s, midi_lo, midi_hi,
-                        has_tempo, constant_tempo, key_sharps, key_mode, part_count, part_name,
-                        mtime, size, present, imported_at, error)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 1, $16, NULL)
-     ON CONFLICT(path) DO UPDATE SET
-       title = $2, composer = $3, measure_count = $4, duration_s = $5, midi_lo = $6, midi_hi = $7,
-       has_tempo = $8, constant_tempo = $9, key_sharps = $10, key_mode = $11, part_count = $12,
-       part_name = $13, mtime = $14, size = $15, present = 1, error = NULL`,
-    [
-      path,
-      index.title,
-      index.composer,
-      index.measureCount,
-      index.durationS,
-      index.midiLo,
-      index.midiHi,
-      index.hasTempo ? 1 : 0,
-      index.constantTempo ? 1 : 0,
-      index.keySharps,
-      index.keyMode,
-      index.partCount,
-      index.partName,
-      mtime,
-      size,
-      Date.now(),
-    ],
-  );
+  return call('index_upsert', { path, index, mtime, size });
 }
 
 /** A file the app cannot read stays a piece: it gains the reason and keeps its old index columns. */
@@ -277,23 +177,15 @@ export async function markError(
   mtime: number,
   size: number,
 ): Promise<void> {
-  const db = await getDb();
-  await db.execute(
-    `INSERT INTO piece (path, mtime, size, present, imported_at, error)
-     VALUES ($1, $2, $3, 1, $4, $5)
-     ON CONFLICT(path) DO UPDATE SET mtime = $2, size = $3, present = 1, error = $5`,
-    [path, mtime, size, Date.now(), error],
-  );
+  return call('index_mark_error', { path, error, mtime, size });
 }
 
 /** Whether the file is in the folder. A row absent from it keeps its history and leaves the list. */
 export async function setPresent(path: string, present: boolean): Promise<void> {
-  const db = await getDb();
-  await db.execute('UPDATE piece SET present = $2 WHERE path = $1', [path, present ? 1 : 0]);
+  return call('index_set_present', { path, present });
 }
 
 /** Drops the piece, and its plays with it through the foreign key that cascades. */
 export async function deletePiece(path: string): Promise<void> {
-  const db = await getDb();
-  await db.execute('DELETE FROM piece WHERE path = $1', [path]);
+  return call('piece_delete', { path });
 }

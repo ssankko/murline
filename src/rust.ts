@@ -4,7 +4,15 @@
 // `setRust`, so the door has a second adapter rather than a mocked import.
 
 import type { PreviewNote } from '@/audio/preview';
-import type { StrikeEvent } from '@/play/engine';
+import type {
+  KnownFile,
+  PieceRow,
+  PieceSettingValues,
+  PlayRow,
+  SortOrder,
+} from '@/library/queries';
+import type { PerformanceRecord, StrikeEvent } from '@/play/engine';
+import type { PieceIndex } from '@/score/summarize';
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
@@ -182,6 +190,32 @@ export interface Commands {
   settings_read: { args: void; result: Record<string, unknown> };
   /** One setting. A key the sound engine owns is refused with the engine's reason. */
   settings_write: { args: { key: string; value: unknown }; result: void };
+  /** Every piece whose file is in the folder, in the order the list pane asked for. */
+  piece_list: { args: { sort: SortOrder }; result: PieceRow[] };
+  piece_paths: { args: void; result: string[] };
+  piece_get: { args: { path: string }; result: PieceRow | null };
+  /** Only the nine piece-setting columns are written; a column set to null unsets it. */
+  piece_update_settings: { args: { path: string; values: PieceSettingValues }; result: void };
+  piece_update_position: { args: { path: string; tick: number }; result: void };
+  piece_set_favorite: { args: { path: string; favorite: boolean }; result: void };
+  piece_recent_plays: { args: { path: string; limit: number }; result: PlayRow[] };
+  play_insert: {
+    args: { path: string; kind: PlayRow['kind']; startedAt: number; durationS: number };
+    result: void;
+  };
+  performance_insert: { args: { path: string; run: PerformanceRecord }; result: void };
+  index_known_files: { args: void; result: KnownFile[] };
+  index_upsert: {
+    args: { path: string; index: PieceIndex; mtime: number; size: number };
+    result: void;
+  };
+  index_mark_error: {
+    args: { path: string; error: string; mtime: number; size: number };
+    result: void;
+  };
+  index_set_present: { args: { path: string; present: boolean }; result: void };
+  /** The piece goes, and its plays with it. */
+  piece_delete: { args: { path: string }; result: void };
   audio_start: { args: void; result: void };
   audio_status: { args: void; result: AudioStatus };
   audio_click: { args: { strength: 'strong' | 'weak'; volume: number }; result: void };

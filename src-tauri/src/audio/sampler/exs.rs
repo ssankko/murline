@@ -449,6 +449,8 @@ mod tests {
         gaps
     }
 
+    // The paths come from the instrument list, which exists only where an engine does.
+    #[cfg(target_os = "macos")]
     #[test]
     #[ignore = "needs the Logic sample library"]
     fn reads_the_logic_pianos() {

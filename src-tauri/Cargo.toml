@@ -1,6 +1,6 @@
 [package]
 name = "murline"
-version = "0.1.0"
+version = "0.1.1"
 description = "Practise piano from sheet music with a MIDI keyboard"
 edition = "2024"
 license = "AGPL-3.0-or-later"

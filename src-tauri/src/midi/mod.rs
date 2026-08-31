@@ -5,7 +5,9 @@
 //! What crosses into the webview is a strike of MIDI number, velocity, on or off, and a
 //! Unix-millisecond time: one shape on every platform, none of it naming a MIDI system.
 
+use crate::settings;
 use serde::Serialize;
+use serde_json::Value;
 
 mod input;
 
@@ -148,10 +150,25 @@ fn relisten(
     (wanted, dropped)
 }
 
+/// The listening rule the stored settings hold: the port pinned for good, and the ports put away.
+/// A value of another shape than the window writes is no rule at all.
+fn rule(device: Option<Value>, hidden: Option<Value>) -> (Option<String>, Vec<String>) {
+    let id = |value: &Value| value.as_str().map(str::to_string);
+    let hidden = hidden
+        .as_ref()
+        .and_then(Value::as_array)
+        .map(|ids| ids.iter().filter_map(id).collect())
+        .unwrap_or_default();
+    (device.as_ref().and_then(id), hidden)
+}
+
 /// Opens the ports and keeps them open for as long as the app runs. Called once at setup, before
-/// the webview asks anything, so a key pressed on the boot screen already sounds.
+/// the webview asks anything, so a key pressed on the boot screen already sounds, and on the rule
+/// the player left behind, so a hidden port stays shut through the boot.
 pub fn start(app: tauri::AppHandle) {
-    input::start(app);
+    let (pinned, hidden) =
+        rule(settings::one(&app, "midi_device"), settings::one(&app, "midi_hidden"));
+    input::start(app, pinned, hidden);
 }
 
 #[tauri::command]
@@ -170,6 +187,7 @@ pub fn midi_listen(pinned: Option<String>, hidden: Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn parse(bytes: &[u8]) -> Vec<Message> {
         let mut parser = Parser::default();
@@ -248,6 +266,21 @@ mod tests {
         assert!(Message::pedal_down(64));
         assert!(!Message::pedal_down(63));
         assert!(!Message::pedal_down(0));
+    }
+
+    /// The first sync of a run, over the rule the stored settings hold: nothing is open yet, and
+    /// what opens is what the player left the app on.
+    #[test]
+    fn a_boot_opens_the_ports_the_stored_settings_leave_open() {
+        let boot = |device, hidden| {
+            let (pinned, hidden) = rule(device, hidden);
+            relisten(&[], &[port("a"), port("b")], pinned.as_deref(), &hidden).0
+        };
+
+        assert_eq!(boot(Some(json!("b")), None), ["b"], "the pinned port alone");
+        assert_eq!(boot(None, Some(json!(["b"]))), ["a"], "a hidden port stays shut");
+        assert_eq!(boot(None, None), ["a", "b"], "nothing pinned and nothing hidden");
+        assert_eq!(boot(Some(json!(null)), Some(json!(null))), ["a", "b"], "no rule stored");
     }
 
     #[test]

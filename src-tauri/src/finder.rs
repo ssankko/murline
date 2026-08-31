@@ -401,17 +401,19 @@ fn addressable(row: &Row) -> bool {
 /// Fetches or unzips one row into a temp file and answers with its path. Nothing reaches the
 /// library folder from here; the import path a dropped file takes does that.
 #[tauri::command]
-pub async fn finder_download(row: Row, pdmx_folder: Option<String>) -> Result<String, String> {
+pub async fn finder_download(app: tauri::AppHandle, row: Row) -> Result<String, String> {
+    // A machine with no data folder has no unpacked tarball either, so the row is not on disk.
+    download(row, crate::pdmx::folder(&app).unwrap_or_default()).await
+}
+
+async fn download(row: Row, pdmx: std::path::PathBuf) -> Result<String, String> {
     if !addressable(&row) {
         return Err("file not found".to_string());
     }
     tauri::async_runtime::spawn_blocking(move || {
         let bytes = match row.provider {
             Provider::KernScores => crate::kernscores::download(&row.file)?,
-            Provider::Pdmx => {
-                let folder = pdmx_folder.filter(|f| !f.is_empty()).ok_or("file not found")?;
-                crate::pdmx::extract(std::path::Path::new(&folder), &row.file)?
-            }
+            Provider::Pdmx => crate::pdmx::extract(&pdmx, &row.file)?,
         };
         let dir = std::env::temp_dir().join("piano-finder");
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -660,9 +662,7 @@ Morris\tLelia N. Morris\tThe Fight Is On\tThe Fight Is On\t\t24\t0\t1/3/QmC.mxl\
     #[test]
     fn a_crafted_row_is_refused_where_a_whole_one_downloads() {
         let folder = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/pdmx");
-        let run = |row: Row| {
-            tauri::async_runtime::block_on(finder_download(row, Some(folder.to_string())))
-        };
+        let run = |row: Row| tauri::async_runtime::block_on(download(row, folder.into()));
 
         let good = run(pdmx_row()).unwrap();
         std::fs::remove_file(&good).unwrap();

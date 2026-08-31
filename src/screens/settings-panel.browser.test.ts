@@ -18,7 +18,6 @@ beforeEach(async () => {
   fakeRust({
     pdmx_fetch: async () => {
       await fetching?.promise;
-      return '/pdmx';
     },
     // `roles` is what the loaded instrument offers beyond its tone, which is what puts the four
     // level rows on the Sound tab.
@@ -175,7 +174,7 @@ test('a word no label holds still finds the rows it names', async () => {
   // "Storage" is what CONTEXT.md tells the app not to call the library folder, so it is exactly
   // what a player types. No row label holds it, so only the synonyms can match.
   const results = await search('storage');
-  expect(labels(results)).toEqual(['Library folder', 'PDMX folder']);
+  expect(labels(results)).toEqual(['Library folder']);
 
   await userEvent.click(results[0]!);
   expect(activeTab()).toBe('Library');

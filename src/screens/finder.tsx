@@ -4,7 +4,6 @@
 
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
-import { setting } from '@/settings/settings';
 import { importFiles } from '@/library/import';
 import { reasonOf } from '@/library/notice';
 import { Collapse } from '@/look/collapse';
@@ -73,19 +72,14 @@ export function Finder({
   const [result, setResult] = useState<SearchResult>({ rows: [], more: 0 });
   const [sel, setSel] = useState(0);
   const [dl, setDl] = useState<DownloadState>({ state: 'idle' });
-  const [pdmxFolder, setPdmxFolder] = useState<string | null>(null);
-  /** Whether the PDMX folder holds unpacked scores, and so whether a PDMX row can be delivered. */
+  /** Whether the PDMX tarball is unpacked, and so whether a PDMX row can be delivered. */
   const [pdmx, setPdmx] = useState<boolean | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const list = useRef<HTMLDivElement>(null);
 
-  // Whether the folder holds unpacked scores; Rust answers off the disk, not off the setting.
+  // Whether the tarball is unpacked; Rust answers off the disk, and owns the folder it looks in.
   useEffect(() => {
-    const held = setting('pdmx_folder');
-    setPdmxFolder(held);
-    void call('pdmx_status', { folder: held })
-      .catch(() => false)
-      .then(setPdmx);
+    void call('pdmx_status').catch(() => false).then(setPdmx);
   }, []);
 
   // Every keystroke searches; Rust answers in under 20 ms. A late answer to an older query is
@@ -136,7 +130,7 @@ export function Finder({
     setDl({ state: 'downloading' });
     let tempPath: string | null = null;
     try {
-      tempPath = await call('finder_download', { row, pdmxFolder });
+      tempPath = await call('finder_download', { row });
       // The name is free: an owned row never gets here. Keep both covers a file the index missed.
       const { imported, failures } = await importFiles(folder, [tempPath], async () => 'keep-both');
       if (failures.length || !imported[0]) throw new Error(failures[0]?.reason ?? 'Import failed');

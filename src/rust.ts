@@ -247,9 +247,10 @@ export interface Commands {
   reveal_in_finder: { args: { path: string }; result: void };
   trash_file: { args: { path: string }; result: void };
   finder_search: { args: { query: string; pdmx: boolean }; result: SearchResult };
-  finder_download: { args: { row: FinderRow; pdmxFolder: string | null }; result: string };
-  pdmx_status: { args: { folder: string }; result: boolean };
-  pdmx_fetch: { args: { progress: (at: PdmxProgress) => void }; result: string };
+  finder_download: { args: { row: FinderRow }; result: string };
+  /** Whether the PDMX tarball is unpacked; the Rust side owns the folder it is unpacked into. */
+  pdmx_status: { args: void; result: boolean };
+  pdmx_fetch: { args: { progress: (at: PdmxProgress) => void }; result: void };
   pdmx_cancel: { args: void; result: void };
   /** The version this build was made as. */
   app_version: { args: void; result: string };

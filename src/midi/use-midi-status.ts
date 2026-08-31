@@ -91,7 +91,8 @@ function publish(next: Partial<MidiStatus>): void {
   for (const listen of listeners) listen();
 }
 
-/** The listening rule as it stands, sent whole because Rust keeps no settings of its own. */
+/** The listening rule as it stands, sent whole at every change. Rust reads the stored rule for
+ * itself at boot; what it hears from here is the session pin over it. */
 function send(): Promise<void> {
   const pinned = session === undefined ? status.defaultId : session;
   return call('midi_listen', { pinned, hidden: status.hidden }).catch((error: unknown) =>

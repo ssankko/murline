@@ -2,7 +2,6 @@
 // closes. Its progress therefore lives here, outside React, so reopening the dialog picks the
 // running download back up.
 
-import { set as writeSetting } from '@/settings/settings';
 import { reasonOf } from '@/library/notice';
 import { call, type PdmxProgress } from '@/rust';
 import { useSyncExternalStore } from 'react';
@@ -26,18 +25,12 @@ export function progressLabel({ done, total }: PdmxProgress): string {
   return total === null ? `${amount(done)} ${unit}` : `${amount(done)} of ${amount(total)} ${unit}`;
 }
 
-/**
- * Downloads and unpacks the PDMX archive, then points `pdmx_folder` at the folder it landed in.
- * The setting is written here rather than by the dialog, which may be closed by then.
- */
+/** Downloads and unpacks the PDMX archive into the folder the Rust side keeps it in. */
 export async function downloadPdmx(): Promise<void> {
   if (held.progress) return;
   set({ progress: { done: 0, total: null }, error: null });
   try {
-    const folder = await call('pdmx_fetch', {
-      progress: (at) => set({ progress: at, error: null }),
-    });
-    await writeSetting('pdmx_folder', folder);
+    await call('pdmx_fetch', { progress: (at) => set({ progress: at, error: null }) });
     set({ progress: null, error: null });
   } catch (error) {
     const reason = reasonOf(error);

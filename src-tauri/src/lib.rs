@@ -48,8 +48,8 @@ pub fn run() {
             // so it needs a handle.
             audio::remember(app.handle().clone());
             finder::warm();
-            // The MIDI ports open before the webview asks: a key pressed on the boot screen
-            // already sounds, and the listening rule arrives from the settings a moment later.
+            // The MIDI ports open before the webview asks, on the listening rule read from the
+            // settings, so a key pressed on the boot screen sounds and a hidden port does not.
             midi::start(app.handle().clone());
             Ok(())
         })

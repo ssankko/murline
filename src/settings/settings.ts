@@ -20,8 +20,6 @@ import { useSyncExternalStore } from 'react';
 /** Global settings, one row each in the Rust side's `setting` table, stored as JSON. */
 export type Settings = {
   library_folder: string;
-  /** The folder holding `mxl/` from the unpacked PDMX tarball; empty until the user picks one. */
-  pdmx_folder: string;
   onboarding_done: boolean;
   /** How the library page orders its list. */
   library_sort: SortOrder;
@@ -207,7 +205,6 @@ export function knobValues<M extends Partial<Record<SettingKey, string>>>(
 /** What every setting holds until it is written, and what a read of an unwritten one gives back. */
 export const SETTING_DEFAULTS: Settings = {
   library_folder: '',
-  pdmx_folder: '',
   onboarding_done: false,
   library_sort: 'title',
   library_selected: null,

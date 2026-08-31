@@ -480,12 +480,6 @@ const SEARCH_ROWS: {
     words: ["storage", "data directory", "scores", "files"],
   },
   {
-    id: "pdmx_folder",
-    tab: "library",
-    label: "PDMX folder",
-    words: ["storage", "data directory"],
-  },
-  {
     id: "pdmx_scores",
     tab: "library",
     label: "PDMX scores",
@@ -616,18 +610,18 @@ export function SettingsPanel({
   // Nothing of this panel writes once it is gone.
   useEffect(() => () => clearTimeout(scrollWrite.current), []);
 
-  // Whether the folder in force holds unpacked scores. Rust answers off the disk, not the setting.
+  // Whether the tarball is unpacked. Rust answers off the disk and owns the folder it looks in,
+  // so the answer is asked for once per open of the panel.
   useEffect(() => {
-    const folder = values.pdmx_folder;
     let live = true;
     const hold = (ready: boolean) => {
       if (live) setPdmxReady(ready);
     };
-    call("pdmx_status", { folder }).then(hold, () => hold(false));
+    call("pdmx_status").then(hold, () => hold(false));
     return () => {
       live = false;
     };
-  }, [values.pdmx_folder]);
+  }, [open]);
 
   // The tab switch and the mark land in one render, so a mark set as the panel opens is scrolled
   // to once the row is on the page. A row on a tab nobody has built yet is not in `SEARCH_ROWS`,
@@ -677,9 +671,7 @@ export function SettingsPanel({
         ? "Ready"
         : "Not downloaded";
 
-  async function chooseFolder(
-    key: "library_folder" | "pdmx_folder",
-  ): Promise<void> {
+  async function chooseFolder(key: "library_folder"): Promise<void> {
     const picked = await openDialog({
       directory: true,
       defaultPath: values[key] || undefined,
@@ -1259,19 +1251,6 @@ export function SettingsPanel({
                     value={values.library_folder}
                     onChoose={() =>
                       chooseFolder("library_folder").catch(console.error)
-                    }
-                  />
-                </Row>
-                <Row
-                  id="pdmx_folder"
-                  marked={marked === "pdmx_folder"}
-                  label="PDMX folder"
-                  hint="Where the PDMX archive is unpacked."
-                >
-                  <Path
-                    value={values.pdmx_folder}
-                    onChoose={() =>
-                      chooseFolder("pdmx_folder").catch(console.error)
                     }
                   />
                 </Row>

@@ -272,7 +272,7 @@ export const DEFAULT_ANSWERS: Answers = {
   finder_search: () => ({ rows: [], more: 0 }),
   finder_download: () => '/tmp/score.mxl',
   pdmx_status: () => false,
-  pdmx_fetch: () => '/pdmx',
+  pdmx_fetch: nothing,
   pdmx_cancel: nothing,
   app_version: () => '0.1.0',
   // The newest build, until a test says another version waits.

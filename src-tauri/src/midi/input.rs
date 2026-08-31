@@ -161,9 +161,13 @@ fn play(app: Option<&AppHandle>, message: Message, time: f64) {
     }
 }
 
-pub fn start(app: AppHandle) {
+/// The rule is in force before the first sync, so the ports that open at boot are the ones the
+/// player left the app listening on.
+pub fn start(app: AppHandle, pinned: Option<String>, hidden: Vec<String>) {
     let mut reader = READER.lock().unwrap();
     reader.app = Some(app);
+    reader.pinned = pinned;
+    reader.hidden = hidden;
     match MidiInput::new(CLIENT) {
         Ok(midi) => reader.midi = Some(midi),
         Err(error) => reader.error = Some(format!("MIDI is unavailable ({error})")),

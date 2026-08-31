@@ -3,7 +3,7 @@
 
 use std::fs::File;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -32,11 +32,20 @@ static CANCEL: AtomicBool = AtomicBool::new(false);
 // ponytail: one flat ceiling for every member; raise it if a real score ever meets it.
 const MAX_SCORE: u64 = 32 * 1024 * 1024;
 
-/// Whether the folder holds an unpacked tarball, which is the one thing the finder needs to
-/// deliver a PDMX row. An unset folder is no folder, never the working directory.
+/// Where the tarball is unpacked: `pdmx` in the app's data folder. The one place it lives, so
+/// nothing outside carries the path.
+pub fn folder(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(app.path().app_data_dir().map_err(|_| "no data folder".to_string())?.join("pdmx"))
+}
+
+fn unpacked(folder: &Path) -> bool {
+    folder.join("mxl").is_dir()
+}
+
+/// Whether the tarball is unpacked, which is the one thing the finder needs to deliver a PDMX row.
 #[tauri::command]
-pub fn pdmx_status(folder: String) -> bool {
-    !folder.is_empty() && Path::new(&folder).join("mxl").is_dir()
+pub fn pdmx_status(app: tauri::AppHandle) -> bool {
+    folder(&app).is_ok_and(|folder| unpacked(&folder))
 }
 
 /// How far the download has come; `total` is absent when the server sends no `Content-Length`.
@@ -47,28 +56,20 @@ pub struct Progress {
     total: Option<u64>,
 }
 
-/// Downloads the tarball into `<app data>/pdmx` and answers with that folder. The archive never
-/// reaches the disk: it is unpacked as it arrives.
+/// Downloads the tarball into the PDMX folder. The archive never reaches the disk: it is unpacked
+/// as it arrives.
 ///
 /// The error is one short line for the settings dialog to show: `already downloading`,
 /// `no data folder`, `no connection`, `Zenodo answered <status>`, `not enough disk space`,
 /// `download stopped`, or `cancelled` when the user stopped it.
 #[tauri::command]
-pub async fn pdmx_fetch(
-    app: tauri::AppHandle,
-    progress: Channel<Progress>,
-) -> Result<String, String> {
+pub async fn pdmx_fetch(app: tauri::AppHandle, progress: Channel<Progress>) -> Result<(), String> {
     if RUNNING.swap(true, Ordering::SeqCst) {
         return Err("already downloading".to_string());
     }
     CANCEL.store(false, Ordering::SeqCst);
-    let home = app.path().app_data_dir();
-    let done = tauri::async_runtime::spawn_blocking(move || {
-        let folder = home.map_err(|_| "no data folder".to_string())?.join("pdmx");
-        fetch_into(&folder, progress)?;
-        Ok(folder.to_string_lossy().into_owned())
-    })
-    .await;
+    let home = folder(&app);
+    let done = tauri::async_runtime::spawn_blocking(move || fetch_into(&home?, progress)).await;
     RUNNING.store(false, Ordering::SeqCst);
     done.unwrap_or_else(|_| Err("download stopped".to_string()))
 }
@@ -125,7 +126,7 @@ impl<R: Read> Read for Counting<R> {
 /// Every `mxl/**/*.mxl` member of the gzipped tarball into `folder`; anything else in the archive
 /// is skipped. The entries land beside `folder` under `pdmx.part` and are renamed onto it once the
 /// last one is in, so nothing a failure, a cancel or a killed app leaves behind is ever a folder
-/// `pdmx_status` calls ready.
+/// the status calls ready.
 fn unpack(reader: impl Read, folder: &Path, cancel: &AtomicBool) -> Result<(), String> {
     let part = folder.with_extension("part");
     let _ = std::fs::remove_dir_all(&part);
@@ -374,7 +375,7 @@ mod tests {
             unpack(File::open(&tarball).unwrap(), &folder, &AtomicBool::new(false)).unwrap();
             assert_eq!(files(&folder), ["mxl/1/11/a.mxl", "mxl/2/22/b.mxl"]);
         }
-        assert!(pdmx_status(folder.to_string_lossy().into_owned()));
+        assert!(unpacked(&folder));
     }
 
     /// The folder an interrupted fetch leaves behind is `pdmx.part`, which is neither a library nor
@@ -387,7 +388,7 @@ mod tests {
         let folder = temp.path().join("pdmx");
         let part = temp.path().join("pdmx.part");
         std::fs::create_dir_all(part.join("mxl").join("1")).unwrap();
-        assert!(!pdmx_status(folder.to_string_lossy().into_owned()));
+        assert!(!unpacked(&folder));
 
         unpack(File::open(&tarball).unwrap(), &folder, &AtomicBool::new(false)).unwrap();
         assert!(!part.exists());
@@ -405,8 +406,7 @@ mod tests {
         let stopped = unpack(File::open(&tarball).unwrap(), &folder, &cancel);
         assert_eq!(stopped, Err("cancelled".to_string()));
         assert!(!folder.exists() && !temp.path().join("pdmx.part").exists());
-        assert!(!pdmx_status(folder.to_string_lossy().into_owned()));
-        assert!(!pdmx_status(String::new()));
+        assert!(!unpacked(&folder));
     }
 
     #[test]

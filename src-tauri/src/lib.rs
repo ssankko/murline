@@ -66,7 +66,7 @@ pub fn run() {
             pieces::piece_recent_plays,
             pieces::play_insert,
             pieces::performance_insert,
-            pieces::index_known_files,
+            pieces::index_plan,
             pieces::index_upsert,
             pieces::index_mark_error,
             pieces::index_set_present,

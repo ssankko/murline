@@ -3,11 +3,14 @@
 //! History numbers are worked out from `play` on the spot; nothing derived is stored.
 
 use crate::db::pool;
+use crate::library::{entry, list_dir, FileEntry};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sqlx::query::Query;
 use sqlx::sqlite::SqliteArguments;
 use sqlx::{FromRow, Sqlite, SqlitePool};
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 
@@ -59,15 +62,6 @@ pub struct PlayRow {
     tempo_value: Option<f64>,
     hands: Option<String>,
     grade: Option<f64>,
-}
-
-/// What the file was when it was last indexed, and whether it is still there.
-#[derive(Debug, Serialize, FromRow)]
-pub struct KnownFile {
-    path: String,
-    mtime: i64,
-    size: i64,
-    present: i64,
 }
 
 /// A piece's summary as indexing produced it.
@@ -372,16 +366,61 @@ async fn insert_performance(
     .await
 }
 
+/// The files whose bytes the window must parse: the library folder walked, or the one file at
+/// `path` looked at, against the rows. A row whose file came back untouched is restored here and a
+/// row whose file is gone is hidden here, so the window is left with the parsing alone.
 #[tauri::command]
-pub async fn index_known_files(app: AppHandle) -> Result<Vec<KnownFile>, String> {
-    known_files(pool(&app)?).await
+pub async fn index_plan(
+    app: AppHandle,
+    folder: String,
+    path: Option<String>,
+) -> Result<Vec<FileEntry>, String> {
+    plan(pool(&app)?, Path::new(&folder), path.as_deref()).await
 }
 
-async fn known_files(pool: &SqlitePool) -> Result<Vec<KnownFile>, String> {
-    sqlx::query_as("SELECT path, mtime, size, present FROM piece")
-        .fetch_all(pool)
-        .await
-        .map_err(|e| e.to_string())
+async fn plan(
+    pool: &SqlitePool,
+    folder: &Path,
+    only: Option<&str>,
+) -> Result<Vec<FileEntry>, String> {
+    let files = match only {
+        Some(rel) => entry(folder, rel).into_iter().collect(),
+        None => list_dir(folder).map_err(|e| e.to_string())?,
+    };
+    // One path asks about one row, so a piece open never reads the whole table.
+    let rows: Vec<(String, i64, i64, i64)> = match only {
+        Some(rel) => sqlx::query_as("SELECT path, mtime, size, present FROM piece WHERE path = ?1")
+            .bind(rel)
+            .fetch_all(pool)
+            .await,
+        None => {
+            sqlx::query_as("SELECT path, mtime, size, present FROM piece").fetch_all(pool).await
+        }
+    }
+    .map_err(|e| e.to_string())?;
+
+    let on_disk: HashSet<&str> = files.iter().map(|file| file.rel_path.as_str()).collect();
+    for (path, .., present) in &rows {
+        if *present == 1 && !on_disk.contains(path.as_str()) {
+            set_present(pool, path, false).await?;
+        }
+    }
+    let known: HashMap<&str, (i64, i64, i64)> = rows
+        .iter()
+        .map(|(path, mtime, size, present)| (path.as_str(), (*mtime, *size, *present)))
+        .collect();
+    let mut parse = Vec::new();
+    for file in files {
+        match known.get(file.rel_path.as_str()) {
+            Some(&(mtime, size, present)) if mtime == file.mtime && size == file.size => {
+                if present == 0 {
+                    set_present(pool, &file.rel_path, true).await?;
+                }
+            }
+            _ => parse.push(file),
+        }
+    }
+    Ok(parse)
 }
 
 /// Writes a fresh index. The row's favorite, settings and history survive, and any error clears.
@@ -529,6 +568,45 @@ mod tests {
         (dir, pool)
     }
 
+    /// A library folder holding the seeded piece's file, with the row's stamp made to match it.
+    async fn folder(pool: &SqlitePool) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        write(&dir, "Bach.musicxml", "bytes");
+        let file = entry(dir.path(), "Bach.musicxml").unwrap();
+        let bach = index("Prelude in C", "J. S. Bach");
+        upsert_index(pool, "Bach.musicxml", &bach, file.mtime, file.size).await.unwrap();
+        dir
+    }
+
+    fn write(dir: &tempfile::TempDir, rel: &str, body: &str) {
+        std::fs::write(dir.path().join(rel), body).unwrap();
+    }
+
+    /// The file facts of one row: what it was indexed at, and whether its file is in the folder.
+    async fn facts(pool: &SqlitePool, path: &str) -> (i64, i64, i64) {
+        sqlx::query_as("SELECT mtime, size, present FROM piece WHERE path = ?1")
+            .bind(path)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// The paths `plan` answers with, in a settled order.
+    async fn to_parse(
+        pool: &SqlitePool,
+        dir: &tempfile::TempDir,
+        only: Option<&str>,
+    ) -> Vec<String> {
+        let mut paths: Vec<String> = plan(pool, dir.path(), only)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|file| file.rel_path)
+            .collect();
+        paths.sort();
+        paths
+    }
+
     fn index(title: &str, composer: &str) -> PieceIndex {
         serde_json::from_value(json!({
             "title": title,
@@ -652,7 +730,7 @@ mod tests {
         let row = get(&pool, "Bach.musicxml").await.unwrap().unwrap();
         assert_eq!(row.favorite, 1);
         assert_eq!(row.position_tick, Some(480));
-        assert_eq!(known_files(&pool).await.unwrap()[0].present, 0);
+        assert_eq!(facts(&pool, "Bach.musicxml").await.2, 0);
 
         set_present(&pool, "Bach.musicxml", true).await.unwrap();
         assert_eq!(paths(&pool).await.unwrap(), vec!["Bach.musicxml".to_string()]);
@@ -665,7 +743,7 @@ mod tests {
         let row = get(&pool, "Bach.musicxml").await.unwrap().unwrap();
         assert_eq!(row.error.as_deref(), Some("Not a MusicXML file"));
         assert_eq!(row.title.as_deref(), Some("Prelude in C"));
-        assert_eq!(known_files(&pool).await.unwrap()[0].mtime, 9);
+        assert_eq!(facts(&pool, "Bach.musicxml").await.0, 9);
 
         // Indexing it again clears the reason.
         upsert_index(&pool, "Bach.musicxml", &index("Prelude in C", "J. S. Bach"), 1, 2)
@@ -691,5 +769,57 @@ mod tests {
         // The never-played sort below the one that has been played.
         assert_eq!(titles(list(&pool, "recent").await.unwrap()), ["Etude", "adagio", "Prelude in C"]);
         assert_eq!(titles(list(&pool, "favorites").await.unwrap()), ["Etude"]);
+    }
+
+    #[tokio::test]
+    async fn only_a_file_the_rows_do_not_match_is_answered_for_parsing() {
+        let (_dir, pool) = library().await;
+        let folder = folder(&pool).await;
+        write(&folder, "Chopin.musicxml", "unseen");
+
+        assert_eq!(to_parse(&pool, &folder, None).await, ["Chopin.musicxml"]);
+
+        // The same file in a new shape is parsed again.
+        write(&folder, "Bach.musicxml", "more bytes than before");
+        assert_eq!(to_parse(&pool, &folder, None).await, ["Bach.musicxml", "Chopin.musicxml"]);
+    }
+
+    #[tokio::test]
+    async fn a_file_back_untouched_is_restored_rather_than_parsed() {
+        let (_dir, pool) = library().await;
+        let folder = folder(&pool).await;
+        set_present(&pool, "Bach.musicxml", false).await.unwrap();
+
+        assert_eq!(to_parse(&pool, &folder, None).await, Vec::<String>::new());
+        assert_eq!(facts(&pool, "Bach.musicxml").await.2, 1);
+    }
+
+    #[tokio::test]
+    async fn a_row_whose_file_is_gone_is_hidden() {
+        let (_dir, pool) = library().await;
+        let folder = folder(&pool).await;
+        std::fs::remove_file(folder.path().join("Bach.musicxml")).unwrap();
+
+        assert_eq!(to_parse(&pool, &folder, None).await, Vec::<String>::new());
+        assert_eq!(facts(&pool, "Bach.musicxml").await.2, 0);
+        assert!(list(&pool, "title").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn one_path_asks_about_that_path_alone() {
+        let (_dir, pool) = library().await;
+        let folder = folder(&pool).await;
+        write(&folder, "Chopin.musicxml", "unseen");
+
+        // The unseen file beside it is not walked, and a matching row is left as it is.
+        assert_eq!(to_parse(&pool, &folder, Some("Bach.musicxml")).await, Vec::<String>::new());
+        assert_eq!(to_parse(&pool, &folder, Some("Chopin.musicxml")).await, ["Chopin.musicxml"]);
+
+        // A file gone hides its own row and no other.
+        std::fs::remove_file(folder.path().join("Bach.musicxml")).unwrap();
+        upsert_index(&pool, "Chopin.musicxml", &index("Etude", "Chopin"), 1, 2).await.unwrap();
+        assert_eq!(to_parse(&pool, &folder, Some("Bach.musicxml")).await, Vec::<String>::new());
+        assert_eq!(facts(&pool, "Bach.musicxml").await.2, 0);
+        assert_eq!(facts(&pool, "Chopin.musicxml").await.2, 1);
     }
 }

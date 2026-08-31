@@ -90,6 +90,17 @@ pub async fn trash_file(path: String) -> Result<(), String> {
     context.delete(&path).map_err(|e| e.to_string())
 }
 
+/// The one score file at `rel_path`, or nothing when it is not there. A symlink is not a file
+/// here, as it is not one to the walk either.
+pub fn entry(root: &Path, rel_path: &str) -> Option<FileEntry> {
+    let meta = std::fs::symlink_metadata(root.join(rel_path)).ok()?;
+    if !meta.is_file() {
+        return None;
+    }
+    let Stamp { mtime, size } = stamp(&meta);
+    Some(FileEntry { rel_path: rel_path.to_string(), mtime, size })
+}
+
 fn copy(src: &Path, dst: &Path) -> std::io::Result<Stamp> {
     if let Some(parent) = dst.parent() {
         std::fs::create_dir_all(parent)?;
@@ -114,7 +125,7 @@ fn stamp(meta: &std::fs::Metadata) -> Stamp {
 /// not UTF-8 is skipped, because a `rel_path` that does not round-trip names no file to reopen.
 // ponytail: walks the whole tree on every launch scan; take a depth cap or an incremental walk when
 // a library folder gets deep enough for the scan to be felt.
-fn list_dir(root: &Path) -> std::io::Result<Vec<FileEntry>> {
+pub fn list_dir(root: &Path) -> std::io::Result<Vec<FileEntry>> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {

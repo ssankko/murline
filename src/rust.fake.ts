@@ -2,9 +2,10 @@
 // carries `?mocktauri`. Its default answers are a working studio, so a test only writes the
 // answers it is about.
 
-import type { KnownFile, PieceRow, PlayRow, SortOrder } from '@/library/queries';
+import type { PieceRow, PlayRow, SortOrder } from '@/library/queries';
 import {
   setRust,
+  type FileEntry,
   type CommandName,
   type Commands,
   type EventName,
@@ -29,7 +30,7 @@ const nothing = () => {};
 export const fakeSettings = new Map<string, unknown>();
 
 /** One row of the `piece` table, with the file facts the scan compares against. */
-type FakePiece = PieceRow & Omit<KnownFile, 'path'>;
+type FakePiece = PieceRow & { mtime: number; size: number; present: number };
 
 /**
  * The `piece` table and the `play` ledger the library commands work on. A test fills them through
@@ -37,6 +38,12 @@ type FakePiece = PieceRow & Omit<KnownFile, 'path'>;
  */
 export const fakePieces = new Map<string, FakePiece>();
 export const fakePlays: (PlayRow & { piece_path: string })[] = [];
+
+/**
+ * The library folder on disk: what the walk finds. A test fills it before it scans, and `fakeRust`
+ * empties it, so every test starts on an empty folder.
+ */
+export const fakeFiles: FileEntry[] = [];
 
 /** A piece with nothing about it known yet, which is what indexing a new file starts from. */
 function blankPiece(path: string): FakePiece {
@@ -165,13 +172,18 @@ export const DEFAULT_ANSWERS: Answers = {
       hands: run.hands,
       grade: run.grade?.grade ?? null,
     }),
-  index_known_files: () =>
-    [...fakePieces.values()].map(({ path, mtime, size, present }) => ({
-      path,
-      mtime,
-      size,
-      present,
-    })),
+  index_plan: ({ path }) => {
+    const files = fakeFiles.filter((file) => path === null || file.relPath === path);
+    const rows = [...fakePieces.values()].filter((row) => path === null || row.path === path);
+    const onDisk = new Set(files.map((file) => file.relPath));
+    for (const row of rows) if (row.present && !onDisk.has(row.path)) row.present = 0;
+    return files.filter((file) => {
+      const row = fakePieces.get(file.relPath);
+      if (!row || row.mtime !== file.mtime || row.size !== file.size) return true;
+      row.present = 1;
+      return false;
+    });
+  },
   index_upsert: ({ path, index, mtime, size }) => {
     fakePieces.set(path, {
       ...(fakePieces.get(path) ?? blankPiece(path)),
@@ -255,7 +267,7 @@ export const DEFAULT_ANSWERS: Answers = {
   }),
   midi_listen: nothing,
   copy_file: () => ({ mtime: 1, size: 1 }),
-  list_library: () => [],
+  list_library: () => [...fakeFiles],
   read_file: () => new ArrayBuffer(0),
   remove_temp_file: nothing,
   reveal_in_finder: nothing,
@@ -301,6 +313,7 @@ export function fakeRust(overrides: Partial<Answers> = {}): FakeRust {
   fakeSettings.clear();
   fakePieces.clear();
   fakePlays.length = 0;
+  fakeFiles.length = 0;
   const answers = { ...DEFAULT_ANSWERS, ...overrides } as Answers;
   const calls: Called[] = [];
   const handlers = new Map<EventName, Set<(payload: unknown) => void>>();

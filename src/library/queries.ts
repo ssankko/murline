@@ -3,7 +3,7 @@
 // over what came back.
 
 import type { PerformanceRecord } from '@/play/engine';
-import { call } from '@/rust';
+import { call, type FileEntry } from '@/rust';
 import type { PieceIndex } from '@/score/summarize';
 
 /** A piece as the library page reads it: its index columns, its file facts and its history. */
@@ -50,14 +50,6 @@ export interface PlayRow {
   tempo_value: number | null;
   hands: string | null;
   grade: number | null;
-}
-
-/** What the file was when it was last indexed, and whether it is still there. */
-export interface KnownFile {
-  path: string;
-  mtime: number;
-  size: number;
-  present: number;
 }
 
 /** How the list pane is ordered. The choice is a global setting, never part of a piece. */
@@ -156,8 +148,12 @@ export async function insertPerformance(path: string, run: PerformanceRecord): P
   return call('performance_insert', { path, run });
 }
 
-export async function knownFiles(): Promise<KnownFile[]> {
-  return call('index_known_files');
+/**
+ * The files whose bytes must be parsed: the library folder, or the one file at `path`, against the
+ * rows. The rows whose file came back or went away are flipped inside the command.
+ */
+export async function planIndex(folder: string, path: string | null = null): Promise<FileEntry[]> {
+  return call('index_plan', { folder, path });
 }
 
 /** Writes a fresh index. The row's favorite, settings and history survive, and any error clears. */
@@ -178,11 +174,6 @@ export async function markError(
   size: number,
 ): Promise<void> {
   return call('index_mark_error', { path, error, mtime, size });
-}
-
-/** Whether the file is in the folder. A row absent from it keeps its history and leaves the list. */
-export async function setPresent(path: string, present: boolean): Promise<void> {
-  return call('index_set_present', { path, present });
 }
 
 /** Drops the piece, and its plays with it through the foreign key that cascades. */

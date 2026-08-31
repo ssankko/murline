@@ -5,7 +5,6 @@
 
 import type { PreviewNote } from '@/audio/preview';
 import type {
-  KnownFile,
   PieceRow,
   PieceSettingValues,
   PlayRow,
@@ -204,7 +203,11 @@ export interface Commands {
     result: void;
   };
   performance_insert: { args: { path: string; run: PerformanceRecord }; result: void };
-  index_known_files: { args: void; result: KnownFile[] };
+  /**
+   * The files whose bytes the window must parse: the library folder walked, or the one file at
+   * `path` looked at, against the rows. Rows whose file came back or went away are flipped there.
+   */
+  index_plan: { args: { folder: string; path: string | null }; result: FileEntry[] };
   index_upsert: {
     args: { path: string; index: PieceIndex; mtime: number; size: number };
     result: void;

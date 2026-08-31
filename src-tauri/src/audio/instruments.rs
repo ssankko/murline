@@ -3,7 +3,8 @@
 //! Unit instruments installed on the Mac. Every entry carries an opaque id, so the webview never
 //! learns what a component description or a file path is.
 
-use crate::audio::mac::{self, Chosen, GRAPH};
+use crate::audio::NO_ENGINE;
+use crate::audio::mac::{self, Chosen};
 use crate::audio::{Instrument, Kept, Status};
 use block2::RcBlock;
 use objc2::AnyThread;
@@ -35,15 +36,13 @@ const MUSIC_DEVICE: u32 = u32::from_be_bytes(*b"aumu");
 const NOT_LISTED: [u32; 2] = [u32::from_be_bytes(*b"dls "), u32::from_be_bytes(*b"msyn")];
 /// How long instantiating a plugin may take before the load gives up on it.
 const PATIENCE: std::time::Duration = std::time::Duration::from_secs(60);
-/// What a load answers when there is no graph to put the instrument into.
-const NO_ENGINE: &str = "The sound engine did not start";
 
 /// Every instrument the engine can play right now, in source order, with the load state of the one
 /// that is loaded (or that failed to).
 pub fn list(folder: &str) -> Vec<Instrument> {
     let mut all = files(&music_folder(), Path::new(LOGIC_LIBRARY), Path::new(folder));
     all.extend(plugins());
-    let chosen = GRAPH.lock().unwrap().as_ref().and_then(|graph| graph.chosen().cloned());
+    let chosen = mac::graph().and_then(|graph| graph.chosen().cloned());
     if let Some(chosen) = chosen {
         for entry in all.iter_mut().filter(|entry| entry.id == chosen.id) {
             entry.loaded = chosen.failure.is_none();
@@ -61,8 +60,7 @@ pub fn load(id: &str, kept: &Kept) -> Result<Status, String> {
     let voices = mac::voices().ok_or(NO_ENGINE)?;
     let (name, made) = build(id, kept.state.as_deref(), voices);
 
-    let mut held = GRAPH.lock().unwrap();
-    let graph = held.as_mut().ok_or(NO_ENGINE)?;
+    let mut graph = mac::graph().ok_or(NO_ENGINE)?;
     let outcome = made.map(|made| {
         match made {
             Made::File(instrument) => graph.load_instrument(instrument),
@@ -74,7 +72,7 @@ pub fn load(id: &str, kept: &Kept) -> Result<Status, String> {
     let failure = outcome.clone().err();
     graph.choose(Chosen { id: id.into(), name, failure, kept: kept.clone() });
     outcome?;
-    Ok(mac::describe(graph))
+    Ok(graph.status())
 }
 
 /// An Instrument built and ready to take the head: the samples the voice engine plays, or the
@@ -353,7 +351,7 @@ fn music_folder() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::mac::{Graph, status};
+    use crate::audio::mac::{Graph, graph as running};
 
     /// The same few kilobytes of SoundFont the graph's own tests play.
     const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/sine.sf2");
@@ -480,7 +478,7 @@ mod tests {
     fn a_file_that_is_no_instrument_reports_why_in_the_picker_and_in_the_status_line() {
         let mut graph = Graph::build().unwrap();
         graph.start_offline(4096).unwrap();
-        *GRAPH.lock().unwrap() = Some(graph);
+        mac::install(graph);
 
         let folder = tempfile::tempdir().unwrap();
         write(folder.path(), "broken.sf2");
@@ -488,7 +486,7 @@ mod tests {
 
         let failure = load(&broken, &Kept::default()).unwrap_err();
         assert_eq!(failure, "That file is not a SoundFont");
-        let said = status();
+        let said = running().expect("the installed graph").status();
         assert!(!said.available);
         assert_eq!(said.reason, format!("broken did not load: {failure}"));
 
@@ -511,7 +509,7 @@ mod tests {
         };
         let said = load(&format!("file:{FIXTURE}"), &kept).unwrap();
         assert!(said.available, "the load answers the engine's status: {}", said.reason);
-        assert_eq!(crate::audio::mac::envelope(), kept.envelope);
+        assert_eq!(running().expect("the installed graph").envelope(), kept.envelope);
     }
 
     #[test]

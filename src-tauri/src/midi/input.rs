@@ -77,8 +77,8 @@ impl Reader {
 
         self.open.retain(|(id, _)| wanted.contains(id));
         // A port that went is a port that will never send the note offs for what it was holding.
-        if dropped {
-            engine::release_all();
+        if dropped && let Some(graph) = engine::graph() {
+            graph.release_all();
         }
         for id in &wanted {
             // A port another app holds open for itself is simply left out; the rest still play.
@@ -147,13 +147,17 @@ fn now_ms() -> f64 {
 fn play(app: Option<&AppHandle>, message: Message, time: f64) {
     match message {
         Message::Note { midi, velocity, on } => {
-            let velocity = engine::note(midi, velocity, on, false);
+            // Without a graph the key sounded nowhere, so the velocity it arrived at is the one.
+            let velocity =
+                engine::graph().map_or(velocity, |graph| graph.note(midi, velocity, on, false));
             if let Some(app) = app {
                 let _ = app.emit(STRIKE, Strike { midi, velocity, time, on });
             }
         }
         Message::Pedal { value } => {
-            engine::pedal(value);
+            if let Some(graph) = engine::graph() {
+                graph.sustain(Message::pedal_down(value));
+            }
             if let Some(app) = app {
                 let _ = app.emit(PEDAL, Pedal { value });
             }

@@ -185,6 +185,10 @@ pub struct Instrument {
     pub reason: String,
 }
 
+/// What a command answers when it needs the graph and there is none: the engine never started, or
+/// its start failed. Off macOS that is every call, since there is no graph to build.
+pub(crate) const NO_ENGINE: &str = "The sound engine did not start";
+
 /// The settings the engine owns, in the order a start puts them in: the output first, then what
 /// the voice engine is built with, then the chain and the levels after it. The velocity remap is
 /// three keys and goes in as one, so `velocity_min` stands for all three.
@@ -205,26 +209,34 @@ pub fn apply(key: &str, all: &crate::settings::Stored) -> Result<(), String> {
     let number = |name: &str, or: f64| all.get(name).and_then(Value::as_f64).unwrap_or(or);
     // The remap goes in whole, at the map that changes nothing for a key nobody has written.
     if matches!(key, "velocity_min" | "velocity_max" | "velocity_curve") {
-        engine::set_velocity_curve(
-            number("velocity_min", 1.0) as u32,
-            number("velocity_max", 127.0) as u32,
-            number("velocity_curve", 1.0),
-        );
+        if let Some(mut graph) = engine::graph() {
+            graph.set_velocity_curve(
+                number("velocity_min", 1.0) as u32,
+                number("velocity_max", 127.0) as u32,
+                number("velocity_curve", 1.0),
+            );
+        }
         return Ok(());
     }
     let Some(value) = all.get(key) else { return Ok(()) };
     match key {
         // Null is the system default, which is where an engine that has been told nothing plays.
-        "audio_output_device" => engine::set_output_device(value.as_str().map(str::to_string)),
-        "audio_buffer_frames" => engine::set_buffer_frames(number(key, 0.0) as u32),
+        "audio_output_device" => {
+            engine::graph().ok_or(NO_ENGINE)?.set_device(value.as_str().map(str::to_string))
+        }
+        "audio_buffer_frames" => {
+            engine::graph().ok_or(NO_ENGINE)?.set_buffer(number(key, 0.0) as u32)
+        }
         "audio_sample_rate" => engine::set_sample_rate(number(key, 0.0) as u32),
-        "audio_voices" => engine::set_voices(number(key, 0.0) as usize),
+        "audio_voices" => engine::graph().ok_or(NO_ENGINE)?.set_voices(number(key, 0.0) as usize),
         "effect_chain" => engine::set_chain(
             serde_json::from_value(value.clone()).map_err(|e| e.to_string())?,
         )
         .map(|_| ()),
         "keyboard_volume" => {
-            engine::set_keyboard_volume(number(key, 100.0) as u32);
+            if let Some(graph) = engine::graph() {
+                graph.set_keyboard_volume(number(key, 100.0) as u32);
+            }
             Ok(())
         }
         _ => Ok(()),
@@ -247,14 +259,16 @@ pub async fn audio_start(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub fn audio_status() -> Status {
-    engine::status()
+    engine::graph().map_or_else(|| Status::unavailable(NO_ENGINE), |graph| graph.status())
 }
 
 /// One metronome click, at a volume of 0 to 100. A no-op where there is no engine, so the
 /// metronome is simply silent there.
 #[tauri::command]
 pub fn audio_click(strength: String, volume: u32) {
-    engine::click(strength == "strong", volume);
+    if let Some(graph) = engine::graph() {
+        graph.click(strength == "strong", volume);
+    }
 }
 
 /// One note the app plays rather than the player: the inactive hand sounding itself. It takes the
@@ -262,7 +276,9 @@ pub fn audio_click(strength: String, volume: u32) {
 /// holds an output velocity. A no-op where there is no engine.
 #[tauri::command]
 pub fn audio_note(midi: u8, velocity: u8, on: bool, raw: bool) {
-    engine::note(midi, velocity, on, raw);
+    if let Some(graph) = engine::graph() {
+        graph.note(midi, velocity, on, raw);
+    }
 }
 
 /// Every Audio Unit effect installed on the machine, Apple's own included.
@@ -344,14 +360,16 @@ pub async fn audio_show_instrument(app: tauri::AppHandle) -> Result<Option<Strin
 /// is how the webview knows to offer no envelope for it, and null where there is no engine.
 #[tauri::command]
 pub fn audio_envelope() -> Option<Envelope> {
-    engine::envelope()
+    engine::graph().and_then(|graph| graph.envelope())
 }
 
 /// Replaces it. The voice engine has it at the next buffer, and every note struck from there on
 /// follows it; whatever is already sounding plays on unchanged.
 #[tauri::command]
 pub fn audio_apply_envelope(envelope: Envelope) {
-    engine::set_envelope(envelope);
+    if let Some(mut graph) = engine::graph() {
+        graph.set_envelope(envelope);
+    }
 }
 
 /// How loud one of the noises a piano makes around the tone sounds, 0 to 100: the damper landing,
@@ -360,68 +378,67 @@ pub fn audio_apply_envelope(envelope: Envelope) {
 /// a slider sends as it moves; a load puts the kept levels on by itself.
 #[tauri::command]
 pub fn audio_apply_role_level(role: sampler::Role, percent: u32) {
-    engine::set_role_level(role, percent);
+    if let Some(graph) = engine::graph() {
+        graph.set_role_level(role, percent);
+    }
 }
 
 /// The Preview's note list, in seconds at the score's own tempo. Replaces whatever was loaded.
 #[tauri::command]
 pub fn preview_load(notes: Vec<PreviewNote>) {
-    engine::preview_load(notes);
+    if let Some(graph) = engine::graph() {
+        graph.preview_load(notes);
+    }
 }
 
 #[tauri::command]
 pub fn preview_play() {
-    engine::preview_play();
+    if let Some(graph) = engine::graph() {
+        graph.preview_play();
+    }
 }
 
 #[tauri::command]
 pub fn preview_pause() {
-    engine::preview_pause();
+    if let Some(graph) = engine::graph() {
+        graph.preview_pause();
+    }
 }
 
 /// Jumps to a time in the piece's own seconds, tempo percent aside.
 #[tauri::command]
 pub fn preview_seek(seconds: f64) {
-    engine::preview_seek(seconds);
+    if let Some(graph) = engine::graph() {
+        graph.preview_seek(seconds);
+    }
 }
 
 /// The tempo as a percent of the score's own: 50 makes the piece take twice as long.
 #[tauri::command]
 pub fn preview_rate(percent: u32) {
-    engine::preview_rate(percent);
+    if let Some(graph) = engine::graph() {
+        graph.preview_rate(percent);
+    }
 }
 
 /// Stops, forgets the note list and returns to the start. What leaving the Preview sends.
 #[tauri::command]
 pub fn preview_stop() {
-    engine::preview_stop();
+    if let Some(graph) = engine::graph() {
+        graph.preview_stop();
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Off macOS there is no graph at all, so every command falls to the answer it keeps for
+    /// that, and what needs no graph still answers.
     #[test]
-    fn a_platform_without_an_engine_says_so_and_every_command_still_answers() {
+    fn a_platform_without_an_engine_has_no_graph_and_still_answers() {
+        assert!(stub::graph().is_none());
         assert_eq!(stub::start(), Err("No sound engine on this platform".into()));
-
-        let status = stub::status();
-        assert!(!status.available);
-        assert_eq!(status.reason, "No sound engine on this platform");
-
-        // The click and the keyboard volume return nothing: silence is the whole of their answer.
-        stub::click(true, 70);
-        stub::click(false, 0);
-        stub::set_keyboard_volume(100);
-        stub::set_keyboard_volume(0);
-        stub::set_velocity_curve(1, 127, 1.0);
-        stub::set_envelope(Envelope::default());
-        assert!(stub::envelope().is_none());
-        stub::set_role_level(sampler::Role::Release, 50);
-        stub::pedal(64);
-        stub::release_all();
-        // A key still answers with a velocity, because the caller reports the one that sounded.
-        assert_eq!(stub::note(60, 100, true, false), 100);
 
         assert!(stub::effects().is_empty());
         assert!(stub::chain().is_empty());
@@ -431,10 +448,7 @@ mod tests {
         );
 
         assert!(stub::output_devices().is_empty());
-        assert!(stub::set_output_device(Some("anything".into())).is_err());
-        assert!(stub::set_buffer_frames(64).is_err());
         assert!(stub::set_sample_rate(48000).is_err());
-        assert!(stub::set_voices(256).is_err());
 
         assert!(stub::instruments("/instruments").is_empty());
         assert_eq!(
@@ -443,9 +457,12 @@ mod tests {
         );
     }
 
+    /// The one answer a command that describes the engine gives when no graph answers it.
     #[test]
-    fn a_status_with_no_engine_carries_no_output_either() {
-        let status = stub::status();
+    fn a_status_with_no_graph_says_so_and_carries_no_output_either() {
+        let status = Status::unavailable(NO_ENGINE);
+        assert!(!status.available);
+        assert_eq!(status.reason, "The sound engine did not start");
         assert_eq!(status.device, None);
         assert_eq!(status.buffer_frames, 0);
         assert_eq!(status.latency_ms, 0.0);
@@ -484,15 +501,5 @@ mod tests {
         // An instrument nobody has touched keeps nothing of its own but the plugin state.
         let untouched = kept_for("three", &all);
         assert!(untouched.envelope.is_none() && untouched.roles.is_empty());
-    }
-
-    #[test]
-    fn preview_commands_answer_without_an_engine() {
-        stub::preview_load(vec![]);
-        stub::preview_play();
-        stub::preview_pause();
-        stub::preview_seek(4.0);
-        stub::preview_rate(50);
-        stub::preview_stop();
     }
 }

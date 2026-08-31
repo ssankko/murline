@@ -3,7 +3,8 @@
 //! Which Instrument is playing lives in one place, `head`, so a note branches once: an instrument
 //! file, EXS or SoundFont, goes through the app's own voice engine behind a source node, and a
 //! hosted Audio Unit plays through itself. Every entry point the command surface and the tests use
-//! is a method on `Graph`; the app keeps one of them in `GRAPH` for as long as it runs.
+//! is a method on `Graph`; the app keeps one of them in `GRAPH` for as long as it runs, and `graph`
+//! is the one way to it.
 //!
 //! One thing here runs on the audio thread: the source node's render block, which owns the voice
 //! engine and the Preview's clock and takes the orders for both through channels. Everything else
@@ -727,6 +728,37 @@ impl Graph {
         status.latency_ms = self.output.latency_ms;
     }
 
+    /// What one graph answers about itself: whether sound can come out and why not when it
+    /// cannot, the Instrument in force, and the output it plays through. A load answers with this
+    /// too, so the webview reads the engine once after a switch.
+    pub fn status(&self) -> Status {
+        let mut status = match self.chosen() {
+            None => Status::unavailable("No instrument chosen"),
+            Some(Chosen { name, failure: Some(failure), .. }) => {
+                Status::unavailable(&format!("{name} did not load: {failure}"))
+            }
+            Some(_) => Status { available: true, ..Status::default() },
+        };
+        status.instrument = self.instrument().unwrap_or_default().into();
+        status.instrument_rate = self.instrument_rate;
+        status.roles = self.head.roles().to_vec();
+        self.describe_output(&mut status);
+        status
+    }
+
+    /// One key of the MIDI keyboard, down or up, answered with the output velocity it was played
+    /// at, so the caller telling the webview about the strike reports the number the instrument
+    /// heard. A key coming up carries the velocity it arrived with: only a note on is remapped, and
+    /// `raw` takes even that off, for a velocity that is already an output.
+    pub fn note(&self, midi: u8, velocity: u8, on: bool, raw: bool) -> u8 {
+        match (on, raw) {
+            (false, _) => self.note_off(midi),
+            (true, true) => self.strike(midi, velocity),
+            (true, false) => return self.note_on(midi, velocity),
+        }
+        velocity
+    }
+
     /// Plays the note and answers the output velocity it was played at, which is the velocity the
     /// rest of the app works in. The remap happens here and only here, so a caller that needs the
     /// output takes it from the return rather than mapping a second time.
@@ -1126,10 +1158,29 @@ fn raise_max_frames(unit: AudioUnit, frames: u32) {
     };
 }
 
-/// Every command that touches the running graph goes through here, so nothing reaches the nodes
-/// while another thread is inside them. Without a graph there is nothing to do and no error.
-fn with<T>(act: impl FnOnce(&mut Graph) -> T) -> Option<T> {
-    GRAPH.lock().unwrap().as_mut().map(act)
+/// The running graph, held under its lock for as long as the caller keeps it, so nothing reaches
+/// the nodes while another thread is inside them.
+pub struct Running(std::sync::MutexGuard<'static, Option<Graph>>);
+
+impl std::ops::Deref for Running {
+    type Target = Graph;
+
+    fn deref(&self) -> &Graph {
+        self.0.as_ref().expect("a Running is only made over a graph")
+    }
+}
+
+impl std::ops::DerefMut for Running {
+    fn deref_mut(&mut self) -> &mut Graph {
+        self.0.as_mut().expect("a Running is only made over a graph")
+    }
+}
+
+/// The one way to the graph the app plays through. Nothing before a start, and after one that
+/// failed; every caller decides for itself what that means.
+pub fn graph() -> Option<Running> {
+    let held = GRAPH.lock().unwrap();
+    held.is_some().then(|| Running(held))
 }
 
 pub fn start() -> Result<(), String> {
@@ -1193,7 +1244,7 @@ fn report_forever() {
     let mut was_playing = false;
     let mut notes = [Event::default(); PREVIEW_BATCH];
     loop {
-        let Some((seconds, playing, voices, limit, share)) = with(|graph| {
+        let Some((seconds, playing, voices, limit, share)) = graph().map(|graph| {
             loop {
                 let took = graph.preview.notes.pop(&mut notes);
                 if took == 0 {
@@ -1231,59 +1282,10 @@ fn report_forever() {
     }
 }
 
-pub fn preview_load(notes: Vec<PreviewNote>) {
-    with(|graph| graph.preview_load(notes));
-}
-
-pub fn preview_play() {
-    with(|graph| graph.preview_play());
-}
-
-pub fn preview_pause() {
-    with(|graph| graph.preview_pause());
-}
-
-pub fn preview_seek(seconds: f64) {
-    with(|graph| graph.preview_seek(seconds));
-}
-
-pub fn preview_rate(percent: u32) {
-    with(|graph| graph.preview_rate(percent));
-}
-
-pub fn preview_stop() {
-    with(|graph| graph.preview_stop());
-}
-
-pub fn status() -> Status {
-    match GRAPH.lock().unwrap().as_ref() {
-        None => Status::unavailable("The sound engine did not start"),
-        Some(graph) => describe(graph),
-    }
-}
-
-/// What one graph answers about itself: whether sound can come out and why not when it cannot, the
-/// Instrument in force, and the output it plays through. A load answers with this too, so the
-/// webview reads the engine once after a switch.
-pub(super) fn describe(graph: &Graph) -> Status {
-    let mut status = match graph.chosen() {
-        None => Status::unavailable("No instrument chosen"),
-        Some(Chosen { name, failure: Some(failure), .. }) => {
-            Status::unavailable(&format!("{name} did not load: {failure}"))
-        }
-        Some(_) => Status { available: true, ..Status::default() },
-    };
-    status.instrument = graph.instrument().unwrap_or_default().into();
-    status.instrument_rate = graph.instrument_rate;
-    status.roles = graph.head.roles().to_vec();
-    graph.describe_output(&mut status);
-    status
-}
-
 /// How many voices the engine holds, which is how many ring slots a file is read in with. Read
 /// under its own lock, so the file itself is read with none held.
 pub(super) fn voices() -> Option<usize> {
-    GRAPH.lock().unwrap().as_ref().map(|graph| graph.voices)
+    graph().map(|graph| graph.voices)
 }
 
 /// Reads an instrument file: a SoundFont whole, an EXS as the head of each zone with a reader
@@ -1299,92 +1301,24 @@ pub(super) fn read_file(path: &Path, voices: usize) -> Result<Arc<sampler::Instr
     }))
 }
 
-pub fn click(strong: bool, volume: u32) {
-    with(|graph| graph.click(strong, volume));
-}
-
-pub fn set_keyboard_volume(percent: u32) {
-    with(|graph| graph.set_keyboard_volume(percent));
-}
-
-pub fn set_velocity_curve(min: u32, max: u32, curve: f64) {
-    with(|graph| graph.set_velocity_curve(min, max, curve));
-}
-
-pub fn envelope() -> Option<Envelope> {
-    with(|graph| graph.envelope()).flatten()
-}
-
-pub fn set_envelope(want: Envelope) {
-    with(|graph| graph.set_envelope(want));
-}
-
-pub fn set_role_level(role: sampler::Role, percent: u32) {
-    with(|graph| graph.set_role_level(role, percent));
-}
-
-/// One key of the MIDI keyboard, down or up. Answers the output velocity the note was played at, so
-/// the caller telling the webview about the strike reports the same number the instrument heard.
-/// A key coming up carries the velocity it arrived with: only a note on is remapped, and `raw`
-/// takes even that off, for a velocity that is already an output.
-pub fn note(midi: u8, velocity: u8, on: bool, raw: bool) -> u8 {
-    with(|graph| {
-        match (on, raw) {
-            (false, _) => graph.note_off(midi),
-            (true, true) => graph.strike(midi, velocity),
-            (true, false) => return graph.note_on(midi, velocity),
-        }
-        velocity
-    })
-    .unwrap_or(velocity)
-}
-
-/// The sustain pedal, as controller 64 sent it. Half travel and up is down, as every host reads it.
-pub fn pedal(value: u8) {
-    with(|graph| graph.sustain(crate::midi::Message::pedal_down(value)));
-}
-
-/// Ends everything sounding: what a lost MIDI port sends, so no note rings after an unplug.
-pub fn release_all() {
-    with(|graph| graph.release_all());
-}
-
 pub fn output_devices() -> Vec<OutputDevice> {
     device::outputs()
-}
-
-pub fn set_output_device(id: Option<String>) -> Result<(), String> {
-    with_graph(|graph| graph.set_device(id))
-}
-
-pub fn set_buffer_frames(frames: u32) -> Result<(), String> {
-    with_graph(|graph| graph.set_buffer(frames))
-}
-
-pub fn set_voices(count: usize) -> Result<(), String> {
-    with_graph(|graph| graph.set_voices(count))
 }
 
 /// Moves the whole engine to `rate`, and puts the chosen Instrument back when the move built the
 /// voice engine anew, so the webview does nothing about a rate change.
 pub fn set_sample_rate(rate: u32) -> Result<(), String> {
-    let mut held = GRAPH.lock().unwrap();
-    let graph = held.as_mut().ok_or("The sound engine did not start")?;
-    let moved = graph.rate != f64::from(rate);
-    let asked = graph.set_sample_rate(rate);
-    let chosen = moved.then(|| graph.chosen().cloned()).flatten();
-    drop(held);
+    let mut running = graph().ok_or(crate::audio::NO_ENGINE)?;
+    let moved = running.rate != f64::from(rate);
+    let asked = running.set_sample_rate(rate);
+    let chosen = moved.then(|| running.chosen().cloned()).flatten();
+    drop(running);
     if let Some(chosen) = chosen {
         // With the Envelope and the Role levels kept for it. A build that fails leaves its reason
         // where the picker reads it, as any load does.
         let _ = load_instrument(&chosen.id, &chosen.kept);
     }
     asked
-}
-
-fn with_graph(run: impl FnOnce(&mut Graph) -> Result<(), String>) -> Result<(), String> {
-    let mut held = GRAPH.lock().unwrap();
-    run(held.as_mut().ok_or("The sound engine did not start")?)
 }
 
 /// Puts an offline graph where the app's own would be, and reads what it renders. The MIDI tests
@@ -1396,7 +1330,7 @@ pub fn install(graph: Graph) {
 
 #[cfg(test)]
 pub fn peak(frames: u32) -> f32 {
-    GRAPH.lock().unwrap().as_mut().map_or(0.0, |graph| graph.render_peak(frames).unwrap())
+    graph().map_or(0.0, |mut graph| graph.render_peak(frames).unwrap())
 }
 
 #[cfg(test)]
@@ -1479,6 +1413,11 @@ mod tests {
     /// scheduled buffer onto its render side on its own time, so the graph is rendered on until
     /// the click is there, one pass more for a click that began at the end of a pass, and a look
     /// further so it has died away before the next one.
+    /// The graph a test has installed, reached the way a command reaches it.
+    fn installed() -> Running {
+        graph().expect("a graph is installed")
+    }
+
     fn click_peak(graph: &mut Graph, strong: bool, volume: u32) -> f32 {
         graph.click(strong, volume);
         let mut passes = (0..50).map(|_| graph.render_peak(PASS).unwrap());
@@ -1664,26 +1603,27 @@ mod tests {
         graph.start().unwrap();
         install(graph);
 
-        set_output_device(None).unwrap();
-        set_buffer_frames(DEFAULT_FRAMES).unwrap();
+        installed().set_device(None).unwrap();
+        installed().set_buffer(DEFAULT_FRAMES).unwrap();
         let piano = instruments("")
             .into_iter()
             .find(|one| one.name == "Concert Grand Piano")
             .expect("Logic's Concert Grand Piano is on this Mac");
         load_instrument(&piano.id, &Kept::default()).unwrap();
         set_chain(Vec::new()).unwrap();
-        assert!(status().available, "{}", status().reason);
+        let said = installed().status();
+        assert!(said.available, "{}", said.reason);
 
         for midi in [60, 64, 67] {
-            note(midi, 90, true, false);
+            installed().note(midi, 90, true, false);
         }
         sleep(Duration::from_millis(2500));
         for midi in [60, 64, 67] {
-            note(midi, 0, false, false);
+            installed().note(midi, 0, false, false);
         }
         sleep(Duration::from_millis(500));
         for beat in 0..4 {
-            click(beat == 0, 70);
+            installed().click(beat == 0, 70);
             sleep(Duration::from_millis(500));
         }
     }
@@ -1703,14 +1643,15 @@ mod tests {
         let graph = Graph::build().unwrap();
         graph.start().unwrap();
         install(graph);
-        set_output_device(None).unwrap();
-        set_buffer_frames(DEFAULT_FRAMES).unwrap();
+        installed().set_device(None).unwrap();
+        installed().set_buffer(DEFAULT_FRAMES).unwrap();
         let piano = instruments("")
             .into_iter()
             .find(|one| one.name == "Concert Grand Piano")
             .expect("Logic's Concert Grand Piano is on this Mac");
         load_instrument(&piano.id, &Kept::default()).unwrap();
-        assert!(status().available, "{}", status().reason);
+        let said = installed().status();
+        assert!(said.available, "{}", said.reason);
 
         // Samples, and the render time each buffer of them claims to start at: a jump in that time
         // is the engine having skipped a stretch of the render, which is what a dropout is.
@@ -1735,14 +1676,14 @@ mod tests {
             mixer.installTapOnBus_bufferSize_format_block(0, 1024, None, RcBlock::as_ptr(&tap));
             mixer.outputFormatForBus(0).sampleRate()
         };
-        println!("tap at {rate} Hz, buffer {} frames", status().buffer_frames);
+        println!("tap at {rate} Hz, buffer {} frames", installed().status().buffer_frames);
 
         for velocity in [20u8, 60, 100, 127] {
             sleep(Duration::from_millis(400));
             *taken.lock().unwrap() = Default::default();
-            note(60, velocity, true, false);
+            installed().note(60, velocity, true, false);
             sleep(Duration::from_millis(900));
-            note(60, 0, false, false);
+            installed().note(60, 0, false, false);
             sleep(Duration::from_millis(300));
 
             let (samples, times) = taken.lock().unwrap().clone();
@@ -1769,7 +1710,7 @@ mod tests {
                 .collect();
             println!("  peak per half ms from the first sound: {}", head.join(" "));
         }
-        release_all();
+        installed().release_all();
     }
 
     /// The two hardest cases for the voice engine, read off the real device with the attack at
@@ -1784,15 +1725,17 @@ mod tests {
         let graph = Graph::build().unwrap();
         graph.start().unwrap();
         install(graph);
-        set_output_device(None).unwrap();
-        set_buffer_frames(DEFAULT_FRAMES).unwrap();
+        installed().set_device(None).unwrap();
+        installed().set_buffer(DEFAULT_FRAMES).unwrap();
         let piano = instruments("")
             .into_iter()
             .find(|one| one.name == "Concert Grand Piano")
             .expect("Logic's Concert Grand Piano is on this Mac");
         load_instrument(&piano.id, &Kept::default()).unwrap();
-        assert!(status().available, "{}", status().reason);
-        set_envelope(Envelope { attack: 0.0, ..envelope().expect("the engine's envelope") });
+        let said = installed().status();
+        assert!(said.available, "{}", said.reason);
+        let brought = installed().envelope().expect("the engine's envelope");
+        installed().set_envelope(Envelope { attack: 0.0, ..brought });
 
         let taken: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
         let into = taken.clone();
@@ -1813,12 +1756,12 @@ mod tests {
             mixer.outputFormatForBus(0).sampleRate()
         };
 
-        note(60, 127, true, false);
+        installed().note(60, 127, true, false);
         sleep(Duration::from_millis(400));
         // The same key again while the first strike is still ringing.
-        note(60, 127, true, false);
+        installed().note(60, 127, true, false);
         sleep(Duration::from_millis(400));
-        note(60, 0, false, false);
+        installed().note(60, 0, false, false);
         sleep(Duration::from_millis(300));
 
         let samples = taken.lock().unwrap().clone();
@@ -1827,7 +1770,7 @@ mod tests {
             .iter()
             .map(|one| format!("{one:.4}"))
             .collect();
-        println!("tap at {rate} Hz, buffer {} frames", status().buffer_frames);
+        println!("tap at {rate} Hz, buffer {} frames", installed().status().buffer_frames);
         println!("the first 48 frames after the onset: {}", head.join(" "));
 
         let window = (rate * 0.020) as usize;
@@ -1841,7 +1784,7 @@ mod tests {
             rms(again.saturating_sub(window)),
             rms(again)
         );
-        release_all();
+        installed().release_all();
     }
 
     /// The Preview's clock read off the real device: eight quarter notes of middle C at 120 BPM,
@@ -1861,14 +1804,15 @@ mod tests {
         let graph = Graph::build().unwrap();
         graph.start().unwrap();
         install(graph);
-        set_output_device(None).unwrap();
-        set_buffer_frames(DEFAULT_FRAMES).unwrap();
+        installed().set_device(None).unwrap();
+        installed().set_buffer(DEFAULT_FRAMES).unwrap();
         let piano = instruments("")
             .into_iter()
             .find(|one| one.name == "Concert Grand Piano")
             .expect("Logic's Concert Grand Piano is on this Mac");
         load_instrument(&piano.id, &Kept::default()).unwrap();
-        assert!(status().available, "{}", status().reason);
+        let said = installed().status();
+        assert!(said.available, "{}", said.reason);
 
         // Room for the whole tap up front: a tap block that grows its buffer holds up the render
         // thread, and a held-up render thread is a hole in what this measures.
@@ -1891,7 +1835,7 @@ mod tests {
             mixer.outputFormatForBus(0).sampleRate()
         };
 
-        preview_load(
+        installed().preview_load(
             (0..NOTES)
                 .map(|beat| PreviewNote {
                     midi: 60,
@@ -1901,9 +1845,9 @@ mod tests {
                 })
                 .collect(),
         );
-        preview_play();
+        installed().preview_play();
         sleep(Duration::from_secs(5));
-        preview_stop();
+        installed().preview_stop();
 
         let samples = taken.lock().unwrap().clone();
         // The first note speaks where the sound first rises out of the silence before it. A plain
@@ -1947,17 +1891,18 @@ mod tests {
         let off: Vec<f64> = (0..NOTES)
             .map(|note| ms(onsets[note] as f64 - (onsets[0] + note * beat) as f64))
             .collect();
-        let buffer = ms(f64::from(status().buffer_frames));
+        let frames = installed().status().buffer_frames;
+        let buffer = ms(f64::from(frames));
         let worst = off.iter().fold(0f64, |top, one| top.max(one.abs()));
         let list = |these: &[f64]| {
             these.iter().map(|one| format!("{one:.3}")).collect::<Vec<_>>().join(" ")
         };
-        println!("tap at {rate} Hz, buffer {} frames, {buffer:.3} ms", status().buffer_frames);
+        println!("tap at {rate} Hz, buffer {frames} frames, {buffer:.3} ms");
         println!("onset to onset in ms: {}", list(&spacings));
         println!("off the written beat in ms: {}", list(&off));
         println!("worst {worst:.3} ms against a buffer of {buffer:.3} ms");
         assert!(worst <= buffer, "a note landed {worst:.3} ms off its beat");
-        release_all();
+        installed().release_all();
     }
 
     fn underruns() -> u64 {
@@ -1977,8 +1922,8 @@ mod tests {
         let graph = Graph::build().unwrap();
         graph.start().unwrap();
         install(graph);
-        set_output_device(None).unwrap();
-        set_buffer_frames(DEFAULT_FRAMES).unwrap();
+        installed().set_device(None).unwrap();
+        installed().set_buffer(DEFAULT_FRAMES).unwrap();
 
         type Tapped = (Vec<f32>, Vec<(i64, u32)>);
         let taken: Arc<Mutex<Tapped>> = Arc::new(Mutex::new(Default::default()));
@@ -2013,20 +1958,21 @@ mod tests {
             let started = Instant::now();
             load_instrument(&piano.id, &Kept::default()).unwrap();
             let load = started.elapsed();
-            assert!(status().available, "{}", status().reason);
-            println!("\n{name} loaded in {load:?}, roles {:?}", status().roles);
+            let said = installed().status();
+            assert!(said.available, "{}", said.reason);
+            println!("\n{name} loaded in {load:?}, roles {:?}", said.roles);
 
             *taken.lock().unwrap() = Default::default();
             let (dry, stolen) = (underruns(), sampler::engine::steals());
-            pedal(127);
+            installed().sustain(true);
             for midi in chord {
-                note(midi, 127, true, false);
+                installed().note(midi, 127, true, false);
             }
             sleep(Duration::from_secs(3));
             for midi in chord {
-                note(midi, 0, false, false);
+                installed().note(midi, 0, false, false);
             }
-            pedal(0);
+            installed().sustain(false);
             sleep(Duration::from_millis(500));
 
             let (samples, times) = taken.lock().unwrap().clone();
@@ -2041,7 +1987,7 @@ mod tests {
                 underruns() - dry,
                 sampler::engine::steals() - stolen,
             );
-            release_all();
+            installed().release_all();
 
             assert!(load < Duration::from_secs(3), "loaded in {load:?}");
             assert!(peak > 0.01, "the chord sounded");

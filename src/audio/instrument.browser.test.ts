@@ -71,6 +71,7 @@ beforeEach(async () => {
     audio_load_instrument: async () => {
       if (held) await held.promise;
       if (refusal) throw new Error(refusal);
+      return status;
     },
   });
   await stored();
@@ -141,7 +142,7 @@ test('choosing writes the setting, loads at once, and marks the row it is on', a
   await open();
   await pick('Concert Grand Piano');
   await vi.waitFor(() =>
-    expect(rust.argsOf('audio_load_instrument')).toEqual([{ id: CONCERT.id, state: null }]),
+    expect(rust.argsOf('audio_load_instrument')).toEqual([{ id: CONCERT.id }]),
   );
   expect(rust.written()).toContainEqual(['instrument_id', CONCERT.id]);
   await vi.waitFor(() => expect(trigger().textContent).toContain('Concert Grand Piano'));
@@ -207,14 +208,19 @@ test('an instrument recorded below the rate in force drags the rate down to its 
 
 test('a first launch plays Logic Concert Grand without being asked', async () => {
   await restoreInstrument();
-  expect(rust.argsOf('audio_load_instrument')).toEqual([{ id: CONCERT.id, state: null }]);
-  expect(rust.written()).toEqual([['instrument_id', CONCERT.id]]);
+  expect(rust.argsOf('audio_load_instrument')).toEqual([{ id: CONCERT.id }]);
+  // The stored state belongs to the stored instrument, so a fresh default starts at its own.
+  expect(rust.written()).toEqual([
+    ['instrument_id', CONCERT.id],
+    ['instrument_state', null],
+  ]);
 });
 
-test('a launch after a choice puts that one back, with the state it was left in', async () => {
+test('a launch after a choice puts that one back, and writes nothing to do it', async () => {
   await stored({ instrument_id: BROKEN.id, instrument_state: 'YmxvYg==' });
   await restoreInstrument();
-  expect(rust.argsOf('audio_load_instrument')).toEqual([{ id: BROKEN.id, state: 'YmxvYg==' }]);
+  // The engine reads the state, the envelope and the role levels kept for the id itself.
+  expect(rust.argsOf('audio_load_instrument')).toEqual([{ id: BROKEN.id }]);
   expect(rust.written()).toEqual([]);
 });
 

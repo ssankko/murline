@@ -145,7 +145,7 @@ pub struct Slot {
 /// How a sampler instrument's loudness answers a key: seconds to reach full loudness, seconds to
 /// fall from there, the fraction of full loudness a held note settles at, and seconds to fade once
 /// the key comes up. Only the sampler has one; a hosted plugin shapes its notes in its own window.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct Envelope {
     pub attack: f64,
     pub decay: f64,
@@ -159,6 +159,16 @@ pub struct Envelope {
 pub struct OutputDevice {
     pub id: String,
     pub name: String,
+}
+
+/// What the window keeps for one instrument and a load puts back with it: the state a plugin was
+/// last left in, the Envelope for a file, and the level of every Role that was moved. Read from the
+/// Global settings here, so the engine's load knows nothing about settings.
+#[derive(Debug, Clone, Default)]
+pub struct Kept {
+    pub state: Option<String>,
+    pub envelope: Option<Envelope>,
+    pub roles: Vec<(sampler::Role, u32)>,
 }
 
 /// One line of the instrument picker. The id is opaque: a file and an Audio Unit look the same
@@ -287,11 +297,41 @@ pub fn audio_instruments(folder: String) -> Vec<Instrument> {
     engine::instruments(&folder)
 }
 
-/// Loads one of them, with the state a plugin was last left in. Off the main thread: a big sampler
-/// instrument takes a moment to read, and the app stays answering while it does.
-#[tauri::command(async)]
-pub fn audio_load_instrument(id: String, state: Option<String>) -> Result<(), String> {
-    engine::load_instrument(&id, state.as_deref())
+/// Loads one of them, with the state a plugin was last left in, the Envelope kept for it and the
+/// level of every Role that was moved, and answers the engine's status. The engine builds the
+/// instrument with nothing locked, so a key pressed meanwhile plays on the one still in.
+#[tauri::command]
+pub async fn audio_load_instrument(app: tauri::AppHandle, id: String) -> Result<Status, String> {
+    let all = crate::settings::all(&app).await?;
+    engine::load_instrument(&id, &kept_for(&id, &all))
+}
+
+/// What the window keeps for one instrument, out of the Global settings.
+fn kept_for(id: &str, all: &crate::settings::Stored) -> Kept {
+    Kept {
+        state: all.get("instrument_state").and_then(Value::as_str).map(str::to_string),
+        envelope: all
+            .get("instrument_envelopes")
+            .and_then(|kept| kept.get(id))
+            .and_then(|one| serde_json::from_value(one.clone()).ok()),
+        roles: role_levels(all.get("instrument_roles").and_then(|kept| kept.get(id))),
+    }
+}
+
+/// The Role levels kept for one instrument, in either shape the setting takes on disk: a map of
+/// role to per cent, or the older list of the roles switched off, which reads as those roles at 0.
+fn role_levels(kept: Option<&Value>) -> Vec<(sampler::Role, u32)> {
+    let role = |name: &str| serde_json::from_value(Value::String(name.into())).ok();
+    match kept {
+        Some(Value::Array(off)) => {
+            off.iter().filter_map(|one| Some((role(one.as_str()?)?, 0))).collect()
+        }
+        Some(Value::Object(levels)) => levels
+            .iter()
+            .filter_map(|(name, level)| Some((role(name)?, level.as_u64()? as u32)))
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// Opens the instrument's own window, and answers with its state when the user closes it again.
@@ -316,9 +356,8 @@ pub fn audio_apply_envelope(envelope: Envelope) {
 
 /// How loud one of the noises a piano makes around the tone sounds, 0 to 100: the damper landing,
 /// the key coming back up, the strings ringing along, the pedal. 0 sounds none of it, the tone
-/// itself has no level, and a role the loaded instrument has no samples for is simply silent. A
-/// load puts every role back to 100, and the webview keeps a level per instrument and sends it
-/// after every load.
+/// itself has no level, and a role the loaded instrument has no samples for is simply silent. What
+/// a slider sends as it moves; a load puts the kept levels on by itself.
 #[tauri::command]
 pub fn audio_apply_role_level(role: sampler::Role, percent: u32) {
     engine::set_role_level(role, percent);
@@ -399,8 +438,8 @@ mod tests {
 
         assert!(stub::instruments("/instruments").is_empty());
         assert_eq!(
-            stub::load_instrument("file:/instruments/piano.sf2", None),
-            Err("No sound engine on this platform".into())
+            stub::load_instrument("file:/instruments/piano.sf2", &Kept::default()).err(),
+            Some("No sound engine on this platform".into())
         );
     }
 
@@ -412,6 +451,39 @@ mod tests {
         assert_eq!(status.latency_ms, 0.0);
         assert_eq!(status.fallback, "");
         assert!(status.roles.is_empty());
+    }
+
+    /// What the window keeps for one instrument, in both shapes the Role levels take on disk.
+    #[test]
+    fn the_role_levels_kept_for_an_instrument_read_in_either_shape() {
+        let all: crate::settings::Stored = serde_json::from_str(
+            r#"{
+                "instrument_state": "YmxvYg==",
+                "instrument_envelopes": {
+                    "one": { "attack": 0.1, "decay": 0.2, "sustain": 0.3, "release": 0.4 }
+                },
+                "instrument_roles": {
+                    "one": { "key_off": 40 },
+                    "two": ["sympathetic", "pedal_noise"]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let first = kept_for("one", &all);
+        assert_eq!(first.state.as_deref(), Some("YmxvYg=="));
+        assert_eq!(first.envelope.map(|one| one.release), Some(0.4));
+        assert_eq!(first.roles, [(sampler::Role::KeyOff, 40)]);
+
+        // The older shape: the roles that were switched off, which is those roles at 0.
+        assert_eq!(kept_for("two", &all).roles, [
+            (sampler::Role::Sympathetic, 0),
+            (sampler::Role::PedalNoise, 0)
+        ]);
+
+        // An instrument nobody has touched keeps nothing of its own but the plugin state.
+        let untouched = kept_for("three", &all);
+        assert!(untouched.envelope.is_none() && untouched.roles.is_empty());
     }
 
     #[test]

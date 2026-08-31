@@ -5,6 +5,7 @@
 import type { PieceRow, PlayRow, SortOrder } from '@/library/queries';
 import {
   setRust,
+  type AudioStatus,
   type FileEntry,
   type CommandName,
   type Commands,
@@ -21,6 +22,22 @@ export type Answers = {
 };
 
 const nothing = () => {};
+
+/** The engine as a test finds it: up on one output device, playing one file instrument. */
+const running = (): AudioStatus => ({
+  available: true,
+  reason: '',
+  device: 'device-1',
+  device_name: 'Built-in Output',
+  instrument: 'Concert Grand Piano',
+  fallback: '',
+  buffer_frames: 128,
+  sample_rate: 48000,
+  buffer_choices: [32, 64, 128, 256, 512],
+  instrument_rate: 44100,
+  latency_ms: 5,
+  roles: ['release', 'key_off', 'sympathetic', 'pedal_noise'],
+});
 
 /**
  * The `setting` table: what `settings_write` has stored and `settings_read` answers with. A test
@@ -222,20 +239,7 @@ export const DEFAULT_ANSWERS: Answers = {
     fakePlays.push(...kept);
   },
   audio_start: nothing,
-  audio_status: () => ({
-    available: true,
-    reason: '',
-    device: 'device-1',
-    device_name: 'Built-in Output',
-    instrument: 'Concert Grand Piano',
-    fallback: '',
-    buffer_frames: 128,
-    sample_rate: 48000,
-    buffer_choices: [32, 64, 128, 256, 512],
-    instrument_rate: 44100,
-    latency_ms: 5,
-    roles: ['release', 'key_off', 'sympathetic', 'pedal_noise'],
-  }),
+  audio_status: running,
   audio_click: nothing,
   audio_note: nothing,
   audio_effects: () => [],
@@ -245,7 +249,8 @@ export const DEFAULT_ANSWERS: Answers = {
   audio_instruments: () => [
     { id: 'grand', name: 'Concert Grand Piano', kind: 'file', loaded: true, reason: '' },
   ],
-  audio_load_instrument: nothing,
+  // The engine puts the kept envelope and role levels on inside the load and answers its status.
+  audio_load_instrument: running,
   audio_show_instrument: () => null,
   audio_envelope: () => ({ attack: 0.001, decay: 0.5, sustain: 0.7, release: 0.2 }),
   audio_apply_envelope: nothing,

@@ -1,9 +1,7 @@
 // The Sound tab's Instrument section: the instrument the keyboard and the Preview play. The
 // engine finds them, this picks one, and every control writes its setting on change.
 
-import { restoreEnvelope } from "@/audio/envelope";
 import { numbered, Row, Segmented } from "@/look/rows";
-import { restoreRoles } from "@/audio/roles";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -54,11 +52,12 @@ export async function restoreInstrument(): Promise<string | null> {
   const all = await listInstruments(setting("instruments_folder"));
   const chosen = kept ?? all.find((one) => one.name === DEFAULT_NAME)?.id ?? null;
   if (!chosen) return null;
-  if (chosen !== kept) await set("instrument_id", chosen);
-  // The stored state belongs to the stored instrument, so a fresh default starts at its own.
-  const state = chosen === kept ? setting("instrument_state") : null;
-  await call("audio_load_instrument", { id: chosen, state });
-  await restoreEnvelope(chosen);
+  if (chosen !== kept) {
+    // The stored state belongs to the stored instrument, so a fresh default starts at its own.
+    await set("instrument_id", chosen);
+    await set("instrument_state", null);
+  }
+  await call("audio_load_instrument", { id: chosen });
   return all.find((one) => one.id === chosen)?.name ?? null;
 }
 
@@ -108,8 +107,9 @@ export function InstrumentSection({
   }, [status, rate]);
 
   /**
-   * A new instrument: the setting first, then the load, whose reason is what the picker says. A
-   * Logic piano takes seconds to load, so the picker beats until the engine answers.
+   * A new instrument: the setting first, since the engine reads what is kept for it, then the
+   * load, whose reason is what the picker says and whose answer is what the rows read. A Logic
+   * piano takes seconds to load, so the picker beats until the engine answers.
    */
   async function choose(id: string): Promise<void> {
     setFailure("");
@@ -117,32 +117,20 @@ export function InstrumentSection({
     await set("instrument_id", id);
     await set("instrument_state", null);
     try {
-      await call("audio_load_instrument", { id, state: null });
-      await restoreEnvelope(id);
+      setStatus(await call("audio_load_instrument", { id }));
     } catch (error) {
       setFailure(reasonOf(error));
+      await readEngine();
     } finally {
       setLoading(false);
     }
-    await readEngine();
     onChanged?.();
   }
 
-  /**
-   * A new rate: the voice engine is built anew at it, so the instrument goes in again, and the
-   * envelope and the levels ride back in on the restore.
-   */
+  /** A new rate: the engine builds its voice engine anew at it and puts the instrument back. */
   async function chooseRate(choice: number): Promise<void> {
     const reason = await set("audio_sample_rate", choice);
     setFailure(reason);
-    if (!reason) {
-      try {
-        await restoreInstrument();
-        await restoreRoles(setting("instrument_id"));
-      } catch (error) {
-        setFailure(reasonOf(error));
-      }
-    }
     await readEngine();
     onChanged?.();
   }

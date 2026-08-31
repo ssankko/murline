@@ -3,8 +3,8 @@
 //! Unit instruments installed on the Mac. Every entry carries an opaque id, so the webview never
 //! learns what a component description or a file path is.
 
-use crate::audio::Instrument;
-use crate::audio::mac::{Chosen, GRAPH};
+use crate::audio::mac::{self, Chosen, GRAPH};
+use crate::audio::{Instrument, Kept, Status};
 use block2::RcBlock;
 use objc2::AnyThread;
 use objc2::rc::Retained;
@@ -35,6 +35,8 @@ const MUSIC_DEVICE: u32 = u32::from_be_bytes(*b"aumu");
 const NOT_LISTED: [u32; 2] = [u32::from_be_bytes(*b"dls "), u32::from_be_bytes(*b"msyn")];
 /// How long instantiating a plugin may take before the load gives up on it.
 const PATIENCE: std::time::Duration = std::time::Duration::from_secs(60);
+/// What a load answers when there is no graph to put the instrument into.
+const NO_ENGINE: &str = "The sound engine did not start";
 
 /// Every instrument the engine can play right now, in source order, with the load state of the one
 /// that is loaded (or that failed to).
@@ -51,15 +53,43 @@ pub fn list(folder: &str) -> Vec<Instrument> {
     all
 }
 
-/// Loads the instrument an id names, restoring a plugin's stored state onto it. Everything
-/// sounding is let go first, so a switch never leaves a note ringing.
-pub fn load(id: &str, state: Option<&str>) -> Result<(), String> {
-    let mut held = GRAPH.lock().unwrap();
-    let graph = held.as_mut().ok_or("The sound engine did not start")?;
-    graph.release_all();
+/// Loads the instrument an id names, with everything the window keeps for it, and answers the
+/// engine's status. The file read or the plugin instantiate happens with no graph lock held, so a
+/// key pressed while it runs plays on the Instrument still in; the lock is taken only to swap the
+/// built one in. A build that fails leaves the old Instrument playing and answers why.
+pub fn load(id: &str, kept: &Kept) -> Result<Status, String> {
+    let voices = mac::voices().ok_or(NO_ENGINE)?;
+    let (name, made) = build(id, kept.state.as_deref(), voices);
 
-    let (name, outcome) = match path_of(id) {
-        Some(path) => (stem(&path), graph.load_file(&path)),
+    let mut held = GRAPH.lock().unwrap();
+    let graph = held.as_mut().ok_or(NO_ENGINE)?;
+    let outcome = made.map(|made| {
+        match made {
+            Made::File(instrument) => graph.load_instrument(instrument),
+            Made::Plugin(unit) => graph.set_plugin(unit),
+        }
+        // Inside the swap, so the first note that can reach the new Instrument already has them.
+        graph.restore(kept);
+    });
+    let failure = outcome.clone().err();
+    graph.choose(Chosen { id: id.into(), name, failure, kept: kept.clone() });
+    outcome?;
+    Ok(mac::describe(graph))
+}
+
+/// An Instrument built and ready to take the head: the samples the voice engine plays, or the
+/// hosted Audio Unit that plays itself.
+enum Made {
+    File(std::sync::Arc<crate::audio::sampler::Instrument>),
+    Plugin(Retained<AVAudioUnitMIDIInstrument>),
+}
+
+/// Reads the file or builds the plugin an id names, with a plugin's stored state on it. Nothing of
+/// the graph is touched here, which is what lets the load run this outside the lock. Answers the
+/// name to show whether it worked or not, so a failed choice is still named in the picker.
+fn build(id: &str, state: Option<&str>, voices: usize) -> (String, Result<Made, String>) {
+    match path_of(id) {
+        Some(path) => (stem(&path), mac::read_file(&path, voices).map(Made::File)),
         None => match plugin_desc(id).and_then(component) {
             None => (id.to_string(), Err("That instrument is not installed".into())),
             Some((desc, name)) => (
@@ -68,13 +98,11 @@ pub fn load(id: &str, state: Option<&str>) -> Result<(), String> {
                     if let Some(state) = state {
                         apply_state(&unit, state);
                     }
-                    graph.set_plugin(unit);
+                    Made::Plugin(unit)
                 }),
             ),
         },
-    };
-    graph.choose(Chosen { id: id.into(), name, failure: outcome.clone().err() });
-    outcome
+    }
 }
 
 /// The plugin state to store with the instrument choice: `fullState` as a property list, base64 so
@@ -458,7 +486,7 @@ mod tests {
         write(folder.path(), "broken.sf2");
         let broken = format!("file:{}", folder.path().join("broken.sf2").display());
 
-        let failure = load(&broken, None).unwrap_err();
+        let failure = load(&broken, &Kept::default()).unwrap_err();
         assert_eq!(failure, "That file is not a SoundFont");
         let said = status();
         assert!(!said.available);
@@ -469,8 +497,21 @@ mod tests {
         assert!(!entry.loaded);
         assert_eq!(entry.reason, failure);
 
-        load(&format!("file:{FIXTURE}"), None).unwrap();
-        assert!(status().available);
+        // A good file, with the Envelope and the Role level the user left this instrument at: both
+        // go on inside the swap, so the first note after the switch already answers as it should.
+        let kept = Kept {
+            envelope: Some(crate::audio::Envelope {
+                attack: 0.4,
+                decay: 0.1,
+                sustain: 0.5,
+                release: 0.9,
+            }),
+            roles: vec![(crate::audio::sampler::Role::Release, 0)],
+            ..Kept::default()
+        };
+        let said = load(&format!("file:{FIXTURE}"), &kept).unwrap();
+        assert!(said.available, "the load answers the engine's status: {}", said.reason);
+        assert_eq!(crate::audio::mac::envelope(), kept.envelope);
     }
 
     #[test]

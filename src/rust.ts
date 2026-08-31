@@ -227,7 +227,9 @@ export interface Commands {
   audio_show_effect: { args: { index: number }; result: void };
   audio_output_devices: { args: void; result: OutputDevice[] };
   audio_instruments: { args: { folder: string }; result: Instrument[] };
-  audio_load_instrument: { args: { id: string; state: string | null }; result: void };
+  /** The engine reads the state, the envelope and the role levels kept for the id itself, and
+   * answers with its status once the instrument is in. */
+  audio_load_instrument: { args: { id: string }; result: AudioStatus };
   audio_show_instrument: { args: void; result: string | null };
   audio_envelope: { args: void; result: Envelope | null };
   audio_apply_envelope: { args: { envelope: Envelope }; result: void };

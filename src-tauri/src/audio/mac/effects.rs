@@ -225,17 +225,16 @@ fn slots(graph: &Graph) -> Vec<Slot> {
 /// playing is left connected to nothing.
 pub(super) fn rewire(graph: &Graph) {
     let engine = &graph.engine;
+    let head = graph.head.node();
     unsafe {
         engine.disconnectNodeOutput(&graph.source);
-        if let Some(plugin) = &graph.plugin {
-            engine.disconnectNodeOutput(plugin);
-        }
+        engine.disconnectNodeOutput(head);
         for held in &graph.chain {
             if let Some(unit) = &held.unit {
                 engine.disconnectNodeOutput(unit);
             }
         }
-        let mut path: Vec<&AVAudioNode> = vec![graph.head()];
+        let mut path: Vec<&AVAudioNode> = vec![head];
         for held in &graph.chain {
             if let Some(unit) = &held.unit {
                 path.push(unit);
@@ -247,10 +246,11 @@ pub(super) fn rewire(graph: &Graph) {
         for pair in path.windows(2) {
             engine.connect_to_format(pair[0], pair[1], Some(&graph.format));
         }
-        // A plugin at the head leaves the source node out of the path, so it keeps an input of its
-        // own on the fader, silenced: the block behind that node carries the Preview's clock and
-        // has to go on being rendered, and nothing it renders may reach the output.
-        let plays = graph.plugin.is_none();
+        // An Instrument other than the voice engine at the head leaves the source node out of the
+        // path, so it keeps an input of its own on the fader, silenced: the block behind that node
+        // carries the Preview's clock and has to go on being rendered, and nothing it renders may
+        // reach the output.
+        let plays = graph.head.is_voice_engine();
         if !plays {
             engine.connect_to_format(&graph.source, &graph.fader, Some(&graph.format));
         }

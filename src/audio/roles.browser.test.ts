@@ -1,4 +1,4 @@
-import { RolesSection, restoreRoles } from '@/audio/roles';
+import { RolesSection } from '@/audio/roles';
 import { NO_STATUS, type Role } from '@/rust';
 import { fakeRust, fakeSettings, type FakeRust } from '@/rust.fake';
 import { load } from '@/settings/settings';
@@ -77,7 +77,8 @@ test('every role the instrument offers gets a slider, all at 100 by default', as
     expect(slider(label)?.value, label).toBe('100');
   }
   expect(host!.querySelector('#setting-row-role_key_off')).toBeTruthy();
-  await vi.waitFor(() => expect(put()).toHaveLength(4));
+  // The load put the levels on, so showing them asks the engine for nothing.
+  expect(asked()).toEqual([]);
 });
 
 test('moving a role keeps its level and sends it to the engine', async () => {
@@ -96,49 +97,20 @@ test('moving a role keeps its level and sends it to the engine', async () => {
   expect(slider('Key-off noise')!.value).toBe('40');
 });
 
-test('the levels the instrument was left at go back in after a load', async () => {
+test('the sliders show the levels the instrument was left at, sent by nobody', async () => {
   await keep({ 'grand.exs': { sympathetic: 0, pedal_noise: 25 } });
   show(ALL);
-  await vi.waitFor(() =>
-    expect(put()).toEqual([
-      ['release', 100],
-      ['key_off', 100],
-      ['sympathetic', 0],
-      ['pedal_noise', 25],
-    ]),
-  );
-  expect(slider('Pedal noise')!.value).toBe('25');
-
-  // The same instrument loaded again: the engine has put every role back to 100, so the levels
-  // are sent once more.
-  show(ALL, 1);
-  await vi.waitFor(() => expect(put()).toHaveLength(8));
-});
-
-test('boot asks the engine what the instrument offers and sends the kept levels', async () => {
-  await keep({ 'grand.exs': { pedal_noise: 0 } });
-  await restoreRoles('grand.exs');
-  expect(put()).toEqual([
-    ['release', 100],
-    ['key_off', 100],
-    ['sympathetic', 100],
-    ['pedal_noise', 0],
-  ]);
+  await vi.waitFor(() => expect(slider('Pedal noise')?.value).toBe('25'));
+  expect(slider('Sympathetic resonance')!.value).toBe('0');
+  expect(slider('Release samples')!.value).toBe('100');
+  // The load is what put them on the engine, so the section asks it for nothing.
+  expect(asked()).toEqual([]);
 });
 
 test('a set of roles switched off reads as those roles at 0', async () => {
   await keep({ 'grand.exs': ['sympathetic', 'pedal_noise'] });
-  await restoreRoles('grand.exs');
-  expect(put()).toEqual([
-    ['release', 100],
-    ['key_off', 100],
-    ['sympathetic', 0],
-    ['pedal_noise', 0],
-  ]);
-});
-
-test('an instrument with nothing moved is left as the load left it', async () => {
-  await restoreRoles('grand.exs');
-  await restoreRoles(null);
-  expect(asked()).toEqual([]);
+  show(ALL);
+  await vi.waitFor(() => expect(slider('Sympathetic resonance')?.value).toBe('0'));
+  expect(slider('Pedal noise')!.value).toBe('0');
+  expect(slider('Key-off noise')!.value).toBe('100');
 });

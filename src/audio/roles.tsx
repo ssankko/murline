@@ -3,8 +3,8 @@
 // offers none, such as a plugin or a plain file, gets no section at all.
 //
 // The setting holds the levels the user has moved, so an instrument nobody has touched plays
-// everything it has whole. The engine puts every role back to 100 on a load, so the levels are
-// sent again whenever the loaded instrument changes.
+// everything it has whole. It is the engine's to read: a load puts the kept levels on by itself,
+// so this section only shows and moves them.
 
 import { Knob } from '@/audio/knob';
 import { set, setting } from '@/settings/settings';
@@ -42,28 +42,9 @@ function keptLevels(instrument: string | null): Levels {
 
 const at = (levels: Levels, role: Role): number => levels[role] ?? 100;
 
-/** Sends every offered role's level to the engine, which loads with all of them at 100. */
-async function send(roles: Role[], levels: Levels): Promise<void> {
-  for (const role of roles) {
-    await call('audio_apply_role_level', { role, percent: at(levels, role) });
-  }
-}
-
-/**
- * Puts the levels an instrument is kept at back on the engine. Reads the offered roles from the
- * engine, because only it knows what the file holds. An instrument with nothing moved already
- * plays as it should and is left alone.
- */
-export async function restoreRoles(instrument: string | null): Promise<void> {
-  const levels = keptLevels(instrument);
-  if (!Object.keys(levels).length) return;
-  const { roles } = await call('audio_status');
-  await send(roles, levels);
-}
-
 /**
  * `roles` is what the loaded instrument offers, from the engine's status, and `round` goes up
- * whenever the instrument changed, which is when the engine has forgotten the levels.
+ * whenever the instrument changed, which is when the sliders have new levels to show.
  */
 export function RolesSection({
   marked,
@@ -82,9 +63,7 @@ export function RolesSection({
 
   useEffect(() => {
     if (!roles.length) return;
-    const kept = keptLevels(instrument ?? null);
-    setLevels(kept);
-    void send(roles, kept).catch(console.error);
+    setLevels(keptLevels(instrument ?? null));
     // `offered` stands in for `roles`, which is a fresh array on every status the tab reads.
   }, [instrument, round, offered]);
 

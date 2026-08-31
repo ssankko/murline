@@ -2,7 +2,7 @@
 //! so the webview needs no platform branch of its own; the app runs as it always did, silently.
 
 use crate::audio::preview::PreviewNote;
-use crate::audio::{Effect, Envelope, Instrument, OutputDevice, Slot, Status};
+use crate::audio::{Effect, Envelope, Instrument, Kept, OutputDevice, Slot, Status};
 
 const PLATFORM: &str = "No sound engine on this platform";
 
@@ -74,7 +74,7 @@ pub fn instruments(_folder: &str) -> Vec<Instrument> {
     Vec::new()
 }
 
-pub fn load_instrument(_id: &str, _state: Option<&str>) -> Result<(), String> {
+pub fn load_instrument(_id: &str, _kept: &Kept) -> Result<Status, String> {
     Err(PLATFORM.into())
 }
 

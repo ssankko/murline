@@ -3,7 +3,6 @@
 // lines as they stand.
 
 import { restoreInstrument } from "@/audio/instrument";
-import { restoreRoles } from "@/audio/roles";
 import { reasonOf } from "@/library/notice";
 import { scanLibrary } from "@/library/scan";
 import { call } from "@/rust";
@@ -80,19 +79,13 @@ export async function boot(print: (lines: BootLine[]) => void): Promise<void> {
   await step("starting sound engine", () => call("audio_start"));
 
   await step("restoring instrument", async () => {
-    // Both go in whatever the other did; the roles ride on the loaded instrument, so the restore
-    // goes first. The landed line names the instrument that went in, when the engine's list knew
-    // it.
+    // The engine puts the envelope and the role levels kept for it back inside the load. The
+    // landed line names the instrument that went in, when the engine's list knew it.
     const [name, reason] = await restoreInstrument().then(
       (restored) => [restored, ""] as const,
       (error: unknown) => [null, reasonOf(error)] as const,
     );
-    const roles = await restoreRoles(setting("instrument_id")).then(
-      () => "",
-      reasonOf,
-    );
-    const first = reason || roles;
-    if (first) throw new Error(first);
+    if (reason) throw new Error(reason);
     return name ? `restoring ${name}` : undefined;
   });
 

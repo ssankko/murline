@@ -5,7 +5,6 @@
 // appears and disappears without a restart.
 
 import { restoreInstrument } from "@/audio/instrument";
-import { restoreRoles } from "@/audio/roles";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -16,7 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { numbered, Row, Segmented } from "@/look/rows";
 import { call, on, type AudioStatus, type OutputDevice } from "@/rust";
-import { set, setting, useSetting } from "@/settings/settings";
+import { set, useSetting } from "@/settings/settings";
 import { ChevronDown } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
@@ -64,9 +63,8 @@ export function OutputSection({ marked }: { marked?: string | null }) {
       const reason = await set("audio_voices", choice);
       if (reason) return reason;
       // A sampled instrument's streaming rings are allocated with it, two slots per voice, so it
-      // is read again at the new count; the envelope and the levels ride back in on the restore.
+      // is read again at the new count.
       await restoreInstrument();
-      await restoreRoles(setting("instrument_id"));
       return "";
     });
 

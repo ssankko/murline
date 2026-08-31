@@ -5,7 +5,8 @@
 // window, and the engine answers null for it, which is what hides this section.
 //
 // The engine takes an envelope at once, so a moving slider is heard as it moves, at one send per
-// frame drawn.
+// frame drawn. The setting is the engine's to read: a load puts the envelope kept for the
+// instrument on by itself, so this section only shows and moves it.
 
 import { Knob } from '@/audio/knob';
 import type { Sounding } from '@/audio/sounding';
@@ -14,16 +15,6 @@ import { colorOf } from '@/look/color';
 import { useDark } from '@/look/use-dark';
 import { call, type Envelope } from '@/rust';
 import { useEffect, useRef, useState } from 'react';
-
-/**
- * Puts the envelope kept for an instrument back on the engine. Called after every load, because a
- * load reads the instrument file's own envelope in over whatever was set. An instrument never
- * given one keeps the envelope its file asks for.
- */
-export async function restoreEnvelope(id: string): Promise<void> {
-  const kept = setting('instrument_envelopes')[id];
-  if (kept) await call('audio_apply_envelope', { envelope: kept });
-}
 
 /**
  * `instrument` is the id the envelope is kept under, and `round` goes up whenever the instrument

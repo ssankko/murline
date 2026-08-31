@@ -601,9 +601,7 @@ export class Engine {
    */
   private openAt(to: number): void {
     this.closed = this.firstNoteFrom(to);
-    for (let i = 0; i < this.closed; i++) {
-      this.states[i] = this.isExpected(this.notes[i]!) ? 'miss' : 'pending';
-    }
+    for (let i = 0; i < this.closed; i++) this.states[i] = this.isExpected(this.notes[i]!) ? 'miss' : 'pending';
     this.states.fill('pending', this.closed);
     this.resolved.fill(0);
     this.version++;
@@ -641,17 +639,10 @@ export class Engine {
     return ticks;
   }
 
-  /** The tick of the list nearest a played tick, the first of them on a tie. */
+  /** The tick of the list nearest a played tick, the first of them on a tie; `to` itself for none. */
   private nearestTick(ticks: number[], to: number): number {
-    let best = to;
-    let distance = Infinity;
-    for (const tick of ticks) {
-      if (Math.abs(tick - to) < distance) {
-        distance = Math.abs(tick - to);
-        best = tick;
-      }
-    }
-    return best;
+    if (ticks.length === 0) return to;
+    return ticks.reduce((best, tick) => (Math.abs(tick - to) < Math.abs(best - to) ? tick : best));
   }
 
   /**
@@ -1003,8 +994,7 @@ export class Engine {
   /** The other expected notes of the same pitch at the same Onset, one key for all of them. */
   private twinsOf(index: number): number[] {
     const { midi, onsetTick } = this.notes[index]!;
-    let from = index;
-    while (from > 0 && this.notes[from - 1]!.onsetTick === onsetTick) from--;
+    const from = this.firstNoteFrom(onsetTick);
     const twins: number[] = [];
     for (let i = from; i < this.notes.length && this.notes[i]!.onsetTick === onsetTick; i++) {
       const note = this.notes[i]!;
@@ -1071,13 +1061,10 @@ export class Engine {
     if (!step) return Infinity;
     const nextStep = this.walk[index + 1]?.tick ?? Infinity;
     const sheetTick = this.sheetTickOf(playedTick);
-    let next = Infinity;
-    for (const entry of this.score.tempoMap) {
-      if (entry.tick > sheetTick) {
-        next = step.tick + (entry.tick - (this.score.onsets[step.onsetIndex]?.tick ?? 0));
-        break;
-      }
-    }
+    const mark = this.score.tempoMap.find((entry) => entry.tick > sheetTick);
+    const next = mark
+      ? step.tick + (mark.tick - (this.score.onsets[step.onsetIndex]?.tick ?? 0))
+      : Infinity;
     return Math.min(nextStep, next);
   }
 
@@ -1095,8 +1082,7 @@ export class Engine {
 
   /** A held key whose strike matched nothing blocks every Onset until it comes up. */
   private get blocked(): boolean {
-    for (const matched of this.held.values()) if (matched === BLOCKING) return true;
-    return false;
+    return [...this.held.values()].includes(BLOCKING);
   }
 
   /**

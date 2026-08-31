@@ -1,7 +1,7 @@
 import { DEFAULT_LANE_LOOK, type LaneLook } from '@/lane/look';
 import { Play } from '@/play/play';
 import { UNSET_PIECE_SETTINGS, resolvePlaySettings } from '@/play/resolve';
-import type { LaneView, SheetView } from '@/play/view';
+import type { LaneView, PlayView, SheetView } from '@/play/view';
 import { fakeRust, type FakeRust } from '@/rust.fake';
 import {
   TICKS_PER_QUARTER,
@@ -87,18 +87,18 @@ function twoBars(): Score {
 /** Both views, writing down every call the Play makes on them in the order they arrive. */
 class FakeSheet implements SheetView {
   pinching: Pinch | null = null;
+  /** The play as a view reads it, which is what the Play hands in at the open. */
+  view!: PlayView;
   private readonly log: string[];
   constructor(log: string[]) {
     this.log = log;
   }
-  open(): void {
+  open(play: PlayView): void {
+    this.view = play;
     this.log.push('sheet.open');
   }
   frame(): void {
     this.log.push('sheet.frame');
-  }
-  effect(): void {
-    this.log.push('sheet.effect');
   }
   setDark(): void {}
   dispose(): void {
@@ -138,16 +138,17 @@ class FakeLane implements LaneView {
 }
 
 /** One play of the two bars, with the inactive hand sounding and the metronome on. */
-function playOf(): { play: Play; log: string[]; beats: [boolean, number][] } {
+function playOf(): { play: Play; view: PlayView; log: string[]; beats: [boolean, number][] } {
   const log: string[] = [];
   const beats: [boolean, number][] = [];
+  const sheet = new FakeSheet(log);
   const play = new Play({
     path: PATH,
     score: twoBars(),
     resolved: { ...resolvePlaySettings(UNSET_PIECE_SETTINGS), hands: 'right', metronome: true },
     intent: 'practice',
     dark: false,
-    sheet: new FakeSheet(log),
+    sheet,
     lane: new FakeLane(log),
     host: {} as HTMLElement,
     canvas: {} as HTMLCanvasElement,
@@ -155,7 +156,7 @@ function playOf(): { play: Play; log: string[]; beats: [boolean, number][] } {
   play.set({ inactiveHandSounds: true });
   play.showBeat = (strong, beatMs) => beats.push([strong, beatMs]);
   log.length = 0;
-  return { play, log, beats };
+  return { play, view: sheet.view, log, beats };
 }
 
 /** The wall clock a frame runs on, as the screen hands it in. */
@@ -188,8 +189,8 @@ test('one frame clicks the beats it crossed, sounds the inactive hand and draws 
     { midi: 48, velocity: 80, on: true, raw: false },
     { midi: 48, velocity: 80, on: true, raw: false },
   ]);
-  // Nobody played the right hand's first note, so it closes as a miss both views hear about.
-  expect(log).toEqual(['sheet.effect', 'lane.effect', 'sheet.frame', 'lane.frame']);
+  // Nobody played the right hand's first note, so it closes as a miss the lane hears about.
+  expect(log).toEqual(['lane.effect', 'sheet.frame', 'lane.frame']);
 });
 
 test('the frame that runs off the end fades the sheet and leaves the practice behind', () => {
@@ -224,14 +225,14 @@ test('leaving stores the place the cursor stood, ahead of the abort that takes i
 });
 
 test('a Section change gives the Loop its new lap, and a keyboard size re-lays the lane', () => {
-  const { play, log } = playOf();
+  const { play, view, log } = playOf();
   // With no Section of its own the lap is the whole piece.
   play.set({ loop: true });
-  expect(play.loopSpan()!.to).toBeGreaterThan(2 * BAR);
+  expect(view.loopSpan()!.to).toBeGreaterThan(2 * BAR);
 
   // The Loop runs the Section's own bar from here, which is the lap the first bar makes.
   play.set({ sectionFrom: 0, sectionTo: 0 });
-  expect(play.loopSpan()).toEqual({ from: 0, to: BAR });
+  expect(view.loopSpan()).toEqual({ from: 0, to: BAR });
   expect(rust.argsOf('piece_update_settings').at(-1)).toEqual({
     path: PATH,
     values: { section_from: 0, section_to: 0 },
@@ -242,4 +243,17 @@ test('a Section change gives the Loop its new lap, and a keyboard size re-lays t
   play.set({ keyboardPreset: 25 });
   expect(log).toEqual(['lane.setRange']);
   expect(rust.argsOf('piece_update_settings').length).toBe(2);
+});
+
+test('a Section set on the view goes through the Play, so it reaches the piece row', () => {
+  const { view } = playOf();
+
+  // A drag on the paper calls this: the engine alone would take the Section and store nothing.
+  view.setSection({ from: 1, to: 1 });
+
+  expect(view.section).toEqual({ from: 1, to: 1 });
+  expect(rust.argsOf('piece_update_settings').at(-1)).toEqual({
+    path: PATH,
+    values: { section_from: 1, section_to: 1 },
+  });
 });

@@ -33,11 +33,12 @@ export function resolvePlaySettings(piece: PieceSettingRow): PieceSettings {
     sectionFrom: piece.section_from,
     sectionTo: piece.section_to,
   };
-  const settings: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(own) as [keyof PieceSettings, unknown][]) {
-    settings[key] = value ?? DEFAULT_PLAY_SETTINGS[key];
-  }
-  return settings as PieceSettings;
+  return Object.fromEntries(
+    Object.entries(own).map(([key, value]) => [
+      key,
+      value ?? DEFAULT_PLAY_SETTINGS[key as keyof PieceSettings],
+    ]),
+  ) as PieceSettings;
 }
 
 function handsOf(text: string | null): HandsSetting | null {

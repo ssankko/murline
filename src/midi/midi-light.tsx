@@ -12,7 +12,6 @@ import {
 } from '@/midi/use-midi-status';
 import { BarButton, ICON } from '@/screens/bar';
 import { Piano } from 'lucide-react';
-import { useState } from 'react';
 
 /**
  * Lists every source the machine has. The machine offers other Macs, phones and buses as MIDI
@@ -31,7 +30,6 @@ export function MidiLight({
   trigger?: React.ReactNode;
 }) {
   const { devices, ports, pinned, defaultId, hidden, error } = useMidiStatus();
-  const [showAway, setShowAway] = useState(false);
   const label = error ?? (devices.length ? devices.join(', ') : 'No MIDI device');
   const away = ports.filter((port) => hidden.includes(port.id));
 
@@ -71,16 +69,12 @@ export function MidiLight({
             ))}
         </div>
         {away.length > 0 && (
-          <div className="border-edge-soft flex flex-col gap-1 border-t pt-2">
-            <button
-              aria-expanded={showAway}
-              onClick={() => setShowAway((shown) => !shown)}
-              className="hover:text-ink text-muted-ink self-start text-[12px]"
-            >
+          <details className="border-edge-soft border-t pt-2">
+            <summary className="hover:text-ink text-muted-ink cursor-pointer text-[12px]">
               Hidden ({away.length})
-            </button>
-            {showAway &&
-              away.map((port) => (
+            </summary>
+            <div className="mt-1 flex flex-col gap-1">
+              {away.map((port) => (
                 <div key={port.id} className="flex items-center gap-1.5">
                   <span className="text-muted-ink min-w-0 flex-1 truncate text-[12px]">
                     {port.name}
@@ -90,7 +84,8 @@ export function MidiLight({
                   </Small>
                 </div>
               ))}
-          </div>
+            </div>
+          </details>
         )}
       </PopoverContent>
     </Popover>

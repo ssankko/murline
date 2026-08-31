@@ -187,12 +187,7 @@ function dynamicsOf(sheet: MusicSheet, staves: OsmdStaff[]): { tick: number; vel
 }
 
 function velocityAt(marks: { tick: number; velocity: number }[] | undefined, tick: number): number {
-  let velocity = DEFAULT_VELOCITY;
-  for (const mark of marks ?? []) {
-    if (mark.tick > tick) break;
-    velocity = mark.velocity;
-  }
-  return velocity;
+  return marks?.findLast((mark) => mark.tick <= tick)?.velocity ?? DEFAULT_VELOCITY;
 }
 
 /**

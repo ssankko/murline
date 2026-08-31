@@ -53,7 +53,6 @@ export interface View {
   open(play: PlayView, host: HTMLElement): void;
   /** One frame. `now` is the animation clock; `wall` is the clock a strike is stamped on. */
   frame(snap: Snapshot, now: number, wall: number): void;
-  effect(event: PlayEvent, wall: number): void;
   setDark(dark: boolean): void;
   dispose(): void;
 }
@@ -73,6 +72,8 @@ export interface SheetView extends View {
 export interface LaneView extends View {
   /** Live look knobs: the Play writes into this object and the next frame reads it. */
   readonly look: LaneLook;
+  /** One strike or one closing note, which the lane answers with a mark that plays out. */
+  effect(event: PlayEvent, wall: number): void;
   /** Shown over the keys while the app has no MIDI input. */
   notice: string | null;
   /** Lays the keyboard out again, which a change of the keyboard size asks for. */

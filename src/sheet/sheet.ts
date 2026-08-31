@@ -14,8 +14,12 @@ import { buildScore } from '@/score/build';
 import { loadInto } from '@/score/load';
 import { analyzeHarmony } from '@/score/harmony';
 import type { ChordEvent, Note, PlayStep, Score } from '@/score/types';
-import { OpenSheetMusicDisplay, type Note as OsmdNote } from 'opensheetmusicdisplay';
-import { applyTheme, applyTiers, noteheadEl, paintHead } from './paint';
+import {
+  OpenSheetMusicDisplay,
+  type IOSMDOptions,
+  type Note as OsmdNote,
+} from 'opensheetmusicdisplay';
+import { applyTheme, noteheadEl, paintHead } from './paint';
 import { DEFAULT_SPACING, SpacingPinch, type Pinch } from './pinch';
 import {
   bandWidth,
@@ -117,50 +121,175 @@ export interface SheetLook {
 }
 
 /**
+ * What both sheets are made of: the OSMD instance and the paper it draws on, the spacing the
+ * measures take, and what a render leaves to be written again. The play's sheet lays the piece on
+ * one endless line and the Preview's down a page, so each holds its own cursor and its own view.
+ */
+export abstract class SheetPaper {
+  readonly osmd: OpenSheetMusicDisplay;
+  score!: Score;
+
+  protected dark: boolean;
+  /** Whether the measures take their width from their duration rather than from their engraving. */
+  protected proportional = false;
+  /** Paper a measure spaced by time takes over the tightest measure's pixels per tick, a percent. */
+  protected spacing = DEFAULT_SPACING;
+  /**
+   * What each measure's notes pack into, in units, read off the engraving once: a spacing percent
+   * is written against the tightest measure of these.
+   */
+  protected engraved: number[] = [];
+  /** OSMD's own cap on how far a chord symbol or a lyric may stretch a measure. */
+  protected readonly elongation: number;
+  /** OSMD draws in here. */
+  protected readonly paper: HTMLElement;
+  /** Everything drawn over the paper hangs in here, out of the way of a pointer on the paper. */
+  protected readonly overlay: HTMLElement;
+  protected readonly bubbles: HTMLElement;
+  /** The cursor band: each sheet hangs its own, at its own place in the overlay's stack. */
+  protected cursor!: HTMLElement;
+  /** Takes every listener this sheet put on the DOM off again. */
+  protected readonly listeners = new AbortController();
+  protected look: SheetLook = { harmony: true, colour: true };
+  /** Where every Onset, bar and rest moment stands, read off the last render. */
+  protected placement: Placement = { placed: [], boxes: [], rests: [], pxPerTick: 0 };
+  protected bubbleEls: HTMLElement[] = [];
+  protected outlined: readonly Note[] = [];
+
+  protected constructor(container: HTMLElement, dark: boolean, options: IOSMDOptions) {
+    this.dark = dark;
+    this.paper = child(container, '');
+    // The class carries the fade a recolouring rides on; src/index.css holds it.
+    this.paper.className = 'sheet-paper';
+    this.overlay = child(container, 'position:absolute;inset:0;pointer-events:none');
+    this.bubbles = child(this.overlay, 'position:absolute;inset:0');
+    this.osmd = new OpenSheetMusicDisplay(this.paper, options);
+    applyTheme(this.osmd, dark);
+    this.elongation = this.osmd.EngravingRules.MaximumLyricsElongationFactor;
+  }
+
+  /** Left edge of an Onset in pixels of the unscaled paper. */
+  xOfOnset(index: number): number {
+    return this.placement.placed[index]?.x ?? 0;
+  }
+
+  /**
+   * Spaces the sheet by musical time, or puts OSMD's own engraved spacing back. Spaced by time the
+   * cursor crosses the paper at a constant speed, because it interpolates between onsets.
+   */
+  setProportional(on: boolean): void {
+    if (on === this.proportional) return;
+    this.proportional = on;
+    this.reflow();
+  }
+
+  /**
+   * How much paper a measure spaced by time takes over the tightest one, as a percent. 100 packs
+   * the sheet as tight as its notes allow; above it the notes of a crowded bar reach their time,
+   * and under it only the bars still wider than their engraved minimum tighten further.
+   */
+  setSpacing(percent: number): void {
+    if (percent === this.spacing) return;
+    this.spacing = percent;
+    if (this.proportional) this.reflow();
+  }
+
+  /**
+   * Rings the noteheads of one Onset, or takes the ring off. The ring is a stroke around the fill,
+   * so it never touches the colour the note carries underneath it.
+   */
+  outline(notes: readonly Note[], on: boolean): void {
+    for (const note of notes) {
+      const head = noteheadEl(this.osmd, note.source);
+      if (!head) continue;
+      paintHead(
+        head,
+        on
+          ? { stroke: OUTLINE, 'stroke-width': '1.2', 'paint-order': 'stroke' }
+          : { stroke: this.colourOf(note), 'stroke-width': null, 'paint-order': null },
+      );
+    }
+  }
+
+  /** The end of a run: the cursor band fades out and comes back at the start point. */
+  finish(): void {
+    if (reducedMotion()) return;
+    this.cursor.animate([{ opacity: 1 }, { opacity: 0, offset: 0.75 }, { opacity: 1 }], FINISH_MS);
+  }
+
+  /** Spaces the sheet again and reads the geometry of the render back off it. */
+  protected abstract reflow(): void;
+
+  /** What a note reads as on this paper, the ring aside. */
+  protected abstract colourOf(note: Note): string;
+
+  /**
+   * Writes the width factor of every measure. Spaced by time each measure's note area is
+   * proportional to its duration in ticks, and `spacing.ts` then stands the notes inside it at
+   * their own share of the measure; OSMD's own spacing is every factor back at 1.
+   */
+  protected space(): void {
+    const measures = this.osmd.Sheet.SourceMeasures;
+    const rules = this.osmd.EngravingRules;
+    setTimed(rules, this.proportional);
+    if (!this.proportional) {
+      for (const measure of measures) measure.WidthFactor = 1;
+      rules.MaximumLyricsElongationFactor = this.elongation;
+      return;
+    }
+    // An elongated measure would be wider than its duration asks for.
+    rules.MaximumLyricsElongationFactor = 1;
+    // Every measure opens up to the tightest one's pixels per tick. OSMD scales a measure's packed
+    // minimum by its factor, so a factor under 1 would print the notes of that bar over each other:
+    // under 100 % the tightest bars stand pinned at their minimum and only the roomier ones tighten.
+    // Every measure carries a factor of its own: OSMD keeps the last one it saw for a measure that
+    // has none.
+    const ticksOf = (i: number) => this.score.measures[i]?.durationTicks ?? 0;
+    let tightest = 0;
+    this.engraved.forEach((width, i) => {
+      if (width > 0 && ticksOf(i) > 0) tightest = Math.max(tightest, width / ticksOf(i));
+    });
+    const want = (tightest * this.spacing) / 100;
+    measures.forEach((measure, i) => {
+      const width = this.engraved[i] ?? 0;
+      const factor = width > 0 && ticksOf(i) > 0 ? (want * ticksOf(i)) / width : 1;
+      measure.WidthFactor = Math.max(1, factor);
+    });
+  }
+
+  /** Every chord the cursor has left behind reads dimmed; the CSS says how fast. */
+  protected dimBubbles(onsetIndex: number): void {
+    this.bubbleEls.forEach((el, i) => {
+      el.classList.toggle('past', this.score.harmony[i]!.onsetIndex < onsetIndex);
+    });
+  }
+}
+
+/**
  * One loaded sheet: its OSMD instance, its Score, the DOM it draws into and the cursor. `load`
  * gives all of it, `open` says which play it draws, and from there the Play only calls `frame`
  * once a frame and `setDark` on a theme change.
  */
-export class Sheet {
-  readonly osmd: OpenSheetMusicDisplay;
-  score!: Score;
+export class Sheet extends SheetPaper {
   /** What a pinch is choosing while it lasts, and `null` once it is over. */
   pinching: Pinch | null = null;
 
   /** The play the paper draws; every read of the clock and the Section goes through it. */
   private play!: PlayView;
 
-  private dark: boolean;
-  /** Whether the measures take their width from their duration rather than from their engraving. */
-  private proportional = false;
-  /** Paper a measure spaced by time takes over the tightest measure's pixels per tick, a percent. */
-  private spacing = DEFAULT_SPACING;
-  /**
-   * What each measure's notes pack into, in units, read off the engraving once: a spacing percent
-   * is written against the tightest measure of these.
-   */
-  private engraved: number[] = [];
-  /** OSMD's own cap on how far a chord symbol or a lyric may stretch a measure. */
-  private readonly elongation: number;
   private readonly host: HTMLElement;
   private readonly scroll: HTMLElement;
   private readonly scale: HTMLElement;
   private readonly content: HTMLElement;
-  private readonly paper: HTMLElement;
-  private readonly cursor: HTMLElement;
   /** The count-in line, which runs to the standing cursor while the count-in lasts. */
   private readonly runner: HTMLElement;
   private readonly marker: HTMLElement;
-  private readonly bubbles: HTMLElement;
-  private bubbleEls: HTMLElement[] = [];
   /** The Section: one tinted band and a handle at each end, the end one carrying the ×. */
   private readonly tint: HTMLElement;
   private readonly handles: [HTMLElement, HTMLElement];
   private readonly clear: HTMLElement;
   /** Tint and handles together: they show, hide and move as one. */
   private readonly band: HTMLElement[];
-  /** Takes every listener this sheet put on the host off again. */
-  private readonly listeners = new AbortController();
   private readonly pinch: SpacingPinch;
 
   private section: Section | null = null;
@@ -169,8 +298,6 @@ export class Sheet {
   private scrolledAt = -Infinity;
   /** The played timeline the cursor reads; the engine swaps it when Loop goes on. */
   private walk: PlayStep[] = [];
-  /** Where every Onset, bar and rest moment stands, read off the last render. */
-  private placement: Placement = { placed: [], boxes: [], rests: [], pxPerTick: 0 };
   private system = { top: 0, bottom: 200 };
   /** The top staff line of the first system: the bubble strip ends here. */
   private stafflineY = BUBBLE_STRIP;
@@ -187,8 +314,6 @@ export class Sheet {
   private projected = -1;
   /** Which hand the play expects; the other hand's noteheads read as scaffolding. */
   private hands: HandsSetting = 'both';
-  private look: SheetLook = { harmony: true, colour: true };
-  private outlined: readonly Note[] = [];
   private drawn = {
     scale: 0,
     /** Cursor x in unscaled content pixels as the last frame wrote it; a rescale anchors on it. */
@@ -212,23 +337,32 @@ export class Sheet {
   };
 
   private constructor(host: HTMLElement, dark: boolean) {
-    this.host = host;
-    this.dark = dark;
     host.style.position = 'relative';
     host.style.overflow = 'hidden';
-    this.scroll = child(host, 'width:100%;height:100%;overflow:hidden');
-    this.scale = child(this.scroll, 'position:relative');
-    this.content = child(this.scale, 'position:relative;width:max-content;transform-origin:0 0');
-    this.paper = child(this.content, '');
-    // The class carries the fade a recolouring rides on; src/index.css holds it.
-    this.paper.className = 'sheet-paper';
-    const overlay = child(this.content, 'position:absolute;inset:0;pointer-events:none');
-    this.bubbles = child(overlay, 'position:absolute;inset:0');
+    const scroll = child(host, 'width:100%;height:100%;overflow:hidden');
+    const scale = child(scroll, 'position:relative');
+    const content = child(scale, 'position:relative;width:max-content;transform-origin:0 0');
+    super(content, dark, {
+      backend: 'svg',
+      autoResize: false,
+      drawCredits: false,
+      drawPartNames: false,
+      drawTitle: false,
+      drawSubtitle: false,
+      drawComposer: false,
+      drawLyricist: false,
+      // Set before `load`, which is what makes the whole piece one endless horizontal line.
+      renderSingleHorizontalStaffline: true,
+    });
+    this.host = host;
+    this.scroll = scroll;
+    this.scale = scale;
+    this.content = content;
     // The paper under the tint stays reachable, so a fresh drag can start inside a Section.
-    this.tint = child(overlay, 'position:absolute;pointer-events:none');
+    this.tint = child(this.overlay, 'position:absolute;pointer-events:none');
     this.handles = [
-      child(overlay, `position:absolute;width:${HANDLE_W}px;cursor:ew-resize`),
-      child(overlay, `position:absolute;width:${HANDLE_W}px;cursor:ew-resize`),
+      child(this.overlay, `position:absolute;width:${HANDLE_W}px;cursor:ew-resize`),
+      child(this.overlay, `position:absolute;width:${HANDLE_W}px;cursor:ew-resize`),
     ];
     this.band = [this.tint, ...this.handles];
     // The class carries the fade and the glide of the Section; src/index.css holds them.
@@ -244,18 +378,16 @@ export class Sheet {
     this.clear.setAttribute('aria-label', 'Clear section');
     this.clear.title = 'Clear section';
     // No transition: the runner is written every frame, and a glide would lag the beat it marks.
-    this.runner = child(overlay, `position:absolute;display:none;width:${RUNNER_W}px`);
+    this.runner = child(this.overlay, `position:absolute;display:none;width:${RUNNER_W}px`);
     this.runner.className = 'sheet-runner';
-    this.cursor = child(overlay, 'position:absolute;border-radius:12px');
+    this.cursor = child(this.overlay, 'position:absolute;border-radius:12px');
     this.cursor.className = 'sheet-cursor';
     this.marker = child(
-      overlay,
+      this.overlay,
       'position:absolute;display:none;padding:1px 6px;border-radius:999px;' +
         'font-size:11px;font-weight:600;white-space:nowrap',
     );
     this.marker.className = 'sheet-marker';
-    this.osmd = makeOsmd(this.paper, dark);
-    this.elongation = this.osmd.EngravingRules.MaximumLyricsElongationFactor;
 
     const { signal } = this.listeners;
     host.addEventListener('pointerdown', (event) => this.down(event), { signal });
@@ -321,14 +453,6 @@ export class Sheet {
     this.play = play;
   }
 
-  /** The paper draws the note states, not the strikes: one event changes nothing it shows. */
-  effect(): void {}
-
-  /** Left edge of an Onset in pixels of the unscaled content. */
-  xOfOnset(index: number): number {
-    return this.placement.placed[index]?.x ?? 0;
-  }
-
   /** Follows the play's walk, so the cursor slides along the timeline the clock runs. */
   setWalk(walk: PlayStep[]): void {
     if (walk === this.walk) return;
@@ -359,32 +483,11 @@ export class Sheet {
   }
 
   /**
-   * Spaces the sheet by musical time, or puts OSMD's own engraved spacing back. Spaced by time
-   * the cursor crosses the paper at a constant speed, because it interpolates between onsets.
-   */
-  setProportional(on: boolean): void {
-    if (on === this.proportional) return;
-    this.proportional = on;
-    this.reflow();
-  }
-
-  /**
-   * How much paper a measure spaced by time takes over the tightest one, as a percent. 100 packs
-   * the sheet as tight as its notes allow; above it the notes of a crowded bar reach their time,
-   * and under it only the bars still wider than their engraved minimum tighten further.
-   */
-  setSpacing(percent: number): void {
-    if (percent === this.spacing) return;
-    this.spacing = percent;
-    if (this.proportional) this.reflow();
-  }
-
-  /**
    * Spaces the sheet again and takes the geometry of the render, which the cursor stands on. The
    * cursor keeps its place in the block the reader sees: the paper opens up or packs around it,
    * and the view holds it there instead of gliding after it.
    */
-  private reflow(): void {
+  protected override reflow(): void {
     const scale = this.drawn.scale;
     const stood = this.drawn.cursorX * scale - this.scroll.scrollLeft;
     this.space();
@@ -400,39 +503,9 @@ export class Sheet {
     this.drawn.scrollFrom = 0;
   }
 
-  /**
-   * Writes the width factor of every measure and renders. Spaced by time each measure's note area
-   * is proportional to its duration in ticks, and `spacing.ts` then stands the notes inside it at
-   * their own share of the measure; OSMD's own spacing is every factor back at 1.
-   */
-  private space(): void {
-    const measures = this.osmd.Sheet.SourceMeasures;
-    const rules = this.osmd.EngravingRules;
-    setTimed(rules, this.proportional);
-    if (!this.proportional) {
-      for (const measure of measures) measure.WidthFactor = 1;
-      rules.MaximumLyricsElongationFactor = this.elongation;
-      this.osmd.render();
-      return;
-    }
-    // An elongated measure would be wider than its duration asks for.
-    rules.MaximumLyricsElongationFactor = 1;
-    // Every measure opens up to the tightest one's pixels per tick. OSMD scales a measure's packed
-    // minimum by its factor, so a factor under 1 would print the notes of that bar over each other:
-    // under 100 % the tightest bars stand pinned at their minimum and only the roomier ones tighten.
-    // Every measure carries a factor of its own: OSMD keeps the last one it saw for a measure that
-    // has none.
-    const ticksOf = (i: number) => this.score.measures[i]?.durationTicks ?? 0;
-    let tightest = 0;
-    this.engraved.forEach((width, i) => {
-      if (width > 0 && ticksOf(i) > 0) tightest = Math.max(tightest, width / ticksOf(i));
-    });
-    const want = (tightest * this.spacing) / 100;
-    measures.forEach((measure, i) => {
-      const width = this.engraved[i] ?? 0;
-      const factor = width > 0 && ticksOf(i) > 0 ? (want * ticksOf(i)) / width : 1;
-      measure.WidthFactor = Math.max(1, factor);
-    });
+  /** The paper's geometry is read off the render, so a fresh spacing is drawn at once. */
+  protected override space(): void {
+    super.space();
     this.osmd.render();
   }
 
@@ -471,23 +544,6 @@ export class Sheet {
       }
     }
     this.outline(this.outlined, true);
-  }
-
-  /**
-   * Rings the noteheads of one Onset, or takes the ring off. The ring is a stroke around the fill,
-   * so it never touches the colour the note carries underneath it.
-   */
-  outline(notes: readonly Note[], on: boolean): void {
-    for (const note of notes) {
-      const head = noteheadEl(this.osmd, note.source);
-      if (!head) continue;
-      paintHead(
-        head,
-        on
-          ? { stroke: OUTLINE, 'stroke-width': '1.2', 'paint-order': 'stroke' }
-          : { stroke: this.colourOf(note), 'stroke-width': null, 'paint-order': null },
-      );
-    }
   }
 
   /** Writes every notehead's colour again, which is what a fresh render and a hands change need. */
@@ -673,12 +729,6 @@ export class Sheet {
     };
   }
 
-  /** The end of a practice: the cursor band fades out and comes back at the start point. */
-  finish(): void {
-    if (reducedMotion()) return;
-    this.cursor.animate([{ opacity: 1 }, { opacity: 0, offset: 0.75 }, { opacity: 1 }], FINISH_MS);
-  }
-
   /** Takes only this sheet's own DOM out of the host, which may already hold the next one. */
   dispose(): void {
     this.listeners.abort();
@@ -809,7 +859,6 @@ export class Sheet {
     this.markJumps();
 
     this.repaint();
-    applyTiers(this.paper, this.dark);
 
     // Paper above the top staff line is dead space apart from the strip the bubbles need. The lift
     // stops short of the sheet's highest ink, so a slur over the top staff survives it as a
@@ -818,7 +867,7 @@ export class Sheet {
     const inkTop = svg ? svg.getBBox().y : this.stafflineY;
     this.offsetY = Math.max(0, Math.min(this.stafflineY - BUBBLE_STRIP, inkTop - TOP_AIR));
     this.contentHeight = bottom - this.offsetY + 8;
-    this.contentWidth = Number(this.paper.querySelector('svg')?.getAttribute('width')) || 1200;
+    this.contentWidth = svg?.width.baseVal.value || 1200;
 
     this.placeBubbles();
     this.drawSection();
@@ -857,13 +906,6 @@ export class Sheet {
     bubblePlaces(places, blocked).forEach((at, i) => {
       this.bubbleEls[i]!.style.left = `${at.x}px`;
       this.bubbleEls[i]!.style.top = `${rows[at.row]!}px`;
-    });
-  }
-
-  /** Every chord the cursor has left behind reads dimmed; the CSS says how fast. */
-  private dimBubbles(onsetIndex: number): void {
-    this.bubbleEls.forEach((el, i) => {
-      el.classList.toggle('past', this.score.harmony[i]!.onsetIndex < onsetIndex);
     });
   }
 
@@ -928,7 +970,7 @@ export class Sheet {
    * plain ink every other glyph is engraved in while the colouring is off. A note of the inactive
    * hand is context only and drops to the scaffolding tier.
    */
-  private colourOf(note: Note, state = this.shown.get(note.source) ?? 'pending'): string {
+  protected override colourOf(note: Note, state = this.shown.get(note.source) ?? 'pending'): string {
     if (isInactiveHand(this.hands, note.hand)) return tone(INK.scaffolding, this.dark);
     if (state === 'miss') return tone(INK.miss, this.dark);
     if (!this.look.colour) return tone(INK.duration, this.dark);
@@ -1006,26 +1048,10 @@ export function labelSpans(labels: DOMRect[], top: number, bottom: number): Span
   return spans.sort((a, b) => a.left - b.left);
 }
 
-function child(parent: HTMLElement, style: string): HTMLElement {
+/** A plain div of the given inline style, hung in the element it is given. */
+export function child(parent: HTMLElement, style: string): HTMLElement {
   const el = document.createElement('div');
   el.style.cssText = style;
   parent.append(el);
   return el;
-}
-
-function makeOsmd(host: HTMLElement, dark: boolean): OpenSheetMusicDisplay {
-  const osmd = new OpenSheetMusicDisplay(host, {
-    backend: 'svg',
-    autoResize: false,
-    drawCredits: false,
-    drawPartNames: false,
-    drawTitle: false,
-    drawSubtitle: false,
-    drawComposer: false,
-    drawLyricist: false,
-    // Set before `load`, which is what makes the whole piece one endless horizontal line.
-    renderSingleHorizontalStaffline: true,
-  });
-  applyTheme(osmd, dark);
-  return osmd;
 }

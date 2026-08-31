@@ -338,16 +338,8 @@ export function on<K extends EventName>(
   handler: (payload: Events[K]) => void,
 ): () => void {
   if (stand) return stand.on(name, handler as (payload: never) => void);
-  let stop: (() => void) | undefined;
-  let stopped = false;
-  void listen(name, (event) => handler(event.payload as Events[K]))
-    .then((unlisten) => {
-      if (stopped) unlisten();
-      else stop = unlisten;
-    })
-    .catch(() => {});
-  return () => {
-    stopped = true;
-    stop?.();
-  };
+  // The listener may not be registered yet when the caller stops; the stop waits on the same
+  // promise, so it takes effect whenever the registration lands. A failed registration stops nothing.
+  const ready = listen(name, (event) => handler(event.payload as Events[K])).catch(() => () => {});
+  return () => void ready.then((unlisten) => unlisten());
 }

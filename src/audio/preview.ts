@@ -2,6 +2,7 @@
 // played timeline. Repeats are expanded through `playOrder`, so a bar that comes round again is a
 // second set of notes at a later second. Nothing here talks to Rust; the Preview screen does.
 
+import { clamp } from '@/lib/utils';
 import { TICKS_PER_QUARTER, bpmAt, stepSeconds, type Score } from '@/score/types';
 
 /** One note as the engine schedules it. Times are the score's own seconds, tempo percent aside. */
@@ -53,7 +54,7 @@ export function tickAt(score: Score, starts: number[], seconds: number): number 
   const bpm = bpmAt(score, score.onsets[step.onsetIndex]!.tick);
   const start = i === 0 ? 0 : step.tick;
   const tick = start + ((seconds - starts[i]!) * bpm * TICKS_PER_QUARTER) / 60;
-  return Math.min(Math.max(tick, 0), score.totalTicks);
+  return clamp(tick, 0, score.totalTicks);
 }
 
 /** The second a played tick falls on, which is what a seek to it asks the engine for. */

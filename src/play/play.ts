@@ -106,7 +106,7 @@ export interface PlayOptions {
   at?: number | null;
 }
 
-export class Play implements PlayView {
+export class Play {
   readonly path: string;
   /** The metronome icon's own beat: the screen hangs its animation on this. */
   showBeat: ((strong: boolean, beatMs: number) => void) | null = null;
@@ -193,9 +193,19 @@ export class Play implements PlayView {
       measures: o.score.measures,
       oneStaff: o.score.staffCount < 2,
     };
-    this.sheet.open(this, o.host);
+    // What both views read the play through. The Engine is the view already, save for the Section:
+    // a change to it must reach the piece row and the screen, so that one call comes back here.
+    // A Proxy and not a prototype over the engine, because the engine writes to itself and those
+    // writes have to land on it, not on the object standing in front of it.
+    const view: PlayView = new Proxy(this.engine, {
+      get: (engine, key) =>
+        key === 'setSection'
+          ? (section: Section | null) => this.setSection(section)
+          : Reflect.get(engine, key, engine),
+    });
+    this.sheet.open(view, o.host);
     this.sheet.setLook({ harmony: setting('sheet_harmony'), colour: setting('sheet_colour') });
-    this.lane.open(this, o.canvas);
+    this.lane.open(view, o.canvas);
     // The piece reopens where it was left. The seek runs with the Section and Loop already in
     // force, so a place inside the lap wins and one outside it is pulled to the lap's start. A file
     // that lost the bars it named leaves a tick past the end, which is no place to open.
@@ -203,57 +213,6 @@ export class Play implements PlayView {
       this.engine.seek({ tick: o.at });
     }
     for (const key of WATCHED) this.stops.push(subscribe(key, () => this.global(key)));
-  }
-
-  // The play as its views read it: the engine, narrowed to what a frame draws.
-
-  get score(): Score {
-    return this.engine.score;
-  }
-  get walk() {
-    return this.engine.walk;
-  }
-  get notes() {
-    return this.engine.notes;
-  }
-  get settings(): Readonly<PlaySettings> {
-    return this.engine.settings;
-  }
-  get section(): Section | null {
-    return this.engine.section;
-  }
-  get countInBeats(): number[] {
-    return this.engine.countInBeats;
-  }
-  get windowTicks(): number {
-    return this.engine.windowTicks;
-  }
-  get resets(): number {
-    return this.engine.resets;
-  }
-  get version(): number {
-    return this.engine.version;
-  }
-  get wraps(): number {
-    return this.engine.wraps;
-  }
-  get finishes(): number {
-    return this.engine.finishes;
-  }
-  noteState(index: number) {
-    return this.engine.noteState(index);
-  }
-  resolvedAt(index: number): number {
-    return this.engine.resolvedAt(index);
-  }
-  keyState(midi: number) {
-    return this.engine.keyState(midi);
-  }
-  heldNote(midi: number): number {
-    return this.engine.heldNote(midi);
-  }
-  loopSpan() {
-    return this.engine.loopSpan();
   }
 
   /** What React draws, and the subscription that says it changed. */
@@ -293,10 +252,8 @@ export class Play implements PlayView {
       this.finished = this.engine.finishes;
       this.sheet.finish();
     }
-    for (const event of this.engine.events()) {
-      this.sheet.effect(event, wall);
-      this.lane.effect(event, wall);
-    }
+    // The paper draws the note states, not the strikes, so only the lane hears the events.
+    for (const event of this.engine.events()) this.lane.effect(event, wall);
     this.sheet.frame(snap, now, wall);
     this.lane.frame(snap, now, wall);
 

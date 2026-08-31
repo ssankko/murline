@@ -153,8 +153,8 @@ function restsOf(
   proportional: boolean,
 ): RestMoment[] {
   const unit = 10 * osmd.zoom;
-  const sounding = new Set(score.onsets.map((onset) => onset.tick));
-  const taken = new Set<number>();
+  // A tick some staff sounds at is taken before the first rest is read, so it holds no moment.
+  const taken = new Set(score.onsets.map((onset) => onset.tick));
   const rests: RestMoment[] = [];
   osmd.GraphicSheet.MeasureList.forEach((staves, index) => {
     const measure = score.measures[index];
@@ -164,7 +164,7 @@ function restsOf(
         if (!entry.hasOnlyRests()) continue;
         const into = ticksOf(entry.relInMeasureTimestamp.RealValue);
         const tick = measure.startTick + into;
-        if (sounding.has(tick) || taken.has(tick)) continue;
+        if (taken.has(tick)) continue;
         taken.add(tick);
         // Spaced by time a rest stands at its own glyph, as an Onset stands at its notehead.
         const g = entry.graphicalVoiceEntries[0]?.notes[0] as VFNote | undefined;

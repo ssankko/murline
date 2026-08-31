@@ -113,19 +113,18 @@ test('the popover says what is listened to and takes Use, Default, Hide and Show
   expect(listed()).toEqual(['Any device']);
 
   // Show: the hidden section is closed until it is asked for.
-  expect(document.querySelector('[aria-label^="Show "]')).toBe(null);
+  const section = disclosure().closest('details')!;
+  expect(section.open).toBe(false);
   disclosure().click();
-  await vi.waitFor(() => expect(button('Show Roland')).toBeTruthy());
+  await vi.waitFor(() => expect(section.open).toBe(true));
   button('Show Roland').click();
   expect(sent()).toEqual({ pinned: null, hidden: ['2'] });
   await vi.waitFor(() => expect(listed()).toEqual(['Any device', 'Roland']));
 });
 
 /** The "Hidden (n)" line the put-away ports sit behind. */
-function disclosure(): HTMLButtonElement {
-  return [...popover()!.querySelectorAll('button')].find((each) =>
-    each.textContent!.startsWith('Hidden'),
-  )!;
+function disclosure(): HTMLElement {
+  return popover()!.querySelector('summary')!;
 }
 
 test('an error from Rust is what the light and the popover both say', async () => {

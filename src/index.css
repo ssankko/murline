@@ -115,6 +115,17 @@
   }
 }
 
+/* The boot log at the flip: it keeps its place over the screen underneath and takes no click while
+   src/App.tsx dissolves it. The log's own look lives in index.html, which paints it before this
+   stylesheet loads; the flip is late enough to be styled from here. */
+.boot-fade {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: var(--paper);
+  pointer-events: none;
+}
+
 /* The three overlays the clock moves: the cursor band, the count-in runner and the jump marker.
    Their colours and geometry come from src/sheet/sheet.ts, which writes their x into `transform`.
    Each holds a compositor layer of its own, so a move repaints nothing of the sheet under it:
@@ -139,6 +150,24 @@
   .chord-bubble {
     transition: none;
   }
+}
+
+/* The duration tier of the sheet: the marks VexFlow paints in an ink of its own, which the
+   engraving rules of src/sheet/paint.ts never reach. A presentation attribute loses to any rule,
+   so naming the groups here is enough; `none` stays `none`, or a slur would fill in solid. The
+   grey is the one src/look/color.ts holds as INK.duration. */
+.sheet-paper {
+  --ink-duration: light-dark(#5a5a5a, #d0d0d0);
+}
+.sheet-paper
+  :is(.vf-stem, .vf-beam, .vf-flag, .vf-stavetie, .vf-slur, .vf-tuplet, .vf-modifiers)
+  :is(path, rect, line, polygon, text):not([fill='none']) {
+  fill: var(--ink-duration);
+}
+.sheet-paper
+  :is(.vf-stem, .vf-beam, .vf-flag, .vf-stavetie, .vf-slur, .vf-tuplet, .vf-modifiers)
+  :is(path, rect, line, polygon, text)[stroke]:not([stroke='none']) {
+  stroke: var(--ink-duration);
 }
 
 /* Noteheads of the sheet. Their colours come from src/sheet/sheet.ts; only the fade a change of

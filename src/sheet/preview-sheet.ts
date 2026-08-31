@@ -11,26 +11,24 @@ import { buildScore } from '@/score/build';
 import { analyzeHarmony } from '@/score/harmony';
 import { loadInto } from '@/score/load';
 import { TICKS_PER_QUARTER, bpmAt, type Note, type Score } from '@/score/types';
-import { OpenSheetMusicDisplay } from 'opensheetmusicdisplay';
-import { applyTheme, applyTiers, noteheadEl, paintHead } from './paint';
+import { applyTheme, noteheadEl, paintHead } from './paint';
 import { SpacingPinch, type Pinch } from './pinch';
-import { bandWidth, hitAt, place, systemsOf, type Placement } from './place';
+import { bandWidth, hitAt, place, systemsOf } from './place';
 import {
   BUBBLE_ROW,
   BUBBLE_STRIP,
   DEFAULT_SPACING,
   DETACH_MS,
-  FINISH_MS,
   GLIDE_MS,
-  OUTLINE,
   SCROLL_GLIDE_MS,
+  SheetPaper,
   bubblePlaces,
+  child,
   labelBoxes,
   labelSpans,
   makeBubble,
   type SheetLook,
 } from './sheet';
-import { setTimed } from './spacing';
 
 /** Host width that reads at zoom 1. A wider window grows the notation instead of the bar count. */
 const BASE_WIDTH = 1000;
@@ -69,9 +67,7 @@ interface BandAt {
 }
 
 /** One loaded Preview sheet: its OSMD instance, the Score behind it and the DOM it draws into. */
-export class PreviewSheet {
-  readonly osmd: OpenSheetMusicDisplay;
-  score!: Score;
+export class PreviewSheet extends SheetPaper {
   /** A click on the paper: the screen decides what a seek does. */
   seekTo: ((target: SeekTarget) => void) | null = null;
   /** A pinch has settled on a spacing: the screen stores it. */
@@ -84,37 +80,17 @@ export class PreviewSheet {
    */
   windowTicks = 0;
 
-  private dark: boolean;
-  /** Whether the measures take their width from their duration rather than from their engraving. */
-  private proportional = false;
-  /** Paper a measure spaced by time takes over the tightest measure's pixels per tick, a percent. */
-  private spacing = DEFAULT_SPACING;
-  /** What each measure's notes pack into, in units, read off the engraving once. */
-  private engraved: number[] = [];
-  /** OSMD's own cap on how far a chord symbol or a lyric may stretch a measure. */
-  private readonly elongation: number;
   /** OSMD's own clear paper between one system's lowest ink and the next system's highest. */
   private readonly systemAir: number;
   private readonly host: HTMLElement;
   /** The one element of the host this sheet owns: `dispose` takes it and everything in it away. */
   private readonly content: HTMLElement;
-  /** OSMD draws in here. */
-  private readonly paper: HTMLElement;
-  private readonly bubbles: HTMLElement;
-  private readonly cursor: HTMLElement;
   /** The nearest ancestor that scrolls the page, which the follow moves; null when none does. */
   private readonly scroller: HTMLElement | null;
-  /** Takes every listener this sheet put on the DOM off again. */
-  private readonly listeners = new AbortController();
   private readonly pinch: SpacingPinch;
 
-  private look: SheetLook = { harmony: true, colour: true };
   private drawnWidth = 0;
-  /** Where every Onset, bar and rest moment stands, read off the last render. */
-  private placement: Placement = { placed: [], boxes: [], rests: [], pxPerTick: 0 };
   private systems: SystemBox[] = [];
-  private bubbleEls: HTMLElement[] = [];
-  private outlined: readonly Note[] = [];
   /** Wall-clock time of the last hand scroll: the follow stays off for two seconds after it. */
   private scrolledAt = -Infinity;
   /** The scroll position the follow last wrote: a scroll event landing elsewhere is the reader's. */
@@ -133,17 +109,8 @@ export class PreviewSheet {
   };
 
   private constructor(host: HTMLElement, dark: boolean) {
-    this.host = host;
-    this.dark = dark;
-    this.content = child(host, 'position:relative');
-    this.paper = child(this.content, '');
-    // The class carries the fade a recolouring rides on; src/index.css holds it.
-    this.paper.className = 'sheet-paper';
-    const overlay = child(this.content, 'position:absolute;inset:0;pointer-events:none');
-    this.bubbles = child(overlay, 'position:absolute;inset:0');
-    this.cursor = child(overlay, 'position:absolute;border-radius:12px');
-    this.cursor.className = 'sheet-cursor';
-    this.osmd = new OpenSheetMusicDisplay(this.paper, {
+    const content = child(host, 'position:relative');
+    super(content, dark, {
       backend: 'svg',
       autoResize: false,
       // One page of unbounded height: the systems wrap down the window and never break to a page.
@@ -152,8 +119,10 @@ export class PreviewSheet {
       // Without the part name every system's staff starts at the page margin.
       drawPartNames: false,
     });
-    applyTheme(this.osmd, dark);
-    this.elongation = this.osmd.EngravingRules.MaximumLyricsElongationFactor;
+    this.host = host;
+    this.content = content;
+    this.cursor = child(this.overlay, 'position:absolute;border-radius:12px');
+    this.cursor.className = 'sheet-cursor';
     this.systemAir = this.osmd.EngravingRules.MinSkyBottomDistBetweenSystems;
 
     const { signal } = this.listeners;
@@ -183,7 +152,7 @@ export class PreviewSheet {
       moving: (pinch) => this.pinching?.(pinch),
       onSettle: (spacing) => {
         this.spacing = spacing;
-        this.draw();
+        this.reflow();
         this.spacedTo?.(spacing);
       },
     });
@@ -216,36 +185,17 @@ export class PreviewSheet {
     return sheet;
   }
 
-  /** Left edge of an Onset in pixels of the paper. */
-  xOfOnset(index: number): number {
-    return this.placement.placed[index]?.x ?? 0;
-  }
-
   /** Re-fits the sheet to the host, which a resize has made wider or narrower. */
   fit(): void {
     if (Math.abs(this.host.clientWidth - this.drawnWidth) < SETTLED) return;
-    this.draw();
+    this.reflow();
   }
 
   /** Repaints the whole sheet for the other theme. */
   setDark(dark: boolean): void {
     this.dark = dark;
     applyTheme(this.osmd, dark);
-    this.draw();
-  }
-
-  /** Spaces the sheet by musical time, or puts OSMD's own engraved spacing back. */
-  setProportional(on: boolean): void {
-    if (on === this.proportional) return;
-    this.proportional = on;
-    this.draw();
-  }
-
-  /** How much paper a measure spaced by time takes over the tightest one, as a percent. */
-  setSpacing(percent: number): void {
-    if (percent === this.spacing) return;
-    this.spacing = percent;
-    if (this.proportional) this.draw();
+    this.reflow();
   }
 
   /**
@@ -255,7 +205,7 @@ export class PreviewSheet {
   setLook(look: Partial<SheetLook>): void {
     const was = { ...this.look };
     Object.assign(this.look, look);
-    if (this.look.harmony !== was.harmony) this.draw();
+    if (this.look.harmony !== was.harmony) this.reflow();
     else if (this.look.colour !== was.colour) this.repaint();
   }
 
@@ -270,12 +220,6 @@ export class PreviewSheet {
     this.follow(at.system, playing, now);
   }
 
-  /** The end of the piece: the band fades out and comes back at the start. */
-  finish(): void {
-    if (reducedMotion()) return;
-    this.cursor.animate([{ opacity: 1 }, { opacity: 0, offset: 0.75 }, { opacity: 1 }], FINISH_MS);
-  }
-
   /** Takes only this sheet's own DOM out of the host, which may already hold the next one. */
   dispose(): void {
     this.listeners.abort();
@@ -285,7 +229,7 @@ export class PreviewSheet {
   }
 
   /** Renders at the host's width and reads everything the render moved. */
-  private draw(): void {
+  protected override reflow(): void {
     this.render();
     this.layout();
   }
@@ -303,37 +247,6 @@ export class PreviewSheet {
     this.osmd.render();
   }
 
-  /**
-   * Writes the width factor of every measure. Spaced by time each measure's note area is
-   * proportional to its duration in ticks, and `spacing.ts` then stands the notes inside it at
-   * their own share of the measure; OSMD's own spacing is every factor back at 1.
-   */
-  private space(): void {
-    const measures = this.osmd.Sheet.SourceMeasures;
-    const rules = this.osmd.EngravingRules;
-    setTimed(rules, this.proportional);
-    if (!this.proportional) {
-      for (const measure of measures) measure.WidthFactor = 1;
-      rules.MaximumLyricsElongationFactor = this.elongation;
-      return;
-    }
-    // An elongated measure would be wider than its duration asks for.
-    rules.MaximumLyricsElongationFactor = 1;
-    // Every measure opens up to the tightest one's pixels per tick; a factor under 1 would print
-    // the notes of a bar over each other, so the tightest bars stand pinned at their minimum.
-    const ticksOf = (i: number) => this.score.measures[i]?.durationTicks ?? 0;
-    let tightest = 0;
-    this.engraved.forEach((width, i) => {
-      if (width > 0 && ticksOf(i) > 0) tightest = Math.max(tightest, width / ticksOf(i));
-    });
-    const want = (tightest * this.spacing) / 100;
-    measures.forEach((measure, i) => {
-      const width = this.engraved[i] ?? 0;
-      const factor = width > 0 && ticksOf(i) > 0 ? (want * ticksOf(i)) / width : 1;
-      measure.WidthFactor = Math.max(1, factor);
-    });
-  }
-
   /** Pixel geometry, pitch colours, bubbles and the band: everything a fresh render wipes. */
   private layout(): void {
     const unit = 10 * this.osmd.zoom;
@@ -347,7 +260,6 @@ export class PreviewSheet {
     });
     this.placement = place(this.osmd, this.score, this.proportional);
     this.repaint();
-    applyTiers(this.paper, this.dark);
     this.placeBubbles();
     // The band's inner edge is a border rather than an inset shadow: a border is part of the box
     // the compositor hands the band, so nothing of it can print outside the layer that moves.
@@ -499,13 +411,17 @@ export class PreviewSheet {
     const { harmony } = this.score;
     this.bubbleEls = harmony.map((event) => makeBubble(this.bubbles, event, this.dark));
     const labels = labelBoxes(this.paper);
+    // The bubbles of each system, read off the placement in one pass; a chord OSMD never placed
+    // lands on no system and is left where it hangs.
+    const perSystem: number[][] = this.systems.map(() => []);
+    harmony.forEach((event, i) => {
+      perSystem[this.placement.placed[event.onsetIndex]?.system ?? -1]?.push(i);
+    });
     this.systems.forEach((box, system) => {
       const top = box.staffline - BUBBLE_STRIP;
       const rows = [top, top + BUBBLE_ROW];
       const blocked = rows.map((y) => labelSpans(labels, y, y + BUBBLE_ROW));
-      const mine = harmony.flatMap((event, i) =>
-        this.placement.placed[event.onsetIndex]?.system === system ? [i] : [],
-      );
+      const mine = perSystem[system]!;
       const places = mine.map((i) => ({
         x: this.xOfOnset(harmony[i]!.onsetIndex),
         width: this.bubbleEls[i]!.offsetWidth,
@@ -515,13 +431,6 @@ export class PreviewSheet {
         el.style.left = `${at.x}px`;
         el.style.top = `${rows[at.row]!}px`;
       });
-    });
-  }
-
-  /** Every chord the band has left behind reads dimmed; the CSS says how fast. */
-  private dimBubbles(onsetIndex: number): void {
-    this.bubbleEls.forEach((el, i) => {
-      el.classList.toggle('past', this.score.harmony[i]!.onsetIndex < onsetIndex);
     });
   }
 
@@ -538,22 +447,8 @@ export class PreviewSheet {
     this.outline(this.outlined, true);
   }
 
-  /** Rings the noteheads of one Onset, or takes the ring off. */
-  private outline(notes: readonly Note[], on: boolean): void {
-    for (const note of notes) {
-      const head = noteheadEl(this.osmd, note.source);
-      if (!head) continue;
-      paintHead(
-        head,
-        on
-          ? { stroke: OUTLINE, 'stroke-width': '1.2', 'paint-order': 'stroke' }
-          : { stroke: this.colourOf(note), 'stroke-width': null, 'paint-order': null },
-      );
-    }
-  }
-
   /** A note's pitch colour, or the plain ink of every other glyph while the colouring is off. */
-  private colourOf(note: Note): string {
+  protected override colourOf(note: Note): string {
     return this.look.colour ? colorOf(note.midi, 'muted', this.dark) : tone(INK.duration, this.dark);
   }
 }
@@ -574,11 +469,4 @@ function scrollParentOf(host: HTMLElement): HTMLElement | null {
     if (/auto|scroll/.test(getComputedStyle(el).overflowY)) return el;
   }
   return null;
-}
-
-function child(parent: HTMLElement, style: string): HTMLElement {
-  const el = document.createElement('div');
-  el.style.cssText = style;
-  parent.append(el);
-  return el;
 }

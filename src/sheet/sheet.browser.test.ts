@@ -119,6 +119,25 @@ test('the colour switch drops every notehead to the plain ink and puts the pitch
   sheet.dispose();
 }, 60_000);
 
+test('the duration tier reaches the marks VexFlow paints in an ink of its own', async () => {
+  const host = hostEl();
+  const sheet = await open(BACH, host);
+  const ink = hexToRgb(tone(INK.duration, false));
+  const marks = [...host.querySelectorAll('.vf-stem path, .vf-beam path')];
+  expect(marks.length).toBeGreaterThan(0);
+  for (const mark of marks) {
+    const style = getComputedStyle(mark);
+    // A stem is a stroked line and a beam a filled box; neither may take the ink it was not drawn
+    // with, or a hollow mark would print solid.
+    if (mark.getAttribute('fill') === 'none') expect(style.fill).toBe('none');
+    else expect(style.fill).toBe(ink);
+    if (mark.getAttribute('stroke') === 'none') expect(style.stroke).toBe('none');
+    else expect(style.stroke).toBe(ink);
+  }
+
+  sheet.dispose();
+}, 60_000);
+
 test('the current mark rings the notehead outside its fill and comes off again', async () => {
   const sheet = await open();
   const note = sheet.score.onsets[0]!.notes[0]!;

@@ -3,6 +3,7 @@
 // running download back up.
 
 import { reasonOf } from '@/library/notice';
+import { makeStore } from '@/lib/store';
 import { call, type PdmxProgress } from '@/rust';
 import { useSyncExternalStore } from 'react';
 
@@ -25,17 +26,21 @@ export function progressLabel({ done, total }: PdmxProgress): string {
   return total === null ? `${amount(done)} ${unit}` : `${amount(done)} of ${amount(total)} ${unit}`;
 }
 
+const download = makeStore<PdmxDownload>({ progress: null, error: null });
+
 /** Downloads and unpacks the PDMX archive into the folder the Rust side keeps it in. */
 export async function downloadPdmx(): Promise<void> {
-  if (held.progress) return;
-  set({ progress: { done: 0, total: null }, error: null });
+  if (download.get().progress) return;
+  download.set({ progress: { done: 0, total: null }, error: null });
   try {
-    await call('pdmx_fetch', { progress: (at) => set({ progress: at, error: null }) });
-    set({ progress: null, error: null });
+    await call('pdmx_fetch', {
+      progress: (at) => download.set({ progress: at, error: null }),
+    });
+    download.set({ progress: null, error: null });
   } catch (error) {
     const reason = reasonOf(error);
     // A cancel is the user's own doing, so it says nothing and returns to the idle state.
-    set({ progress: null, error: reason === 'cancelled' ? null : reason });
+    download.set({ progress: null, error: reason === 'cancelled' ? null : reason });
   }
 }
 
@@ -46,20 +51,5 @@ export function cancelPdmx(): void {
 
 /** The download as it stands, for as long as the component asking is on screen. */
 export function usePdmxDownload(): PdmxDownload {
-  return useSyncExternalStore(subscribe, () => held);
-}
-
-let held: PdmxDownload = { progress: null, error: null };
-const listeners = new Set<() => void>();
-
-function set(next: PdmxDownload): void {
-  held = next;
-  for (const listen of listeners) listen();
-}
-
-function subscribe(listen: () => void): () => void {
-  listeners.add(listen);
-  return () => {
-    listeners.delete(listen);
-  };
+  return useSyncExternalStore(download.subscribe, download.get);
 }

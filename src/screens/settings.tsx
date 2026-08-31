@@ -768,6 +768,14 @@ export function SettingsPanel({
     setMarked(row.id.slice(rowId("").length));
   }
 
+  /** The `id` and `marked` every `Row` takes, spread instead of repeated at each call site. */
+  const markRow = (id: string) => ({ id, marked: marked === id });
+
+  /** The `value` and `onChange` every control writing straight to one setting takes. */
+  function bind<K extends keyof Settings>(key: K) {
+    return { value: values[key], onChange: (value: Settings[K]) => void set(key, value) };
+  }
+
   return (
     // Radix owns the overlay, the focus trap, Escape and the click outside. Its content carries
     // `role="dialog"` with `data-state="open"`, which is what the play screen's keys watch for:
@@ -876,206 +884,148 @@ export function SettingsPanel({
             >
               <Rows>
                 <Row
-                  id="theme"
-                  marked={marked === "theme"}
+                  {...markRow("theme")}
                   label="Theme"
                   hint="Light or dark, or whichever the system is in."
                 >
-                  <Segmented
-                    options={THEMES}
-                    value={values.theme}
-                    onChange={(value) => void set("theme", value)}
-                  />
+                  <Segmented options={THEMES} {...bind("theme")} />
                 </Row>
               </Rows>
 
               {/* Sheet and falling notes each carry their own harmony and their own colours, so
                 each heading names the view its rows move and nothing else. */}
-              <section className="flex flex-col gap-1.5">
-                <h3 className="text-[13px] font-semibold">Sheet</h3>
+              <Section title="Sheet">
                 <Rows>
                   <Row
-                    id="sheet_proportional"
-                    marked={marked === "sheet_proportional"}
+                    {...markRow("sheet_proportional")}
                     label="Space notes by time"
                     hint="Draws note spacing from duration, not from the engraving."
                   >
-                    <Toggle
-                      value={values.sheet_proportional}
-                      onChange={(value) =>
-                        void set("sheet_proportional", value)
-                      }
-                    />
+                    <Toggle {...bind("sheet_proportional")} />
                   </Row>
                   <Row
-                    id="sheet_spacing"
-                    marked={marked === "sheet_spacing"}
+                    {...markRow("sheet_spacing")}
                     label="Spacing"
                     hint="How much paper one beat takes; a pinch moves it too."
                   >
                     <Slider
                       label="Sheet spacing in percent"
-                      value={values.sheet_spacing}
                       unit="%"
                       min={SPACING_MIN}
                       max={SPACING_MAX}
                       step={5}
                       disabled={!values.sheet_proportional}
-                      onChange={(value) => void set("sheet_spacing", value)}
+                      {...bind("sheet_spacing")}
                     />
                   </Row>
                   <Row
-                    id="sheet_harmony"
-                    marked={marked === "sheet_harmony"}
+                    {...markRow("sheet_harmony")}
                     label="Harmony"
                     hint="Names the chord at the cursor and the two after it."
                   >
-                    <Toggle
-                      value={values.sheet_harmony}
-                      onChange={(value) => void set("sheet_harmony", value)}
-                    />
+                    <Toggle {...bind("sheet_harmony")} />
                   </Row>
                   <Row
-                    id="sheet_colour"
-                    marked={marked === "sheet_colour"}
+                    {...markRow("sheet_colour")}
                     label="Pitch colours"
                     hint="Gives every note head the colour of its pitch."
                   >
-                    <Toggle
-                      value={values.sheet_colour}
-                      onChange={(value) => void set("sheet_colour", value)}
-                    />
+                    <Toggle {...bind("sheet_colour")} />
                   </Row>
                 </Rows>
-              </section>
+              </Section>
 
-              <section className="flex flex-col gap-1.5">
-                <h3 className="text-[13px] font-semibold">Falling notes</h3>
+              <Section title="Falling notes">
                 <Rows>
                   <Row
-                    id="lane_lookahead"
-                    marked={marked === "lane_lookahead"}
+                    {...markRow("lane_lookahead")}
                     label="Lookahead"
                     hint="How many beats of the piece are in view at once."
                   >
                     <Slider
                       label="Lane lookahead in beats"
-                      value={values.lane_lookahead}
                       unit=" beats"
                       min={LOOKAHEAD_MIN}
                       max={LOOKAHEAD_MAX}
                       step={0.1}
-                      onChange={(value) => void set("lane_lookahead", value)}
+                      {...bind("lane_lookahead")}
                     />
                   </Row>
                   <Row
-                    id="lane_note_width"
-                    marked={marked === "lane_note_width"}
+                    {...markRow("lane_note_width")}
                     label="Note width"
                     hint="How wide a block is against the key it falls on."
                   >
                     <Slider
                       label="Note width in percent"
-                      value={values.lane_note_width}
                       unit="%"
                       min={10}
                       max={100}
                       step={1}
-                      onChange={(value) => void set("lane_note_width", value)}
+                      {...bind("lane_note_width")}
                     />
                   </Row>
                   <Row
-                    id="lane_gap"
-                    marked={marked === "lane_gap"}
+                    {...markRow("lane_gap")}
                     label="Gap"
                     hint="Space cut between two blocks that follow each other."
                   >
                     <Slider
                       label="Gap in pixels"
-                      value={values.lane_gap}
                       unit=" px"
                       min={0}
                       max={20}
                       step={1}
-                      onChange={(value) => void set("lane_gap", value)}
+                      {...bind("lane_gap")}
                     />
                   </Row>
                   <Row
-                    id="lane_names"
-                    marked={marked === "lane_names"}
+                    {...markRow("lane_names")}
                     label="Note names on blocks"
                     hint="Writes each note's name on its own block."
                   >
-                    <Toggle
-                      value={values.lane_names}
-                      onChange={(value) => void set("lane_names", value)}
-                    />
+                    <Toggle {...bind("lane_names")} />
                   </Row>
                   <Row
-                    id="lane_harmony"
-                    marked={marked === "lane_harmony"}
+                    {...markRow("lane_harmony")}
                     label="Harmony"
                     hint="What stands at the lane's top right: panels or the wheel."
                   >
-                    <Segmented
-                      options={HARMONY}
-                      value={values.lane_harmony}
-                      onChange={(value) => void set("lane_harmony", value)}
-                    />
+                    <Segmented options={HARMONY} {...bind("lane_harmony")} />
                   </Row>
                   <Row
-                    id="lane_colour"
-                    marked={marked === "lane_colour"}
+                    {...markRow("lane_colour")}
                     label="Pitch colours"
                     hint="Gives every block the colour of its pitch."
                   >
-                    <Toggle
-                      value={values.lane_colour}
-                      onChange={(value) => void set("lane_colour", value)}
-                    />
+                    <Toggle {...bind("lane_colour")} />
                   </Row>
                 </Rows>
-              </section>
+              </Section>
 
               {/* The keys drawn under the falling notes, which the sheet knows nothing of. */}
-              <section className="flex flex-col gap-1.5">
-                <h3 className="text-[13px] font-semibold">Keyboard</h3>
+              <Section title="Keyboard">
                 <Rows>
                   <Row
-                    id="keyboard_labels"
-                    marked={marked === "keyboard_labels"}
+                    {...markRow("keyboard_labels")}
                     label="Note names on keys"
                     hint="Writes each note's name on its own key."
                   >
-                    <Toggle
-                      value={values.keyboard_labels}
-                      onChange={(value) => void set("keyboard_labels", value)}
-                    />
+                    <Toggle {...bind("keyboard_labels")} />
                   </Row>
                   <Row
-                    id="keyboard_scale_marks"
-                    marked={marked === "keyboard_scale_marks"}
+                    {...markRow("keyboard_scale_marks")}
                     label="Mark keys off the scale"
                     hint="Ghosts the keys the key in force does not hold."
                   >
-                    <Toggle
-                      value={values.keyboard_scale_marks}
-                      onChange={(value) =>
-                        void set("keyboard_scale_marks", value)
-                      }
-                    />
+                    <Toggle {...bind("keyboard_scale_marks")} />
                   </Row>
                   <Row
-                    id="keyboard_size"
-                    marked={marked === "keyboard_size"}
+                    {...markRow("keyboard_size")}
                     label="Keyboard size"
                     hint="Keys the lane draws under the falling notes."
                   >
-                    <Segmented
-                      options={PRESETS}
-                      value={values.keyboard_preset}
-                      onChange={(value) => void set("keyboard_preset", value)}
-                    />
+                    <Segmented options={PRESETS} {...bind("keyboard_preset")} />
                   </Row>
                   {values.keyboard_preset === "custom" && (
                     <Row
@@ -1093,7 +1043,7 @@ export function SettingsPanel({
                     </Row>
                   )}
                 </Rows>
-              </section>
+              </Section>
             </Tabs.Content>
 
             <Tabs.Content
@@ -1101,100 +1051,78 @@ export function SettingsPanel({
               className="flex flex-col gap-7"
               tabIndex={undefined}
             >
-              <section className="flex flex-col gap-1.5">
-                <h3 className="text-[13px] font-semibold">Timing</h3>
+              <Section title="Timing">
                 <Rows>
                   <Row
-                    id="matching_window_ms"
-                    marked={marked === "matching_window_ms"}
+                    {...markRow("matching_window_ms")}
                     label="Matching window"
                     hint="How far off the beat a strike still counts."
                   >
                     <Slider
                       label="Matching window in milliseconds"
-                      value={values.matching_window_ms}
                       unit=" ms"
                       min={1}
                       max={1000}
                       step={1}
-                      onChange={(value) =>
-                        void set("matching_window_ms", value)
-                      }
+                      {...bind("matching_window_ms")}
                     />
                   </Row>
                   <Row
-                    id="togetherness_ms"
-                    marked={marked === "togetherness_ms"}
+                    {...markRow("togetherness_ms")}
                     label="Togetherness window"
                     hint="How far apart the notes of one chord may be struck."
                   >
                     <Slider
                       label="Togetherness window in milliseconds"
-                      value={values.togetherness_ms}
                       unit=" ms"
                       min={1}
                       max={1000}
                       step={1}
-                      onChange={(value) => void set("togetherness_ms", value)}
+                      {...bind("togetherness_ms")}
                     />
                   </Row>
                 </Rows>
-              </section>
+              </Section>
 
               {/* The velocity and the level shape a sound nothing makes while the first row is
                 off, so both stand dead until it is on. */}
-              <section className="flex flex-col gap-1.5">
-                <h3 className="text-[13px] font-semibold">Inactive hand</h3>
+              <Section title="Inactive hand">
                 <Rows>
                   <Row
-                    id="play_inactive_hand"
-                    marked={marked === "play_inactive_hand"}
+                    {...markRow("play_inactive_hand")}
                     label="Inactive hand sounds"
                     hint="Plays the hand you are not playing as the clock passes it."
                   >
-                    <Toggle
-                      value={values.play_inactive_hand}
-                      onChange={(value) =>
-                        void set("play_inactive_hand", value)
-                      }
-                    />
+                    <Toggle {...bind("play_inactive_hand")} />
                   </Row>
                   <Row
-                    id="play_inactive_hand_velocity"
-                    marked={marked === "play_inactive_hand_velocity"}
+                    {...markRow("play_inactive_hand_velocity")}
                     label="Inactive hand velocity"
                     hint="Loudness from the written dynamics, or from your strikes."
                   >
                     <Segmented
                       options={INACTIVE_HAND_VELOCITIES}
-                      value={values.play_inactive_hand_velocity}
                       disabled={!values.play_inactive_hand}
-                      onChange={(value) =>
-                        void set("play_inactive_hand_velocity", value)
-                      }
+                      {...bind("play_inactive_hand_velocity")}
                     />
                   </Row>
                   <Row
-                    id="play_inactive_hand_level"
-                    marked={marked === "play_inactive_hand_level"}
+                    {...markRow("play_inactive_hand_level")}
                     label="Inactive hand level"
                     hint="Part of that loudness the inactive hand sounds at."
                   >
                     <Slider
                       label="Inactive hand level in percent"
-                      value={values.play_inactive_hand_level}
                       unit="%"
                       min={INACTIVE_HAND_LEVEL[0]}
                       max={INACTIVE_HAND_LEVEL[1]}
                       step={5}
                       disabled={!values.play_inactive_hand}
-                      onChange={(value) =>
-                        void set("play_inactive_hand_level", value)
-                      }
+                      {...bind("play_inactive_hand_level")}
                     />
                   </Row>
                 </Rows>
-              </section>
+              </Section>
 
               {import.meta.env.DEV && (
                 <details
@@ -1210,12 +1138,7 @@ export function SettingsPanel({
                   <div className="mt-3">
                     <Rows>
                       {GRADE_KNOBS.map(([key, label, min, max, step]) => (
-                        <Row
-                          key={key}
-                          id={key}
-                          marked={marked === key}
-                          label={label}
-                        >
+                        <Row key={key} {...markRow(key)} label={label}>
                           <Slider
                             label={label}
                             value={values[key] as number}
@@ -1242,8 +1165,7 @@ export function SettingsPanel({
               </p>
               <Rows>
                 <Row
-                  id="library_folder"
-                  marked={marked === "library_folder"}
+                  {...markRow("library_folder")}
                   label="Library folder"
                   hint="Where the app keeps every piece's file."
                 >
@@ -1255,8 +1177,7 @@ export function SettingsPanel({
                   />
                 </Row>
                 <Row
-                  id="pdmx_scores"
-                  marked={marked === "pdmx_scores"}
+                  {...markRow("pdmx_scores")}
                   label="PDMX scores"
                   hint="The score finder needs them to offer PDMX rows."
                 >
@@ -1358,6 +1279,22 @@ function slide(row: HTMLElement, way: 1 | -1, fine: boolean): boolean {
   )!.set!.call(input, String(next));
   input.dispatchEvent(new Event("input", { bubbles: true }));
   return true;
+}
+
+/** One heading over one group of rows, on the Look and Playing tabs. */
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="flex flex-col gap-1.5">
+      <h3 className="text-[13px] font-semibold">{title}</h3>
+      {children}
+    </section>
+  );
 }
 
 /** Paper kept between the fingers and the panel a pinch raises, and from the window's edges. */

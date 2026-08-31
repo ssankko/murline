@@ -73,20 +73,7 @@ export function App() {
     <>
       {screenOf(route, setRoute)}
       {(route.at === 'loading' || fading) && (
-        <div
-          ref={layer}
-          style={
-            route.at === 'loading'
-              ? undefined
-              : {
-                  position: 'fixed',
-                  inset: 0,
-                  zIndex: 100,
-                  background: 'var(--paper)',
-                  pointerEvents: 'none',
-                }
-          }
-        >
+        <div ref={layer} className={route.at === 'loading' ? undefined : 'boot-fade'}>
           <BootScreen lines={shown} />
         </div>
       )}

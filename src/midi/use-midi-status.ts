@@ -1,3 +1,4 @@
+import { makeStore } from '@/lib/store';
 import { set, setting } from '@/settings/settings';
 import type { StrikeEvent } from '@/play/engine';
 import { call, on, type MidiPorts } from '@/rust';
@@ -29,7 +30,7 @@ export function useMidiStatus(onStrike?: (event: StrikeEvent) => void): MidiStat
     };
   }, []);
 
-  return useSyncExternalStore(subscribe, () => status);
+  return useSyncExternalStore(subscribe, store.get);
 }
 
 /** Listens on one port for the rest of the session, or on every port outside `hidden` with null. */
@@ -49,51 +50,48 @@ export function setDefaultDevice(id: string | null): void {
 /** Puts a port away. A hidden port is neither the pin nor the default, or it would open anyway. */
 export function hideDevice(id: string): void {
   if (session === id) session = undefined;
-  if (status.defaultId === id) {
+  if (store.get().defaultId === id) {
     publish({ defaultId: null });
     void set('midi_device', null);
   }
-  void hide([...status.hidden, id]);
+  void hide([...store.get().hidden, id]);
 }
 
 /** Brings a port back into the list "Any device" opens. */
 export function showDevice(id: string): void {
-  void hide(status.hidden.filter((each) => each !== id));
+  void hide(store.get().hidden.filter((each) => each !== id));
 }
 
 let started = false;
-let status: MidiStatus = {
+const store = makeStore<MidiStatus>({
   devices: [],
   ports: [],
   pinned: null,
   defaultId: null,
   hidden: [],
   error: null,
-};
+});
 /**
  * The port picked for this session, `undefined` while the default rules. Null cannot say that:
  * null is "Any device" picked for the session, which outranks a default naming a port.
  */
 let session: string | null | undefined;
 const strikes = new Set<(event: StrikeEvent) => void>();
-const listeners = new Set<() => void>();
 
 function subscribe(listen: () => void): () => void {
-  listeners.add(listen);
+  const unsubscribe = store.subscribe(listen);
   start();
-  return () => {
-    listeners.delete(listen);
-  };
+  return unsubscribe;
 }
 
 function publish(next: Partial<MidiStatus>): void {
-  status = { ...status, ...next };
-  for (const listen of listeners) listen();
+  store.set({ ...store.get(), ...next });
 }
 
 /** The listening rule as it stands, sent whole at every change. Rust reads the stored rule for
  * itself at boot; what it hears from here is the session pin over it. */
 function send(): Promise<void> {
+  const status = store.get();
   const pinned = session === undefined ? status.defaultId : session;
   return call('midi_listen', { pinned, hidden: status.hidden }).catch((error: unknown) =>
     publish({ error: String(error) }),

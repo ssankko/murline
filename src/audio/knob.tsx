@@ -19,7 +19,6 @@ export function Knob({
   hi,
   value,
   readout,
-  disabled,
   onChange,
 }: {
   id: string;
@@ -30,7 +29,6 @@ export function Knob({
   hi: number;
   value: number;
   readout: string;
-  disabled?: boolean;
   onChange: (value: number) => void;
 }) {
   return (
@@ -50,9 +48,8 @@ export function Knob({
         max={hi}
         step={1}
         value={value}
-        disabled={disabled}
         onChange={(event) => onChange(Number(event.target.value))}
-        className="accent-ink min-w-0 flex-1 disabled:opacity-30"
+        className="accent-ink min-w-0 flex-1"
       />
       <span className="text-muted-ink w-8 flex-none text-right text-[11px] tabular-nums">
         {readout}

@@ -39,7 +39,6 @@ import { TICKS_PER_QUARTER, type ChordEvent, type PlayStep, type Score } from '@
 
 export {
   DEFAULT_LANE_LOOK,
-  DEFAULT_SPLIT,
   SPLIT_MAX,
   SPLIT_MIN,
   type LaneHarmony,
@@ -1305,9 +1304,8 @@ export class Lane {
   /** Moves every speck on by one step and drops the ones that died or fell back to the keys. */
   private stepParticles(step: number, laneH: number): void {
     const seconds = step / 1000;
-    let kept = 0;
-    for (const spark of this.particles) {
-      if (this.now - spark.born >= spark.life || spark.y > laneH) continue;
+    this.particles = this.particles.filter((spark) => {
+      if (this.now - spark.born >= spark.life || spark.y > laneH) return false;
       spark.vy += spark.gravity * seconds;
       spark.x += spark.vx * seconds;
       if (spark.wobble > 0) {
@@ -1316,9 +1314,8 @@ export class Lane {
         spark.x += swing * spark.wobble * seconds;
       }
       spark.y += spark.vy * seconds;
-      this.particles[kept++] = spark;
-    }
-    this.particles.length = kept;
+      return true;
+    });
   }
 
   private drawParticles(): void {

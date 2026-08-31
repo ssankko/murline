@@ -147,12 +147,7 @@ export interface Score {
 
 /** The tempo in force at a sheet tick. The first entry also covers everything before it. */
 export function bpmAt(score: Score, tick: number): number {
-  let bpm = score.tempoMap[0]?.bpm ?? 120;
-  for (const entry of score.tempoMap) {
-    if (entry.tick > tick) break;
-    bpm = entry.bpm;
-  }
-  return bpm;
+  return score.tempoMap.findLast((entry) => entry.tick <= tick)?.bpm ?? 120;
 }
 
 /**

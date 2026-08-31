@@ -10,6 +10,10 @@ A desktop app that helps one person practise piano from imported sheet music wit
 The half of the app that runs outside the window: it keeps the global settings and the library's rows, reads and writes the disk, runs the sound engine and listens to the MIDI keyboard. The window asks it for everything it cannot do itself and hears from it when something changes.
 _Avoid_: Backend, native side, core, IPC
 
+**Refusal**:
+The one shape every command of the Rust side answers with when it cannot do what it was asked: a kind the window may act on (`gone` when the file is no longer there, `refused` when a rule or the sound engine said no, `failed` for anything else) and a sentence that is only ever shown. The window never reads the sentence to decide anything.
+_Avoid_: Error string, exception, error message (the sentence is one part of it)
+
 ### Library
 
 **Piece**:

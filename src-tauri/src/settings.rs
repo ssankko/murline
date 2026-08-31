@@ -1,21 +1,26 @@
 //! The global settings: one row per key in the `setting` table of the app's SQLite file, each
-//! value the JSON the window wrote. The window reads them all once at start and writes them one
-//! key at a time; a key the sound engine owns reaches the running engine on its way in.
+//! value the JSON the window wrote. The table is read once into a map that answers every read
+//! after it, and a write updates the map and upserts the one row. A key the sound engine owns
+//! reaches the running engine on its way in.
 
 use crate::audio;
 use crate::db::pool;
 use serde_json::Value;
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
+use std::sync::Mutex;
 use tauri::AppHandle;
 
 /// Every stored setting, by key. A key never written is simply absent, and the window holds the
 /// default for it.
 pub type Stored = HashMap<String, Value>;
 
-/// Every stored setting. A value that is not JSON is passed over: the window holds a default for
-/// every key and a row nobody can read is one of them.
-pub async fn read(pool: &SqlitePool) -> Result<Stored, String> {
+/// The table in memory, empty until the first read fills it.
+static MAP: Mutex<Option<Stored>> = Mutex::new(None);
+
+/// Every stored row. A value that is not JSON is passed over: the window holds a default for every
+/// key and a row nobody can read is one of them.
+async fn read(pool: &SqlitePool) -> Result<Stored, String> {
     let rows = sqlx::query("SELECT key, value FROM setting")
         .fetch_all(pool)
         .await
@@ -27,6 +32,16 @@ pub async fn read(pool: &SqlitePool) -> Result<Stored, String> {
             serde_json::from_str(&value).ok().map(|value| (row.get("key"), value))
         })
         .collect())
+}
+
+/// The map, reading the table into it the first time it is asked for. The lock is taken twice and
+/// held over neither the query nor the caller's work.
+async fn loaded(pool: &SqlitePool) -> Result<Stored, String> {
+    if let Some(map) = MAP.lock().unwrap().as_ref() {
+        return Ok(map.clone());
+    }
+    let stored = read(pool).await?;
+    Ok(MAP.lock().unwrap().get_or_insert(stored).clone())
 }
 
 async fn store(pool: &SqlitePool, key: &str, value: &Value) -> Result<(), String> {
@@ -42,7 +57,7 @@ async fn store(pool: &SqlitePool, key: &str, value: &Value) -> Result<(), String
 /// Every setting the window starts from, in one read.
 #[tauri::command]
 pub async fn settings_read(app: AppHandle) -> Result<Stored, String> {
-    read(pool(&app)?).await
+    all(&app).await
 }
 
 /// One setting. A key the sound engine owns goes on the running engine first, so a value the
@@ -53,15 +68,23 @@ pub async fn settings_write(app: AppHandle, key: String, value: Value) -> Result
 }
 
 async fn write_one(pool: &SqlitePool, key: &str, value: Value) -> Result<(), String> {
-    let mut all = read(pool).await?;
+    let mut all = loaded(pool).await?;
     all.insert(key.to_string(), value.clone());
     audio::apply(key, &all)?;
-    store(pool, key, &value).await
+    store(pool, key, &value).await?;
+    MAP.lock().unwrap().get_or_insert_default().insert(key.to_string(), value);
+    Ok(())
 }
 
 /// Every setting, for the sound engine's own restore at start.
 pub async fn all(app: &AppHandle) -> Result<Stored, String> {
-    read(pool(app)?).await
+    loaded(pool(app)?).await
+}
+
+/// One setting, for a reader inside the Rust side. It blocks while the table is read, which
+/// happens once a run, so a module starting before the window can call it.
+pub fn one(app: &AppHandle, key: &str) -> Option<Value> {
+    tauri::async_runtime::block_on(async { loaded(pool(app).ok()?).await.ok()?.get(key).cloned() })
 }
 
 #[cfg(test)]
@@ -106,5 +129,16 @@ mod tests {
         // A key the engine does not own is nobody's to refuse.
         write_one(&pool, "theme", json!("dark")).await.unwrap();
         assert_eq!(read(&pool).await.unwrap()["theme"], json!("dark"));
+    }
+
+    /// The row behind the map is changed under it, so a read that went to the table would answer
+    /// the other value.
+    #[tokio::test]
+    async fn a_written_setting_is_answered_without_reading_the_table_again() {
+        let (_dir, pool) = table().await;
+        write_one(&pool, "library_folder", json!("/Scores")).await.unwrap();
+        store(&pool, "library_folder", &json!("/Elsewhere")).await.unwrap();
+
+        assert_eq!(loaded(&pool).await.unwrap()["library_folder"], json!("/Scores"));
     }
 }

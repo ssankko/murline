@@ -69,7 +69,6 @@ pub fn run() {
             pieces::index_plan,
             pieces::index_upsert,
             pieces::index_mark_error,
-            pieces::index_set_present,
             pieces::piece_delete,
             audio::audio_start,
             audio::audio_status,

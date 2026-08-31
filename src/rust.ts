@@ -216,7 +216,6 @@ export interface Commands {
     args: { path: string; error: string; mtime: number; size: number };
     result: void;
   };
-  index_set_present: { args: { path: string; present: boolean }; result: void };
   /** The piece goes, and its plays with it. */
   piece_delete: { args: { path: string }; result: void };
   audio_start: { args: void; result: void };

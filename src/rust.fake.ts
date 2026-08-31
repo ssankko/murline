@@ -214,9 +214,6 @@ export const DEFAULT_ANSWERS: Answers = {
       error,
     });
   },
-  index_set_present: ({ path, present }) => {
-    Object.assign(fakePieces.get(path) ?? {}, { present: present ? 1 : 0 });
-  },
   piece_delete: ({ path }) => {
     fakePieces.delete(path);
     // The foreign key cascades, so a piece takes its plays with it.

@@ -510,15 +510,6 @@ async fn mark_error(
 }
 
 /// Whether the file is in the folder. A row absent from it keeps its history and leaves the list.
-#[tauri::command]
-pub async fn index_set_present(
-    app: AppHandle,
-    path: String,
-    present: bool,
-) -> Result<(), String> {
-    set_present(pool(&app)?, &path, present).await
-}
-
 async fn set_present(pool: &SqlitePool, path: &str, present: bool) -> Result<(), String> {
     run(pool, "UPDATE piece SET present = ?2 WHERE path = ?1", |q| {
         q.bind(path.to_string()).bind(i64::from(present))

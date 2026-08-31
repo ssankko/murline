@@ -51,7 +51,7 @@ use std::time::{Duration, Instant};
 const RATE: f64 = 44100.0;
 /// The sample rates the dialog offers, which the voice engine renders at and the device is asked
 /// to run at. Every voice costs the engine in proportion: 96 kHz is twice the render load of 48.
-pub const RATE_CHOICES: [u32; 4] = [44100, 48000, 88200, 96000];
+const RATE_CHOICES: [u32; 4] = [44100, 48000, 88200, 96000];
 /// Length of one click, short enough to read as a tick and not as a pitch.
 const CLICK_MS: f64 = 30.0;
 /// The weak click's pitch, and the strong one a fifth above it so the bar line stands out.
@@ -72,8 +72,8 @@ const FILE_ENVELOPE: Envelope = Envelope { attack: 0.0, decay: 0.0, sustain: 1.0
 /// key-up sounds six more. Ten keys held and let go reach about 126. Twice the limit in ring slots
 /// is allocated with the instrument, at 256 KB each, so an EXS costs 64 MB of streaming buffers at
 /// 128 voices and 256 MB at 512.
-pub const VOICE_CHOICES: [usize; 3] = [128, 256, sampler::engine::MOST_VOICES];
-pub const DEFAULT_VOICES: usize = 128;
+const VOICE_CHOICES: [usize; 3] = [128, 256, sampler::engine::MOST_VOICES];
+const DEFAULT_VOICES: usize = 128;
 
 /// The MIDI channel everything the app plays goes out on.
 const CHANNEL: u8 = 0;
@@ -82,21 +82,13 @@ const SUSTAIN: u8 = 64;
 const ALL_SOUND_OFF: u8 = 120;
 const ALL_NOTES_OFF: u8 = 123;
 
-/// The buffer sizes the dialog offers, and the one the app starts at. The device decides which of
-/// them it takes; `Graph::buffer_choices` is the list the dialog ends up with.
-pub const FRAME_CHOICES: [u32; 5] = [32, 64, 128, 256, 512];
-pub const DEFAULT_FRAMES: u32 = 64;
-/// The smallest IO cycle a Bluetooth device is asked for. The radio ships audio in packets of
-/// about 20 ms, and a sub-millisecond cycle under that is what makes coreaudiod miss deadlines for
-/// every app playing through the device.
-const BLUETOOTH_FRAMES: u32 = 256;
+/// The buffer the app starts at, of the sizes the dialog offers.
+const DEFAULT_FRAMES: u32 = 64;
 /// The velocity remap the engine starts with: the whole range in, the whole range out, straight.
 /// Out of the box the app hands back exactly what the keyboard sent.
 const DEFAULT_MIN: u8 = 1;
 const DEFAULT_MAX: u8 = 127;
 const DEFAULT_CURVE: f64 = 1.0;
-/// The status line when the device the user picked is not plugged in.
-const GONE: &str = "Your chosen output device is not connected; playing through the system default";
 
 /// The longest the graph waits for the output device's first render before it starts the click
 /// player on it.
@@ -211,9 +203,11 @@ pub struct Graph {
     /// The device the user picked, kept as its UID even while it is unplugged so that plugging it
     /// back in takes it up again. None is the system default.
     chosen_device: Option<String>,
-    /// The device actually playing, and whether the choice above had to be given up to find it.
-    device: DeviceId,
-    fell_back: bool,
+    /// Where the device facts come from: CoreAudio's HAL when the app runs, a table in a test.
+    devices: Arc<dyn device::Devices>,
+    /// The device actually playing and everything about it, read again at every device and buffer
+    /// change, so the status costs no property read.
+    output: device::Output,
     /// The buffer the user picked. What the device runs may differ, and the status reports that.
     wanted_frames: u32,
     /// The voices the user picked, which is both the engine's limit and half the ring slots a file
@@ -241,6 +235,12 @@ impl Graph {
     /// The nodes, attached and connected, with the engine not yet started. A caller picks realtime
     /// or offline rendering next, because the choice cannot be made after the start.
     pub fn build() -> Result<Self, String> {
+        Graph::over(Arc::new(device::Hal))
+    }
+
+    /// The same graph over a device source of the caller's choosing, which is how a test plays
+    /// through a table rather than through the machine's own hardware.
+    pub fn over(devices: Arc<dyn device::Devices>) -> Result<Self, String> {
         unsafe {
             let format = stereo(RATE)?;
             let engine = AVAudioEngine::new();
@@ -296,8 +296,8 @@ impl Graph {
                 offline_frames: 0,
                 chosen: None,
                 chosen_device: None,
-                device: 0,
-                fell_back: false,
+                devices,
+                output: device::Output::default(),
                 wanted_frames: DEFAULT_FRAMES,
                 voices: DEFAULT_VOICES,
                 velocity_min: DEFAULT_MIN,
@@ -549,22 +549,35 @@ impl Graph {
     /// Reads back the device the engine started on, so the status has an answer before the first
     /// setting is applied.
     fn adopt(&mut self) {
-        self.device = current_device(self.output_unit()).unwrap_or(0);
+        self.output = self.devices.describe(current_device(self.output_unit()).unwrap_or(0));
     }
 
-    /// Moves the whole graph to `device`. Nothing is left sounding: the notes go first, and the
+    /// Reads the device again, which is what a buffer or rate write moves, keeping the line saying
+    /// why it is the device playing.
+    fn reread(&mut self) {
+        let fallback = std::mem::take(&mut self.output.fallback);
+        self.output = self.devices.describe(self.output.id);
+        self.output.fallback = fallback;
+    }
+
+    /// Moves the whole graph to `output`. Nothing is left sounding: the notes go first, and the
     /// engine has to stop before the output unit will take a different device.
-    fn play_through(&mut self, device: DeviceId, fell_back: bool) -> Result<(), String> {
+    fn play_through(&mut self, output: device::Output) -> Result<(), String> {
         // Already playing through it: the move is only about which device, so nothing is torn down.
-        if device == self.device && self.running() {
-            self.fell_back = fell_back;
+        if output.id == self.output.id && self.running() {
+            self.output = output;
             return Ok(());
         }
         self.release_all();
         unsafe { self.engine.stop() };
-        set_current_device(self.output_unit(), device)?;
-        self.device = device;
-        self.fell_back = fell_back;
+        // A graph in manual rendering mode plays into the caller's buffer and has no output device
+        // to point; the value it keeps is still the device the status reports.
+        if self.offline_frames == 0 {
+            set_current_device(self.output_unit(), output.id).map_err(|status| {
+                format!("{} could not be played through (status {status})", output.name)
+            })?;
+        }
+        self.output = output;
         // A device that will not take the buffer keeps its own; the move itself still stands, and
         // the status reports the size actually running.
         let _ = self.apply_buffer();
@@ -577,11 +590,13 @@ impl Graph {
     /// device it plays through has not changed, because AVAudioEngine stops itself whenever the
     /// output hardware changes under it and never starts itself back up.
     pub fn follow_devices(&mut self) -> Result<(), String> {
-        let (device, fell_back) = device::resolve(self.chosen_device.as_deref())?;
-        if device == self.device && fell_back == self.fell_back && self.running() {
+        let output = self.devices.open(self.chosen_device.as_deref())?;
+        if output.id == self.output.id && output.fallback == self.output.fallback && self.running()
+        {
+            self.output = output;
             return Ok(());
         }
-        self.play_through(device, fell_back)
+        self.play_through(output)
     }
 
     fn running(&self) -> bool {
@@ -590,31 +605,20 @@ impl Graph {
 
     pub fn set_device(&mut self, chosen: Option<String>) -> Result<(), String> {
         self.chosen_device = chosen;
-        let (device, fell_back) = device::resolve(self.chosen_device.as_deref())?;
-        self.play_through(device, fell_back)
+        let output = self.devices.open(self.chosen_device.as_deref())?;
+        self.play_through(output)
     }
 
-    /// The buffer sizes this device takes, which is what the dialog offers.
-    fn buffer_choices(&self) -> Vec<u32> {
-        allowed_buffers(device::buffer_range(self.device), device::is_bluetooth(self.device))
-    }
-
-    /// Whether the device lists `rate` among the ones it runs at.
-    fn device_runs_at(&self, rate: f64) -> bool {
-        device::sample_rate_ranges(self.device)
-            .iter()
-            .any(|&(low, high)| (low..=high).contains(&rate))
-    }
-
-    /// Asks for `frames`, one of `FRAME_CHOICES`. A device that does not take the size gets the
-    /// nearest one it does, so a saved size from another device never breaks the one playing.
+    /// Asks for `frames`, one of the sizes the dialog offers. A device that does not take the size
+    /// gets the nearest one it does, so a saved size from another device never breaks the one
+    /// playing.
     pub fn set_buffer(&mut self, frames: u32) -> Result<(), String> {
-        if !FRAME_CHOICES.contains(&frames) {
+        if !device::FRAME_CHOICES.contains(&frames) {
             return Err(format!("{frames} frames is not one of 32, 64, 128, 256 and 512"));
         }
         self.wanted_frames = frames;
         // The device is on that size already, so there is nothing to restart the IO for.
-        if self.nearest_buffer() == Some(device::buffer_frames(self.device)) {
+        if self.nearest_buffer() == Some(self.output.frames) {
             return Ok(());
         }
         self.release_all();
@@ -655,11 +659,12 @@ impl Graph {
         self.rewire_at(f64::from(rate))?;
         // A device that lists the rate is moved to it, so nothing is resampled on the way out;
         // one that does not keeps its own, and the mixer converts.
-        let asked = if self.device_runs_at(f64::from(rate)) {
-            device::set_sample_rate(self.device, f64::from(rate))
+        let asked = if self.output.runs_at(f64::from(rate)) {
+            self.devices.set_rate(self.output.id, f64::from(rate))
         } else {
             Ok(())
         };
+        self.reread();
         self.start()?;
         asked
     }
@@ -694,37 +699,36 @@ impl Graph {
         Ok(())
     }
 
-    /// Writes the buffer the user picked, or the nearest size the device does take: the smallest
-    /// choice at or above it, and the largest choice when every one of them is smaller.
     /// The size the device is asked for: the wanted one, else the smallest it takes above it,
     /// else the largest it takes.
     fn nearest_buffer(&self) -> Option<u32> {
-        let choices = self.buffer_choices();
+        let choices = &self.output.buffers;
         choices.iter().find(|&&frames| frames >= self.wanted_frames).or(choices.last()).copied()
     }
 
-    fn apply_buffer(&self) -> Result<(), String> {
+    /// Writes the buffer the device is to run and reads the device again, since what it ends up
+    /// running is its own answer.
+    fn apply_buffer(&mut self) -> Result<(), String> {
         let asked = match self.nearest_buffer() {
-            Some(frames) => device::set_buffer_frames(self.device, frames),
-            None => Err(format!("{} takes none of the buffer sizes", device::name(self.device))),
+            Some(frames) => self.devices.set_frames(self.output.id, frames),
+            None => Err(format!("{} takes none of the buffer sizes", self.output.name)),
         };
-        let running = device::buffer_frames(self.device);
+        self.reread();
         for unit in [self.output_unit(), unsafe { self.limiter.audioUnit() }] {
-            raise_max_frames(unit, running);
+            raise_max_frames(unit, self.output.frames);
         }
         asked
     }
 
-    /// What the Audio dialog shows about the output, folded into the status the engine answers.
+    /// What the Audio dialog shows about the output, copied from the device value the graph keeps.
     fn describe_output(&self, status: &mut Status) {
-        let frames = device::buffer_frames(self.device);
-        status.device = device::uid(self.device);
-        status.device_name = device::name(self.device);
-        status.fallback = if self.fell_back { GONE.into() } else { String::new() };
-        status.buffer_frames = frames;
-        status.buffer_choices = self.buffer_choices();
-        status.sample_rate = device::sample_rate(self.device);
-        status.latency_ms = device::latency_ms(self.device, frames);
+        status.device.clone_from(&self.output.uid);
+        status.device_name.clone_from(&self.output.name);
+        status.fallback.clone_from(&self.output.fallback);
+        status.buffer_frames = self.output.frames;
+        status.buffer_choices.clone_from(&self.output.buffers);
+        status.sample_rate = self.output.rate;
+        status.latency_ms = self.output.latency_ms;
     }
 
     /// Plays the note and answers the output velocity it was played at, which is the velocity the
@@ -1096,13 +1100,6 @@ pub(super) fn reason(error: Retained<NSError>) -> String {
     error.localizedDescription().to_string()
 }
 
-/// The buffer sizes a device takes: the ones inside the range it reports, and on Bluetooth
-/// nothing under `BLUETOOTH_FRAMES`. A device that reports no range takes none of them.
-fn allowed_buffers(range: (u32, u32), bluetooth: bool) -> Vec<u32> {
-    let least = if bluetooth { range.0.max(BLUETOOTH_FRAMES) } else { range.0 };
-    FRAME_CHOICES.into_iter().filter(|&frames| frames >= least && frames <= range.1).collect()
-}
-
 fn current_device(unit: AudioUnit) -> Option<DeviceId> {
     let mut device: DeviceId = 0;
     let mut size = size_of::<DeviceId>() as u32;
@@ -1119,7 +1116,7 @@ fn current_device(unit: AudioUnit) -> Option<DeviceId> {
     (status == 0).then_some(device)
 }
 
-fn set_current_device(unit: AudioUnit, device: DeviceId) -> Result<(), String> {
+fn set_current_device(unit: AudioUnit, device: DeviceId) -> Result<(), i32> {
     let status = unsafe {
         AudioUnitSetProperty(
             unit,
@@ -1130,11 +1127,7 @@ fn set_current_device(unit: AudioUnit, device: DeviceId) -> Result<(), String> {
             size_of::<DeviceId>() as u32,
         )
     };
-    if status == 0 {
-        Ok(())
-    } else {
-        Err(format!("{} could not be played through (status {status})", device::name(device)))
-    }
+    if status == 0 { Ok(()) } else { Err(status) }
 }
 
 /// Lets a unit render a whole device buffer in one slice. Units start well above every buffer the
@@ -1654,31 +1647,6 @@ mod tests {
             click(beat == 0, 70);
             sleep(Duration::from_millis(500));
         }
-    }
-
-    /// The one test that plays to a device rather than to a buffer, because a graph in manual
-    /// rendering mode has no output unit and so no device to lose. It sounds nothing: no instrument
-    /// is loaded and no note is sent. An open device is outside what the spec lets an ordinary run
-    /// touch, so: `cargo test -- --ignored a_graph_the_hardware_stopped`.
-    #[test]
-    #[ignore = "opens a real audio device"]
-    fn a_graph_the_hardware_stopped_is_playing_again_after_the_next_device_change() {
-        // A Mac with no output device at all has nothing to start on.
-        let Ok(default) = device::default_output() else { return };
-        let Some(chosen) = device::uid(default) else { return };
-        let mut graph = Graph::build().unwrap();
-        graph.start().unwrap();
-        // Pinned to one device, so a headphone connecting on the machine running the test cannot
-        // move the graph and the stop below is the only thing left that explains a silent engine.
-        graph.set_device(Some(chosen)).unwrap();
-
-        // What AVAudioEngine does to itself when the output hardware changes under it.
-        unsafe { graph.engine.stop() };
-        assert!(!graph.running());
-
-        graph.follow_devices().unwrap();
-        assert!(graph.running(), "the engine is playing again rather than silent for good");
-        assert_eq!(graph.device, default, "through the same device, nothing else having changed");
     }
 
     /// What a note looks like on the way out of the real device, which is the only path with the
@@ -2417,10 +2385,7 @@ mod idle {
         let before = threads();
         std::thread::sleep(Duration::from_secs(8));
         let after = threads();
-        println!(
-            "--- {label}, {} frames\n{before}\n{after}",
-            device::buffer_frames(graph.device)
-        );
+        println!("--- {label}, {} frames\n{before}\n{after}", graph.output.frames);
     }
 
     #[test]
@@ -2485,20 +2450,31 @@ mod rate {
     }
 }
 
-/// What the engine offers for the device it plays through, and what it refuses.
+/// What the engine offers for the device it plays through, and what it refuses. The graph renders
+/// offline over a table of devices, so every rule here is checked with no hardware: an offline
+/// graph has no output device to point at, and the table answers for the one it keeps.
 #[cfg(test)]
 mod output {
     use super::*;
+    use crate::audio::device::{Output, Table};
 
-    #[test]
-    fn a_bluetooth_device_is_offered_nothing_under_a_packet() {
-        // The range AirPods report: everything the dialog knows is inside it.
-        assert_eq!(allowed_buffers((14, 960), false), vec![32, 64, 128, 256, 512]);
-        assert_eq!(allowed_buffers((14, 960), true), vec![256, 512]);
+    /// A graph over the table's devices, rendering to the test's own buffer and on no device until
+    /// one is set.
+    fn over(table: Arc<Table>) -> Graph {
+        let mut graph = Graph::over(table).unwrap();
+        graph.start_offline(4096).unwrap();
+        graph
+    }
 
-        // An interface's range still bounds the list, and a device that reports none takes none.
-        assert_eq!(allowed_buffers((64, 256), false), vec![64, 128, 256]);
-        assert!(allowed_buffers((0, 0), false).is_empty());
+    /// The device a table answers as the system default.
+    fn speakers() -> Output {
+        Output::plugged(1, "speakers")
+    }
+
+    /// A device to choose over the default, which takes one buffer size fewer, so the answers for
+    /// one device are told from the other's.
+    fn interface() -> Output {
+        Output { buffers: vec![64, 128, 256, 512], ..Output::plugged(2, "interface") }
     }
 
     /// A graph that has not been put on a device answers for no device, which takes nothing: the
@@ -2506,23 +2482,124 @@ mod output {
     #[test]
     fn a_buffer_the_device_does_not_list_is_refused() {
         let mut graph = Graph::build().unwrap();
-        assert!(graph.buffer_choices().is_empty());
+        assert!(graph.output.buffers.is_empty());
         assert!(graph.set_buffer(DEFAULT_FRAMES).is_err());
     }
 
     /// The app asks for its buffer size at every boot, and the device is usually on it already.
     #[test]
     fn the_size_the_device_already_runs_costs_no_restart() {
-        let Ok(device) = device::default_output() else { return };
-        let mut graph = Graph::build().unwrap();
-        graph.device = device;
-        let running = device::buffer_frames(device);
-        if !graph.buffer_choices().contains(&running) {
-            return; // This Mac's output runs a size the dialog does not offer.
-        }
-        graph.start_offline(4096).unwrap();
-        graph.set_buffer(running).unwrap();
+        let table = Arc::new(Table::of(&[Output { frames: 128, ..speakers() }]));
+        let mut graph = over(table);
+        graph.set_device(None).unwrap();
+        graph.set_buffer(128).unwrap();
         assert!(graph.running(), "the engine plays on rather than stopping and starting");
+        assert_eq!(graph.output.frames, 128);
+    }
+
+    /// The size the device does not take is the nearest one above it, and the largest it takes
+    /// when every one of them is smaller.
+    #[test]
+    fn a_buffer_the_device_will_not_take_becomes_the_nearest_one_it_will() {
+        let table = Arc::new(Table::of(&[Output { buffers: vec![128, 256], ..speakers() }]));
+        let mut graph = over(table);
+        graph.set_device(None).unwrap();
+
+        graph.set_buffer(32).unwrap();
+        assert_eq!(graph.output.frames, 128, "the smallest size the device takes above 32");
+        graph.set_buffer(512).unwrap();
+        assert_eq!(graph.output.frames, 256, "the largest it takes, every choice being smaller");
+    }
+
+    /// A device change carries the buffer the user picked onto the device that takes over.
+    #[test]
+    fn the_device_taken_up_runs_the_buffer_the_user_picked() {
+        let table = Arc::new(Table::of(&[speakers(), interface()]));
+        let mut graph = over(table);
+        graph.set_device(None).unwrap();
+        graph.set_buffer(64).unwrap();
+        graph.set_device(Some("interface".into())).unwrap();
+
+        assert_eq!(graph.output.id, interface().id, "playing through the choice");
+        assert_eq!(graph.output.frames, 64);
+        assert!(graph.running());
+    }
+
+    /// The engine follows the device list: it gives the chosen device up when it is unplugged and
+    /// takes it back when it returns, and says so in the status while it is gone.
+    #[test]
+    fn an_unplugged_choice_falls_back_to_the_default_and_is_taken_up_again() {
+        let table = Arc::new(Table::of(&[speakers(), interface()]));
+        let mut graph = over(table.clone());
+        graph.set_device(Some("interface".into())).unwrap();
+        assert_eq!(status_of(&graph).fallback, "");
+
+        table.plug(&[speakers()]);
+        graph.follow_devices().unwrap();
+        assert_eq!(graph.output.id, speakers().id, "the system default plays instead");
+        assert!(!status_of(&graph).fallback.is_empty(), "and the status says why");
+        assert!(graph.running());
+
+        table.plug(&[speakers(), interface()]);
+        graph.follow_devices().unwrap();
+        assert_eq!(graph.output.id, interface().id, "the choice is honoured again");
+        assert_eq!(status_of(&graph).fallback, "");
+    }
+
+    /// AVAudioEngine stops itself whenever the output hardware changes under it and never starts
+    /// itself back up, so the next device change has to, even when no device has changed.
+    #[test]
+    fn a_graph_the_hardware_stopped_is_playing_again_after_the_next_device_change() {
+        let table = Arc::new(Table::of(&[speakers()]));
+        let mut graph = over(table);
+        graph.set_device(None).unwrap();
+
+        unsafe { graph.engine.stop() };
+        assert!(!graph.running());
+
+        graph.follow_devices().unwrap();
+        assert!(graph.running(), "the engine is playing again rather than silent for good");
+        assert_eq!(graph.output.id, speakers().id, "through the same device, nothing else changed");
+    }
+
+    /// What the status bar reads is a copy of the device value the graph keeps.
+    #[test]
+    fn the_status_names_the_device_playing_and_what_it_takes() {
+        let table = Arc::new(Table::of(&[speakers(), interface()]));
+        let mut graph = over(table);
+        graph.set_device(Some("interface".into())).unwrap();
+
+        let status = status_of(&graph);
+        assert_eq!(status.device.as_deref(), Some("interface"));
+        assert_eq!(status.device_name, "interface");
+        assert_eq!(status.buffer_choices, interface().buffers);
+        assert_eq!(status.buffer_frames, graph.output.frames);
+        assert_eq!(status.sample_rate, 44100.0);
+    }
+
+    /// A device that lists the rate is moved to it; one that does not keeps its own and the mixer
+    /// converts, which is no error to the caller.
+    #[test]
+    fn the_device_follows_the_rate_it_lists_and_keeps_its_own_otherwise() {
+        let fixed = Output { rates: vec![(44100.0, 44100.0)], ..speakers() };
+        let table = Arc::new(Table::of(&[fixed]));
+        let mut graph = over(table.clone());
+        graph.set_device(None).unwrap();
+
+        graph.set_sample_rate(48000).unwrap();
+        assert_eq!(graph.output.rate, 44100.0, "the device it will not run at keeps its own");
+
+        table.plug(&[Output { rates: vec![(44100.0, 96000.0)], ..speakers() }]);
+        graph.follow_devices().unwrap();
+        graph.set_sample_rate(96000).unwrap();
+        assert_eq!(graph.output.rate, 96000.0);
+    }
+
+    /// The status the engine answers, off one graph rather than the app's own.
+    fn status_of(graph: &Graph) -> Status {
+        let mut status = Status::default();
+        graph.describe_output(&mut status);
+        status
     }
 }
 

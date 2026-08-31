@@ -1,6 +1,7 @@
-//! The output side of the sound engine: which CoreAudio device the app plays through, the buffer
-//! that device runs, and the latency the device reports for that buffer. This is the HAL's
-//! `AudioObject` property API; the AVAudioEngine graph that plays into it lives in `mac.rs`.
+//! The output side of the sound engine: the device the app plays through and everything about it,
+//! as one `Output` the graph reads whenever the device or its buffer changes. `Devices` is where
+//! those facts come from: `Hal` reads CoreAudio's `AudioObject` properties, and a test writes a
+//! `Table` instead. The AVAudioEngine graph that plays into the device lives in `mac.rs`.
 //!
 //! Devices cross the command boundary as their CoreAudio UID, which is an opaque string to the
 //! webview and stays the same across unplugging and plugging back in.
@@ -33,6 +34,203 @@ use std::sync::Mutex;
 /// A CoreAudio device id. Valid only while the device is plugged in, which is why the app keeps the
 /// user's choice as a UID and looks the id up again every time.
 pub type DeviceId = AudioObjectID;
+
+/// The buffer sizes the dialog offers. Which of them a device takes is `Output::buffers`.
+pub const FRAME_CHOICES: [u32; 5] = [32, 64, 128, 256, 512];
+/// The smallest IO cycle a Bluetooth device is asked for. The radio ships audio in packets of
+/// about 20 ms, and a sub-millisecond cycle under that is what makes coreaudiod miss deadlines for
+/// every app playing through the device.
+const BLUETOOTH_FRAMES: u32 = 256;
+/// The fallback line when the device the user picked is not plugged in.
+const GONE: &str = "Your chosen output device is not connected; playing through the system default";
+
+/// The device the graph plays through and everything it needs to know about it, read in one go.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Output {
+    pub id: DeviceId,
+    pub name: String,
+    pub uid: Option<String>,
+    /// The buffer the device runs, which is not always the one it was asked for.
+    pub frames: u32,
+    /// The buffer sizes it takes, of the ones the dialog knows, ascending.
+    pub buffers: Vec<u32>,
+    /// The rates it can be set to, as the spans it reports.
+    pub rates: Vec<(f64, f64)>,
+    /// The rate it is running at.
+    pub rate: f64,
+    pub latency_ms: f64,
+    /// Why this is not the device the user chose; empty while the choice is honoured.
+    pub fallback: String,
+}
+
+impl Output {
+    /// Whether the device lists `rate` among the ones it runs at.
+    pub fn runs_at(&self, rate: f64) -> bool {
+        self.rates.iter().any(|&(low, high)| (low..=high).contains(&rate))
+    }
+}
+
+/// Where the graph learns about output devices, and the one place that asks a device to change.
+/// Which device answers a choice is decided here, above both adapters.
+pub trait Devices: Send + Sync {
+    /// The device with this UID, while it is plugged in and can play.
+    fn find(&self, uid: &str) -> Option<DeviceId>;
+    fn default_output(&self) -> Result<DeviceId, String>;
+    /// Everything about one device. An id that names no device answers the empty value, which
+    /// takes no buffer and has no name.
+    fn describe(&self, device: DeviceId) -> Output;
+    fn set_frames(&self, device: DeviceId, frames: u32) -> Result<(), String>;
+    fn set_rate(&self, device: DeviceId, rate: f64) -> Result<(), String>;
+
+    /// The device to play through: the chosen one while it is plugged in, the system default when
+    /// it is not, which is the fallback line the status reports. The choice itself is kept by the
+    /// caller, so the device is taken up again when it comes back.
+    fn open(&self, chosen: Option<&str>) -> Result<Output, String> {
+        let wanted = chosen.filter(|id| !id.is_empty());
+        if let Some(device) = wanted.and_then(|id| self.find(id)) {
+            return Ok(self.describe(device));
+        }
+        let mut output = self.describe(self.default_output()?);
+        if wanted.is_some() {
+            output.fallback = GONE.into();
+        }
+        Ok(output)
+    }
+}
+
+/// The devices CoreAudio reports, which is what the app itself plays through.
+pub struct Hal;
+
+impl Devices for Hal {
+    fn find(&self, uid: &str) -> Option<DeviceId> {
+        read_all::<AudioObjectID>(SYSTEM, kAudioHardwarePropertyDevices, WHOLE)
+            .into_iter()
+            .find(|&device| plays(device) && self::uid(device).as_deref() == Some(uid))
+    }
+
+    fn default_output(&self) -> Result<DeviceId, String> {
+        read(SYSTEM, kAudioHardwarePropertyDefaultOutputDevice, WHOLE)
+            .filter(|&device| device != 0)
+            .ok_or_else(|| "This Mac has no output device".into())
+    }
+
+    fn describe(&self, device: DeviceId) -> Output {
+        let frames = buffer_frames(device);
+        Output {
+            id: device,
+            name: name(device),
+            uid: uid(device),
+            frames,
+            buffers: allowed_buffers(buffer_range(device), is_bluetooth(device)),
+            rates: sample_rate_ranges(device),
+            rate: sample_rate(device),
+            latency_ms: latency_ms(device, frames),
+            fallback: String::new(),
+        }
+    }
+
+    fn set_frames(&self, device: DeviceId, frames: u32) -> Result<(), String> {
+        write(device, kAudioDevicePropertyBufferFrameSize, frames).map_err(|status| {
+            format!("The device refused a buffer of {frames} frames (status {status})")
+        })
+    }
+
+    /// The change is the system's, so every app playing through the device hears it, and a device
+    /// that cannot run at the rate refuses.
+    fn set_rate(&self, device: DeviceId, rate: f64) -> Result<(), String> {
+        write(device, kAudioDevicePropertyNominalSampleRate, rate)
+            .map_err(|status| format!("The device refused a rate of {rate} Hz (status {status})"))
+    }
+}
+
+/// The buffer sizes a device takes: the ones inside the range it reports, and on Bluetooth nothing
+/// under `BLUETOOTH_FRAMES`. A device that reports no range takes none of them.
+fn allowed_buffers(range: (u32, u32), bluetooth: bool) -> Vec<u32> {
+    let least = if bluetooth { range.0.max(BLUETOOTH_FRAMES) } else { range.0 };
+    FRAME_CHOICES.into_iter().filter(|&frames| frames >= least && frames <= range.1).collect()
+}
+
+/// The devices a test plugs in, in the HAL's place: one row per device, the first of them the
+/// system default. A row taken out of the list is a device unplugged, and a write lands on the row
+/// the way it lands on the hardware.
+#[cfg(test)]
+#[derive(Default)]
+pub struct Table {
+    plugged: Mutex<Vec<Output>>,
+}
+
+#[cfg(test)]
+impl Table {
+    pub fn of(devices: &[Output]) -> Self {
+        Table { plugged: Mutex::new(devices.to_vec()) }
+    }
+
+    /// The device list as it stands now, which is what a plug or an unplug leaves behind.
+    pub fn plug(&self, devices: &[Output]) {
+        *self.plugged.lock().unwrap() = devices.to_vec();
+    }
+}
+
+#[cfg(test)]
+impl Devices for Table {
+    fn find(&self, uid: &str) -> Option<DeviceId> {
+        let plugged = self.plugged.lock().unwrap();
+        plugged.iter().find(|one| one.uid.as_deref() == Some(uid)).map(|one| one.id)
+    }
+
+    fn default_output(&self) -> Result<DeviceId, String> {
+        let plugged = self.plugged.lock().unwrap();
+        plugged.first().map(|one| one.id).ok_or_else(|| "This Mac has no output device".into())
+    }
+
+    fn describe(&self, device: DeviceId) -> Output {
+        let plugged = self.plugged.lock().unwrap();
+        plugged.iter().find(|one| one.id == device).cloned().unwrap_or_default()
+    }
+
+    fn set_frames(&self, device: DeviceId, frames: u32) -> Result<(), String> {
+        let mut plugged = self.plugged.lock().unwrap();
+        let Some(row) = plugged.iter_mut().find(|one| one.id == device) else {
+            return Err("The device is not plugged in".into());
+        };
+        if !row.buffers.contains(&frames) {
+            return Err(format!("The device refused a buffer of {frames} frames"));
+        }
+        row.frames = frames;
+        Ok(())
+    }
+
+    fn set_rate(&self, device: DeviceId, rate: f64) -> Result<(), String> {
+        let mut plugged = self.plugged.lock().unwrap();
+        let Some(row) = plugged.iter_mut().find(|one| one.id == device) else {
+            return Err("The device is not plugged in".into());
+        };
+        if !row.runs_at(rate) {
+            return Err(format!("The device refused a rate of {rate} Hz"));
+        }
+        row.rate = rate;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+impl Output {
+    /// One device for a table: it takes every buffer the dialog offers, runs the largest of them
+    /// and runs at one rate. A test moves whatever it is about to assert on.
+    pub fn plugged(id: DeviceId, uid: &str) -> Self {
+        Output {
+            id,
+            name: uid.into(),
+            uid: Some(uid.into()),
+            frames: 512,
+            buffers: FRAME_CHOICES.into(),
+            rates: vec![(44100.0, 44100.0)],
+            rate: 44100.0,
+            latency_ms: 0.0,
+            fallback: String::new(),
+        }
+    }
+}
 
 /// The object standing for the machine's audio hardware, and the two scopes read below: the whole
 /// device, and the side of it that plays.
@@ -155,50 +353,28 @@ fn private_aggregate(device: DeviceId) -> bool {
 }
 
 /// The name to show, and the UID when the device will not give one, so a picker row is never blank.
-pub fn name(device: DeviceId) -> String {
+fn name(device: DeviceId) -> String {
     read_text(device, kAudioObjectPropertyName, WHOLE)
         .or_else(|| uid(device))
         .unwrap_or_default()
 }
 
-pub fn uid(device: DeviceId) -> Option<String> {
+fn uid(device: DeviceId) -> Option<String> {
     read_text(device, kAudioDevicePropertyDeviceUID, WHOLE)
 }
 
-pub fn default_output() -> Result<DeviceId, String> {
-    read(SYSTEM, kAudioHardwarePropertyDefaultOutputDevice, WHOLE)
-        .filter(|&device| device != 0)
-        .ok_or_else(|| "This Mac has no output device".into())
-}
-
-/// The device to play through: the chosen one while it is plugged in, the system default when it is
-/// not. The flag says a choice was made and could not be honoured, which is the line the status
-/// reports; the choice itself is kept, so the device is taken up again when it comes back.
-pub fn resolve(chosen: Option<&str>) -> Result<(DeviceId, bool), String> {
-    let wanted = chosen.filter(|id| !id.is_empty());
-    if let Some(id) = wanted {
-        let found = read_all::<AudioObjectID>(SYSTEM, kAudioHardwarePropertyDevices, WHOLE)
-            .into_iter()
-            .find(|&device| plays(device) && uid(device).as_deref() == Some(id));
-        if let Some(device) = found {
-            return Ok((device, false));
-        }
-    }
-    Ok((default_output()?, wanted.is_some()))
-}
-
 /// The rate the device is running at.
-pub fn sample_rate(device: DeviceId) -> f64 {
+fn sample_rate(device: DeviceId) -> f64 {
     read(device, kAudioDevicePropertyNominalSampleRate, WHOLE).unwrap_or(0.0)
 }
 
-pub fn buffer_frames(device: DeviceId) -> u32 {
+fn buffer_frames(device: DeviceId) -> u32 {
     read(device, kAudioDevicePropertyBufferFrameSize, WHOLE).unwrap_or(0)
 }
 
 /// The smallest and the largest IO cycle the device takes, in frames. A device that answers
 /// nothing takes no size at all, which is what an id that no longer names a device does.
-pub fn buffer_range(device: DeviceId) -> (u32, u32) {
+fn buffer_range(device: DeviceId) -> (u32, u32) {
     read::<AudioValueRange>(device, kAudioDevicePropertyBufferFrameSizeRange, WHOLE)
         .map_or((0, 0), |range| (range.mMinimum as u32, range.mMaximum as u32))
 }
@@ -206,7 +382,7 @@ pub fn buffer_range(device: DeviceId) -> (u32, u32) {
 /// The rates the device can be set to, as the spans it reports. A device with a fixed set of rates
 /// reports each of them as a span whose ends are the same; one with its own clock reports a span
 /// it can run anywhere inside.
-pub fn sample_rate_ranges(device: DeviceId) -> Vec<(f64, f64)> {
+fn sample_rate_ranges(device: DeviceId) -> Vec<(f64, f64)> {
     read_all::<AudioValueRange>(device, kAudioDevicePropertyAvailableNominalSampleRates, WHOLE)
         .into_iter()
         .map(|range| (range.mMinimum, range.mMaximum))
@@ -215,56 +391,36 @@ pub fn sample_rate_ranges(device: DeviceId) -> Vec<(f64, f64)> {
 
 /// Whether the device plays over Bluetooth, which is what makes a small IO cycle unworkable: the
 /// radio ships audio in packets of about 20 ms whatever the buffer says.
-pub fn is_bluetooth(device: DeviceId) -> bool {
+fn is_bluetooth(device: DeviceId) -> bool {
     read::<u32>(device, kAudioDevicePropertyTransportType, WHOLE).is_some_and(|transport| {
         transport == kAudioDeviceTransportTypeBluetooth
             || transport == kAudioDeviceTransportTypeBluetoothLE
     })
 }
 
-pub fn set_buffer_frames(device: DeviceId, frames: u32) -> Result<(), String> {
-    let mut at = address(kAudioDevicePropertyBufferFrameSize, WHOLE);
+/// One fixed-size property written back, answering the status a refusal comes with.
+fn write<T: Copy>(
+    device: DeviceId,
+    selector: AudioObjectPropertySelector,
+    value: T,
+) -> Result<(), i32> {
+    let mut at = address(selector, WHOLE);
     let status = unsafe {
         AudioObjectSetPropertyData(
             device,
             NonNull::from(&mut at),
             0,
             null(),
-            size_of::<u32>() as u32,
-            NonNull::from(&frames).cast(),
+            size_of::<T>() as u32,
+            NonNull::from(&value).cast(),
         )
     };
-    if status == 0 {
-        Ok(())
-    } else {
-        Err(format!("The device refused a buffer of {frames} frames (status {status})"))
-    }
-}
-
-/// Asks the device to run at `rate`. The change is the system's, so every app playing through
-/// the device hears it, and a device that cannot run at the rate refuses.
-pub fn set_sample_rate(device: DeviceId, rate: f64) -> Result<(), String> {
-    let mut at = address(kAudioDevicePropertyNominalSampleRate, WHOLE);
-    let status = unsafe {
-        AudioObjectSetPropertyData(
-            device,
-            NonNull::from(&mut at),
-            0,
-            null(),
-            size_of::<f64>() as u32,
-            NonNull::from(&rate).cast(),
-        )
-    };
-    if status == 0 {
-        Ok(())
-    } else {
-        Err(format!("The device refused a rate of {rate} Hz (status {status})"))
-    }
+    if status == 0 { Ok(()) } else { Err(status) }
 }
 
 /// What the device says it costs to get a rendered frame out of the speaker, in milliseconds: the
 /// four frame counts CoreAudio reports, at the rate the device runs.
-pub fn latency_ms(device: DeviceId, frames: u32) -> f64 {
+fn latency_ms(device: DeviceId, frames: u32) -> f64 {
     let stream = read_all::<AudioObjectID>(device, kAudioDevicePropertyStreams, PLAYING)
         .first()
         .and_then(|&stream| read::<u32>(stream, kAudioStreamPropertyLatency, WHOLE))
@@ -350,25 +506,64 @@ mod tests {
         assert_eq!(latency_of(1, 2, 3, 4, 0.0), 0.0);
     }
 
+    /// The same rule the table tests state, over the machine's own devices, so the HAL's lookup of
+    /// a UID and of the system default is checked as well.
     #[test]
     fn a_device_that_is_not_there_falls_back_to_the_system_default() {
-        let Ok(default) = default_output() else {
+        let Ok(default) = Hal.default_output() else {
             return; // A Mac with no output at all: nothing to fall back to and nothing to check.
         };
 
-        let (device, fell_back) = resolve(Some("no such device")).unwrap();
-        assert_eq!(device, default);
-        assert!(fell_back, "the choice could not be honoured and the status must say so");
+        let output = Hal.open(Some("no such device")).unwrap();
+        assert_eq!(output.id, default);
+        assert!(!output.fallback.is_empty(), "the choice was not honoured and the status says so");
 
         // No choice at all is the system default too, and that is not a fallback.
-        assert_eq!(resolve(None).unwrap(), (default, false));
-        assert_eq!(resolve(Some("")).unwrap(), (default, false));
+        for none in [None, Some("")] {
+            let output = Hal.open(none).unwrap();
+            assert_eq!((output.id, output.fallback.as_str()), (default, ""));
+        }
 
         // The default device's own UID resolves back to it, and honouring a choice is not a
         // fallback either.
         if let Some(id) = uid(default) {
-            assert_eq!(resolve(Some(&id)).unwrap(), (default, false));
+            let output = Hal.open(Some(&id)).unwrap();
+            assert_eq!((output.id, output.fallback.as_str()), (default, ""));
+            assert_eq!(output.name, name(default));
         }
+    }
+
+    #[test]
+    fn a_bluetooth_device_is_offered_nothing_under_a_packet() {
+        // The range AirPods report: everything the dialog knows is inside it.
+        assert_eq!(allowed_buffers((14, 960), false), vec![32, 64, 128, 256, 512]);
+        assert_eq!(allowed_buffers((14, 960), true), vec![256, 512]);
+
+        // An interface's range still bounds the list, and a device that reports none takes none.
+        assert_eq!(allowed_buffers((64, 256), false), vec![64, 128, 256]);
+        assert!(allowed_buffers((0, 0), false).is_empty());
+    }
+
+    /// The choice is honoured while the device is there and given up while it is not, and the
+    /// device is taken up again when it comes back.
+    #[test]
+    fn a_choice_that_is_unplugged_falls_back_and_is_taken_up_again() {
+        let speakers = Output::plugged(1, "speakers");
+        let interface = Output::plugged(2, "interface");
+        let table = Table::of(&[speakers.clone(), interface.clone()]);
+
+        assert_eq!(table.open(Some("interface")).unwrap(), interface);
+
+        table.plug(std::slice::from_ref(&speakers));
+        let output = table.open(Some("interface")).unwrap();
+        assert_eq!(output.id, speakers.id, "the system default plays instead");
+        assert_eq!(output.fallback, GONE);
+
+        table.plug(&[speakers, interface.clone()]);
+        assert_eq!(table.open(Some("interface")).unwrap(), interface);
+
+        table.plug(&[]);
+        assert!(table.open(None).is_err(), "a machine with no output has nothing to open");
     }
 
     #[test]
@@ -385,7 +580,7 @@ mod tests {
     #[test]
     #[ignore = "makes a real CoreAudio device"]
     fn a_private_aggregate_is_a_device_with_an_output_but_never_a_picker_row() {
-        let Ok(default) = default_output() else {
+        let Ok(default) = Hal.default_output() else {
             return; // A Mac with no output at all: nothing to aggregate over.
         };
         let Some(over) = uid(default) else { return };

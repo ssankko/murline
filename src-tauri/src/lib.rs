@@ -7,6 +7,7 @@ mod midi;
 mod pdmx;
 mod pieces;
 mod settings;
+mod update;
 
 /// Creates the library folder, parents included. Already existing is success, so onboarding and a
 /// later folder change both call it without checking first.
@@ -38,6 +39,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // The library's rows and the global settings share one SQLite file; it reaches the
             // current shape before anything reads it.
@@ -101,7 +103,11 @@ pub fn run() {
             finder::finder_download,
             pdmx::pdmx_status,
             pdmx::pdmx_fetch,
-            pdmx::pdmx_cancel
+            pdmx::pdmx_cancel,
+            update::app_version,
+            update::update_check,
+            update::update_install,
+            update::update_restart
         ])
         .run(context)
         .expect("error while running tauri application");

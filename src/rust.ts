@@ -249,6 +249,14 @@ export interface Commands {
   pdmx_status: { args: { folder: string }; result: boolean };
   pdmx_fetch: { args: { progress: (at: PdmxProgress) => void }; result: string };
   pdmx_cancel: { args: void; result: void };
+  /** The version this build was made as. */
+  app_version: { args: void; result: string };
+  /** The version waiting on the release page, or null when this build is the newest. */
+  update_check: { args: void; result: string | null };
+  /** Fetches the newer bundle and swaps the app on disk; it starts at the next launch. */
+  update_install: { args: void; result: void };
+  /** Starts the app again. It never answers: this process is replaced by the new one. */
+  update_restart: { args: void; result: void };
 }
 
 export type CommandName = keyof Commands;

@@ -126,7 +126,15 @@ There is much to fix and improve yet, so if you encounter some bug or frustratin
 
 ## Install
 
-No release builds yet. You need macOS, [Rust](https://rustup.rs) 1.96 or newer, and [pnpm](https://pnpm.io).
+Take the `.dmg` from the [releases page](https://github.com/ssankko/murline/releases) and drag Murline into Applications. The build is not signed with an Apple Developer ID, so macOS refuses the first launch until you clear the download flag:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Murline.app
+```
+
+Once is enough. From then on the version at the right of the status bar tells you when a newer one is out, with an amber arrow beside the number. Press it to fetch that version; press the green check that follows to start it at once, or leave it and it starts the next time you open the app. Nothing downloads until you press it.
+
+To build it yourself you need macOS, [Rust](https://rustup.rs) 1.96 or newer, and [pnpm](https://pnpm.io).
 
 ```sh
 git clone https://github.com/ssankko/murline.git
@@ -140,7 +148,7 @@ On first launch pick a library folder. Drop a MusicXML file on the window or ope
 
 ## FAQ
 
-**Why is this FAQ so short?**
+**Why is this FAQ empty?**
 Nobody asked me questions yet, so go ahead.
 
 ## How it is built
@@ -184,12 +192,12 @@ Nothing here is promised, just a short list of ideas I find amusing.
 - [ ] Second audio instrument channel for voice
 - [ ] Record mode and MIDI output
 
-## License
-
-[AGPL-3.0-or-later](LICENSE). Use it, change it, share it, and share the source of what you built with it.
-
 ## Data sources
 
 The score finder searches two indexes I build and commit: `src-tauri/index/kernscores.json` from [KernScores](https://kern.ccarh.org) listings and `src-tauri/index/pdmx.tsv` from the [PDMX](https://zenodo.org/records/15571083) dataset. The scores themselves download from those sites, not from this repo, and each file keeps the licence its collection gives it. Check the collection before you publish anything you made from a download.
 
 The test scores under `src/score/fixtures/` and `src-tauri/fixtures/` are encodings of public-domain works: three from the [OpenSheetMusicDisplay](https://github.com/opensheetmusicdisplay/opensheetmusicdisplay) demo (Bach BWV 846, Clementi Op. 36 No. 1, Joplin's The Entertainer), the rest exported from KernScores and PDMX, plus a few bars I wrote by hand.
+
+## License
+
+[AGPL-3.0-or-later](LICENSE)

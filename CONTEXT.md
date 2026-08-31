@@ -60,8 +60,12 @@ The modal holding every global setting, grouped into Sound, Look, Playing and Li
 _Avoid_: Settings dialog, preferences, options
 
 **Status bar**:
-The last row of the library, Preview and play screens, one line of small text high. At the far left the solid cog into the settings panel, then the MIDI cell, which hangs the MIDI popover, and the sound cell, which hangs the sound popover. At the right the keyboard and metronome volumes, which together are the mixer's button, then the output latency, the voices sounding of the most the engine holds, and the render load. Every number stands beside its icon in a box of least width, so a digit more or less moves nothing. The boot and onboarding screens have none.
+The last row of the library, Preview and play screens, one line of small text high. At the far left the cog into the settings panel, then the MIDI cell, which hangs the MIDI popover, and the sound cell, which hangs the sound popover. At the right the keyboard and metronome volumes, which together are the mixer's button, then the output latency, the voices sounding of the most the engine holds, the render load, and the version cell. Every number stands beside its icon in a box of least width, so a digit more or less moves nothing. The cog and the version cell are as high as the bar and reach into its inset, so a press near either lands on it. The boot and onboarding screens have none.
 _Avoid_: Footer, status line, taskbar
+
+**Version cell**:
+The far right of the status bar: the version running, and beside it a mark for what the release page holds. Number and mark are one button, and what it does is what the mark shows: an amber arrow fetches the version waiting and swaps the app on disk, a green check starts the app again so that version takes over, and a bare number asks the release page again. A version on disk that is not started stays for the next launch.
+_Avoid_: Updater, auto-update, upgrade button
 
 **Loading indicator**:
 The row of beats that runs wherever the app is waiting on work the user asked for or on the app's own boot, drawn as the falling notes' countdown is: a capsule for the strong beat and dots for the weak ones, travelling right, the one at the right burning out as a new one is born at the left. It leaves only on a beat: the row runs to the next beat, then every mark eases out to the right. The open of a piece is one of those waits: while the play screen or the Preview reads a file, the row stands large over the content area and names the piece it is opening.

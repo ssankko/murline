@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      # The bundle carries the version from tauri.conf.json, not from the tag, so a mismatch would
+      # ship a .dmg whose name disagrees with the release.
+      - name: Tag matches the app version
+        run: |
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          test "v$version" = "${{ github.ref_name }}"
+      - run: pnpm install --frozen-lockfile
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.96'
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The updater refuses a bundle this key did not sign. Its public half sits in
+          # tauri.conf.json, its private half in this secret and in ~/.tauri/murline.key, with no
+          # password; lose both copies and no installed app can ever update again.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: ${{ github.ref_name }}
+          # The release is public the moment it is made. tauri-action builds first and creates it
+          # after, so a failed build leaves no release behind, and the app's update endpoint reads
+          # the latest published release.
+          releaseDraft: false
+          # One bundle for Apple silicon and Intel. The action splits it into the darwin-aarch64
+          # and darwin-x86_64 rows of latest.json, which the app reads to find its update.
+          args: --target universal-apple-darwin

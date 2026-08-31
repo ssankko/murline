@@ -96,6 +96,8 @@ test("the settings shortcut stands back for a text field and for an open dialog"
 /** The event handlers the bar subscribed with, so a test can be the engine. */
 /** What `audio_status` answers, which one test moves to see the latency cell hold one line. */
 let latencyMs = 12;
+/** What the release page holds, which one test fills to see the update button come up. */
+let waiting: string | null = null;
 let rust: FakeRust;
 
 beforeEach(async () => {
@@ -111,6 +113,7 @@ beforeEach(async () => {
       error: null,
     }),
     audio_effects: () => [],
+    update_check: () => waiting,
     audio_envelope: () => ({
       attack: 0.01,
       decay: 0.2,
@@ -137,6 +140,7 @@ afterEach(() => {
   opened = 0;
   sound = 0;
   latencyMs = 12;
+  waiting = null;
 });
 
 /** The screen around the bar, which is what holds the two popovers open or shut. */
@@ -264,6 +268,33 @@ test("the cog and ⌘, both ask the screen to open the settings panel", async ()
     new KeyboardEvent("keydown", { key: ",", metaKey: true }),
   );
   expect(opened).toBe(2);
+});
+
+test("the version cell names what runs, and one press on it fetches what waits", async () => {
+  waiting = "0.1.1";
+  await mount();
+  // The number and the amber mark are one button, which the waiting version renames.
+  await vi.waitFor(() => expect(cell("Update").textContent).toBe("0.1.0"));
+
+  // Nothing is fetched until that button is pressed.
+  expect(rust.argsOf("update_install")).toHaveLength(0);
+  await userEvent.click(cell("Update"));
+  await vi.waitFor(() => expect(rust.argsOf("update_install")).toHaveLength(1));
+
+  // With the version on disk the cell asks to be pressed again, and that press restarts the app.
+  await vi.waitFor(() => expect(cell("Restart").textContent).toBe("0.1.0"));
+  await userEvent.click(cell("Restart"));
+  await vi.waitFor(() => expect(rust.argsOf("update_restart")).toHaveLength(1));
+});
+
+test("clicking the version asks the release page again", async () => {
+  await mount();
+  await vi.waitFor(() => expect(cell("Version").textContent).toBe("0.1.0"));
+  expect(rust.argsOf("update_check")).toHaveLength(1);
+  expect(cell("Update")).toBeNull();
+
+  await userEvent.click(cell("Version"));
+  await vi.waitFor(() => expect(rust.argsOf("update_check")).toHaveLength(2));
 });
 
 function slot(name: string) {

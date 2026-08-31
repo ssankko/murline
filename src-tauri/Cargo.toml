@@ -24,6 +24,12 @@ sqlx = { version = "0.8.6", default-features = false, features = ["derive", "mig
 tar = "0.4"
 tauri = { version = "2.11.5", features = [] }
 tauri-plugin-dialog = "2.7.0"
+# The macOS update arrives as a .app.tar.gz, which the zip feature unpacks; native-tls keeps one
+# TLS stack in the build, the same one reqwest uses.
+tauri-plugin-updater = { version = "2.10.1", default-features = false, features = [
+    "native-tls",
+    "zip",
+] }
 trash = { version = "5", default-features = false, features = ["coinit_apartmentthreaded"] }
 unicode-normalization = "0.1"
 zip = { version = "8", default-features = false, features = ["deflate-flate2"] }

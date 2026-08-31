@@ -1,7 +1,8 @@
 // The status bar: the last row of the library, the Preview and the play screen. On the left the
 // cog into the settings panel and two cells saying what the app is listening to and what it is
-// playing through; on the right the volumes, which are the mixer's button, and what the sound
-// engine costs.
+// playing through; on the right the volumes, which are the mixer's button, what the sound engine
+// costs, and the version cell. The cog and the version cell stand as high as the bar and reach
+// into its inset, so a press anywhere near either one lands on it.
 
 import { Mixer, SoundPopover } from '@/audio/mixer';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -16,7 +17,8 @@ import {
   type Meter,
 } from '@/rust';
 import { useSetting } from '@/settings/settings';
-import { AudioLines, Cpu, Gauge, Metronome, Piano, Settings } from 'lucide-react';
+import { checkUpdate, restartApp, takeUpdate, updateLabel, useVersions } from '@/update';
+import { AudioLines, Check, Cpu, Download, Gauge, Metronome, Piano, Settings } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 /** How the dot beside a cell reads: working, nothing there, or something wrong. */
@@ -154,10 +156,9 @@ export function StatusBar({
           <button
             aria-label="Settings"
             onClick={onOpenSettings}
-            className="hover:bg-ink/8 hover:text-ink flex size-[18px] flex-none items-center justify-center rounded-sm transition-colors duration-150"
+            className="text-muted-ink hover:bg-ink/8 hover:text-ink -ml-2 flex h-full flex-none items-center rounded-sm pr-1.5 pl-2 transition-colors duration-150"
           >
-            {/* The gear is solid, with the bar's own background left standing in its middle. */}
-            <Settings {...ICON} fill="currentColor" className="[&>circle]:fill-chrome" />
+            <Settings {...ICON} />
           </button>
         </Tip>
 
@@ -189,7 +190,7 @@ export function StatusBar({
           <TooltipContent side="top">{sound}</TooltipContent>
         </Tooltip>
 
-        <div className="text-muted-ink ml-auto flex flex-none items-center gap-2 whitespace-nowrap">
+        <div className="text-muted-ink ml-auto flex h-full flex-none items-center gap-2 whitespace-nowrap">
           <Mixer
             open={mixerOpen}
             onOpenChange={onMixerOpen}
@@ -247,9 +248,56 @@ export function StatusBar({
               </span>
             </span>
           </Tip>
+
+          <Version />
         </div>
       </div>
     </TooltipProvider>
+  );
+}
+
+/**
+ * The far right of the bar: the version running, with the mark beside it saying what the release
+ * page holds. Number and mark are one button, and what it does is what the mark shows: an amber
+ * arrow fetches the version waiting, a green check starts the app again so that version takes
+ * over, and a bare number asks the release page again.
+ */
+function Version() {
+  const versions = useVersions();
+  const { current, update } = versions;
+
+  useEffect(() => {
+    void checkUpdate();
+  }, []);
+
+  // What the button is called and what it does both follow the mark it carries.
+  const { name, press } =
+    update.kind === 'found'
+      ? { name: 'Update', press: takeUpdate }
+      : update.kind === 'ready'
+        ? { name: 'Restart', press: restartApp }
+        : { name: 'Version', press: checkUpdate };
+
+  return (
+    <Tip text={updateLabel(versions)}>
+      <button
+        aria-label={name}
+        onClick={() => void press()}
+        disabled={update.kind === 'taking'}
+        className="hover:bg-ink/8 hover:text-ink -mr-2 flex h-full items-center gap-1 rounded-sm pr-2 pl-1.5 transition-colors duration-150"
+      >
+        {current}
+        {(update.kind === 'found' || update.kind === 'taking') && (
+          <Download
+            {...ICON}
+            className={`text-amber-600 dark:text-amber-500 ${update.kind === 'taking' ? 'animate-pulse' : ''}`}
+          />
+        )}
+        {update.kind === 'ready' && (
+          <Check {...ICON} className="text-green-600 dark:text-green-500" />
+        )}
+      </button>
+    </Tip>
   );
 }
 

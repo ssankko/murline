@@ -7,6 +7,7 @@
 //   ?mocktauri&piece=prelude28-01.musicxml   one fixture from src-tauri/fixtures as the library
 //   &s.keyboard_preset=25&s.sheet_split=0.5   any global setting, as JSON, under an `s.` prefix
 //   &p.position_tick=38400                    any `piece` column, as JSON, under a `p.` prefix
+//   &update=0.1.1                             a version waiting on the release page
 
 import { DEFAULT_ANSWERS, fakeRust, fakeSettings, type FakeRust } from '@/rust.fake';
 
@@ -29,6 +30,7 @@ export function installTauriMock(): void {
       return row && Object.assign(row, columns);
     },
     list_library: () => pieces.map((relPath) => ({ relPath, mtime: 1, size: 1 })),
+    update_check: () => params.get('update'),
     read_file: async ({ path }) => {
       const response = await fetch(`/src-tauri/fixtures/${path.split('/').pop()}`);
       if (!response.ok) throw new Error(`no such file: ${path}`);

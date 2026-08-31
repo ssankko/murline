@@ -265,6 +265,11 @@ export const DEFAULT_ANSWERS: Answers = {
   pdmx_status: () => false,
   pdmx_fetch: () => '/pdmx',
   pdmx_cancel: nothing,
+  app_version: () => '0.1.0',
+  // The newest build, until a test says another version waits.
+  update_check: () => null,
+  update_install: nothing,
+  update_restart: nothing,
 };
 
 /** One command the window asked for, in the order it asked. */

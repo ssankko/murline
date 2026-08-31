@@ -151,12 +151,12 @@ export function StatusBar({
 
   return (
     <TooltipProvider>
-      <div className="bg-chrome border-edge-soft flex h-[22px] flex-none items-center gap-1 border-t px-2 text-[11px]">
+      <div className="bg-chrome border-edge-soft flex h-[22px] flex-none items-center gap-1 border-t px-4 text-[11px]">
         <Tip text="Settings (⌘,)">
           <button
             aria-label="Settings"
             onClick={onOpenSettings}
-            className="text-muted-ink hover:bg-ink/8 hover:text-ink -ml-2 flex h-full flex-none items-center rounded-sm pr-1.5 pl-2 transition-colors duration-150"
+            className="text-muted-ink hover:bg-ink/8 hover:text-ink -ml-4 flex h-full flex-none items-center rounded-sm pr-1.5 pl-4 transition-colors duration-150"
           >
             <Settings {...ICON} />
           </button>
@@ -190,7 +190,7 @@ export function StatusBar({
           <TooltipContent side="top">{sound}</TooltipContent>
         </Tooltip>
 
-        <div className="text-muted-ink ml-auto flex h-full flex-none items-center gap-2 whitespace-nowrap">
+        <div className="text-muted-ink ml-auto flex h-full flex-none items-center gap-3.5 whitespace-nowrap">
           <Mixer
             open={mixerOpen}
             onOpenChange={onMixerOpen}
@@ -223,7 +223,7 @@ export function StatusBar({
           <Tip text={latencyLabel(status)}>
             <span className="flex items-center gap-1">
               <Gauge {...ICON} />
-              <span className="min-w-[6ch] tabular-nums">
+              <span className={`tabular-nums ${latency === null ? '' : 'min-w-[6ch]'}`}>
                 {latency === null ? '—' : `${latency} ms`}
               </span>
             </span>
@@ -232,7 +232,7 @@ export function StatusBar({
           <Tip text="Voices sounding, of the most the engine holds">
             <span className="flex items-center gap-1">
               <AudioLines {...ICON} />
-              <span className="min-w-[7ch] tabular-nums">
+              <span className={`tabular-nums ${shown ? 'min-w-[7ch]' : ''}`}>
                 {shown ? `${shown.voices} / ${shown.limit}` : '—'}
               </span>
             </span>
@@ -242,7 +242,7 @@ export function StatusBar({
             <span className="flex items-center gap-1">
               <Cpu {...ICON} />
               <span
-                className={`min-w-[4ch] tabular-nums ${shown && shown.load > HOT ? 'text-red-600 dark:text-red-400' : ''}`}
+                className={`tabular-nums ${shown ? 'min-w-[4ch]' : ''} ${shown && shown.load > HOT ? 'text-red-600 dark:text-red-400' : ''}`}
               >
                 {shown ? `${shown.load}%` : '—'}
               </span>
@@ -284,7 +284,7 @@ function Version() {
         aria-label={name}
         onClick={() => void press()}
         disabled={update.kind === 'taking'}
-        className="hover:bg-ink/8 hover:text-ink -mr-2 flex h-full items-center gap-1 rounded-sm pr-2 pl-1.5 transition-colors duration-150"
+        className="hover:bg-ink/8 hover:text-ink -mr-4 -ml-1.5 flex h-full items-center gap-1 rounded-sm pr-4 pl-1.5 transition-colors duration-150"
       >
         {current}
         {(update.kind === 'found' || update.kind === 'taking') && (

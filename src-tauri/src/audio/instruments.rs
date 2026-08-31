@@ -17,8 +17,12 @@ use objc2_foundation::{
 };
 use std::path::{Path, PathBuf};
 
-/// Where Logic keeps the Studio Piano inside its sound library bundle in `~/Music`.
-const STUDIO_PIANO: &str = "Plug-In Settings/Sampler/z_Internal/Studio Piano";
+/// Where Logic keeps the Studio Piano under a sound library root: the first is the layout of a
+/// library relocated to a bundle, the second the layout of one left where the installer put it.
+const STUDIO_PIANO: [&str; 2] =
+    ["Plug-In Settings/Sampler/z_Internal/Studio Piano", "Sampler Instruments/z_Internal/Studio Piano"];
+/// The sound library root Logic uses until the user relocates it.
+const LOGIC_LIBRARY: &str = "/Library/Application Support/Logic";
 /// The Studio Piano instruments the engine plays. Vintage Upright is left out: its file stores
 /// percent-encoded sample paths that resolve to no sample on disk.
 const LOGIC_PIANOS: [&str; 2] = ["Concert Grand Piano", "Studio Grand Piano"];
@@ -35,7 +39,7 @@ const PATIENCE: std::time::Duration = std::time::Duration::from_secs(60);
 /// Every instrument the engine can play right now, in source order, with the load state of the one
 /// that is loaded (or that failed to).
 pub fn list(folder: &str) -> Vec<Instrument> {
-    let mut all = files(&music_folder(), Path::new(folder));
+    let mut all = files(&music_folder(), Path::new(LOGIC_LIBRARY), Path::new(folder));
     all.extend(plugins());
     let chosen = GRAPH.lock().unwrap().as_ref().and_then(|graph| graph.chosen().cloned());
     if let Some(chosen) = chosen {
@@ -114,8 +118,8 @@ fn apply_state(unit: &AVAudioUnitMIDIInstrument, state: &str) {
 }
 
 /// The file instruments: Logic's two pianos, then whatever the instruments folder holds.
-fn files(music: &Path, folder: &Path) -> Vec<Instrument> {
-    let mut all = logic_pianos(music);
+fn files(music: &Path, library: &Path, folder: &Path) -> Vec<Instrument> {
+    let mut all = logic_pianos(music, library);
     let mut own: Vec<Instrument> = read_dir(folder)
         .filter(|path| {
             path.extension()
@@ -131,17 +135,24 @@ fn files(music: &Path, folder: &Path) -> Vec<Instrument> {
     all
 }
 
-/// Logic's Studio Piano, read in place out of its sound library bundle. No Logic on the Mac means
-/// no bundle, no entries and nothing to report.
-fn logic_pianos(music: &Path) -> Vec<Instrument> {
-    read_dir(music)
-        .filter(|path| path.extension().is_some_and(|kind| kind == "bundle"))
-        .flat_map(|bundle| {
-            LOGIC_PIANOS.map(|name| bundle.join(STUDIO_PIANO).join(format!("{name}.exs")))
-        })
-        .filter(|path| path.is_file())
-        .map(|path| file_entry(&path, stem(&path)))
-        .collect()
+/// Logic's Studio Piano, read in place out of its sound library. A library relocated to a bundle
+/// in `~/Music` answers before the default root, and one library answers for all: the first root
+/// holding the pianos ends the search, so a relocation that left the old files behind lists them
+/// once. No Logic on the Mac means no entries and nothing to report.
+fn logic_pianos(music: &Path, library: &Path) -> Vec<Instrument> {
+    let bundles = read_dir(music).filter(|path| path.extension().is_some_and(|kind| kind == "bundle"));
+    for root in bundles.chain(std::iter::once(library.to_path_buf())) {
+        let found: Vec<Instrument> = STUDIO_PIANO
+            .iter()
+            .flat_map(|place| LOGIC_PIANOS.map(|name| root.join(place).join(format!("{name}.exs"))))
+            .filter(|path| path.is_file())
+            .map(|path| file_entry(&path, stem(&path)))
+            .collect();
+        if !found.is_empty() {
+            return found;
+        }
+    }
+    Vec::new()
 }
 
 /// The installed Audio Unit instruments, by manufacturer and name.
@@ -231,6 +242,16 @@ pub(in crate::audio) const APPLE_INSTRUMENT: AudioComponentDescription = AudioCo
     componentFlagsMask: 0,
 };
 
+/// The Studio Piano files on this Mac, wherever its sound library sits, for the tests that read a
+/// real Logic instrument.
+#[cfg(test)]
+pub(in crate::audio) fn logic_piano_paths() -> Vec<PathBuf> {
+    logic_pianos(&music_folder(), Path::new(LOGIC_LIBRARY))
+        .iter()
+        .filter_map(|entry| path_of(&entry.id))
+        .collect()
+}
+
 #[cfg(test)]
 pub(in crate::audio) fn hosted_instrument() -> Retained<AVAudioUnitMIDIInstrument> {
     instantiate(APPLE_INSTRUMENT).unwrap()
@@ -309,6 +330,11 @@ mod tests {
     /// The same few kilobytes of SoundFont the graph's own tests play.
     const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/sine.sf2");
 
+    /// A sound library root that holds nothing, for the tests that are about the other roots.
+    fn nowhere() -> PathBuf {
+        PathBuf::from("/nonexistent/Logic")
+    }
+
     fn write(folder: &Path, name: &str) {
         std::fs::create_dir_all(folder.parent().unwrap_or(folder)).unwrap();
         std::fs::create_dir_all(folder).unwrap();
@@ -323,7 +349,7 @@ mod tests {
             write(folder.path(), name);
         }
 
-        let found = files(music.path(), folder.path());
+        let found = files(music.path(), &nowhere(), folder.path());
         assert_eq!(
             found.iter().map(|entry| entry.name.as_str()).collect::<Vec<_>>(),
             ["SHOUTED.SF2", "piano.sf2", "strings.exs"]
@@ -336,15 +362,17 @@ mod tests {
     fn a_mac_without_logic_lists_no_pianos_and_says_nothing_about_it() {
         let music = tempfile::tempdir().unwrap();
         let folder = tempfile::tempdir().unwrap();
-        assert!(files(music.path(), folder.path()).is_empty());
-        assert!(files(&music.path().join("gone"), &folder.path().join("gone")).is_empty());
+        assert!(files(music.path(), &nowhere(), folder.path()).is_empty());
+        assert!(
+            files(&music.path().join("gone"), &nowhere(), &folder.path().join("gone")).is_empty()
+        );
     }
 
     #[test]
     fn logics_two_pianos_are_listed_and_the_vintage_upright_is_not() {
         let music = tempfile::tempdir().unwrap();
         let folder = tempfile::tempdir().unwrap();
-        let pianos = music.path().join("Logic Pro Library.bundle").join(STUDIO_PIANO);
+        let pianos = music.path().join("Logic Pro Library.bundle").join(STUDIO_PIANO[0]);
         for name in [
             "Concert Grand Piano.exs",
             "Studio Grand Piano.exs",
@@ -354,11 +382,52 @@ mod tests {
             write(&pianos, name);
         }
 
-        let found = files(music.path(), folder.path());
+        let found = files(music.path(), &nowhere(), folder.path());
         assert_eq!(
             found.iter().map(|entry| entry.name.as_str()).collect::<Vec<_>>(),
             ["Concert Grand Piano", "Studio Grand Piano"]
         );
+    }
+
+    /// A sound library the user never relocated stays under `/Library/Application Support/Logic`,
+    /// where the pianos sit in `Sampler Instruments` rather than under `Plug-In Settings`.
+    #[test]
+    fn a_sound_library_left_where_logic_installed_it_lists_the_same_two_pianos() {
+        let music = tempfile::tempdir().unwrap();
+        let library = tempfile::tempdir().unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        let pianos = library.path().join("Sampler Instruments/z_Internal/Studio Piano");
+        for name in ["Concert Grand Piano.exs", "Studio Grand Piano.exs", "Vintage Upright Piano.exs"] {
+            write(&pianos, name);
+        }
+
+        let found = files(music.path(), library.path(), folder.path());
+        assert_eq!(
+            found.iter().map(|entry| entry.name.as_str()).collect::<Vec<_>>(),
+            ["Concert Grand Piano", "Studio Grand Piano"]
+        );
+        assert_eq!(found[0].id, format!("file:{}", pianos.join("Concert Grand Piano.exs").display()));
+    }
+
+    /// Relocating a library copies the pianos without always clearing the old root, and the app
+    /// plays one instrument, not two of each.
+    #[test]
+    fn pianos_in_both_roots_are_listed_once() {
+        let music = tempfile::tempdir().unwrap();
+        let library = tempfile::tempdir().unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        let bundle = music.path().join("Logic Pro Library.bundle").join(STUDIO_PIANO[0]);
+        for name in ["Concert Grand Piano.exs", "Studio Grand Piano.exs"] {
+            write(&bundle, name);
+            write(&library.path().join(STUDIO_PIANO[1]), name);
+        }
+
+        let found = files(music.path(), library.path(), folder.path());
+        assert_eq!(
+            found.iter().map(|entry| entry.name.as_str()).collect::<Vec<_>>(),
+            ["Concert Grand Piano", "Studio Grand Piano"]
+        );
+        assert!(found.iter().all(|entry| entry.id.contains(".bundle")), "{found:?}");
     }
 
     #[test]

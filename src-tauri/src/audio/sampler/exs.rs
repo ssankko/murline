@@ -462,11 +462,11 @@ mod tests {
             "articulation",
             "tempo",
         ];
-        let library = PathBuf::from(std::env::var("HOME").unwrap()).join(
-            "Music/Logic Pro Library.bundle/Plug-In Settings/Sampler/z_Internal/Studio Piano",
-        );
-        for name in ["Concert Grand Piano", "Studio Grand Piano"] {
-            let exs = read(&library.join(format!("{name}.exs"))).unwrap();
+        let pianos = crate::audio::instruments::logic_piano_paths();
+        assert_eq!(pianos.len(), 2, "the Logic pianos are not on this Mac: {pianos:?}");
+        for piano in &pianos {
+            let exs = read(piano).unwrap();
+            let name = piano.file_stem().unwrap().to_string_lossy();
             println!("\n{name}");
             for group in &exs.groups {
                 println!(

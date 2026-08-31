@@ -120,12 +120,6 @@ impl Stream {
         self.slots.len()
     }
 
-    /// Frames a voice has been given and not yet read. What a test waits on.
-    #[cfg(test)]
-    pub fn ready(&self, slot: usize) -> usize {
-        self.slots.get(slot).map_or(0, |slot| slot.frames.ready() / 2)
-    }
-
     pub fn underruns(&self) -> u64 {
         self.underruns.load(Relaxed)
     }

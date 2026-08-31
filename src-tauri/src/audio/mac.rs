@@ -1479,6 +1479,19 @@ mod tests {
         (0..passes).find(|_| graph.render_peak(PASS).unwrap() > 0.01)
     }
 
+    /// One click and the peak it comes out at, zero if it never sounded. The player takes a
+    /// scheduled buffer onto its render side on its own time, so the graph is rendered on until
+    /// the click is there, one pass more for a click that began at the end of a pass, and a look
+    /// further so it has died away before the next one.
+    fn click_peak(graph: &mut Graph, strong: bool, volume: u32) -> f32 {
+        graph.click(strong, volume);
+        let mut passes = (0..50).map(|_| graph.render_peak(PASS).unwrap());
+        let Some(first) = passes.find(|&peak| peak > 0.01) else { return 0.0 };
+        let peak = first.max(passes.next().unwrap_or(0.0));
+        graph.render_peak(LOOK).unwrap();
+        peak
+    }
+
     /// A second of a 55 Hz sine that starts at its own peak, looped, mapped across the keyboard at
     /// the pitch it was recorded at. A voice that read it straight from the first frame would put
     /// nine tenths of full scale into the output in one frame, which is what a click is.
@@ -2156,8 +2169,7 @@ mod tests {
         unsafe { graph.engine.stop() };
         graph.start().unwrap();
 
-        graph.click(true, 100);
-        assert!(graph.render_peak(LOOK).unwrap() > 0.01);
+        assert!(click_peak(&mut graph, true, 100) > 0.01);
     }
 
     #[test]
@@ -2200,16 +2212,13 @@ mod tests {
     #[test]
     fn a_click_puts_sound_on_the_mixer_and_a_volume_of_zero_does_not() {
         let mut graph = offline();
-        graph.click(true, 100);
-        let strong = graph.render_peak(LOOK).unwrap();
+        let strong = click_peak(&mut graph, true, 100);
         assert!(strong > 0.01);
 
-        graph.click(false, 100);
-        let weak = graph.render_peak(LOOK).unwrap();
+        let weak = click_peak(&mut graph, false, 100);
         assert!(weak > 0.01 && weak < strong, "strong {strong}, weak {weak}");
 
-        graph.click(true, 0);
-        assert_eq!(graph.render_peak(LOOK).unwrap(), 0.0);
+        assert_eq!(click_peak(&mut graph, true, 0), 0.0);
     }
 
     /// The Audio dialog switches instrument on the worker thread its command came in on, and a

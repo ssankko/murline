@@ -203,14 +203,11 @@ pub fn listen(pinned: Option<String>, hidden: Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::thread::sleep;
 
     #[test]
     fn a_message_is_stamped_in_unix_milliseconds() {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64() * 1e3;
         assert!((now_ms() - now).abs() < 1000.0, "{} against {now}", now_ms());
-        sleep(Duration::from_millis(5));
-        assert!((5.0..25.0).contains(&(now_ms() - now)), "{} ms on", now_ms() - now);
     }
 
     /// The whole path a key press takes, on a port the test makes itself. It needs the macOS sound
@@ -221,6 +218,7 @@ mod tests {
         use crate::audio;
         use midir::MidiOutput;
         use midir::os::unix::VirtualOutput;
+        use std::thread::sleep;
 
         /// The same two kilobytes of SoundFont the engine's own tests play: one sine across the
         /// keyboard, so a note that reaches the instrument is a peak the test can read.

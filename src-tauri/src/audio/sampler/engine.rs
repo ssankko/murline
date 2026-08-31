@@ -838,42 +838,26 @@ mod tests {
         (Arc::new(instrument), frame)
     }
 
-    /// A thread standing in for the disk: it takes every order and answers it whole. Ends with the
-    /// instrument, like the real reader does.
-    fn feeder(instrument: &Arc<Instrument>, frame: impl Fn(usize) -> [i16; 2] + Send + 'static) {
-        let watch = Arc::downgrade(instrument.stream.as_ref().unwrap());
-        std::thread::spawn(move || {
-            while let Some(stream) = watch.upgrade() {
-                match stream.order() {
-                    Some(fill) if stream.open(&fill) => {
-                        let frames: Vec<i16> = (fill.from..fill.to).flat_map(&frame).collect();
-                        stream.feed(&fill, &frames);
-                    }
-                    _ => std::thread::sleep(std::time::Duration::from_millis(1)),
-                }
-            }
-        });
-    }
-
-    /// Waits for the reader to have the frames the render is about to ask for, which on the real
-    /// device the head buys time for and here would otherwise be a race.
-    fn wait(instrument: &Instrument, slot: usize, frames: usize) {
+    /// Stands in for the disk: answers every order the voices have placed, whole, so the ring
+    /// holds the rest of the sample before the render asks for it.
+    fn feed(instrument: &Instrument, frame: impl Fn(usize) -> [i16; 2]) {
         let stream = instrument.stream.as_deref().unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while stream.ready(slot) < frames && std::time::Instant::now() < deadline {
-            std::thread::yield_now();
+        while let Some(fill) = stream.order() {
+            if stream.open(&fill) {
+                let frames: Vec<i16> = (fill.from..fill.to).flat_map(&frame).collect();
+                assert_eq!(stream.feed(&fill, &frames), fill.to - fill.from, "the ring holds it all");
+            }
         }
     }
 
     #[test]
     fn a_streamed_zone_runs_out_of_its_head_into_the_ring_without_a_step() {
         let (instrument, frame) = streamed();
-        feeder(&instrument, frame);
         let (mut s, _dead) = sampler(8);
         s.apply(Command::Load(instrument.clone()));
         // A key off its root, so the boundary is crossed between two frames rather than on one.
         s.apply(Command::NoteOn { note: 61, velocity: 127 });
-        wait(&instrument, 0, (RATE * 0.7) as usize);
+        feed(&instrument, frame);
 
         let out = render(&mut s, 0.5);
         let boundary = (RATE * 0.09) as usize;

@@ -16,15 +16,19 @@ const STORED: Record<string, unknown> = {
 let engineReason: string | null = null;
 /** What the engine answers for its instrument list while it is set. */
 let listed: { id: string; name: string }[] = [];
-/** While it is set, the scan waits on it, so a step can be watched in flight. */
-let heldScan: Promise<void> | null = null;
+/** While it is set, the scan tells `reached` it started and then waits on `held`, so a step can be
+ * watched in flight. */
+let heldScan: { reached: () => void; held: Promise<void> } | null = null;
 
 // The paper is the window's, and this test has none.
 vi.mock('@/look/use-dark', () => ({ useDark: () => false }));
 vi.mock('@/library/scan', () => ({
   scanLibrary: async (folder: string) => {
     if (folder === '/gone') throw new Error('folder is gone');
-    if (heldScan) await heldScan;
+    if (heldScan) {
+      heldScan.reached();
+      await heldScan.held;
+    }
   },
 }));
 /** Every command but the settings answers the way a refusing or an absent engine would. */
@@ -77,12 +81,13 @@ test('every step names itself while it runs, in the order the steps run', async 
 
 test('a step in flight reads with no tail, and its tail flips when the step lands', async () => {
   let release!: () => void;
-  heldScan = new Promise<void>((resolve) => (release = resolve));
+  let reached!: () => void;
+  const scanning = new Promise<void>((resolve) => (reached = resolve));
+  heldScan = { reached, held: new Promise<void>((resolve) => (release = resolve)) };
   try {
     const printed: BootLine[][] = [];
     const done = boot((lines) => printed.push(lines));
-    // One turn of the loop lets the log reach the held scan and stop there.
-    await new Promise((resolve) => setTimeout(resolve));
+    await scanning;
     const last = printed[printed.length - 1]!;
     expect(last[last.length - 1]).toEqual({ label: 'scanning /scores', state: 'running' });
     release();

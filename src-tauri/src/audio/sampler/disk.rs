@@ -82,41 +82,53 @@ fn serve(stream: Weak<Stream>, mut readers: Vec<Reader>) {
     loop {
         let Some(stream) = stream.upgrade() else { return };
         jobs.resize(stream.slots(), None);
-        while let Some(fill) = stream.order() {
-            if stream.open(&fill) {
-                jobs[fill.slot] = Some(fill);
-            }
-        }
-
-        let mut worked = false;
-        for (slot, job) in jobs.iter_mut().enumerate() {
-            let Some(fill) = job else { continue };
-            if stream.stale(fill) || fill.from >= fill.to {
-                *job = None;
-                continue;
-            }
-            let want = CHUNK.min(fill.to - fill.from);
-            if stream.room(slot) < want {
-                continue;
-            }
-            let read = readers
-                .get_mut(fill.sample)
-                .map_or(Ok(0), |reader| reader.read(fill.from, &mut chunk[..want * 2]));
-            match read {
-                // A file that stops early or errs has nothing more for this voice.
-                Ok(0) | Err(_) => *job = None,
-                Ok(frames) => {
-                    stream.feed(fill, &chunk[..frames * 2]);
-                    fill.from += frames;
-                    worked = true;
-                }
-            }
-        }
+        let worked = round(&stream, &mut readers, &mut jobs, &mut chunk);
         drop(stream);
         if !worked {
             thread::sleep(POLL);
         }
     }
+}
+
+/// One round of the reader: takes the new orders and reads one chunk for every voice with room
+/// for it. False when there was nothing to do, which is when the thread may rest.
+fn round(
+    stream: &Stream,
+    readers: &mut [Reader],
+    jobs: &mut [Option<super::Fill>],
+    chunk: &mut [i16],
+) -> bool {
+    while let Some(fill) = stream.order() {
+        if stream.open(&fill) {
+            jobs[fill.slot] = Some(fill);
+        }
+    }
+
+    let mut worked = false;
+    for (slot, job) in jobs.iter_mut().enumerate() {
+        let Some(fill) = job else { continue };
+        if stream.stale(fill) || fill.from >= fill.to {
+            *job = None;
+            continue;
+        }
+        let want = CHUNK.min(fill.to - fill.from);
+        if stream.room(slot) < want {
+            continue;
+        }
+        let read = readers
+            .get_mut(fill.sample)
+            .map_or(Ok(0), |reader| reader.read(fill.from, &mut chunk[..want * 2]));
+        match read {
+            // A file that stops early or errs has nothing more for this voice.
+            Ok(0) | Err(_) => *job = None,
+            Ok(frames) => {
+                stream.feed(fill, &chunk[..frames * 2]);
+                fill.from += frames;
+                worked = true;
+            }
+        }
+    }
+    worked
 }
 
 /// One sample file, open and decoding to interleaved 16-bit stereo at the rate it was recorded at.
@@ -271,14 +283,6 @@ mod tests {
         out
     }
 
-    /// Waits for the reader thread, which is the one thing here that does not answer at once.
-    fn wait(stream: &Stream, slot: usize, frames: usize) {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while stream.ready(slot) < frames && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(1));
-        }
-    }
-
     /// A file longer than one head, so the load keeps the front of it and the reader has to fetch
     /// the rest from where the head stops.
     #[test]
@@ -303,17 +307,21 @@ mod tests {
             end: frames,
             loop_: None,
         };
-        let instrument = build(vec![zone], &[SampleRef { path, frames }], 4).unwrap();
+        let instrument = build(vec![zone], &[SampleRef { path: path.clone(), frames }], 4).unwrap();
 
         let head = (HEAD * RATE as f64) as usize;
         assert_eq!(instrument.samples[0].rate, RATE as f64);
         assert!(instrument.samples[0].data.is_none(), "nothing but the head is held");
         assert_eq!(instrument.heads[0], pcm[..head * 2], "and the head is the front of the file");
 
-        let stream = instrument.stream.clone().unwrap();
+        // The reader's rounds, run here rather than on its thread, until one finds nothing to do.
+        let stream = Stream::new(4, RING);
+        let mut readers = vec![Reader::open(&path).unwrap()];
+        let mut jobs = vec![None; 4];
+        let mut chunk = vec![0i16; CHUNK * 2];
         let generation =
             stream.start(Fill { slot: 1, sample: 0, from: head, to: frames, ..Fill::default() });
-        wait(&stream, 1, frames - head);
+        while round(&stream, &mut readers, &mut jobs, &mut chunk) {}
 
         let mut got = Vec::new();
         let mut frame = [0i16; 2];

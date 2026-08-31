@@ -128,7 +128,7 @@ fn present(
     window.makeKeyAndOrderFront(None);
 
     let closing = RcBlock::new(move |_: NonNull<NSNotification>| {
-        let state = unsafe { state_of(&(&*unit.0 as &AVAudioUnit).AUAudioUnit()) };
+        let state = state_of(&unit.0);
         post.try_send(Ok(state)).ok();
         forget_window();
     });
@@ -163,7 +163,7 @@ fn forget_window() {
 
 /// The AUv2 path: the Cocoa view the unit publishes, built by the factory class inside the bundle
 /// the unit names.
-unsafe fn cocoa_view(unit: AudioUnit, mtm: MainThreadMarker) -> Option<Retained<NSView>> {
+pub(super) unsafe fn cocoa_view(unit: AudioUnit, mtm: MainThreadMarker) -> Option<Retained<NSView>> {
     unsafe {
         let mut info = std::mem::MaybeUninit::<AudioUnitCocoaViewInfo>::zeroed();
         let mut size = size_of::<AudioUnitCocoaViewInfo>() as u32;
@@ -196,7 +196,7 @@ unsafe fn cocoa_view(unit: AudioUnit, mtm: MainThreadMarker) -> Option<Retained<
 }
 
 /// The last resort: the parameter view CoreAudioKit builds for any unit at all.
-unsafe fn generic_view(unit: AudioUnit) -> Option<Retained<NSView>> {
+pub(super) unsafe fn generic_view(unit: AudioUnit) -> Option<Retained<NSView>> {
     unsafe {
         let framework =
             NSBundle::bundleWithPath(&NSString::from_str("/System/Library/Frameworks/CoreAudioKit.framework"))?;

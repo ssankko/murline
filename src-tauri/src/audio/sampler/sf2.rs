@@ -101,13 +101,10 @@ fn parse(bytes: &[u8]) -> Result<Instrument, String> {
         };
         for zone in zoned(&ibag, &igen, from, to, SAMPLE_ID) {
             let Some(id) = value(&zone, SAMPLE_ID).map(|id| id as u16) else { continue };
-            let Some(header) = shdr.get(id as usize * SHDR..).map(|rest| &rest[..SHDR.min(rest.len())])
+            let Some(header) = shdr.get(id as usize * SHDR..).and_then(|rest| rest.get(..SHDR))
             else {
                 continue;
             };
-            if header.len() < SHDR {
-                continue;
-            }
             let at = match made.get(&id) {
                 Some(&at) => at,
                 None => {

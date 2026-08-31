@@ -6,27 +6,24 @@
 //! and its state blob and is simply left out of the wiring, as a bypassed one is, so nothing about
 //! the instrument stops when either changes.
 
+use crate::audio::instruments::{apply_state, state_of};
 use crate::audio::mac::{GRAPH, Graph, release_on_main};
+use crate::audio::window::{cocoa_view, generic_view};
 use crate::audio::{Effect, Slot};
 use block2::RcBlock;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyClass, AnyObject};
+use objc2::runtime::AnyObject;
 use objc2::{AllocAnyThread, MainThreadMarker, MainThreadOnly, Message, msg_send, sel};
 use objc2_app_kit::{
-    NSBackingStoreType, NSView, NSViewController, NSWindow, NSWindowStyleMask,
+    NSBackingStoreType, NSViewController, NSWindow, NSWindowStyleMask,
     NSWindowWillCloseNotification,
 };
-use objc2_audio_toolbox::{
-    AudioComponentDescription, AudioUnitCocoaViewInfo, AudioUnitGetProperty,
-    kAudioUnitProperty_CocoaUI, kAudioUnitScope_Global,
-};
+use objc2_audio_toolbox::AudioComponentDescription;
 use objc2_avf_audio::{
-    AVAudioMixing, AVAudioNode, AVAudioUnit, AVAudioUnitComponentManager, AVAudioUnitEffect,
+    AVAudioMixing, AVAudioNode, AVAudioUnitComponentManager, AVAudioUnitEffect,
 };
 use objc2_foundation::{
-    NSBundle, NSData, NSDataBase64DecodingOptions, NSDataBase64EncodingOptions, NSDictionary,
-    NSNotificationCenter, NSObjectProtocol, NSPoint, NSPropertyListFormat,
-    NSPropertyListMutabilityOptions, NSPropertyListSerialization, NSRect, NSSize, NSString, NSURL,
+    NSNotificationCenter, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -210,7 +207,7 @@ fn slots(graph: &Graph) -> Vec<Slot> {
             name: held.name.clone(),
             bypass: held.bypass,
             state: match &held.unit {
-                Some(unit) => read_state(unit).unwrap_or_else(|| held.state.clone()),
+                Some(unit) => state_of(unit).unwrap_or_else(|| held.state.clone()),
                 None => held.state.clone(),
             },
             missing: held.unit.is_none(),
@@ -255,48 +252,6 @@ pub(super) fn rewire(graph: &Graph) {
             engine.connect_to_format(&graph.source, &graph.fader, Some(&graph.format));
         }
         graph.source.setVolume(if plays { 1.0 } else { 0.0 });
-    }
-}
-
-/// The plugin's whole state as a base64 property list, the one string the webview keeps for it.
-fn read_state(unit: &AVAudioUnit) -> Option<String> {
-    unsafe {
-        let state = unit.AUAudioUnit().fullState()?;
-        let data = NSPropertyListSerialization::dataWithPropertyList_format_options_error(
-            &state,
-            NSPropertyListFormat::BinaryFormat_v1_0,
-            0,
-        )
-        .ok()?;
-        Some(
-            data.base64EncodedStringWithOptions(NSDataBase64EncodingOptions::empty())
-                .to_string(),
-        )
-    }
-}
-
-/// The other way round, for a plugin that has just been loaded. A blob the plugin will not read is
-/// no reason to refuse the slot: it plays at its defaults instead.
-fn apply_state(unit: &AVAudioUnit, blob: &str) {
-    unsafe {
-        let Some(data) = NSData::initWithBase64EncodedString_options(
-            NSData::alloc(),
-            &NSString::from_str(blob),
-            NSDataBase64DecodingOptions::empty(),
-        ) else {
-            return;
-        };
-        let Ok(plist) = NSPropertyListSerialization::propertyListWithData_options_format_error(
-            &data,
-            NSPropertyListMutabilityOptions::Immutable,
-            std::ptr::null_mut(),
-        ) else {
-            return;
-        };
-        if let Ok(state) = plist.downcast::<NSDictionary>() {
-            unit.AUAudioUnit()
-                .setFullState(Some(state.cast_unchecked()));
-        }
     }
 }
 
@@ -425,61 +380,16 @@ fn fill(window: &NSWindow, unit: &AVAudioUnitEffect, mtm: MainThreadMarker) {
     cocoa_or_generic(window, unit, mtm);
 }
 
+/// The AUv2 paths: the Cocoa view the plugin publishes, and Apple's generic view of its parameters
+/// for the plugin that publishes none.
 fn cocoa_or_generic(window: &NSWindow, unit: &AVAudioUnitEffect, mtm: MainThreadMarker) {
-    let view = cocoa_view(unit, mtm).or_else(|| generic_view(unit, mtm));
+    let view = unsafe {
+        let raw = unit.audioUnit();
+        cocoa_view(raw, mtm).or_else(|| generic_view(raw))
+    };
     if let Some(view) = view {
         window.setContentView(Some(&view));
         fit(window);
-    }
-}
-
-/// The view an AUv2 publishes: a bundle and a class name, which the host loads and asks for a view.
-fn cocoa_view(unit: &AVAudioUnitEffect, _mtm: MainThreadMarker) -> Option<Retained<NSView>> {
-    unsafe {
-        let audio_unit = unit.audioUnit();
-        let mut info = std::mem::MaybeUninit::<AudioUnitCocoaViewInfo>::zeroed();
-        let mut size = std::mem::size_of::<AudioUnitCocoaViewInfo>() as u32;
-        let status = AudioUnitGetProperty(
-            audio_unit,
-            kAudioUnitProperty_CocoaUI,
-            kAudioUnitScope_Global,
-            0,
-            std::ptr::NonNull::new(info.as_mut_ptr().cast()).unwrap(),
-            std::ptr::NonNull::from(&mut size),
-        );
-        if status != 0 {
-            return None;
-        }
-        let info = info.assume_init();
-        let url: Retained<NSURL> = Retained::retain(info.mCocoaAUViewBundleLocation.as_ptr().cast())?;
-        let class_name: Retained<NSString> = Retained::retain(info.mCocoaAUViewClass[0].as_ptr().cast())?;
-        let bundle = NSBundle::bundleWithURL(&url)?;
-        bundle.load();
-        let class = AnyClass::get(&std::ffi::CString::new(class_name.to_string()).ok()?)?;
-        let factory: Retained<AnyObject> = msg_send![class, new];
-        let view: *mut NSView = msg_send![
-            &*factory,
-            uiViewForAudioUnit: audio_unit,
-            withSize: NSSize::new(640.0, 400.0),
-        ];
-        Retained::retain(view)
-    }
-}
-
-/// Apple's own view of a plugin's parameters, for the plugin that draws none of its own. It lives
-/// in CoreAudioKit, which nothing else in the app needs, so it is loaded the first time it is.
-fn generic_view(unit: &AVAudioUnitEffect, _mtm: MainThreadMarker) -> Option<Retained<NSView>> {
-    unsafe {
-        let name = c"AUGenericView";
-        let class = AnyClass::get(name).or_else(|| {
-            let path = NSString::from_str("/System/Library/Frameworks/CoreAudioKit.framework");
-            NSBundle::bundleWithPath(&path)?.load().then_some(())?;
-            AnyClass::get(name)
-        })?;
-        let view: *mut NSView = msg_send![class, alloc];
-        let view: *mut NSView = msg_send![view, initWithAudioUnit: unit.audioUnit()];
-        // An init hands its one reference over, unlike the view an AUv2 factory lends out.
-        Retained::from_raw(view)
     }
 }
 
@@ -535,7 +445,7 @@ mod tests {
     use super::*;
     use crate::audio::instruments::hosted_instrument;
     use crate::audio::mac::Graph;
-    use objc2_audio_toolbox::AudioUnitSetParameter;
+    use objc2_audio_toolbox::{AudioUnitSetParameter, kAudioUnitScope_Global};
     use std::path::Path;
 
     /// Apple's reverb: an effect every Mac has, so no test here needs a plugin the user installed.

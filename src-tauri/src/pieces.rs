@@ -156,11 +156,10 @@ pub async fn piece_paths(app: AppHandle) -> Result<Vec<String>, Refusal> {
 }
 
 async fn paths(pool: &SqlitePool) -> Result<Vec<String>, String> {
-    let rows: Vec<(String,)> = sqlx::query_as("SELECT path FROM piece WHERE present = 1")
+    sqlx::query_scalar("SELECT path FROM piece WHERE present = 1")
         .fetch_all(pool)
         .await
-        .map_err(|e| e.to_string())?;
-    Ok(rows.into_iter().map(|(path,)| path).collect())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

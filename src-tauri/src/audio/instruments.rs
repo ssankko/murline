@@ -9,8 +9,7 @@ use crate::audio::{Instrument, Kept, Status};
 use block2::RcBlock;
 use objc2::AnyThread;
 use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
-use objc2_audio_toolbox::{AUAudioUnit, AudioComponentDescription, AudioComponentInstantiationOptions};
+use objc2_audio_toolbox::{AudioComponentDescription, AudioComponentInstantiationOptions};
 use objc2_avf_audio::{AVAudioUnit, AVAudioUnitComponentManager, AVAudioUnitMIDIInstrument};
 use objc2_foundation::{
     NSData, NSDataBase64DecodingOptions, NSDataBase64EncodingOptions, NSDictionary, NSError,
@@ -103,14 +102,13 @@ fn build(id: &str, state: Option<&str>, voices: usize) -> (String, Result<Made, 
     }
 }
 
-/// The plugin state to store with the instrument choice: `fullState` as a property list, base64 so
-/// that it crosses the command boundary as a plain string.
-pub fn state_of(unit: &AUAudioUnit) -> Option<String> {
+/// A hosted unit's whole state as a base64 property list, the one string the webview keeps for it,
+/// whether the unit plays as the instrument or sits in the effect chain.
+pub(in crate::audio) fn state_of(unit: &AVAudioUnit) -> Option<String> {
     unsafe {
-        let full = unit.fullState()?;
-        let plist: &AnyObject = &full;
+        let full = unit.AUAudioUnit().fullState()?;
         let data = NSPropertyListSerialization::dataWithPropertyList_format_options_error(
-            plist,
+            &full,
             NSPropertyListFormat::BinaryFormat_v1_0,
             0,
         )
@@ -119,9 +117,9 @@ pub fn state_of(unit: &AUAudioUnit) -> Option<String> {
     }
 }
 
-/// The other direction, on a freshly instantiated unit. A blob the plugin no longer understands is
-/// dropped rather than reported: the instrument still plays, at its own defaults.
-fn apply_state(unit: &AVAudioUnitMIDIInstrument, state: &str) {
+/// The other direction, on a freshly built unit. A blob the plugin no longer understands is
+/// dropped rather than reported: the unit still plays, at its own defaults.
+pub(in crate::audio) fn apply_state(unit: &AVAudioUnit, state: &str) {
     unsafe {
         let Some(data) = NSData::initWithBase64EncodedString_options(
             NSData::alloc(),
@@ -132,14 +130,14 @@ fn apply_state(unit: &AVAudioUnitMIDIInstrument, state: &str) {
         };
         let Ok(plist) = NSPropertyListSerialization::propertyListWithData_options_format_error(
             &data,
-            NSPropertyListMutabilityOptions::empty(),
+            NSPropertyListMutabilityOptions::Immutable,
             std::ptr::null_mut(),
         ) else {
             return;
         };
-        let dict: *const NSDictionary<NSString, AnyObject> = Retained::as_ptr(&plist).cast();
-        let au: &AVAudioUnit = unit;
-        au.AUAudioUnit().setFullState(Some(&*dict));
+        if let Ok(state) = plist.downcast::<NSDictionary>() {
+            unit.AUAudioUnit().setFullState(Some(state.cast_unchecked()));
+        }
     }
 }
 
@@ -521,10 +519,10 @@ mod tests {
         graph.note_on(60, 100);
         assert!(graph.render_peak(4410).unwrap() > 0.01);
 
-        let state = unsafe { state_of(&graph.plugin().unwrap().AUAudioUnit()) }.unwrap();
+        let state = state_of(graph.plugin().unwrap()).unwrap();
         let fresh = hosted_instrument();
         apply_state(&fresh, &state);
-        assert_eq!(unsafe { state_of(&fresh.AUAudioUnit()) }.unwrap(), state);
+        assert_eq!(state_of(&fresh).unwrap(), state);
     }
 
     #[test]

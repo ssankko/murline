@@ -228,7 +228,7 @@ fn convert(measure: Elem, st: &mut State, first_measure: bool) -> Vec<Elem> {
                 let chord = child(&el, "chord").is_some();
                 for lyric in take_all(&mut el, "lyric") {
                     let text = child(&lyric, "text").map(text_of).unwrap_or_default();
-                    if is_dynamic(text.trim()) {
+                    if DYNAMICS.contains(&text.trim()) {
                         // The mark goes on staff 1 like a MuseScore piano export's, whichever part
                         // the lyric was in, before the note or before the first note of its chord.
                         let mut pos = out.len();
@@ -319,10 +319,6 @@ fn staff_of_clef(clef: &Elem) -> u8 {
     } else {
         1
     }
-}
-
-fn is_dynamic(word: &str) -> bool {
-    DYNAMICS.contains(&word)
 }
 
 fn dynamics(word: &str, staff: &str) -> Elem {

@@ -903,8 +903,8 @@ fn curved(velocity: u8, min: u8, max: u8, exponent: f64) -> u8 {
 /// no thread for either side, so the app takes the one AppKit already tears windows down on.
 /// Nothing waits for this; the plugin is gone by the next turn of the main run loop.
 pub(super) fn release_on_main<T: objc2::Message + 'static>(unit: Retained<T>) {
-    let leaving = std::cell::RefCell::new(Some(unit));
-    let let_go = RcBlock::new(move || drop(leaving.borrow_mut().take()));
+    let leaving = std::cell::Cell::new(Some(unit));
+    let let_go = RcBlock::new(move || drop(leaving.take()));
     unsafe { NSOperationQueue::mainQueue().addOperationWithBlock(&let_go) };
 }
 
@@ -1337,6 +1337,7 @@ pub fn peak(frames: u32) -> f32 {
 mod tests {
     use super::*;
     use head::Sent;
+    use objc2_avf_audio::AVAudioTime;
 
     /// A few kilobytes of SoundFont: one looped sine mapped across the keyboard, so any note the
     /// tests play sounds. `fixtures/make-sine-sf2.py` writes it.
@@ -1358,6 +1359,11 @@ mod tests {
         graph.load_file(Path::new(FIXTURE)).unwrap();
         graph.start_offline(PASS).unwrap();
         graph
+    }
+
+    /// The loudest sample of a stretch of them.
+    fn peak(samples: &[f32]) -> f32 {
+        samples.iter().fold(0f32, |top, one| top.max(one.abs()))
     }
 
     /// Plays a note and lets it go again, answering how loud it was. Two instruments differ in
@@ -1525,14 +1531,14 @@ mod tests {
 
         graph.note_on(60, 127);
         let samples = graph.render_frames(LOOK).unwrap();
-        let peak = samples.iter().fold(0f32, |top, one| top.max(one.abs()));
-        assert!(peak > 0.1, "the instrument sounds at all: {peak}");
+        let loudest = peak(&samples);
+        assert!(loudest > 0.1, "the instrument sounds at all: {loudest}");
 
         let head = &samples[..(RATE * 0.003) as usize];
         let step = head.windows(2).fold(0f32, |top, pair| top.max((pair[1] - pair[0]).abs()));
         assert!(
-            step < peak * 0.02,
-            "the note opens by steps of {step} against a peak of {peak}"
+            step < loudest * 0.02,
+            "the note opens by steps of {step} against a peak of {loudest}"
         );
 
         graph.release_all();
@@ -1593,26 +1599,76 @@ mod tests {
         assert_eq!(at_volume(&mut graph, 0), 0.0, "a fader at zero is silence");
     }
 
+    /// The engine on the real output device at the buffer the app boots with, installed where a
+    /// command reaches it. Every test that takes this opens real hardware.
+    fn boot() {
+        let graph = Graph::build().unwrap();
+        graph.start().unwrap();
+        install(graph);
+        installed().set_device(None).unwrap();
+        installed().set_buffer(DEFAULT_FRAMES).unwrap();
+    }
+
+    /// Loads one of Logic's pianos by name, and says so if the engine will not play it.
+    fn load_piano(name: &str) {
+        let piano = instruments("")
+            .into_iter()
+            .find(|one| one.name == name)
+            .unwrap_or_else(|| panic!("Logic's {name} is on this Mac"));
+        load_instrument(&piano.id, &Kept::default()).unwrap();
+        let said = installed().status();
+        assert!(said.available, "{}", said.reason);
+    }
+
+    /// Samples off the mixer, and the render time each buffer of them claims to start at.
+    type Tapped = (Vec<f32>, Vec<(i64, u32)>);
+
+    /// The block the mixer calls on its render thread, held for as long as the tap is installed.
+    type TapBlock = RcBlock<dyn Fn(NonNull<AVAudioPCMBuffer>, NonNull<AVAudioTime>)>;
+
+    /// Taps the main mixer: what it fills, the rate it fills it at, and the block itself. Room for
+    /// the whole tap is taken up front, because a tap block that grows its buffer holds up the
+    /// render thread, and a held-up render thread is a hole in what these tests measure.
+    fn tap_mixer() -> (Arc<Mutex<Tapped>>, f64, TapBlock) {
+        let taken: Arc<Mutex<Tapped>> =
+            Arc::new(Mutex::new((Vec::with_capacity(96_000 * 8), Vec::new())));
+        let into = taken.clone();
+        let tap = RcBlock::new(
+            move |buffer: NonNull<AVAudioPCMBuffer>, when: NonNull<AVAudioTime>| unsafe {
+                let buffer = buffer.as_ref();
+                let channel = (*buffer.floatChannelData()).as_ptr();
+                let mut held = into.lock().unwrap();
+                let frames = buffer.frameLength();
+                held.1.push((when.as_ref().sampleTime(), frames));
+                for frame in 0..frames as usize {
+                    held.0.push(channel.add(frame).read());
+                }
+            },
+        );
+        let rate = unsafe {
+            let held = GRAPH.lock().unwrap();
+            let mixer = held.as_ref().unwrap().engine.mainMixerNode();
+            mixer.installTapOnBus_bufferSize_format_block(0, 1024, None, RcBlock::as_ptr(&tap));
+            mixer.outputFormatForBus(0).sampleRate()
+        };
+        (taken, rate, tap)
+    }
+
+    /// Buffers whose render time does not follow on from the one before, which is what a dropout
+    /// leaves behind in a tap's timeline.
+    fn gaps(times: &[(i64, u32)]) -> usize {
+        times.windows(2).filter(|pair| pair[0].0 + i64::from(pair[0].1) != pair[1].0).count()
+    }
+
     /// The one test that plays out of the real output device, in the order the app boots, so that
     /// a human can hear what no assertion here can tell: that the piano is a piano and that the
     /// metronome clicks. Run it with `cargo test -- --ignored the_boot_order` and listen.
     #[test]
     #[ignore]
     fn the_boot_order_on_this_mac_plays_a_piano_and_then_a_bar_of_clicks() {
-        let graph = Graph::build().unwrap();
-        graph.start().unwrap();
-        install(graph);
-
-        installed().set_device(None).unwrap();
-        installed().set_buffer(DEFAULT_FRAMES).unwrap();
-        let piano = instruments("")
-            .into_iter()
-            .find(|one| one.name == "Concert Grand Piano")
-            .expect("Logic's Concert Grand Piano is on this Mac");
-        load_instrument(&piano.id, &Kept::default()).unwrap();
+        boot();
+        load_piano("Concert Grand Piano");
         set_chain(Vec::new()).unwrap();
-        let said = installed().status();
-        assert!(said.available, "{}", said.reason);
 
         for midi in [60, 64, 67] {
             installed().note(midi, 90, true, false);
@@ -1637,45 +1693,9 @@ mod tests {
     #[test]
     #[ignore = "opens a real audio device"]
     fn what_a_note_looks_like_on_the_way_out_of_the_real_device() {
-        use objc2_avf_audio::AVAudioTime;
-        use std::sync::Arc;
-
-        let graph = Graph::build().unwrap();
-        graph.start().unwrap();
-        install(graph);
-        installed().set_device(None).unwrap();
-        installed().set_buffer(DEFAULT_FRAMES).unwrap();
-        let piano = instruments("")
-            .into_iter()
-            .find(|one| one.name == "Concert Grand Piano")
-            .expect("Logic's Concert Grand Piano is on this Mac");
-        load_instrument(&piano.id, &Kept::default()).unwrap();
-        let said = installed().status();
-        assert!(said.available, "{}", said.reason);
-
-        // Samples, and the render time each buffer of them claims to start at: a jump in that time
-        // is the engine having skipped a stretch of the render, which is what a dropout is.
-        type Tapped = (Vec<f32>, Vec<(i64, u32)>);
-        let taken: Arc<Mutex<Tapped>> = Arc::new(Mutex::new(Default::default()));
-        let into = taken.clone();
-        let tap = RcBlock::new(
-            move |buffer: NonNull<AVAudioPCMBuffer>, when: NonNull<AVAudioTime>| unsafe {
-                let buffer = buffer.as_ref();
-                let channel = (*buffer.floatChannelData()).as_ptr();
-                let mut held = into.lock().unwrap();
-                let frames = buffer.frameLength();
-                held.1.push((when.as_ref().sampleTime(), frames));
-                for frame in 0..frames as usize {
-                    held.0.push(channel.add(frame).read());
-                }
-            },
-        );
-        let rate = unsafe {
-            let held = GRAPH.lock().unwrap();
-            let mixer = held.as_ref().unwrap().engine.mainMixerNode();
-            mixer.installTapOnBus_bufferSize_format_block(0, 1024, None, RcBlock::as_ptr(&tap));
-            mixer.outputFormatForBus(0).sampleRate()
-        };
+        boot();
+        load_piano("Concert Grand Piano");
+        let (taken, rate, _tap) = tap_mixer();
         println!("tap at {rate} Hz, buffer {} frames", installed().status().buffer_frames);
 
         for velocity in [20u8, 60, 100, 127] {
@@ -1687,16 +1707,13 @@ mod tests {
             sleep(Duration::from_millis(300));
 
             let (samples, times) = taken.lock().unwrap().clone();
-            let gaps = times
-                .windows(2)
-                .filter(|pair| pair[0].0 + i64::from(pair[0].1) != pair[1].0)
-                .count();
-            let peak = samples.iter().fold(0f32, |top, one| top.max(one.abs()));
+            let gaps = gaps(&times);
+            let loudest = peak(&samples);
             let onset = samples.iter().position(|one| one.abs() > 0.0005).unwrap_or(0);
-            let to_full = samples.iter().position(|one| one.abs() >= peak * 0.9);
+            let to_full = samples.iter().position(|one| one.abs() >= loudest * 0.9);
             let jump = samples.windows(2).fold(0f32, |top, pair| top.max((pair[1] - pair[0]).abs()));
             println!(
-                "v{velocity}: peak {peak:.4}, 90% of it {:.1} ms after the first sound, \
+                "v{velocity}: peak {loudest:.4}, 90% of it {:.1} ms after the first sound, \
                  biggest jump between samples {jump:.4}, {gaps} gaps in the render",
                 to_full.map_or(-1.0, |at| (at - onset) as f64 / rate * 1000.0)
             );
@@ -1705,7 +1722,7 @@ mod tests {
                 .map(|slot| {
                     let at = onset + slot * step;
                     let window = &samples[at.min(samples.len())..(at + step).min(samples.len())];
-                    format!("{:.3}", window.iter().fold(0f32, |top, one| top.max(one.abs())))
+                    format!("{:.3}", peak(window))
                 })
                 .collect();
             println!("  peak per half ms from the first sound: {}", head.join(" "));
@@ -1720,41 +1737,12 @@ mod tests {
     #[test]
     #[ignore = "opens a real audio device"]
     fn what_the_voice_engine_looks_like_on_the_way_out_of_the_real_device() {
-        use objc2_avf_audio::AVAudioTime;
-
-        let graph = Graph::build().unwrap();
-        graph.start().unwrap();
-        install(graph);
-        installed().set_device(None).unwrap();
-        installed().set_buffer(DEFAULT_FRAMES).unwrap();
-        let piano = instruments("")
-            .into_iter()
-            .find(|one| one.name == "Concert Grand Piano")
-            .expect("Logic's Concert Grand Piano is on this Mac");
-        load_instrument(&piano.id, &Kept::default()).unwrap();
-        let said = installed().status();
-        assert!(said.available, "{}", said.reason);
+        boot();
+        load_piano("Concert Grand Piano");
         let brought = installed().envelope().expect("the engine's envelope");
         installed().set_envelope(Envelope { attack: 0.0, ..brought });
 
-        let taken: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
-        let into = taken.clone();
-        let tap = RcBlock::new(
-            move |buffer: NonNull<AVAudioPCMBuffer>, _when: NonNull<AVAudioTime>| unsafe {
-                let buffer = buffer.as_ref();
-                let channel = (*buffer.floatChannelData()).as_ptr();
-                let mut held = into.lock().unwrap();
-                for frame in 0..buffer.frameLength() as usize {
-                    held.push(channel.add(frame).read());
-                }
-            },
-        );
-        let rate = unsafe {
-            let held = GRAPH.lock().unwrap();
-            let mixer = held.as_ref().unwrap().engine.mainMixerNode();
-            mixer.installTapOnBus_bufferSize_format_block(0, 1024, None, RcBlock::as_ptr(&tap));
-            mixer.outputFormatForBus(0).sampleRate()
-        };
+        let (taken, rate, _tap) = tap_mixer();
 
         installed().note(60, 127, true, false);
         sleep(Duration::from_millis(400));
@@ -1764,7 +1752,7 @@ mod tests {
         installed().note(60, 0, false, false);
         sleep(Duration::from_millis(300));
 
-        let samples = taken.lock().unwrap().clone();
+        let (samples, _) = taken.lock().unwrap().clone();
         let onset = samples.iter().position(|one| one.abs() > 0.0005).unwrap_or(0);
         let head: Vec<String> = samples[onset..(onset + 48).min(samples.len())]
             .iter()
@@ -1794,46 +1782,14 @@ mod tests {
     #[test]
     #[ignore = "opens a real audio device"]
     fn the_preview_keeps_its_beat_on_the_real_device() {
-        use objc2_avf_audio::AVAudioTime;
-
         /// One beat at 120 BPM, and how long each note is held of it.
         const BEAT: f64 = 0.5;
         const HELD_FOR: f64 = 0.4;
         const NOTES: usize = 8;
 
-        let graph = Graph::build().unwrap();
-        graph.start().unwrap();
-        install(graph);
-        installed().set_device(None).unwrap();
-        installed().set_buffer(DEFAULT_FRAMES).unwrap();
-        let piano = instruments("")
-            .into_iter()
-            .find(|one| one.name == "Concert Grand Piano")
-            .expect("Logic's Concert Grand Piano is on this Mac");
-        load_instrument(&piano.id, &Kept::default()).unwrap();
-        let said = installed().status();
-        assert!(said.available, "{}", said.reason);
-
-        // Room for the whole tap up front: a tap block that grows its buffer holds up the render
-        // thread, and a held-up render thread is a hole in what this measures.
-        let taken: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::with_capacity(96_000 * 8)));
-        let into = taken.clone();
-        let tap = RcBlock::new(
-            move |buffer: NonNull<AVAudioPCMBuffer>, _when: NonNull<AVAudioTime>| unsafe {
-                let buffer = buffer.as_ref();
-                let channel = (*buffer.floatChannelData()).as_ptr();
-                let mut held = into.lock().unwrap();
-                for frame in 0..buffer.frameLength() as usize {
-                    held.push(channel.add(frame).read());
-                }
-            },
-        );
-        let rate = unsafe {
-            let held = GRAPH.lock().unwrap();
-            let mixer = held.as_ref().unwrap().engine.mainMixerNode();
-            mixer.installTapOnBus_bufferSize_format_block(0, 1024, None, RcBlock::as_ptr(&tap));
-            mixer.outputFormatForBus(0).sampleRate()
-        };
+        boot();
+        load_piano("Concert Grand Piano");
+        let (taken, rate, _tap) = tap_mixer();
 
         installed().preview_load(
             (0..NOTES)
@@ -1849,12 +1805,12 @@ mod tests {
         sleep(Duration::from_secs(5));
         installed().preview_stop();
 
-        let samples = taken.lock().unwrap().clone();
+        let (samples, _) = taken.lock().unwrap().clone();
         // The first note speaks where the sound first rises out of the silence before it. A plain
         // level does not find the ones after it, which strike into the ringing of the one before:
         // they are the same sample at the same velocity, so each is placed instead at the lag that
         // fits the first note's attack best over the frames around the beat it is due on.
-        let loudest = samples.iter().fold(0f32, |top, one| top.max(one.abs()));
+        let loudest = peak(&samples);
         let beat = (rate * BEAT) as usize;
         let window = (rate * 0.025) as usize;
         let first = samples
@@ -1917,34 +1873,8 @@ mod tests {
     #[test]
     #[ignore = "opens a real audio device"]
     fn a_streamed_chord_holds_for_three_seconds_without_running_dry() {
-        use objc2_avf_audio::AVAudioTime;
-
-        let graph = Graph::build().unwrap();
-        graph.start().unwrap();
-        install(graph);
-        installed().set_device(None).unwrap();
-        installed().set_buffer(DEFAULT_FRAMES).unwrap();
-
-        type Tapped = (Vec<f32>, Vec<(i64, u32)>);
-        let taken: Arc<Mutex<Tapped>> = Arc::new(Mutex::new(Default::default()));
-        let into = taken.clone();
-        let tap = RcBlock::new(
-            move |buffer: NonNull<AVAudioPCMBuffer>, when: NonNull<AVAudioTime>| unsafe {
-                let buffer = buffer.as_ref();
-                let channel = (*buffer.floatChannelData()).as_ptr();
-                let mut held = into.lock().unwrap();
-                let frames = buffer.frameLength();
-                held.1.push((when.as_ref().sampleTime(), frames));
-                for frame in 0..frames as usize {
-                    held.0.push(channel.add(frame).read());
-                }
-            },
-        );
-        unsafe {
-            let held = GRAPH.lock().unwrap();
-            let mixer = held.as_ref().unwrap().engine.mainMixerNode();
-            mixer.installTapOnBus_bufferSize_format_block(0, 1024, None, RcBlock::as_ptr(&tap));
-        }
+        boot();
+        let (taken, _rate, _tap) = tap_mixer();
 
         // Ten keys at the hardest strike, held down with the pedal: every one of them streams for
         // as long as the chord lasts, which is the most the reader is ever asked for. The Studio
@@ -1976,13 +1906,10 @@ mod tests {
             sleep(Duration::from_millis(500));
 
             let (samples, times) = taken.lock().unwrap().clone();
-            let gaps = times
-                .windows(2)
-                .filter(|pair| pair[0].0 + i64::from(pair[0].1) != pair[1].0)
-                .count();
-            let peak = samples.iter().fold(0f32, |top, one| top.max(one.abs()));
+            let gaps = gaps(&times);
+            let loudest = peak(&samples);
             println!(
-                "{} notes for 3 s: peak {peak:.4}, {} underruns, {gaps} gaps, {} voices stolen",
+                "{} notes for 3 s: peak {loudest:.4}, {} underruns, {gaps} gaps, {} voices stolen",
                 chord.len(),
                 underruns() - dry,
                 sampler::engine::steals() - stolen,
@@ -1990,7 +1917,7 @@ mod tests {
             installed().release_all();
 
             assert!(load < Duration::from_secs(3), "loaded in {load:?}");
-            assert!(peak > 0.01, "the chord sounded");
+            assert!(loudest > 0.01, "the chord sounded");
             assert_eq!(underruns() - dry, 0, "no voice ran dry");
             assert_eq!(gaps, 0, "and the render never skipped");
             assert_eq!(sampler::engine::steals() - stolen, 0, "and no voice was given up");

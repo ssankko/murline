@@ -1,10 +1,9 @@
 //! The app's one SQLite file: the pool every module reads it through, and the migrations that
 //! bring it up to date before anything does.
 
-use sqlx::migrate::{Migration, MigrationType, Migrator};
+use sqlx::migrate::Migrator;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
-use std::borrow::Cow;
 use std::sync::OnceLock;
 use tauri::{AppHandle, Manager};
 
@@ -24,59 +23,18 @@ pub fn pool(app: &AppHandle) -> Result<&'static SqlitePool, String> {
     Ok(POOL.get_or_init(|| SqlitePoolOptions::new().connect_lazy_with(options)))
 }
 
-/// One numbered SQL file, under the version its name begins with.
-fn step(version: i64, description: &'static str, sql: &'static str) -> Migration {
-    Migration::new(
-        version,
-        Cow::Borrowed(description),
-        MigrationType::Simple,
-        Cow::Borrowed(sql),
-        false,
-    )
-}
-
-/// The migration files in order. Each is recorded in `_sqlx_migrations` under its version and the
-/// SHA-384 of its text, so a file already applied by an earlier build never runs a second time.
-fn migrator() -> Migrator {
-    Migrator {
-        migrations: Cow::Owned(vec![
-            step(1, "init", include_str!("../migrations/0001_init.sql")),
-            step(
-                2,
-                "no inheritance",
-                include_str!("../migrations/0002_no_inheritance.sql"),
-            ),
-            step(
-                3,
-                "practice state",
-                include_str!("../migrations/0003_practice_state.sql"),
-            ),
-            step(
-                4,
-                "velocity remap",
-                include_str!("../migrations/0004_velocity_remap.sql"),
-            ),
-            step(
-                5,
-                "no velocity offset",
-                include_str!("../migrations/0005_no_velocity_offset.sql"),
-            ),
-            step(
-                6,
-                "piece position",
-                include_str!("../migrations/0006_piece_position.sql"),
-            ),
-        ]),
-        ..Migrator::DEFAULT
-    }
-}
+/// The `migrations` folder, embedded at compile time: every numbered file, in order, under the
+/// version and description its name spells. Each is recorded in `_sqlx_migrations` under that
+/// version and the SHA-384 of its text, so a file already applied by an earlier build never runs a
+/// second time.
+static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 /// Brings the file up to the current shape. Runs before the window exists, so every read after it
 /// meets the tables the window expects. The pool is built inside the runtime because it keeps a
 /// task of its own that has to be spawned somewhere.
 pub fn migrate(app: &AppHandle) -> Result<(), String> {
     tauri::async_runtime::block_on(async {
-        migrator().run(pool(app)?).await.map_err(|e| e.to_string())
+        MIGRATOR.run(pool(app)?).await.map_err(|e| e.to_string())
     })
 }
 
@@ -85,6 +43,7 @@ pub mod tests {
     use super::*;
     use serde_json::{json, Value};
     use sqlx::Row;
+    use std::borrow::Cow;
 
     /// A pool on an empty database file of this test's own, with nothing applied to it yet.
     pub fn open(dir: &tempfile::TempDir) -> SqlitePool {
@@ -97,9 +56,8 @@ pub mod tests {
 
     /// Applies the first `upto` migrations, which is the shape the one after them meets.
     pub async fn migrate_to(pool: &SqlitePool, upto: usize) {
-        let full = migrator();
         let partial = Migrator {
-            migrations: Cow::Owned(full.migrations[..upto].to_vec()),
+            migrations: Cow::Owned(MIGRATOR.migrations[..upto].to_vec()),
             ..Migrator::DEFAULT
         };
         partial.run(pool).await.unwrap();
@@ -111,7 +69,7 @@ pub mod tests {
         for statement in seed.split(';').filter(|s| !s.trim().is_empty()) {
             sqlx::query(statement).execute(pool).await.unwrap();
         }
-        migrator().run(pool).await.unwrap();
+        MIGRATOR.run(pool).await.unwrap();
     }
 
     async fn setting(pool: &SqlitePool, key: &str) -> Option<Value> {
@@ -324,7 +282,7 @@ pub mod tests {
     async fn a_database_that_was_never_opened_before_ends_with_every_table_and_no_row() {
         let dir = tempfile::tempdir().unwrap();
         let pool = open(&dir);
-        migrator().run(&pool).await.unwrap();
+        MIGRATOR.run(&pool).await.unwrap();
         let names = columns(&pool, "piece").await;
         for column in ["position_tick", "section_to", "mode"] {
             assert!(names.contains(&column.to_string()), "{column} is missing");
@@ -335,13 +293,6 @@ pub mod tests {
             .await
             .unwrap();
         assert_eq!(count.0, 0);
-    }
-
-    #[tokio::test]
-    async fn every_migration_file_is_in_the_list() {
-        // A file written but never listed runs on no database at all, and nothing else would say so.
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
-        assert_eq!(std::fs::read_dir(dir).unwrap().count(), migrator().iter().count());
     }
 
     /// The version rows of a user's database, taken off the machine that wrote them. A checksum
@@ -386,7 +337,7 @@ pub mod tests {
             .unwrap();
 
         // A migration run again would fail on its own CREATE TABLE or ALTER TABLE.
-        migrator().run(&pool).await.unwrap();
+        MIGRATOR.run(&pool).await.unwrap();
         assert_eq!(text(&pool, "path").await.as_deref(), Some("Bach.musicxml"));
     }
 }

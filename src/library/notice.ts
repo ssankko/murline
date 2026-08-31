@@ -2,6 +2,7 @@
 // outside React so a screen that is closing, such as a play that could not open its piece, can
 // leave its message behind for the library page.
 
+import { isRefusal } from '@/rust';
 import { useSyncExternalStore } from 'react';
 
 let notice: string | null = null;
@@ -13,8 +14,9 @@ export function setNotice(text: string | null): void {
   for (const listen of listeners) listen();
 }
 
-/** Tauri rejects with a plain string, the paths above throw an Error; a notice reads one way. */
+/** The Rust side rejects with a Refusal, the paths above throw an Error; a notice reads one way. */
 export function reasonOf(error: unknown): string {
+  if (isRefusal(error)) return error.text;
   return String(error).replace(/^Error:\s*/, '');
 }
 

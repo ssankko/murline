@@ -1,4 +1,4 @@
-import { fakeRust, fakeSettings } from '@/rust.fake';
+import { fakeRust, fakeSettings, refusal } from '@/rust.fake';
 import { load, set, setting, SETTING_DEFAULTS, subscribe } from '@/settings/settings';
 import { beforeEach, expect, test } from 'vitest';
 
@@ -39,7 +39,7 @@ test('a write is in memory before the Rust side has it, and tells whoever draws 
 test('a value the Rust side refuses goes back to what it was, with the reason for the caller', async () => {
   fakeRust({
     settings_write: () => {
-      throw '64 frames is not one of this device’s sizes';
+      throw refusal('refused', '64 frames is not one of this device’s sizes');
     },
   });
   const heard: number[] = [];

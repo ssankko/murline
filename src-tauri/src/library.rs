@@ -1,6 +1,7 @@
 //! The library folder as the frontend sees it: what score files are in it, their bytes, and the
 //! file operations the library page runs on them.
 
+use crate::refusal::Refusal;
 use std::path::Path;
 use std::process::Command;
 use std::time::UNIX_EPOCH;
@@ -31,49 +32,47 @@ pub struct Stamp {
 
 /// Every score file under the library folder, at any depth, in no particular order.
 #[tauri::command]
-pub async fn list_library(folder: String) -> Result<Vec<FileEntry>, String> {
-    list_dir(Path::new(&folder)).map_err(|e| e.to_string())
+pub async fn list_library(folder: String) -> Result<Vec<FileEntry>, Refusal> {
+    Ok(list_dir(Path::new(&folder))?)
 }
 
 /// The bytes of one file, sent raw so a megabyte of MusicXML does not travel as a JSON number array.
 #[tauri::command]
-pub async fn read_file(path: String) -> Result<tauri::ipc::Response, String> {
-    std::fs::read(&path)
-        .map(tauri::ipc::Response::new)
-        .map_err(|e| e.to_string())
+pub async fn read_file(path: String) -> Result<tauri::ipc::Response, Refusal> {
+    Ok(tauri::ipc::Response::new(std::fs::read(&path)?))
 }
 
 /// Copies an imported file into the library folder, overwriting whatever is at `dst`. The stamp of
 /// the written file goes back so the caller can index it without listing the folder again.
 #[tauri::command]
-pub async fn copy_file(src: String, dst: String) -> Result<Stamp, String> {
-    copy(Path::new(&src), Path::new(&dst)).map_err(|e| e.to_string())
+pub async fn copy_file(src: String, dst: String) -> Result<Stamp, Refusal> {
+    Ok(copy(Path::new(&src), Path::new(&dst))?)
 }
 
 /// Deletes the finder's download once the import has read it: a file the user never saw does not
 /// belong in the Trash. Nothing outside the OS temp directory is deleted, so the Trash stays the
 /// only way a file of the library folder goes.
 #[tauri::command]
-pub async fn remove_temp_file(path: String) -> Result<(), String> {
+pub async fn remove_temp_file(path: String) -> Result<(), Refusal> {
     let path = Path::new(&path);
     let inside = path.starts_with(std::env::temp_dir())
         && !path.components().any(|c| c == std::path::Component::ParentDir);
     if !inside {
-        return Err("not a temp file".to_string());
+        return Err("not a temp file".into());
     }
-    std::fs::remove_file(path).map_err(|e| e.to_string())
+    Ok(std::fs::remove_file(path)?)
 }
 
 /// Opens the file's folder in the Finder with the file selected. A file that has gone since the
 /// last scan is a reason the caller shows, not a silent no-op.
 #[tauri::command]
-pub async fn reveal_in_finder(path: String) -> Result<(), String> {
+pub async fn reveal_in_finder(path: String) -> Result<(), Refusal> {
     if !Path::new(&path).exists() {
-        return Err("file not found".to_string());
+        return Err(Refusal::gone("file not found"));
     }
-    let status = Command::new("open").args(["-R", &path]).status().map_err(|e| e.to_string())?;
+    let status = Command::new("open").args(["-R", &path]).status()?;
     if !status.success() {
-        return Err("the Finder could not open it".to_string());
+        return Err("the Finder could not open it".into());
     }
     Ok(())
 }
@@ -81,13 +80,19 @@ pub async fn reveal_in_finder(path: String) -> Result<(), String> {
 /// Moves the file to the system Trash, which is the only undo a delete has. On macOS `NSFileManager`
 /// does the move instead of the Finder, so deleting never asks the user for automation rights; the
 /// cost is that the Trash may not offer "Put Back" for the file.
+///
+/// A file that is already gone is answered as gone: the trash crate words that failure the way it
+/// words every other one, and the library page drops the piece row on this kind alone.
 #[tauri::command]
-pub async fn trash_file(path: String) -> Result<(), String> {
+pub async fn trash_file(path: String) -> Result<(), Refusal> {
+    if !Path::new(&path).exists() {
+        return Err(Refusal::gone("file not found"));
+    }
     #[allow(unused_mut)]
     let mut context = trash::TrashContext::default();
     #[cfg(target_os = "macos")]
     context.set_delete_method(trash::macos::DeleteMethod::NsFileManager);
-    context.delete(&path).map_err(|e| e.to_string())
+    Ok(context.delete(&path)?)
 }
 
 /// The one score file at `rel_path`, or nothing when it is not there. A symlink is not a file
@@ -159,6 +164,7 @@ pub fn list_dir(root: &Path) -> std::io::Result<Vec<FileEntry>> {
 #[cfg(test)]
 mod tests {
     use super::{copy, list_dir, remove_temp_file, reveal_in_finder, trash_file, FileEntry};
+    use crate::refusal::{Kind, Refusal};
     use std::path::Path;
 
     fn write(root: &Path, rel: &str, body: &str) {
@@ -225,7 +231,7 @@ mod tests {
         let outside = library.path().join("..").join("piece.musicxml");
         assert_eq!(
             remove("/Users/somebody/Music/Piano/piece.musicxml".to_string()),
-            Err("not a temp file".to_string())
+            Err(Refusal::from("not a temp file"))
         );
         assert!(remove(outside.to_string_lossy().into_owned()).is_err());
         assert!(library.path().join("piece.musicxml").exists());
@@ -249,13 +255,19 @@ mod tests {
         assert_eq!(names, ["sub/piece.musicxml"]);
     }
 
+    /// Both file commands of the library page answer a file that is gone as `gone`, which is the
+    /// one thing the page acts on: the row goes even though the delete failed.
     #[test]
-    fn revealing_a_file_that_is_gone_reads_as_a_reason() {
+    fn revealing_or_deleting_a_file_that_is_gone_reads_as_gone() {
         let root = tempfile::tempdir().unwrap();
         let gone = root.path().join("gone.musicxml").to_string_lossy().into_owned();
         assert_eq!(
-            tauri::async_runtime::block_on(reveal_in_finder(gone)),
-            Err("file not found".to_string())
+            tauri::async_runtime::block_on(reveal_in_finder(gone.clone())),
+            Err(Refusal::gone("file not found"))
+        );
+        assert_eq!(
+            tauri::async_runtime::block_on(trash_file(gone)).unwrap_err().kind,
+            Kind::Gone
         );
     }
 

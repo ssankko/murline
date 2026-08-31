@@ -5,6 +5,7 @@
 
 use crate::audio;
 use crate::db::pool;
+use crate::refusal::Refusal;
 use serde_json::Value;
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
@@ -56,15 +57,15 @@ async fn store(pool: &SqlitePool, key: &str, value: &Value) -> Result<(), String
 
 /// Every setting the window starts from, in one read.
 #[tauri::command]
-pub async fn settings_read(app: AppHandle) -> Result<Stored, String> {
-    all(&app).await
+pub async fn settings_read(app: AppHandle) -> Result<Stored, Refusal> {
+    Ok(all(&app).await?)
 }
 
 /// One setting. A key the sound engine owns goes on the running engine first, so a value the
 /// engine refuses is answered with its reason and never stored.
 #[tauri::command]
-pub async fn settings_write(app: AppHandle, key: String, value: Value) -> Result<(), String> {
-    write_one(pool(&app)?, &key, value).await
+pub async fn settings_write(app: AppHandle, key: String, value: Value) -> Result<(), Refusal> {
+    Ok(write_one(pool(&app)?, &key, value).await?)
 }
 
 async fn write_one(pool: &SqlitePool, key: &str, value: Value) -> Result<(), String> {

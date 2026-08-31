@@ -1,6 +1,7 @@
 //! The PDMX tarball: the app fetches and unpacks it, and opens one `.mxl` out of it for its
 //! MusicXML.
 
+use crate::refusal::Refusal;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -63,15 +64,18 @@ pub struct Progress {
 /// `no data folder`, `no connection`, `Zenodo answered <status>`, `not enough disk space`,
 /// `download stopped`, or `cancelled` when the user stopped it.
 #[tauri::command]
-pub async fn pdmx_fetch(app: tauri::AppHandle, progress: Channel<Progress>) -> Result<(), String> {
+pub async fn pdmx_fetch(
+    app: tauri::AppHandle,
+    progress: Channel<Progress>,
+) -> Result<(), Refusal> {
     if RUNNING.swap(true, Ordering::SeqCst) {
-        return Err("already downloading".to_string());
+        return Err("already downloading".into());
     }
     CANCEL.store(false, Ordering::SeqCst);
     let home = folder(&app);
     let done = tauri::async_runtime::spawn_blocking(move || fetch_into(&home?, progress)).await;
     RUNNING.store(false, Ordering::SeqCst);
-    done.unwrap_or_else(|_| Err("download stopped".to_string()))
+    Ok(done.unwrap_or_else(|_| Err("download stopped".to_string()))?)
 }
 
 /// Stops the running fetch, which then removes what it had unpacked.

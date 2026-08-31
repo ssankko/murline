@@ -1,6 +1,7 @@
 //! What version runs and what version waits on the release page. Nothing is taken without being
 //! asked for: the window runs the check, and the user's click runs the install.
 
+use crate::refusal::Refusal;
 use tauri::AppHandle;
 use tauri_plugin_updater::{Update, UpdaterExt};
 
@@ -12,21 +13,18 @@ pub fn app_version(app: AppHandle) -> String {
 
 /// The version waiting on the release page, or nothing when this build is the newest.
 #[tauri::command]
-pub async fn update_check(app: AppHandle) -> Result<Option<String>, String> {
+pub async fn update_check(app: AppHandle) -> Result<Option<String>, Refusal> {
     Ok(waiting(&app).await?.map(|update| update.version))
 }
 
 /// Fetches the newer bundle and swaps the app on disk. Nothing restarts, so the new version starts
 /// at the next launch and a practice session is never cut short.
 #[tauri::command]
-pub async fn update_install(app: AppHandle) -> Result<(), String> {
+pub async fn update_install(app: AppHandle) -> Result<(), Refusal> {
     let Some(update) = waiting(&app).await? else {
         return Ok(());
     };
-    update
-        .download_and_install(|_, _| {}, || {})
-        .await
-        .map_err(|e| e.to_string())
+    update.download_and_install(|_, _| {}, || {}).await.map_err(|e| Refusal::failed(e.to_string()))
 }
 
 /// Starts the app again, which is how a version already on disk takes over. This never returns:
@@ -38,10 +36,7 @@ pub fn update_restart(app: AppHandle) {
 
 /// The one check both commands run. The install asks the release page again instead of holding on
 /// to what the check before it found, so there is no update to go stale.
-async fn waiting(app: &AppHandle) -> Result<Option<Update>, String> {
-    app.updater()
-        .map_err(|e| e.to_string())?
-        .check()
-        .await
-        .map_err(|e| e.to_string())
+async fn waiting(app: &AppHandle) -> Result<Option<Update>, Refusal> {
+    let updater = app.updater().map_err(|e| Refusal::failed(e.to_string()))?;
+    updater.check().await.map_err(|e| Refusal::failed(e.to_string()))
 }

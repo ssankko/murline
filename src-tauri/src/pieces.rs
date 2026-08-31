@@ -3,6 +3,7 @@
 //! History numbers are worked out from `play` on the spot; nothing derived is stored.
 
 use crate::db::pool;
+use crate::refusal::Refusal;
 use crate::library::{entry, list_dir, FileEntry};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -134,8 +135,8 @@ fn now_ms() -> i64 {
 
 /// Every piece whose file is in the folder. A missing file hides its piece until it is back.
 #[tauri::command]
-pub async fn piece_list(app: AppHandle, sort: String) -> Result<Vec<PieceRow>, String> {
-    list(pool(&app)?, &sort).await
+pub async fn piece_list(app: AppHandle, sort: String) -> Result<Vec<PieceRow>, Refusal> {
+    Ok(list(pool(&app)?, &sort).await?)
 }
 
 async fn list(pool: &SqlitePool, sort: &str) -> Result<Vec<PieceRow>, String> {
@@ -150,8 +151,8 @@ async fn list(pool: &SqlitePool, sort: &str) -> Result<Vec<PieceRow>, String> {
 /// The path of every piece whose file is in the folder, whatever the list pane is filtered to. The
 /// finder reads it to know which of its rows are already downloaded.
 #[tauri::command]
-pub async fn piece_paths(app: AppHandle) -> Result<Vec<String>, String> {
-    paths(pool(&app)?).await
+pub async fn piece_paths(app: AppHandle) -> Result<Vec<String>, Refusal> {
+    Ok(paths(pool(&app)?).await?)
 }
 
 async fn paths(pool: &SqlitePool) -> Result<Vec<String>, String> {
@@ -163,8 +164,8 @@ async fn paths(pool: &SqlitePool) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-pub async fn piece_get(app: AppHandle, path: String) -> Result<Option<PieceRow>, String> {
-    get(pool(&app)?, &path).await
+pub async fn piece_get(app: AppHandle, path: String) -> Result<Option<PieceRow>, Refusal> {
+    Ok(get(pool(&app)?, &path).await?)
 }
 
 async fn get(pool: &SqlitePool, path: &str) -> Result<Option<PieceRow>, String> {
@@ -209,8 +210,8 @@ pub async fn piece_update_settings(
     app: AppHandle,
     path: String,
     values: Map<String, Value>,
-) -> Result<(), String> {
-    update_settings(pool(&app)?, &path, &values).await
+) -> Result<(), Refusal> {
+    Ok(update_settings(pool(&app)?, &path, &values).await?)
 }
 
 async fn update_settings(
@@ -243,8 +244,12 @@ async fn update_settings(
 /// Stores where the play screen left the cursor, in played ticks. It is state of the piece rather
 /// than a setting: no control shows it and no play reads it out of its settings.
 #[tauri::command]
-pub async fn piece_update_position(app: AppHandle, path: String, tick: i64) -> Result<(), String> {
-    update_position(pool(&app)?, &path, tick).await
+pub async fn piece_update_position(
+    app: AppHandle,
+    path: String,
+    tick: i64,
+) -> Result<(), Refusal> {
+    Ok(update_position(pool(&app)?, &path, tick).await?)
 }
 
 async fn update_position(pool: &SqlitePool, path: &str, tick: i64) -> Result<(), String> {
@@ -260,8 +265,8 @@ pub async fn piece_set_favorite(
     app: AppHandle,
     path: String,
     favorite: bool,
-) -> Result<(), String> {
-    set_favorite(pool(&app)?, &path, favorite).await
+) -> Result<(), Refusal> {
+    Ok(set_favorite(pool(&app)?, &path, favorite).await?)
 }
 
 async fn set_favorite(pool: &SqlitePool, path: &str, favorite: bool) -> Result<(), String> {
@@ -277,8 +282,8 @@ pub async fn piece_recent_plays(
     app: AppHandle,
     path: String,
     limit: i64,
-) -> Result<Vec<PlayRow>, String> {
-    recent_plays(pool(&app)?, &path, limit).await
+) -> Result<Vec<PlayRow>, Refusal> {
+    Ok(recent_plays(pool(&app)?, &path, limit).await?)
 }
 
 async fn recent_plays(pool: &SqlitePool, path: &str, limit: i64) -> Result<Vec<PlayRow>, String> {
@@ -301,8 +306,8 @@ pub async fn play_insert(
     kind: String,
     started_at: f64,
     duration_s: f64,
-) -> Result<(), String> {
-    insert_play(pool(&app)?, &path, &kind, started_at, duration_s).await
+) -> Result<(), Refusal> {
+    Ok(insert_play(pool(&app)?, &path, &kind, started_at, duration_s).await?)
 }
 
 async fn insert_play(
@@ -331,8 +336,8 @@ pub async fn performance_insert(
     app: AppHandle,
     path: String,
     run: Performance,
-) -> Result<(), String> {
-    insert_performance(pool(&app)?, &path, &run).await
+) -> Result<(), Refusal> {
+    Ok(insert_performance(pool(&app)?, &path, &run).await?)
 }
 
 async fn insert_performance(
@@ -374,8 +379,8 @@ pub async fn index_plan(
     app: AppHandle,
     folder: String,
     path: Option<String>,
-) -> Result<Vec<FileEntry>, String> {
-    plan(pool(&app)?, Path::new(&folder), path.as_deref()).await
+) -> Result<Vec<FileEntry>, Refusal> {
+    Ok(plan(pool(&app)?, Path::new(&folder), path.as_deref()).await?)
 }
 
 async fn plan(
@@ -431,8 +436,8 @@ pub async fn index_upsert(
     index: PieceIndex,
     mtime: i64,
     size: i64,
-) -> Result<(), String> {
-    upsert_index(pool(&app)?, &path, &index, mtime, size).await
+) -> Result<(), Refusal> {
+    Ok(upsert_index(pool(&app)?, &path, &index, mtime, size).await?)
 }
 
 async fn upsert_index(
@@ -482,8 +487,8 @@ pub async fn index_mark_error(
     error: String,
     mtime: i64,
     size: i64,
-) -> Result<(), String> {
-    mark_error(pool(&app)?, &path, &error, mtime, size).await
+) -> Result<(), Refusal> {
+    Ok(mark_error(pool(&app)?, &path, &error, mtime, size).await?)
 }
 
 async fn mark_error(
@@ -519,8 +524,8 @@ async fn set_present(pool: &SqlitePool, path: &str, present: bool) -> Result<(),
 
 /// Drops the piece, and its plays with it through the foreign key that cascades.
 #[tauri::command]
-pub async fn piece_delete(app: AppHandle, path: String) -> Result<(), String> {
-    delete(pool(&app)?, &path).await
+pub async fn piece_delete(app: AppHandle, path: String) -> Result<(), Refusal> {
+    Ok(delete(pool(&app)?, &path).await?)
 }
 
 async fn delete(pool: &SqlitePool, path: &str) -> Result<(), String> {

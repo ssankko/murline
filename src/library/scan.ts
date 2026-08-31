@@ -1,6 +1,7 @@
 // The launch scan: the Rust side answers which files must be parsed, and the window parses them.
 // Runs once at launch and again for one piece when it opens. No watcher.
 
+import { reasonOf } from '@/library/notice';
 import type { FileEntry } from '@/rust';
 import { ScoreError } from '@/score/types';
 import { baseNameOf, indexBytes, pathOf, readScoreFile } from './index-file';
@@ -31,7 +32,7 @@ async function index(folder: string, file: FileEntry): Promise<void> {
     await upsertIndex(file.relPath, summary, file.mtime, file.size);
   } catch (error) {
     const reason =
-      error instanceof ScoreError ? error.message : `Could not read the file: ${String(error)}`;
+      error instanceof ScoreError ? error.message : `Could not read the file: ${reasonOf(error)}`;
     await markError(file.relPath, reason, file.mtime, file.size);
   }
 }

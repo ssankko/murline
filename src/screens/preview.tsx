@@ -6,7 +6,7 @@ import { previewNotes, secondsOf, tickAt } from '@/audio/preview';
 import { Button } from '@/components/ui/button';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { baseNameOf } from '@/library/index-file';
-import { setNotice } from '@/library/notice';
+import { reasonOf, setNotice } from '@/library/notice';
 import { getPiece, updatePieceSettings } from '@/library/queries';
 import { openPiece } from '@/library/open-piece';
 import { clamp } from '@/lib/utils';
@@ -294,7 +294,7 @@ export function PreviewScreen({
         // A Preview the user closed mid-load throws on the host the cleanup already released, so
         // only a failure while the screen still stands is worth a notice.
         if (!live) return;
-        const reason = error instanceof ScoreError ? error.reason : String(error);
+        const reason = error instanceof ScoreError ? error.reason : reasonOf(error);
         const row = await getPiece(path).catch(() => null);
         if (!live) return;
         setNotice(`Could not open ${row?.title ?? fileName}: ${reason}`);

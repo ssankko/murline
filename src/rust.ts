@@ -266,6 +266,23 @@ export interface Commands {
 
 export type CommandName = keyof Commands;
 
+/**
+ * What the Rust side answers with when it cannot do what it was asked, and what a rejection from
+ * `call` therefore is: a kind to act on and a sentence to show. The sentence is never read to
+ * decide anything.
+ */
+export interface Refusal {
+  /** `gone` when the file is no longer there, `refused` when a rule or the sound engine said no,
+   * `failed` for anything else. */
+  kind: 'gone' | 'refused' | 'failed';
+  text: string;
+}
+
+/** Whether this is a refusal from the Rust side rather than the window's own thrown `Error`. */
+export function isRefusal(error: unknown): error is Refusal {
+  return typeof error === 'object' && error !== null && 'kind' in error && 'text' in error;
+}
+
 /** Every event the Rust side emits, with the payload it carries. */
 export interface Events {
   'midi-ports': MidiPorts;
@@ -292,7 +309,7 @@ export function setRust(fake: Rust | null): void {
   stand = fake;
 }
 
-/** Asks the Rust side for one thing. */
+/** Asks the Rust side for one thing. A command that cannot do it rejects with a `Refusal`. */
 export function call<K extends CommandName>(
   name: K,
   ...rest: Commands[K]['args'] extends void ? [] : [Commands[K]['args']]

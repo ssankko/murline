@@ -4,7 +4,7 @@
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { SPLIT_MAX, SPLIT_MIN, TOP_BAR } from '@/lane/lane';
 import { baseNameOf } from '@/library/index-file';
-import { setNotice } from '@/library/notice';
+import { reasonOf, setNotice } from '@/library/notice';
 import { clamp } from '@/lib/utils';
 import { Collapse } from '@/look/collapse';
 import { Opening } from '@/look/loading';
@@ -124,7 +124,7 @@ export function PlayScreen({
         // The play screen has no error state: the library says what went wrong instead, and only
         // a failure while this run of the screen still stands is worth a notice.
         if (!live) return;
-        const reason = error instanceof ScoreError ? error.reason : String(error);
+        const reason = error instanceof ScoreError ? error.reason : reasonOf(error);
         setNotice(`Could not open ${fileName}: ${reason}`);
         setOpening(false);
         backRef.current();

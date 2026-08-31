@@ -1,5 +1,5 @@
 import type { CommandName } from '@/rust';
-import { DEFAULT_ANSWERS, fakeRust, fakeSettings, type Answers } from '@/rust.fake';
+import { DEFAULT_ANSWERS, fakeRust, fakeSettings, refusal, type Answers } from '@/rust.fake';
 import { beforeEach, expect, test, vi } from 'vitest';
 import type { BootLine } from './boot';
 
@@ -39,7 +39,7 @@ const answers = Object.fromEntries(
       command,
       () => {
         // Nothing but the instrument list answers without the engine, and every failure is alike.
-        if (engineReason && command !== 'audio_instruments') throw engineReason;
+        if (engineReason && command !== 'audio_instruments') throw refusal('refused', engineReason);
         if (command === 'audio_instruments') return listed;
       },
     ]),

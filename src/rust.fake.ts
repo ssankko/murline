@@ -11,6 +11,7 @@ import {
   type Commands,
   type EventName,
   type Events,
+  type Refusal,
   type Rust,
 } from '@/rust';
 
@@ -22,6 +23,11 @@ export type Answers = {
 };
 
 const nothing = () => {};
+
+/** What an answer throws to refuse the way the Rust side does. */
+export function refusal(kind: Refusal['kind'], text: string): Refusal {
+  return { kind, text };
+}
 
 /** The engine as a test finds it: up on one output device, playing one file instrument. */
 const running = (): AudioStatus => ({

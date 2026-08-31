@@ -2,6 +2,7 @@
 //! text, and no Audio Unit or CoreAudio type crossing into the webview, so a backend for another
 //! platform can sit behind exactly these commands.
 
+use crate::refusal::Refusal;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::OnceLock;
@@ -247,12 +248,12 @@ pub fn apply(key: &str, all: &crate::settings::Stored) -> Result<(), String> {
 /// setting is applied whatever the one before it did, so an unplugged device does not cost the app
 /// its effect chain; only a failed start stops the rest.
 #[tauri::command]
-pub async fn audio_start(app: tauri::AppHandle) -> Result<(), String> {
+pub async fn audio_start(app: tauri::AppHandle) -> Result<(), Refusal> {
     engine::start()?;
     let all = crate::settings::all(&app).await?;
     let refusals: Vec<String> = OWNED.iter().filter_map(|key| apply(key, &all).err()).collect();
     match refusals.into_iter().next() {
-        Some(reason) => Err(reason),
+        Some(reason) => Err(reason.into()),
         None => Ok(()),
     }
 }
@@ -295,8 +296,8 @@ pub fn audio_chain() -> Vec<Slot> {
 /// Opens one slot's plugin window. Closing it emits `audio-chain-changed` with the whole chain,
 /// which is how the plugin's settings reach the setting the webview keeps.
 #[tauri::command]
-pub fn audio_show_effect(app: tauri::AppHandle, index: usize) -> Result<(), String> {
-    engine::show_effect(app, index)
+pub fn audio_show_effect(app: tauri::AppHandle, index: usize) -> Result<(), Refusal> {
+    Ok(engine::show_effect(app, index)?)
 }
 
 /// Every device the app can play through, newest list each call. The webview reads it again on
@@ -317,9 +318,9 @@ pub fn audio_instruments(folder: String) -> Vec<Instrument> {
 /// level of every Role that was moved, and answers the engine's status. The engine builds the
 /// instrument with nothing locked, so a key pressed meanwhile plays on the one still in.
 #[tauri::command]
-pub async fn audio_load_instrument(app: tauri::AppHandle, id: String) -> Result<Status, String> {
+pub async fn audio_load_instrument(app: tauri::AppHandle, id: String) -> Result<Status, Refusal> {
     let all = crate::settings::all(&app).await?;
-    engine::load_instrument(&id, &kept_for(&id, &all))
+    Ok(engine::load_instrument(&id, &kept_for(&id, &all))?)
 }
 
 /// What the window keeps for one instrument, out of the Global settings.
@@ -352,8 +353,8 @@ fn role_levels(kept: Option<&Value>) -> Vec<(sampler::Role, u32)> {
 
 /// Opens the instrument's own window, and answers with its state when the user closes it again.
 #[tauri::command]
-pub async fn audio_show_instrument(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    engine::show_instrument(app).await
+pub async fn audio_show_instrument(app: tauri::AppHandle) -> Result<Option<String>, Refusal> {
+    Ok(engine::show_instrument(app).await?)
 }
 
 /// The envelope the loaded instrument answers a key with now. Null when a plugin is playing, which

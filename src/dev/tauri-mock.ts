@@ -9,7 +9,14 @@
 //   &p.position_tick=38400                    any `piece` column, as JSON, under a `p.` prefix
 //   &update=0.1.1                             a version waiting on the release page
 
-import { DEFAULT_ANSWERS, fakeFiles, fakeRust, fakeSettings, type FakeRust } from '@/rust.fake';
+import {
+  DEFAULT_ANSWERS,
+  fakeFiles,
+  fakeRust,
+  fakeSettings,
+  refusal,
+  type FakeRust,
+} from '@/rust.fake';
 
 type TauriMock = {
   invoke: () => Promise<unknown>;
@@ -32,7 +39,7 @@ export function installTauriMock(): void {
     update_check: () => params.get('update'),
     read_file: async ({ path }) => {
       const response = await fetch(`/src-tauri/fixtures/${path.split('/').pop()}`);
-      if (!response.ok) throw new Error(`no such file: ${path}`);
+      if (!response.ok) throw refusal('gone', `no such file: ${path}`);
       return response.arrayBuffer();
     },
   });

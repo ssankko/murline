@@ -1,4 +1,4 @@
-import { fakeRust, type FakeRust } from '@/rust.fake';
+import { fakeRust, refusal, type FakeRust } from '@/rust.fake';
 import { beforeEach, describe, expect, test } from 'vitest';
 import { importFiles, isScoreFile } from './import';
 
@@ -25,9 +25,9 @@ beforeEach(() => {
   rust = fakeRust({
     read_file: async ({ path }) => {
       const name = path.split('/').pop()!;
-      if (name === 'locked.musicxml') throw new Error('Permission denied (os error 13)');
+      if (name === 'locked.musicxml') throw refusal('failed', 'Permission denied (os error 13)');
       const url = FIXTURES[`../score/fixtures/${name}`];
-      if (!url) throw new Error(`No such file or directory (os error 2): ${path}`);
+      if (!url) throw refusal('gone', `No such file or directory (os error 2): ${path}`);
       return (await fetch(url as string)).arrayBuffer();
     },
     list_library: () => folderFiles.map((relPath) => ({ relPath, mtime: 1, size: 1 })),

@@ -4,6 +4,7 @@
 //! index line with its normalised haystack; the fields are split out of the line again for the at
 //! most 30 rows a search returns.
 
+use crate::refusal::Refusal;
 use std::borrow::Cow;
 use std::sync::LazyLock;
 
@@ -368,10 +369,10 @@ fn has_word(s: &str, t: &str, whole: bool) -> bool {
 /// The scan is one blocking pass over the whole index, and the first call waits for `warm()` to
 /// finish building it, so it runs on a blocking thread and leaves the runtime to the file commands.
 #[tauri::command]
-pub async fn finder_search(query: String, pdmx: bool) -> Result<SearchResult, String> {
+pub async fn finder_search(query: String, pdmx: bool) -> Result<SearchResult, Refusal> {
     tauri::async_runtime::spawn_blocking(move || search(&INDEX, &query, pdmx))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| Refusal::failed(e.to_string()))
 }
 
 /// One path segment and nothing else: no separator and no walk up the tree.
@@ -401,14 +402,14 @@ fn addressable(row: &Row) -> bool {
 /// Fetches or unzips one row into a temp file and answers with its path. Nothing reaches the
 /// library folder from here; the import path a dropped file takes does that.
 #[tauri::command]
-pub async fn finder_download(app: tauri::AppHandle, row: Row) -> Result<String, String> {
+pub async fn finder_download(app: tauri::AppHandle, row: Row) -> Result<String, Refusal> {
     // A machine with no data folder has no unpacked tarball either, so the row is not on disk.
     download(row, crate::pdmx::folder(&app).unwrap_or_default()).await
 }
 
-async fn download(row: Row, pdmx: std::path::PathBuf) -> Result<String, String> {
+async fn download(row: Row, pdmx: std::path::PathBuf) -> Result<String, Refusal> {
     if !addressable(&row) {
-        return Err("file not found".to_string());
+        return Err(Refusal::gone("file not found"));
     }
     tauri::async_runtime::spawn_blocking(move || {
         let bytes = match row.provider {
@@ -416,13 +417,13 @@ async fn download(row: Row, pdmx: std::path::PathBuf) -> Result<String, String> 
             Provider::Pdmx => crate::pdmx::extract(&pdmx, &row.file)?,
         };
         let dir = std::env::temp_dir().join("piano-finder");
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&dir)?;
         let path = dir.join(&row.file_name);
-        std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+        std::fs::write(&path, bytes)?;
         Ok(path.to_string_lossy().into_owned())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| Refusal::failed(e.to_string()))?
 }
 
 #[cfg(test)]
@@ -669,11 +670,11 @@ Morris\tLelia N. Morris\tThe Fight Is On\tThe Fight Is On\t\t24\t0\t1/3/QmC.mxl\
 
         let mut up = pdmx_row();
         up.file = "11/34/../34/QmTNyLYrAi5Qgh37iTp9ieLYzAzb2q8JeNPSKEhDsafzeF.mxl".to_string();
-        assert_eq!(run(up).unwrap_err(), "file not found");
+        assert_eq!(run(up).unwrap_err(), Refusal::gone("file not found"));
 
         let mut escape = pdmx_row();
         escape.file_name = "../escaped.musicxml".to_string();
-        assert_eq!(run(escape).unwrap_err(), "file not found");
+        assert_eq!(run(escape).unwrap_err(), Refusal::gone("file not found"));
         assert!(!std::env::temp_dir().join("escaped.musicxml").exists());
     }
 

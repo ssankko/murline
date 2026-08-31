@@ -2,7 +2,8 @@
 
 import { buildScore } from '@/score/build';
 import { loadSheet } from '@/score/load';
-import { call, type FileEntry } from '@/rust';
+import { call, isRefusal, type FileEntry } from '@/rust';
+import { reasonOf } from '@/library/notice';
 import { summarize, type PieceIndex } from '@/score/summarize';
 import { ScoreError } from '@/score/types';
 
@@ -31,11 +32,11 @@ export async function readScoreFile(path: string): Promise<Uint8Array> {
     return new Uint8Array(await call('read_file', { path }));
   } catch (error) {
     const reason = isMissingFile(error) ? 'File not found' : 'Could not read the file';
-    throw new ScoreError(reason, String(error));
+    throw new ScoreError(reason, reasonOf(error));
   }
 }
 
 /** Whether a refusal from Rust is the file being gone rather than anything else. */
 export function isMissingFile(error: unknown): boolean {
-  return /no such file|not found/i.test(String(error));
+  return isRefusal(error) && error.kind === 'gone';
 }

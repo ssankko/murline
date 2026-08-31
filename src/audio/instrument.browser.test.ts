@@ -1,6 +1,6 @@
 import { InstrumentSection, restoreInstrument } from '@/audio/instrument';
 import { NO_STATUS, type AudioStatus } from '@/rust';
-import { fakeRust, fakeSettings, type FakeRust } from '@/rust.fake';
+import { fakeRust, fakeSettings, refusal, type FakeRust } from '@/rust.fake';
 import { load, type Settings } from '@/settings/settings';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -34,7 +34,7 @@ let status: AudioStatus = NO_STATUS;
 let rateSetting = 44100;
 
 let listed = [HOSTED, CONCERT, BROKEN];
-let refusal: string | null = null;
+let reason: string | null = null;
 let rust: FakeRust;
 /** Set by a test that wants the load to stand still until it releases it. */
 let held: { promise: Promise<void>; release: () => void } | null = null;
@@ -63,14 +63,14 @@ beforeEach(async () => {
   listed = [HOSTED, CONCERT, BROKEN];
   status = NO_STATUS;
   rateSetting = 44100;
-  refusal = null;
+  reason = null;
   held = null;
   rust = fakeRust({
     audio_instruments: () => listed,
     audio_status: () => status,
     audio_load_instrument: async () => {
       if (held) await held.promise;
-      if (refusal) throw new Error(refusal);
+      if (reason) throw refusal('refused', reason);
       return status;
     },
   });
@@ -154,7 +154,7 @@ test('choosing writes the setting, loads at once, and marks the row it is on', a
 });
 
 test('a load that fails says why, where the instrument was picked', async () => {
-  refusal = 'That file is not a SoundFont';
+  reason = 'That file is not a SoundFont';
   const [text] = await open();
   await pick('broken.sf2');
   await vi.waitFor(() => expect(text()).toContain('That file is not a SoundFont'));
@@ -171,7 +171,7 @@ test('the picker itself says it is loading until the engine has the instrument',
 
 test('a load that fails stops saying it is loading', async () => {
   held = hold();
-  refusal = 'That file is not a SoundFont';
+  reason = 'That file is not a SoundFont';
   const [text] = await open();
   await pick('broken.sf2');
   await vi.waitFor(() => expect(trigger().querySelector('[role="status"]')).not.toBeNull());

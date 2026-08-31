@@ -6,14 +6,17 @@ mod library;
 mod midi;
 mod pdmx;
 mod pieces;
+mod refusal;
 mod settings;
 mod update;
+
+use refusal::Refusal;
 
 /// Creates the library folder, parents included. Already existing is success, so onboarding and a
 /// later folder change both call it without checking first.
 #[tauri::command]
-fn ensure_dir(path: String) -> Result<(), String> {
-    std::fs::create_dir_all(&path).map_err(|e| e.to_string())
+fn ensure_dir(path: String) -> Result<(), Refusal> {
+    Ok(std::fs::create_dir_all(&path)?)
 }
 
 /// The paper grey the window opens on, dark when macOS is in its dark appearance. The webview

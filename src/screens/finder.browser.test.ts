@@ -1,6 +1,6 @@
 import { Finder } from '@/screens/finder';
 import type { FinderRow } from '@/rust';
-import { fakeRust } from '@/rust.fake';
+import { fakeRust, refusal } from '@/rust.fake';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -25,7 +25,7 @@ const ROW: FinderRow = {
 
 /** Set by a test that wants the download to stand still until it releases it. */
 let held: { promise: Promise<void>; release: () => void } | null = null;
-let refusal: string | null = null;
+let reason: string | null = null;
 
 vi.mock('@/library/import', () => ({
   importFiles: async () => ({ imported: ['prelude28-4.musicxml'], failures: [] }),
@@ -35,13 +35,13 @@ let close: (() => void) | null = null;
 
 beforeEach(() => {
   held = null;
-  refusal = null;
+  reason = null;
   fakeRust({
     pdmx_status: () => true,
     finder_search: () => ({ rows: [ROW], more: 0 }),
     finder_download: async () => {
       if (held) await held.promise;
-      if (refusal) throw new Error(refusal);
+      if (reason) throw refusal('refused', reason);
       return '/tmp/prelude28-4.musicxml';
     },
   });
@@ -92,7 +92,7 @@ function beating(): boolean {
 test('the Download button beats while the score is coming, and stops when it fails', async () => {
   let release = (): void => {};
   held = { promise: new Promise<void>((resolve) => (release = resolve)), release: () => release() };
-  refusal = 'KernScores is not answering';
+  reason = 'KernScores is not answering';
 
   const button = await open();
   expect(beating()).toBe(false);

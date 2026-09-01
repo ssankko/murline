@@ -479,7 +479,8 @@ mod tests {
     }
 
     /// The one test that plays through the app's own graph, so it holds every step the Audio
-    /// dialog takes: pick a broken file, read the reason, pick a good one, hear that it is loaded.
+    /// dialog takes: pick a broken file, read the reason, pick a good one, hear that it is loaded,
+    /// take it out again and hear nothing. One test, because the installed graph is one global.
     #[test]
     fn a_file_that_is_no_instrument_reports_why_in_the_picker_and_in_the_status_line() {
         let mut graph = Graph::build().unwrap();
@@ -516,19 +517,9 @@ mod tests {
         let said = load(&format!("file:{FIXTURE}"), &kept).unwrap();
         assert!(said.available, "the load answers the engine's status: {}", said.reason);
         assert_eq!(running().expect("the installed graph").envelope(), kept.envelope);
-    }
 
-    /// Taking the instrument out: nothing is named in the status line and no key sounds, while the
-    /// engine itself keeps running.
-    #[test]
-    fn unloading_leaves_the_engine_running_with_no_instrument_and_no_sound() {
-        let mut graph = Graph::build().unwrap();
-        graph.start_offline(4096).unwrap();
-        mac::install(graph);
-
-        let said = load(&format!("file:{FIXTURE}"), &Kept::default()).unwrap();
-        assert_eq!(said.instrument, "sine");
-
+        // Taking the instrument out: nothing is named in the status line and no key sounds, while
+        // the engine itself keeps running.
         let said = unload().unwrap();
         assert!(!said.available);
         assert_eq!(said.reason, "No instrument chosen");

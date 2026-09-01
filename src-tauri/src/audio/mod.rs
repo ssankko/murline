@@ -463,6 +463,10 @@ mod tests {
             stub::load_instrument("file:/instruments/piano.sf2", &Kept::default()).err(),
             Some("No sound engine on this platform".into())
         );
+        assert_eq!(
+            stub::unload_instrument().err(),
+            Some("No sound engine on this platform".into())
+        );
     }
 
     /// The one answer a command that describes the engine gives when no graph answers it.

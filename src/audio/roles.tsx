@@ -52,8 +52,8 @@ export function RolesSection({
   round = 0,
 }: {
   /** The row a search result jumped to, which each level row tints itself for. */
-  marked?: string | null;
-  roles?: Role[];
+  marked?: string | null | undefined;
+  roles?: Role[] | undefined;
   instrument?: string | null;
   round?: number;
 }) {
@@ -64,6 +64,7 @@ export function RolesSection({
     if (!roles.length) return;
     setLevels(keptLevels(instrument ?? null));
     // `offered` stands in for `roles`, which is a fresh array on every status the tab reads.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [instrument, round, offered]);
 
   /** Moves one role: the setting first, so a crash after it still plays what the user chose. */

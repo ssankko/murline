@@ -49,7 +49,7 @@ export interface PlayView {
 }
 
 /** One view of a play: the Play opens it, feeds it every frame and disposes it on the way out. */
-export interface View {
+interface View {
   open(play: PlayView, host: HTMLElement): void;
   /** One frame. `now` is the animation clock; `wall` is the clock a strike is stamped on. */
   frame(snap: Snapshot, now: number, wall: number): void;

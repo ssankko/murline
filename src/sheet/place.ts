@@ -8,7 +8,7 @@ import type { MusicSystem, OpenSheetMusicDisplay } from 'opensheetmusicdisplay';
 import type { VFNote } from './paint';
 
 /** Pixel geometry of one Onset, filled from the graphical model after every render. */
-export interface Placed {
+interface Placed {
   x: number;
   /** Right edge of the Onset's measure: what the cursor runs to before a snap. */
   measureRight: number;
@@ -19,7 +19,7 @@ export interface Placed {
  * One moment of the sheet held by rests alone: a place the cursor may stand at that no Onset names.
  * The bar and the ticks past its opening line are what a seek to it asks for.
  */
-export interface RestMoment {
+interface RestMoment {
   x: number;
   measure: number;
   into: number;

@@ -61,11 +61,11 @@ export function SoundControls({
   folder = true,
   onChanged,
 }: {
-  marked?: string | null;
+  marked?: string | null | undefined;
   /** The instruments folder row, which the sound popover leaves out. */
   folder?: boolean;
   /** A new instrument, for whatever reads the sound line outside these sections. */
-  onChanged?: () => void;
+  onChanged?: (() => void) | undefined;
 }) {
   // A section that changed something another one reads asks for this to go round again.
   const [round, setRound] = useState(0);
@@ -108,7 +108,7 @@ export function SoundControls({
  * The sound engine's own settings, under the panel's Sound tab: where the sound goes out, what
  * makes it, and the one line saying what is wrong with it.
  */
-export function SoundTab({ marked }: { marked?: string | null }) {
+export function SoundTab({ marked }: { marked?: string | null | undefined }) {
   // The trouble line follows the instrument, which only the sections below can change.
   const [round, setRound] = useState(0);
   const status = useAudioStatus(round);

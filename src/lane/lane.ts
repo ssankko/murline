@@ -2210,7 +2210,7 @@ function easeOutBack(t: number): number {
 }
 
 /** One swell and settle over a pop's time: out past the mark, then back to nothing. */
-export const breathAt = (t: number) => swellAt(t, easeOutBack);
+const breathAt = (t: number) => swellAt(t, easeOutBack);
 
 /** A swell out on `rise` and a settle back on the same slow curve, and nothing outside its time. */
 function swellAt(t: number, rise: (at: number) => number): number {

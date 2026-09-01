@@ -7,7 +7,7 @@ import {
   useMidiStatus,
   type MidiStatus,
 } from '@/midi/use-midi-status';
-import { createElement } from 'react';
+import { createElement, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { fakeRust, fakeSettings } from '@/rust.fake';
 import { load } from '@/settings/settings';
@@ -44,7 +44,10 @@ let shown: MidiStatus = {
 };
 
 function Probe() {
-  shown = useMidiStatus((event) => struck.push(event));
+  const status = useMidiStatus((event) => struck.push(event));
+  useEffect(() => {
+    shown = status;
+  });
   return null;
 }
 

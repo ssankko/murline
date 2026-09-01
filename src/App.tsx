@@ -13,7 +13,7 @@ import { useEffect, useRef, useState } from 'react';
 type Route =
   | { at: 'loading' }
   | { at: 'onboarding' }
-  | { at: 'library'; folder: string | null; selected?: string }
+  | { at: 'library'; folder: string | null; selected?: string | undefined }
   | { at: 'preview'; folder: string; path: string }
   | { at: 'play'; folder: string; path: string; intent: PlayKind };
 

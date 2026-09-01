@@ -22,7 +22,7 @@ function stored(slot: EffectSlot): EffectSlot {
   return { id: slot.id, name: slot.name, bypass: slot.bypass, state: slot.state };
 }
 
-export function EffectsSection({ marked }: { marked?: string | null }) {
+export function EffectsSection({ marked }: { marked?: string | null | undefined }) {
   const [slots, setSlots] = useState<EffectSlot[]>([]);
   const [available, setAvailable] = useState<Effect[]>([]);
   const [dragging, setDragging] = useState<number | null>(null);

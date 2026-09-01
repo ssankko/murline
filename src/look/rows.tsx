@@ -57,8 +57,8 @@ export function Segmented<T extends string | number | boolean>({
   options: [T, string][];
   value: T;
   onChange: (value: T) => void;
-  allowed?: T[];
-  disabled?: boolean;
+  allowed?: T[] | undefined;
+  disabled?: boolean | undefined;
 }) {
   return (
     <div className="border-edge flex flex-none border">
@@ -91,7 +91,7 @@ export function Toggle({
 }: {
   value: boolean;
   onChange: (value: boolean) => void;
-  disabled?: boolean;
+  disabled?: boolean | undefined;
 }) {
   return (
     <Segmented

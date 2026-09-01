@@ -20,6 +20,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm typecheck
+      - run: pnpm lint
       - run: pnpm test
       # The Rust build embeds dist/, so the frontend is built before any cargo step.
       - run: pnpm build

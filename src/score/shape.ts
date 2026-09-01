@@ -6,7 +6,7 @@ export interface Shape {
   /** Suffix of the absolute name. */
   abs: string;
   /** Suffix of the degree name; a shape the degree form cannot read has none. */
-  rel?: string;
+  rel?: string | undefined;
   /** Semitones above the root. */
   steps: number[];
 }
@@ -21,8 +21,8 @@ export const MINOR_7: Shape = { abs: 'm7', rel: 'm⁷', steps: [0, 3, 7, 10] };
 export const HALF_DIMINISHED_7: Shape = { abs: 'ø7', rel: 'ø⁷', steps: [0, 3, 6, 10] };
 export const DIMINISHED_7: Shape = { abs: '°7', rel: '°⁷', steps: [0, 3, 6, 9] };
 // The two sevenths only the harmonic minor stacks: on its tonic and on its mediant.
-export const MINOR_MAJOR_7: Shape = { abs: 'mM7', rel: 'mM⁷', steps: [0, 3, 7, 11] };
-export const AUGMENTED_MAJOR_7: Shape = { abs: '+M7', rel: '+M⁷', steps: [0, 4, 8, 11] };
+const MINOR_MAJOR_7: Shape = { abs: 'mM7', rel: 'mM⁷', steps: [0, 3, 7, 11] };
+const AUGMENTED_MAJOR_7: Shape = { abs: '+M7', rel: '+M⁷', steps: [0, 4, 8, 11] };
 
 /** The triads a scale degree can stack into. */
 export const TRIADS = [MAJOR_TRIAD, MINOR_TRIAD, DIMINISHED, AUGMENTED];

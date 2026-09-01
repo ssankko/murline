@@ -64,7 +64,7 @@ export function Library({
 }: {
   folder: string | null;
   /** The piece the play screen came back from: it stands over the stored selection. */
-  selected?: string;
+  selected?: string | undefined;
   /** A folder chosen here or in the settings dialog: the app re-points and moves no file. */
   onFolder: (folder: string) => void;
   onPlay: (path: string, intent: 'practice' | 'performance') => void;
@@ -96,6 +96,7 @@ export function Library({
     setSort(setting('library_sort'));
     if (!opened) setSelected(setting('library_selected'));
     setRestored(true);
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // A new library folder in the settings panel re-points the app; the scan runs again and no file

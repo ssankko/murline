@@ -61,7 +61,7 @@ const LABEL_REACH = 3;
  * The ring drawn around the noteheads of the Onset the cursor stands at. It reads as paper
  * cleared out of the amber cursor band, so it works on either paper.
  */
-export const OUTLINE = '#ffffff';
+const OUTLINE = '#ffffff';
 
 /** A backward jump names its bar over the sheet for this long. */
 const MARKER_MS = 800;
@@ -91,7 +91,7 @@ export const GLIDE_MS = 220;
 const EASE_MS = 200;
 
 /** The end of a practice: the cursor band fades away over this long and comes back at the start. */
-export const FINISH_MS = 400;
+const FINISH_MS = 400;
 
 /** Where the cursor stands, in pixels of the unscaled sheet content. */
 interface CursorAt {

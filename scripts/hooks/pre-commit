@@ -1,7 +1,8 @@
 #!/bin/sh
-# The two checks CI runs that a laptop can run in seconds: the typecheck, and clippy with every
-# warning an error. `pnpm install` points core.hooksPath here through the prepare script.
+# The checks CI runs that a laptop can run in seconds: the typecheck, knip and oxlint, and clippy
+# with every warning an error. `pnpm install` points core.hooksPath here through the prepare script.
 set -e
 cd "$(git rev-parse --show-toplevel)"
 pnpm typecheck
+pnpm lint
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings

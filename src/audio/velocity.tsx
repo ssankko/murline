@@ -24,7 +24,7 @@ export function VelocitySection({
   marked,
   sounding = [],
 }: {
-  marked?: string | null;
+  marked?: string | null | undefined;
   sounding?: Sounding[];
 }) {
   const min = useSetting('velocity_min');

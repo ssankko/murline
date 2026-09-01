@@ -672,10 +672,8 @@ export function SettingsPanel({
         : "Not downloaded";
 
   async function chooseFolder(key: "library_folder"): Promise<void> {
-    const picked = await openDialog({
-      directory: true,
-      defaultPath: values[key] || undefined,
-    });
+    const at = values[key];
+    const picked = await openDialog({ directory: true, ...(at ? { defaultPath: at } : {}) });
     if (typeof picked === "string") void set(key, picked);
   }
 

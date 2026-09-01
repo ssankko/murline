@@ -29,7 +29,7 @@ export function EnvelopeSection({
   instrument,
   round = 0,
 }: {
-  marked?: string | null;
+  marked?: string | null | undefined;
   sounding?: Sounding[];
   onRelease?: (seconds: number) => void;
   instrument?: string | null;

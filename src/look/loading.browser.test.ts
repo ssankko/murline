@@ -42,7 +42,7 @@ function drawn(mark: HTMLElement): { x: number; scale: number; opacity: number }
 
 test('the row is a capsule and three dots, each a step right of the one before it', async () => {
   const marks = await open();
-  expect(marks.map((mark) => mark.dataset.beat)).toEqual(['strong', 'weak', 'weak', 'weak']);
+  expect(marks.map((mark) => mark.dataset["beat"])).toEqual(['strong', 'weak', 'weak', 'weak']);
   expect(document.querySelector('[role="status"]')?.textContent).toBe('Loading the instrument');
   // The capsule is taller than the dots, which is what tells the strong beat from the weak ones.
   expect(marks[0]!.getBoundingClientRect().height).toBeGreaterThan(
@@ -102,12 +102,12 @@ test('a wait that ends leaves the row running to the next beat, then out to the 
     },
     { interval: 10, timeout: 2000 },
   );
-  const xOf = (frame: ComputedKeyframe) => new DOMMatrixReadOnly(String(frame.transform)).m41;
+  const xOf = (frame: ComputedKeyframe) => new DOMMatrixReadOnly(String(frame["transform"])).m41;
   for (const mark of marks) {
     const exit = mark.getAnimations()[0]!.effect as KeyframeEffect;
     const [from, to] = exit.getKeyframes();
     expect(xOf(to!)).toBeGreaterThan(xOf(from!));
-    expect(Number(to!.opacity)).toBe(0);
+    expect(Number(to!["opacity"])).toBe(0);
   }
 
   // Once the exit is over there is nothing of the row left on the page.

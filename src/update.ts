@@ -7,7 +7,7 @@ import { call } from '@/rust';
 import { useSyncExternalStore } from 'react';
 
 /** Where the update stands. `ready` is a version on disk, waiting for the next launch. */
-export type Update =
+type Update =
   | { kind: 'idle' }
   | { kind: 'checking' }
   | { kind: 'found'; version: string }

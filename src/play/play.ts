@@ -103,7 +103,7 @@ export interface PlayOptions {
   host: HTMLElement;
   canvas: HTMLCanvasElement;
   /** Played tick the piece was left at, which a practice reopens at. */
-  at?: number | null;
+  at?: number | null | undefined;
 }
 
 export class Play {

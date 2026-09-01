@@ -25,7 +25,7 @@ import { useEffect, useRef, useState } from 'react';
 export type Dot = 'on' | 'off' | 'bad';
 
 /** The load past which the number turns red: the render block is close to missing its buffer. */
-export const HOT = 80;
+const HOT = 80;
 
 /** How often the sound line is read again, in milliseconds. */
 const READ_MS = 2000;

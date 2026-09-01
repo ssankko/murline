@@ -25,7 +25,7 @@ const FRAME_CHOICES = [32, 64, 128, 256, 512];
 /** The voice limits the engine takes. 512 voices cost 256 MB of streaming buffers for an EXS. */
 const VOICE_CHOICES = [128, 256, 512];
 
-export function OutputSection({ marked }: { marked?: string | null }) {
+export function OutputSection({ marked }: { marked?: string | null | undefined }) {
   const [devices, setDevices] = useState<OutputDevice[]>([]);
   const [status, setStatus] = useState<AudioStatus | null>(null);
   const chosen = useSetting("audio_output_device");

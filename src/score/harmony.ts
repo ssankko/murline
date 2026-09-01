@@ -229,12 +229,12 @@ function segment(score: Score): ChordEvent[] {
   });
   const capAt = onsets.map((o) => SEGMENT_BARS * (barOf(o)?.durationTicks ?? WHOLE_NOTE));
 
-  const best = [0, ...new Array<number>(n).fill(-Infinity)];
-  const from = new Array<number>(n + 1).fill(0);
-  const label = new Array<Candidate>(n + 1);
+  const best = [0, ...Array.from<number>({ length: n }).fill(-Infinity)];
+  const from = Array.from<number>({ length: n + 1 }).fill(0);
+  const label = Array.from<Candidate>({ length: n + 1 });
   for (let j = 1; j <= n; j++) {
-    const weight = new Array<number>(12).fill(0);
-    const off = new Array<number>(12).fill(0);
+    const weight = Array.from<number>({ length: 12 }).fill(0);
+    const off = Array.from<number>({ length: 12 }).fill(0);
     let total = 0;
     // Shorter segments first, and a tie keeps the shorter one, so a name starts with its evidence.
     for (let i = j - 1; i >= 0 && (i === j - 1 || endOf(j - 1) - ticks[i]! <= capAt[i]!); i--) {
@@ -283,7 +283,7 @@ function segment(score: Score): ChordEvent[] {
 interface Chord {
   root: number;
   shape: Shape;
-  bass?: number;
+  bass?: number | undefined;
   /** 1 for a sharp, -1 for a flat, 0 for none or a natural. */
   written?: [root: number, bass: number];
 }

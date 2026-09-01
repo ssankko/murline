@@ -40,7 +40,7 @@ const answers = Object.fromEntries(
       () => {
         // Nothing but the instrument list answers without the engine, and every failure is alike.
         if (engineReason && command !== 'audio_instruments') throw refusal('refused', engineReason);
-        if (command === 'audio_instruments') return listed;
+        return command === 'audio_instruments' ? listed : undefined;
       },
     ]),
 ) as Partial<Answers>;

@@ -104,7 +104,7 @@ export interface Envelope {
 }
 
 /** One MIDI input port as the MIDI popover lists it. */
-export interface MidiPort {
+interface MidiPort {
   id: string;
   name: string;
 }
@@ -127,7 +127,7 @@ export interface FileEntry {
 }
 
 /** What a copied file was when it landed: enough to tell later whether it changed. */
-export interface Stamp {
+interface Stamp {
   mtime: number;
   size: number;
 }
@@ -173,7 +173,7 @@ export interface Meter {
 }
 
 /** Where the Preview's transport stands, sent about thirty times a second. */
-export interface PreviewProgress {
+interface PreviewProgress {
   seconds: number;
   playing: boolean;
 }

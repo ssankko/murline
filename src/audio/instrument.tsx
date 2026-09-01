@@ -27,7 +27,7 @@ const RATE_CHOICES = [44100, 48000, 88200, 96000];
  * rendering a sampled instrument over its own rate buys nothing but load. A plugin, which has no
  * recorded rate, takes any.
  */
-export function allowedRates(status: AudioStatus | null): number[] {
+function allowedRates(status: AudioStatus | null): number[] {
   const ceiling = status?.instrument_rate ?? 0;
   return ceiling > 0
     ? RATE_CHOICES.filter((rate) => rate <= ceiling)
@@ -69,10 +69,10 @@ export function InstrumentSection({
   folder: showFolder = true,
   onChanged,
 }: {
-  marked?: string | null;
+  marked?: string | null | undefined;
   /** The instruments folder row, which the status bar's sound popover leaves out. */
   folder?: boolean;
-  onChanged?: () => void;
+  onChanged?: (() => void) | undefined;
 }) {
   const [all, setAll] = useState<Instrument[]>([]);
   const chosen = useSetting("instrument_id") ?? "";
@@ -99,6 +99,7 @@ export function InstrumentSection({
     return () => {
       live = false;
     };
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [folder]);
 
   // The rate must never sit above the instrument's own, so an instrument recorded lower than the
@@ -107,6 +108,7 @@ export function InstrumentSection({
     if (!status?.instrument_rate || rate <= status.instrument_rate) return;
     const top = allowedRates(status).at(-1);
     if (top && top !== rate) void chooseRate(top);
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [status, rate]);
 
   /**
@@ -144,10 +146,7 @@ export function InstrumentSection({
   }
 
   async function chooseFolder(): Promise<void> {
-    const picked = await open({
-      directory: true,
-      defaultPath: folder || undefined,
-    });
+    const picked = await open({ directory: true, ...(folder ? { defaultPath: folder } : {}) });
     if (typeof picked !== "string") return;
     // The list follows the folder: the effect above reads it again.
     await set("instruments_folder", picked);
@@ -296,7 +295,7 @@ export function InstrumentSection({
 
 /** The rate the loaded file was recorded at, which is the one that plays it without resampling;
  * a plugin renders at whatever rate it is given. */
-export function recordedLine(status: AudioStatus | null): string {
+function recordedLine(status: AudioStatus | null): string {
   if (!status?.instrument) return "—";
   if (!status.instrument_rate)
     return "any: a plugin renders at the rate it is given";

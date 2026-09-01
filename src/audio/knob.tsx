@@ -22,9 +22,9 @@ export function Knob({
   onChange,
 }: {
   id: string;
-  marked?: string | null;
+  marked?: string | null | undefined;
   label: string;
-  hint?: string;
+  hint?: string | undefined;
   lo: number;
   hi: number;
   value: number;

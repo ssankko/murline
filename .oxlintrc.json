@@ -1,0 +1,9 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["react", "unicorn", "typescript", "oxc"],
+  "rules": {
+    // React Compiler prerequisites, and this app does not run the compiler.
+    "react/set-state-in-effect": "off",
+    "react/refs": "off"
+  }
+}

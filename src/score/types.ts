@@ -35,7 +35,7 @@ export interface Note {
   velocity: number;
   measureIndex: number;
   /** The roll of the chord the note is written in, from its arpeggiate mark; absent for a plain chord. */
-  arpeggio?: 'up' | 'down';
+  arpeggio?: 'up' | 'down' | undefined;
   /** The OSMD note, the identity that finds this note's SVG after any render. */
   source: OsmdNote;
 }
@@ -93,7 +93,7 @@ export interface ChordSymbol {
   /** OSMD's `ChordSymbolEnum`. */
   kind: number;
   /** Pitch class of the printed bass note, undefined without a slash. */
-  bass?: number;
+  bass?: number | undefined;
 }
 
 /**
@@ -112,7 +112,7 @@ export interface ChordEvent {
   /** The shape the chord was matched to, carrying the suffix both names wear. */
   shape: Shape;
   /** Pitch class of the bass the names print after a slash; undefined where the root is in it. */
-  bass?: number;
+  bass?: number | undefined;
   /** Pitch classes of the chord, the root first, then rising by interval above it. */
   tones: number[];
 }

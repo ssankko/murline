@@ -59,8 +59,8 @@ type FakePiece = PieceRow & { mtime: number; size: number; present: number };
  * The `piece` table and the `play` ledger the library commands work on. A test fills them through
  * the commands themselves, and `fakeRust` empties them, so every test starts on an empty library.
  */
-export const fakePieces = new Map<string, FakePiece>();
-export const fakePlays: (PlayRow & { piece_path: string })[] = [];
+const fakePieces = new Map<string, FakePiece>();
+const fakePlays: (PlayRow & { piece_path: string })[] = [];
 
 /**
  * The library folder on disk: what the walk finds. A test fills it before it scans, and `fakeRust`
@@ -294,7 +294,7 @@ export const DEFAULT_ANSWERS: Answers = {
 };
 
 /** One command the window asked for, in the order it asked. */
-export interface Called {
+interface Called {
   name: CommandName;
   args: unknown;
 }

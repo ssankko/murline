@@ -56,8 +56,7 @@ export function noteheadEl(
 /** A notehead group carries no paint of its own, so every write goes to its child paths. */
 export function paintHead(head: HTMLElement, attrs: Record<string, string | null>): void {
   for (const path of head.children) {
-    for (const name in attrs) {
-      const value = attrs[name];
+    for (const [name, value] of Object.entries(attrs)) {
       if (value === null) path.removeAttribute(name);
       else path.setAttribute(name, value);
     }

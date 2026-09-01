@@ -153,7 +153,7 @@ const FILE_TITLE = {
 const CANON = { Chopin: 'Chopin, Frédéric', 'Müler': 'Müller, August Eberhard', Mozart: 'Mozart, Wolfgang Amadeus', Bach: 'Bach, Johann Sebastian' };
 
 /** A movement heading: the `\n` the files write for a line break becomes a comma, tempo marks in brackets go. */
-const movementName = (s) => s.replace(/\\n/g, ', ').replace(/\s*[\[(].*$/, '').replace(/\.$/, '').trim() || null;
+const movementName = (s) => s.replace(/\\n/g, ', ').replace(/\s*[[(].*$/, '').replace(/\.$/, '').trim() || null;
 
 /** Files that duplicate another row: chord-annotation twins and lettered variants of the same etude. */
 const DUPLICATE = /-chord\.krn$|^etude10-02b\.krn$/;

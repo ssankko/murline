@@ -12,7 +12,7 @@ export const SHARP_NAMES = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G�
 export const FLAT_NAMES = ['C', 'D♭', 'D', 'E♭', 'E', 'F', 'G♭', 'G', 'A♭', 'A', 'B♭', 'B'];
 
 /** The octave a MIDI number stands in, middle C being C4. */
-export function octave(midi: number): number {
+function octave(midi: number): number {
   return Math.floor(midi / 12) - 1;
 }
 

@@ -7,7 +7,7 @@ import { SEVENTHS, TRIADS, type Shape } from './shape';
 import type { Score } from './types';
 
 /** One scale degree of a key: what it is called and what it stacks into. */
-export interface KeyDegree {
+interface KeyDegree {
   degree: number;
   note: string;
   /** The note as semitones from C, for its colour. */

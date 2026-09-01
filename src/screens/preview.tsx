@@ -224,6 +224,7 @@ export function PreviewScreen({
     if (sheet) sheet.windowTicks = windowTicksOf(sheet.score, percent);
     restartClock();
     if (loadedRef.current) void call('preview_rate', { percent });
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [percent]);
 
   // Where the playback stands, about thirty times a second. The end of the piece arrives as one
@@ -359,6 +360,7 @@ export function PreviewScreen({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [playing, off, percent, tempo, tempoMode]);
 
   return (

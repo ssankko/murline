@@ -266,7 +266,7 @@ describe('a countdown glyph burning up on its beat', () => {
 
 describe("the chord figure inside the wheel", () => {
   test.each([false, true])('the fill alpha stays inside its clamp on dark=%s', (dark) => {
-    for (const pc of [...Array(12).keys()]) {
+    for (const pc of Array(12).keys()) {
       expect(wheelFillAlpha(pc, dark)).toBeGreaterThanOrEqual(0.35);
       expect(wheelFillAlpha(pc, dark)).toBeLessThanOrEqual(0.5);
     }
@@ -278,7 +278,7 @@ describe("the chord figure inside the wheel", () => {
       const on = luminance(mix(tone(PAPER, dark), colorOf(pc, 'full', dark), alpha));
       return (Math.max(paper, on) + 0.05) / (Math.min(paper, on) + 0.05);
     };
-    for (const pc of [...Array(12).keys()]) {
+    for (const pc of Array(12).keys()) {
       const alpha = wheelFillAlpha(pc, dark);
       expect(alpha === 0.5 || contrast(pc, alpha) >= 1.6).toBe(true);
       // One hundredth less would not carry, unless the clamp already holds it at its floor.

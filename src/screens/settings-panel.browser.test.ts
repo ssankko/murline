@@ -329,19 +329,19 @@ test('the arrows move the search selection and enter picks it', async () => {
 
   const results = await search('chords');
   expect(labels(results)).toEqual(['Harmony', 'Harmony']);
-  expect(results[0]!.dataset.selected).toBe('true');
+  expect(results[0]!.dataset["selected"]).toBe('true');
 
   await userEvent.keyboard('{ArrowDown}');
   await vi.waitFor(() => {
     const now = [...document.querySelectorAll<HTMLButtonElement>('ul button')];
-    expect(now[1]!.dataset.selected).toBe('true');
-    expect(now[0]!.dataset.selected).toBe(undefined);
+    expect(now[1]!.dataset["selected"]).toBe('true');
+    expect(now[0]!.dataset["selected"]).toBe(undefined);
   });
 
   // Up never runs off the top, so a second press holds the first row.
   await userEvent.keyboard('{ArrowUp}{ArrowUp}');
   await vi.waitFor(() =>
-    expect(document.querySelectorAll<HTMLButtonElement>('ul button')[0]!.dataset.selected).toBe(
+    expect(document.querySelectorAll<HTMLButtonElement>('ul button')[0]!.dataset["selected"]).toBe(
       'true',
     ),
   );

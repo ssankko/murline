@@ -1,0 +1,6 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": ["scripts/kernscores-index.mjs"],
+  "project": ["src/**/*.{ts,tsx,css}", "scripts/*.mjs"],
+  "ignoreBinaries": ["v\\$version"]
+}

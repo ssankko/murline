@@ -69,7 +69,7 @@ export function Mixer({
         <Knob
           id="click_volume"
           label="Metronome"
-          hint="The click's own volume, straight to the output."
+          hint="Past the effects and the keyboard fader."
           lo={0}
           hi={100}
           value={click}

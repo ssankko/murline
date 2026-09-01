@@ -20,7 +20,9 @@ use crate::audio::sampler::{self, Command, Ring, engine::Sampler};
 use crate::audio::{Envelope, Kept, OutputDevice, Status, load, progress};
 use head::{Head, Plugin, Voices};
 // The instrument the graph plays, and the window a hosted plugin brings with it.
-pub use crate::audio::instruments::{list as instruments, load as load_instrument};
+pub use crate::audio::instruments::{
+    list as instruments, load as load_instrument, unload as unload_instrument,
+};
 pub use crate::audio::window::show_instrument;
 use block2::RcBlock;
 use objc2::AllocAnyThread;
@@ -513,6 +515,20 @@ impl Graph {
         // Through the effects, not straight to the mixer: the chain belongs to the instrument
         // whichever kind it is.
         self.wear(Head::Plugin(Plugin::new(unit)));
+    }
+
+    /// Takes the instrument out: the head goes back to the empty voice engine a boot builds, and
+    /// nothing is chosen, so no key sounds until an instrument is loaded again.
+    pub fn unload(&mut self) {
+        self.wear(Head::Voices(Voices::new(
+            self.source.clone(),
+            self.commands.clone(),
+            None,
+            Vec::new(),
+        )));
+        // The voice engine keeps the head here, so `wear` leaves it holding its samples.
+        self.send(Command::Unload);
+        self.chosen = None;
     }
 
     /// The hosted plugin, which is the one instrument that has a window of its own.

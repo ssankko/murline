@@ -83,6 +83,7 @@ pub fn run() {
             audio::audio_output_devices,
             audio::audio_instruments,
             audio::audio_load_instrument,
+            audio::audio_unload_instrument,
             audio::audio_show_instrument,
             audio::audio_envelope,
             audio::audio_apply_envelope,

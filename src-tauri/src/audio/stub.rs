@@ -117,6 +117,10 @@ pub fn load_instrument(_id: &str, _kept: &Kept) -> Result<Status, String> {
     Err(PLATFORM.into())
 }
 
+pub fn unload_instrument() -> Result<Status, String> {
+    Err(PLATFORM.into())
+}
+
 // The stub compiles into the macOS tests too, where no test can hold an app to call this with.
 #[allow(dead_code)]
 pub async fn show_instrument(_app: tauri::AppHandle) -> Result<Option<String>, String> {

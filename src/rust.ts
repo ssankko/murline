@@ -230,6 +230,8 @@ export interface Commands {
   /** The engine reads the state, the envelope and the role levels kept for the id itself, and
    * answers with its status once the instrument is in. */
   audio_load_instrument: { args: { id: string }; result: AudioStatus };
+  /** Takes the loaded instrument out, so the app sounds nothing until one is chosen again. */
+  audio_unload_instrument: { args: void; result: AudioStatus };
   audio_show_instrument: { args: void; result: string | null };
   audio_envelope: { args: void; result: Envelope | null };
   audio_apply_envelope: { args: { envelope: Envelope }; result: void };

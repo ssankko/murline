@@ -257,6 +257,7 @@ export const DEFAULT_ANSWERS: Answers = {
   ],
   // The engine puts the kept envelope and role levels on inside the load and answers its status.
   audio_load_instrument: running,
+  audio_unload_instrument: (): AudioStatus => ({ ...running(), instrument: '', instrument_rate: 0 }),
   audio_show_instrument: () => null,
   audio_envelope: () => ({ attack: 0.001, decay: 0.5, sustain: 0.7, release: 0.2 }),
   audio_apply_envelope: nothing,

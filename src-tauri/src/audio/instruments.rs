@@ -74,6 +74,14 @@ pub fn load(id: &str, kept: &Kept) -> Result<Status, String> {
     Ok(graph.status())
 }
 
+/// Takes whatever is loaded out of the graph and answers the engine's status, which from here on
+/// names no instrument.
+pub fn unload() -> Result<Status, String> {
+    let mut graph = mac::graph().ok_or(NO_ENGINE)?;
+    graph.unload();
+    Ok(graph.status())
+}
+
 /// An Instrument built and ready to take the head: the samples the voice engine plays, or the
 /// hosted Audio Unit that plays itself.
 enum Made {
@@ -508,6 +516,31 @@ mod tests {
         let said = load(&format!("file:{FIXTURE}"), &kept).unwrap();
         assert!(said.available, "the load answers the engine's status: {}", said.reason);
         assert_eq!(running().expect("the installed graph").envelope(), kept.envelope);
+    }
+
+    /// Taking the instrument out: nothing is named in the status line and no key sounds, while the
+    /// engine itself keeps running.
+    #[test]
+    fn unloading_leaves_the_engine_running_with_no_instrument_and_no_sound() {
+        let mut graph = Graph::build().unwrap();
+        graph.start_offline(4096).unwrap();
+        mac::install(graph);
+
+        let said = load(&format!("file:{FIXTURE}"), &Kept::default()).unwrap();
+        assert_eq!(said.instrument, "sine");
+
+        let said = unload().unwrap();
+        assert!(!said.available);
+        assert_eq!(said.reason, "No instrument chosen");
+        assert_eq!(said.instrument, "");
+        assert_eq!(said.instrument_rate, 0.0);
+        assert!(running().expect("the installed graph").chosen().is_none());
+
+        // The order to give the samples up is taken up at the next block, so one pass goes by
+        // before the key that must now be silent.
+        mac::peak(4096);
+        running().expect("the installed graph").note_on(60, 100);
+        assert!(mac::peak(4096) < 0.001);
     }
 
     #[test]

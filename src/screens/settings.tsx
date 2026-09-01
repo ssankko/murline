@@ -883,11 +883,7 @@ export function SettingsPanel({
               tabIndex={undefined}
             >
               <Rows>
-                <Row
-                  {...markRow("theme")}
-                  label="Theme"
-                  hint="Light or dark, or whichever the system is in."
-                >
+                <Row {...markRow("theme")} label="Theme">
                   <Segmented options={THEMES} {...bind("theme")} />
                 </Row>
               </Rows>
@@ -899,14 +895,14 @@ export function SettingsPanel({
                   <Row
                     {...markRow("sheet_proportional")}
                     label="Space notes by time"
-                    hint="Draws note spacing from duration, not from the engraving."
+                    hint="Off keeps the engraving's own spacing."
                   >
                     <Toggle {...bind("sheet_proportional")} />
                   </Row>
                   <Row
                     {...markRow("sheet_spacing")}
                     label="Spacing"
-                    hint="How much paper one beat takes; a pinch moves it too."
+                    hint="A pinch on the sheet moves it too."
                   >
                     <Slider
                       label="Sheet spacing in percent"
@@ -925,11 +921,7 @@ export function SettingsPanel({
                   >
                     <Toggle {...bind("sheet_harmony")} />
                   </Row>
-                  <Row
-                    {...markRow("sheet_colour")}
-                    label="Pitch colours"
-                    hint="Gives every note head the colour of its pitch."
-                  >
+                  <Row {...markRow("sheet_colour")} label="Pitch colours">
                     <Toggle {...bind("sheet_colour")} />
                   </Row>
                 </Rows>
@@ -940,7 +932,7 @@ export function SettingsPanel({
                   <Row
                     {...markRow("lane_lookahead")}
                     label="Lookahead"
-                    hint="How many beats of the piece are in view at once."
+                    hint="How many beats are in view at once."
                   >
                     <Slider
                       label="Lane lookahead in beats"
@@ -954,7 +946,7 @@ export function SettingsPanel({
                   <Row
                     {...markRow("lane_note_width")}
                     label="Note width"
-                    hint="How wide a block is against the key it falls on."
+                    hint="Part of its key's width."
                   >
                     <Slider
                       label="Note width in percent"
@@ -968,7 +960,7 @@ export function SettingsPanel({
                   <Row
                     {...markRow("lane_gap")}
                     label="Gap"
-                    hint="Space cut between two blocks that follow each other."
+                    hint="Cut between two blocks that follow each other."
                   >
                     <Slider
                       label="Gap in pixels"
@@ -982,22 +974,17 @@ export function SettingsPanel({
                   <Row
                     {...markRow("lane_names")}
                     label="Note names on blocks"
-                    hint="Writes each note's name on its own block."
                   >
                     <Toggle {...bind("lane_names")} />
                   </Row>
                   <Row
                     {...markRow("lane_harmony")}
                     label="Harmony"
-                    hint="What stands at the lane's top right: panels or the wheel."
+                    hint="Chord names at the lane's top right."
                   >
                     <Segmented options={HARMONY} {...bind("lane_harmony")} />
                   </Row>
-                  <Row
-                    {...markRow("lane_colour")}
-                    label="Pitch colours"
-                    hint="Gives every block the colour of its pitch."
-                  >
+                  <Row {...markRow("lane_colour")} label="Pitch colours">
                     <Toggle {...bind("lane_colour")} />
                   </Row>
                 </Rows>
@@ -1009,14 +996,13 @@ export function SettingsPanel({
                   <Row
                     {...markRow("keyboard_labels")}
                     label="Note names on keys"
-                    hint="Writes each note's name on its own key."
                   >
                     <Toggle {...bind("keyboard_labels")} />
                   </Row>
                   <Row
                     {...markRow("keyboard_scale_marks")}
                     label="Mark keys off the scale"
-                    hint="Ghosts the keys the key in force does not hold."
+                    hint="Ghosts what the key in force does not hold."
                   >
                     <Toggle {...bind("keyboard_scale_marks")} />
                   </Row>
@@ -1028,10 +1014,7 @@ export function SettingsPanel({
                     <Segmented options={PRESETS} {...bind("keyboard_preset")} />
                   </Row>
                   {values.keyboard_preset === "custom" && (
-                    <Row
-                      label="Custom range"
-                      hint="The lowest and the highest key to draw."
-                    >
+                    <Row label="Custom range">
                       <CustomRange
                         lo={values.keyboard_lo}
                         hi={values.keyboard_hi}
@@ -1091,7 +1074,7 @@ export function SettingsPanel({
                   <Row
                     {...markRow("play_inactive_hand")}
                     label="Inactive hand sounds"
-                    hint="Plays the hand you are not playing as the clock passes it."
+                    hint="Played as the clock passes it."
                   >
                     <Toggle {...bind("play_inactive_hand")} />
                   </Row>
@@ -1109,7 +1092,7 @@ export function SettingsPanel({
                   <Row
                     {...markRow("play_inactive_hand_level")}
                     label="Inactive hand level"
-                    hint="Part of that loudness the inactive hand sounds at."
+                    hint="Part of that loudness it sounds at."
                   >
                     <Slider
                       label="Inactive hand level in percent"
@@ -1167,7 +1150,6 @@ export function SettingsPanel({
                 <Row
                   {...markRow("library_folder")}
                   label="Library folder"
-                  hint="Where the app keeps every piece's file."
                 >
                   <Path
                     value={values.library_folder}

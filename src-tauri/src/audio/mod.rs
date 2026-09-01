@@ -323,6 +323,13 @@ pub async fn audio_load_instrument(app: tauri::AppHandle, id: String) -> Result<
     Ok(engine::load_instrument(&id, &kept_for(&id, &all))?)
 }
 
+/// Takes the loaded instrument out, so the app makes no sound until one is chosen again, and
+/// answers the engine's status, which now names no instrument.
+#[tauri::command]
+pub fn audio_unload_instrument() -> Result<Status, Refusal> {
+    Ok(engine::unload_instrument()?)
+}
+
 /// What the window keeps for one instrument, out of the Global settings.
 fn kept_for(id: &str, all: &crate::settings::Stored) -> Kept {
     Kept {

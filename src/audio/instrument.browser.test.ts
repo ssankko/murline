@@ -126,8 +126,9 @@ async function pick(name: string): Promise<void> {
 test('the picker groups what the engine found, and names the folder it read', async () => {
   const [text] = await open();
   openPicker();
-  await vi.waitFor(() => expect(rows().length).toBe(3));
+  await vi.waitFor(() => expect(rows().length).toBe(4));
   expect(rows().map((row) => row.textContent)).toEqual([
+    'None',
     'Vintage Electric Piano',
     'Concert Grand Piano',
     'broken.sf2',
@@ -148,9 +149,25 @@ test('choosing writes the setting, loads at once, and marks the row it is on', a
   await vi.waitFor(() => expect(trigger().textContent).toContain('Concert Grand Piano'));
 
   openPicker();
-  await vi.waitFor(() => expect(rows().length).toBe(3));
+  await vi.waitFor(() => expect(rows().length).toBe(4));
   const marked = rows().filter((row) => row.getAttribute('aria-checked') === 'true');
   expect(marked.map((row) => row.textContent)).toEqual(['Concert Grand Piano']);
+});
+
+test('picking None takes the instrument out of the engine and keeps it out', async () => {
+  await stored({ instrument_id: CONCERT.id, instrument_state: 'YmxvYg==' });
+  await open('Concert Grand Piano');
+  await pick('None');
+  await vi.waitFor(() => expect(rust.argsOf('audio_unload_instrument')).toHaveLength(1));
+  expect(rust.argsOf('audio_load_instrument')).toEqual([]);
+  expect(rust.written()).toContainEqual(['instrument_id', '']);
+  expect(rust.written()).toContainEqual(['instrument_state', null]);
+  await vi.waitFor(() => expect(trigger().textContent).toContain('None'));
+
+  // The next launch reads the same setting and leaves the engine as the user left it.
+  await stored({ instrument_id: '' });
+  expect(await restoreInstrument()).toBeNull();
+  expect(rust.argsOf('audio_load_instrument')).toEqual([]);
 });
 
 test('a load that fails says why, where the instrument was picked', async () => {

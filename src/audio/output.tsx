@@ -88,7 +88,6 @@ export function OutputSection({ marked }: { marked?: string | null }) {
         id="audio_output_device"
         marked={marked === "audio_output_device"}
         label="Output device"
-        hint="Where the sound goes out."
       >
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -96,7 +95,9 @@ export function OutputSection({ marked }: { marked?: string | null }) {
               variant="outline"
               size="sm"
               aria-label="Output device"
-              className="h-7 max-w-[190px] justify-between px-2 text-[12px] font-normal"
+              // The button ships with `shrink-0`; here it must give way, so a long device name
+              // narrows the trigger instead of widening the row.
+              className="h-7 max-w-[190px] min-w-0 shrink justify-between px-2 text-[12px] font-normal"
             >
               <span className="truncate">
                 {shown?.name ?? "System default"}
@@ -148,7 +149,7 @@ export function OutputSection({ marked }: { marked?: string | null }) {
         id="audio_voices"
         marked={marked === "audio_voices"}
         label="Voices"
-        hint="Most notes sounding at once. More costs memory."
+        hint="Most notes sounding at once; more costs memory."
       >
         <Segmented
           options={numbered(VOICE_CHOICES)}
@@ -157,7 +158,7 @@ export function OutputSection({ marked }: { marked?: string | null }) {
         />
       </Row>
 
-      <Row label="Latency" hint="The delay between a key press and its sound.">
+      <Row label="Latency">
         <span className="text-muted-ink text-[12px] tabular-nums">
           {latencyLine(status)}
         </span>

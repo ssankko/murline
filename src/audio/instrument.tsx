@@ -49,6 +49,9 @@ function listInstruments(folder: string): Promise<Instrument[]> {
  */
 export async function restoreInstrument(): Promise<string | null> {
   const kept = setting("instrument_id");
+  // The empty id is the instrument taken out on purpose, so nothing goes back in; null is a first
+  // launch, which gets the default below.
+  if (kept === "") return null;
   const all = await listInstruments(setting("instruments_folder"));
   const chosen = kept ?? all.find((one) => one.name === DEFAULT_NAME)?.id ?? null;
   if (!chosen) return null;
@@ -109,7 +112,8 @@ export function InstrumentSection({
   /**
    * A new instrument: the setting first, since the engine reads what is kept for it, then the
    * load, whose reason is what the picker says and whose answer is what the rows read. A Logic
-   * piano takes seconds to load, so the picker beats until the engine answers.
+   * piano takes seconds to load, so the picker beats until the engine answers. The empty id is
+   * None, which takes the instrument out instead.
    */
   async function choose(id: string): Promise<void> {
     setFailure("");
@@ -117,7 +121,11 @@ export function InstrumentSection({
     await set("instrument_id", id);
     await set("instrument_state", null);
     try {
-      setStatus(await call("audio_load_instrument", { id }));
+      setStatus(
+        id
+          ? await call("audio_load_instrument", { id })
+          : await call("audio_unload_instrument"),
+      );
     } catch (error) {
       setFailure(reasonOf(error));
       await readEngine();
@@ -190,7 +198,9 @@ export function InstrumentSection({
                 variant="outline"
                 size="sm"
                 aria-label="Instrument"
-                className="h-7 max-w-[190px] justify-between px-2 text-[12px] font-normal"
+                // The button ships with `shrink-0`; here it must give way, so a long instrument
+                // name narrows the trigger instead of pushing Show out of the row.
+                className="h-7 max-w-[190px] min-w-0 shrink justify-between px-2 text-[12px] font-normal"
               >
                 <span className="flex min-w-0 items-center gap-1.5">
                   <span className="truncate">{shown?.name ?? "None"}</span>
@@ -209,6 +219,9 @@ export function InstrumentSection({
                 value={chosen}
                 onValueChange={(id) => void choose(id)}
               >
+                <DropdownMenuRadioItem value="" className="text-[13px]">
+                  None
+                </DropdownMenuRadioItem>
                 {group(
                   "Audio Unit instruments",
                   all.filter((one) => one.kind === "plugin"),
@@ -233,10 +246,7 @@ export function InstrumentSection({
         </div>
       </Row>
 
-      <Row
-        label="Recommended sample rate"
-        hint="The rate this instrument was recorded at."
-      >
+      <Row label="Recommended sample rate">
         <span className="text-muted-ink text-[12px] tabular-nums">
           {recordedLine(status)}
         </span>

@@ -20,12 +20,11 @@ const LABELS: Record<Role, string> = {
   pedal_noise: 'Pedal noise',
 };
 
-/** What each role is the sound of, which is what tells the player which one to turn down. */
-const HINTS: Record<Role, string> = {
+/** What a role is the sound of, where its label does not already say. */
+const HINTS: Partial<Record<Role, string>> = {
   release: 'The damper falling as a key comes up.',
   key_off: 'The key itself coming back up.',
   sympathetic: 'Other strings ringing along, pedal down.',
-  pedal_noise: 'The pedal moving, down or up.',
 };
 
 /** The level per role, 0 to 100; a role the map misses sounds at 100. */

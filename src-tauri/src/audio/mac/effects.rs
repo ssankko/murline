@@ -193,9 +193,8 @@ pub fn show_effect(app: AppHandle, index: usize) -> Result<(), String> {
             return Err(format!("{} is not installed", slot.name));
         }
     }
-    let handle = app.clone();
-    app.run_on_main_thread(move || open_window(handle, index))
-        .map_err(|error| error.to_string())
+    let on_main = app.clone();
+    on_main.run_on_main_thread(move || open_window(app, index)).map_err(|e| e.to_string())
 }
 
 fn slots(graph: &Graph) -> Vec<Slot> {
@@ -305,9 +304,10 @@ fn description_of(id: &str) -> Option<AudioComponentDescription> {
 /// A four-character code as its characters, or as hex for the rare unit whose code is not text.
 fn code(value: u32) -> String {
     let bytes = value.to_be_bytes();
-    match bytes.iter().all(|byte| (0x20..0x7f).contains(byte)) {
-        true => String::from_utf8_lossy(&bytes).into_owned(),
-        false => format!("{value:08x}"),
+    if bytes.iter().all(|byte| (0x20..0x7f).contains(byte)) {
+        String::from_utf8_lossy(&bytes).into_owned()
+    } else {
+        format!("{value:08x}")
     }
 }
 

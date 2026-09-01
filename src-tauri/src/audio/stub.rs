@@ -14,8 +14,9 @@ const PLATFORM: &str = "No sound engine on this platform";
 pub struct Graph;
 
 // Off macOS these are what the commands call; on macOS the stub is compiled for the tests alone,
-// where nothing holds a graph to call them on.
-#[allow(dead_code, clippy::unused_self)]
+// where nothing holds a graph to call them on. Every signature is the macOS one, Result and all,
+// so the shared command bodies compile against both.
+#[allow(dead_code, clippy::unused_self, clippy::unnecessary_wraps)]
 impl Graph {
     pub fn status(&self) -> Status {
         Status::unavailable(PLATFORM)
@@ -122,7 +123,8 @@ pub fn unload_instrument() -> Result<Status, String> {
 }
 
 // The stub compiles into the macOS tests too, where no test can hold an app to call this with.
-#[allow(dead_code)]
+// It is async because the command awaits the macOS one.
+#[allow(dead_code, clippy::unused_async)]
 pub async fn show_instrument(_app: tauri::AppHandle) -> Result<Option<String>, String> {
     Err(PLATFORM.into())
 }

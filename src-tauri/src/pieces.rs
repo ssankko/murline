@@ -98,6 +98,8 @@ pub struct Performance {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+// The webview sends the fields by name, `grade` among them.
+#[allow(clippy::struct_field_names)]
 pub struct Grade {
     grade: f64,
     expected: i64,

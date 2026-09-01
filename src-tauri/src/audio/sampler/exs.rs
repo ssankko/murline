@@ -123,7 +123,7 @@ fn parse(bytes: &[u8], path: &Path) -> Result<Exs, String> {
                     None if group.enable_by == ARTICULATION => return None,
                     None => {}
                 }
-                zone.gain_db += group.volume as f32;
+                zone.gain_db += f32::from(group.volume);
                 zone.vel_lo = zone.vel_lo.max(group.vel_lo);
                 zone.vel_hi = zone.vel_hi.min(group.vel_hi);
                 zone.key_lo = zone.key_lo.max(group.key_lo);
@@ -167,8 +167,8 @@ fn read_zone(c: &Rdr) -> (Zone, u32, u32) {
         vel_lo: if velocity_range_on { c.u8(93) } else { 0 },
         vel_hi: if velocity_range_on { c.u8(94) } else { 127 },
         root: c.u8(85),
-        tune_cents: c.i8(164) as i32 * 100 + c.i8(86) as i32,
-        gain_db: c.i8(88) as f32,
+        tune_cents: i32::from(c.i8(164)) * 100 + i32::from(c.i8(86)),
+        gain_db: f32::from(c.i8(88)),
         sample: 0,
         start: c.u32(96) as usize,
         end: c.u32(100) as usize,
@@ -185,7 +185,7 @@ fn read_group(c: &Rdr) -> Group {
         vel_lo: c.u8(89),
         vel_hi: c.u8(90),
         release_trigger: c.u8(157) != 0,
-        round_robin: c.u32(164) as i32,
+        round_robin: c.u32(164).cast_signed(),
         enable_by: c.u8(168),
         enable_control: c.u8(169),
         key_lo: c.u8(172),
@@ -243,7 +243,7 @@ impl Rdr<'_> {
     }
 
     fn i8(&self, at: usize) -> i8 {
-        self.u8(at) as i8
+        self.u8(at).cast_signed()
     }
 
     fn u32(&self, at: usize) -> u32 {
@@ -525,7 +525,7 @@ mod tests {
             println!("  middle C: {} dB, {zone:?}", zone.gain_db);
             assert_eq!(zone.root, 60);
             if name == "Concert Grand Piano" {
-                assert_eq!(zone.start, 405875712);
+                assert_eq!(zone.start, 405_875_712);
                 assert!(
                     exs.samples[zone.sample].path.ends_with("Concert Grand Piano_consolidated.caf"),
                     "{}",

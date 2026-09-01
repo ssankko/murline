@@ -15,8 +15,8 @@ use refusal::Refusal;
 /// Creates the library folder, parents included. Already existing is success, so onboarding and a
 /// later folder change both call it without checking first.
 #[tauri::command]
-fn ensure_dir(path: String) -> Result<(), Refusal> {
-    Ok(std::fs::create_dir_all(&path)?)
+fn ensure_dir(path: &str) -> Result<(), Refusal> {
+    Ok(std::fs::create_dir_all(path)?)
 }
 
 /// The paper grey the window opens on, dark when macOS is in its dark appearance. The webview
@@ -33,6 +33,11 @@ fn paper() -> tauri::window::Color {
     }
 }
 
+/// Builds the app and hands the process to Tauri, which returns only once the app is closed.
+///
+/// # Panics
+///
+/// When Tauri cannot run the app at all, there being no window left to report it in.
 pub fn run() {
     let mut context = tauri::generate_context!();
     // The window is built from the config, which holds one colour and cannot know the appearance.

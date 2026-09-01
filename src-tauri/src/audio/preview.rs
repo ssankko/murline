@@ -88,7 +88,7 @@ impl Scheduler {
     /// The tempo as a percent of the score's own. The schedule stretches from here on; what has
     /// already sounded keeps its time.
     pub fn set_rate(&mut self, percent: u32) {
-        self.rate = percent.max(1) as f64 / 100.0;
+        self.rate = f64::from(percent.max(1)) / 100.0;
         self.sounding.clear();
     }
 
@@ -110,19 +110,19 @@ impl Scheduler {
     /// this callback, so the error is never more than one buffer. Nothing is allocated as long as
     /// `out` holds `HELD`, which is what lets the audio thread call it.
     pub fn pump(&mut self, frames: u32, sample_rate: f64, out: &mut Vec<Event>) {
-        out.clear();
-        if !self.playing {
-            return;
-        }
-        let rate = if self.rate == 0.0 { 1.0 } else { self.rate };
-        let end = self.seconds + (frames as f64 / sample_rate) * rate;
-
         // A tie at the same time breaks by rank: an off goes out before an unrelated on, so a
         // same-pitch retrigger never lands on top of the voice it is replacing. A zero-length
         // note's own off is the exception: it must follow its own on, or that voice never starts.
         const OFF: u8 = 0;
         const ON: u8 = 1;
         const OFF_OF_A_ZERO_LENGTH_NOTE: u8 = 2;
+
+        out.clear();
+        if !self.playing {
+            return;
+        }
+        let rate = if self.rate == 0.0 { 1.0 } else { self.rate };
+        let end = self.seconds + (f64::from(frames) / sample_rate) * rate;
 
         let due = &mut self.due;
         due.clear();

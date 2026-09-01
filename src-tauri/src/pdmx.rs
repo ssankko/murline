@@ -20,7 +20,7 @@ const ARCHIVE: &str = "https://zenodo.org/api/records/15571083/files/mxl.tar.gz/
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// The blocking client applies its timeout to each single read of the body, so this bounds the
 /// wait for the next bytes and never the hours the whole 1.89 GB may take.
-const READ_TIMEOUT: Duration = Duration::from_secs(120);
+const READ_TIMEOUT: Duration = Duration::from_mins(2);
 /// Downloaded bytes between progress messages.
 const STEP: u64 = 4 * 1024 * 1024;
 
@@ -45,6 +45,8 @@ fn unpacked(folder: &Path) -> bool {
 
 /// Whether the tarball is unpacked, which is the one thing the finder needs to deliver a PDMX row.
 #[tauri::command]
+// Tauri hands a command its AppHandle by value; the trait it looks for has no reference form.
+#[allow(clippy::needless_pass_by_value)]
 pub fn pdmx_status(app: tauri::AppHandle) -> bool {
     folder(&app).is_ok_and(|folder| unpacked(&folder))
 }
@@ -137,7 +139,7 @@ fn unpack(reader: impl Read, folder: &Path, cancel: &AtomicBool) -> Result<(), S
     let result = unpack_entries(reader, &part, cancel).and_then(|()| {
         // A rename needs the way clear, and a second download replaces the first.
         let _ = std::fs::remove_dir_all(folder);
-        std::fs::rename(&part, folder).map_err(io_reason)
+        std::fs::rename(&part, folder).map_err(|e| io_reason(&e))
     });
     if result.is_err() {
         let _ = std::fs::remove_dir_all(&part);
@@ -146,27 +148,27 @@ fn unpack(reader: impl Read, folder: &Path, cancel: &AtomicBool) -> Result<(), S
 }
 
 fn unpack_entries(reader: impl Read, folder: &Path, cancel: &AtomicBool) -> Result<(), String> {
-    std::fs::create_dir_all(folder).map_err(io_reason)?;
+    std::fs::create_dir_all(folder).map_err(|e| io_reason(&e))?;
     let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(reader));
-    for entry in archive.entries().map_err(io_reason)? {
+    for entry in archive.entries().map_err(|e| io_reason(&e))? {
         if cancel.load(Ordering::SeqCst) {
             return Err("cancelled".to_string());
         }
-        let mut entry = entry.map_err(io_reason)?;
-        let path = entry.path().map_err(io_reason)?.to_string_lossy().into_owned();
+        let mut entry = entry.map_err(|e| io_reason(&e))?;
+        let path = entry.path().map_err(|e| io_reason(&e))?.to_string_lossy().into_owned();
         let name = path.strip_prefix("./").unwrap_or(&path);
-        if !(name.starts_with("mxl/") && name.ends_with(".mxl")) {
+        if !(name.starts_with("mxl/") && Path::new(name).extension().is_some_and(|e| e == "mxl")) {
             continue;
         }
         // `unpack_in` drops the leading `./` and refuses any member that walks out of the folder.
-        entry.unpack_in(folder).map_err(io_reason)?;
+        entry.unpack_in(folder).map_err(|e| io_reason(&e))?;
     }
     Ok(())
 }
 
 /// The settings dialog shows the reason on one line, so it names no URL and no path. Everything
 /// short of a full disk is a body that stopped arriving or a file that would not be written.
-fn io_reason(e: std::io::Error) -> String {
+fn io_reason(e: &std::io::Error) -> String {
     match e.kind() {
         std::io::ErrorKind::StorageFull => "not enough disk space",
         _ => "download stopped",
@@ -211,7 +213,9 @@ fn root_file(zip: &mut ZipArchive<File>) -> Option<String> {
 fn first_xml(zip: &mut ZipArchive<File>) -> Option<String> {
     (0..zip.len()).find_map(|i| {
         let name = zip.by_index(i).ok()?.name().to_string();
-        (name.ends_with(".xml") && !name.starts_with("META-INF/")).then_some(name)
+        (Path::new(&name).extension().is_some_and(|e| e == "xml")
+            && !name.starts_with("META-INF/"))
+            .then_some(name)
     })
 }
 

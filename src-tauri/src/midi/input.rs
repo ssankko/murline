@@ -105,7 +105,7 @@ impl Reader {
         midi.connect(
             &port,
             CLIENT,
-            move |_stamp, bytes, _| {
+            move |_stamp, bytes, ()| {
                 let time = now_ms();
                 parser.feed(bytes, |message| play(app.as_ref(), message, time));
             },

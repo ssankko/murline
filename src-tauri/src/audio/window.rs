@@ -73,14 +73,14 @@ fn open(unit: Held, title: String, post: Sender<Reply>) {
     let au = unsafe { (&*unit.0 as &AVAudioUnit).AUAudioUnit() };
     // The binding for this one is hand-written below, so ask the unit before sending it.
     if !au.respondsToSelector(sel!(requestViewControllerWithCompletionHandler:)) {
-        present(None, unit, title, post, mtm);
+        present(None, unit, &title, post, mtm);
         return;
     }
     let handler = RcBlock::new(move |controller: *mut NSViewController| {
         let controller = unsafe { Retained::retain(controller) };
         // The completion comes back on the main thread, where it must, but say so out loud.
         if let Some(mtm) = MainThreadMarker::new() {
-            present(controller, unit.clone(), title.clone(), post.clone(), mtm);
+            present(controller, unit.clone(), &title, post.clone(), mtm);
         }
     });
     unsafe {
@@ -92,7 +92,7 @@ fn open(unit: Held, title: String, post: Sender<Reply>) {
 fn present(
     controller: Option<Retained<NSViewController>>,
     unit: Held,
-    title: String,
+    title: &str,
     post: Sender<Reply>,
     mtm: MainThreadMarker,
 ) {
@@ -111,19 +111,18 @@ fn present(
     // The window lives as long as this module holds it, not as long as it is on screen.
     unsafe { window.setReleasedWhenClosed(false) };
 
-    match controller {
-        Some(controller) => window.setContentViewController(Some(&controller)),
-        None => {
-            let view = unsafe { cocoa_view(raw, mtm).or_else(|| generic_view(raw)) };
-            let Some(view) = view else {
-                post.try_send(Err("This instrument has no window of its own".into())).ok();
-                return;
-            };
-            window.setContentSize(view.frame().size);
-            window.setContentView(Some(&view));
-        }
+    if let Some(controller) = controller {
+        window.setContentViewController(Some(&controller));
+    } else {
+        let view = unsafe { cocoa_view(raw, mtm).or_else(|| generic_view(raw)) };
+        let Some(view) = view else {
+            post.try_send(Err("This instrument has no window of its own".into())).ok();
+            return;
+        };
+        window.setContentSize(view.frame().size);
+        window.setContentView(Some(&view));
     }
-    window.setTitle(&NSString::from_str(&title));
+    window.setTitle(&NSString::from_str(title));
     window.center();
     window.makeKeyAndOrderFront(None);
 

@@ -6,6 +6,8 @@
 
 use crate::refusal::Refusal;
 use std::borrow::Cow;
+use std::fmt::Write as _;
+use std::path::Path;
 use std::sync::LazyLock;
 
 use serde::{Deserialize, Serialize};
@@ -193,7 +195,7 @@ pub fn search(ix: &Index, query: &str, pdmx: bool) -> SearchResult {
         .flat_map(|(_, block)| {
             let spelling = block[0].heading.clone();
             block.into_iter().map(move |mut row| {
-                row.heading = spelling.clone();
+                row.heading.clone_from(&spelling);
                 row
             })
         })
@@ -288,15 +290,15 @@ fn heading(composer: &str) -> String {
 /// The name the file lands under in the library folder, cut to the 255 bytes a POSIX file name
 /// takes: a long title loses its tail, never the extension.
 fn file_name(f: &Fields) -> String {
+    const EXT: &str = ".musicxml";
     let mut name = format!("{} - {}", f.surname, f.title);
     if let Some(mv) = f.movement {
-        name.push_str(&format!(" - {mv}"));
+        write!(name, " - {mv}").unwrap();
         if let Some(m) = f.movement_name {
-            name.push_str(&format!(". {m}"));
+            write!(name, ". {m}").unwrap();
         }
     }
     name = name.replace(['/', ':'], "-");
-    const EXT: &str = ".musicxml";
     if name.len() > 255 - EXT.len() {
         name.truncate(name.floor_char_boundary(255 - EXT.len()));
         name.truncate(name.trim_end().len());
@@ -315,7 +317,7 @@ fn sort_key(f: &Fields) -> String {
         leading_number(f.opus.unwrap_or("")),
         norm(f.opus.unwrap_or("")),
         leading_number(f.number.unwrap_or("")),
-        999_999_999u64.saturating_sub(f.ratings as u64),
+        999_999_999u64.saturating_sub(u64::from(f.ratings)),
         norm(f.title),
         f.movement.unwrap_or(0),
     )
@@ -393,7 +395,9 @@ fn addressable(row: &Row) -> bool {
                 matches!(
                     (parts.next(), parts.next(), parts.next(), parts.next()),
                     (Some(d), Some(dd), Some(hash), None)
-                        if plain_name(d) && plain_name(dd) && hash.ends_with(".mxl")
+                        if plain_name(d)
+                            && plain_name(dd)
+                            && Path::new(hash).extension().is_some_and(|e| e == "mxl")
                 )
             }
         }
@@ -548,7 +552,8 @@ Morris\tLelia N. Morris\tThe Fight Is On\tThe Fight Is On\t\t24\t0\t1/3/QmC.mxl\
     fn thirty_rows_then_the_remainder() {
         let mut tsv = String::new();
         for i in 0..40 {
-            tsv.push_str(&format!("Erik Satie\tErik Satie\tPiece {i}\tPiece {i}\t\t10\t0\t1/1/Qm{i}.mxl\n"));
+            writeln!(tsv, "Erik Satie\tErik Satie\tPiece {i}\tPiece {i}\t\t10\t0\t1/1/Qm{i}.mxl")
+                .unwrap();
         }
         let ix = Index::build("[]", Box::leak(tsv.into_boxed_str()));
         let hits = search(&ix, "satie", true);

@@ -34,7 +34,7 @@ const MUSIC_DEVICE: u32 = u32::from_be_bytes(*b"aumu");
 /// voice engine plays.
 const NOT_LISTED: [u32; 2] = [u32::from_be_bytes(*b"dls "), u32::from_be_bytes(*b"msyn")];
 /// How long instantiating a plugin may take before the load gives up on it.
-const PATIENCE: std::time::Duration = std::time::Duration::from_secs(60);
+const PATIENCE: std::time::Duration = std::time::Duration::from_mins(1);
 
 /// Every instrument the engine can play right now, in source order, with the load state of the one
 /// that is loaded (or that failed to).
@@ -192,7 +192,7 @@ fn plugins() -> Vec<Instrument> {
     let mut all = Vec::new();
     unsafe {
         let manager = AVAudioUnitComponentManager::sharedAudioUnitComponentManager();
-        for component in manager.componentsMatchingDescription(wildcard()).iter() {
+        for component in &manager.componentsMatchingDescription(wildcard()) {
             let desc = component.audioComponentDescription();
             if NOT_LISTED.contains(&desc.componentSubType) {
                 continue;

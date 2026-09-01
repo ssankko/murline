@@ -318,7 +318,7 @@ impl Graph {
         let _turn = LOADING.lock().unwrap();
         unsafe {
             self.engine.prepare();
-            self.engine.startAndReturnError().map_err(reason)?;
+            self.engine.startAndReturnError().map_err(|e| reason(&e))?;
             // A player told to play before the output has rendered once raises inside AVFAudio,
             // and the device takes anything up to a second to its first cycle, so the render is
             // waited for. An output that never renders is left to the player to complain about.
@@ -347,7 +347,7 @@ impl Graph {
                     &self.format,
                     max_frames,
                 )
-                .map_err(reason)?;
+                .map_err(|e| reason(&e))?;
         }
         self.offline_frames = max_frames;
         self.start()
@@ -393,7 +393,7 @@ impl Graph {
                 let status = (*render).call((
                     left.min(self.offline_frames),
                     buffer.mutableAudioBufferList(),
-                    &mut os_status,
+                    &raw mut os_status,
                 ));
                 let rendered = buffer.frameLength();
                 if status != AVAudioEngineManualRenderingStatus::Success || rendered == 0 {
@@ -939,6 +939,9 @@ fn sound_bank(path: &Path) -> bool {
 /// so a note lands in the buffer its time falls in whatever the host thread is doing.
 ///
 /// `preview` and `meters` are the reporter's too, so they carry over from one node to the next.
+// The render block runs on the audio thread as one straight pass; cutting it into helpers puts
+// calls between the steps it must take in order.
+#[allow(clippy::too_many_lines)]
 fn source_node(
     format: &AVAudioFormat,
     rate: f64,
@@ -1108,7 +1111,7 @@ fn blip(
 }
 
 /// An NSError as the plain-text line the boot screen and the Audio dialog print.
-pub(super) fn reason(error: Retained<NSError>) -> String {
+pub(super) fn reason(error: &NSError) -> String {
     error.localizedDescription().to_string()
 }
 
@@ -1200,13 +1203,13 @@ pub fn graph() -> Option<Running> {
 }
 
 pub fn start() -> Result<(), String> {
+    static REPORTING: Once = Once::new();
     let mut graph = Graph::build()?;
     graph.start()?;
     graph.adopt();
     watch_configuration(&graph.engine);
     *GRAPH.lock().unwrap() = Some(graph);
     device::watch(devices_changed);
-    static REPORTING: Once = Once::new();
     REPORTING.call_once(|| {
         std::thread::spawn(report_forever);
     });
@@ -1254,8 +1257,9 @@ fn watch_configuration(engine: &AVAudioEngine) {
 // ponytail: a plugin's notes are started at this thread's wake rather than at the frame they fall
 // on; MusicDeviceMIDIEvent with a frame offset, sent from inside the block, is the exact upgrade.
 fn report_forever() {
-    let mut told = Instant::now() - PROGRESS;
-    let mut metered = Instant::now() - LOAD;
+    // Both deadlines start already past, so the first pass reports without a wait.
+    let mut told = Instant::now().checked_sub(PROGRESS).unwrap_or_else(Instant::now);
+    let mut metered = Instant::now().checked_sub(LOAD).unwrap_or_else(Instant::now);
     let mut reported = None;
     let mut was_playing = false;
     let mut notes = [Event::default(); PREVIEW_BATCH];
@@ -1533,7 +1537,7 @@ mod tests {
 
     /// The head of the chain, by address, which is what says one instrument gave it up to another.
     fn node_of(graph: &Graph) -> usize {
-        std::ptr::from_ref(graph.head.node()) as *const () as usize
+        std::ptr::from_ref(graph.head.node()).addr()
     }
 
     /// The voice engine plays through the graph, and a note off a sample that begins nowhere near
@@ -1680,7 +1684,7 @@ mod tests {
     /// a human can hear what no assertion here can tell: that the piano is a piano and that the
     /// metronome clicks. Run it with `cargo test -- --ignored the_boot_order` and listen.
     #[test]
-    #[ignore]
+    #[ignore = "plays out of the real output device, so a human has to be there to hear it"]
     fn the_boot_order_on_this_mac_plays_a_piano_and_then_a_bar_of_clicks() {
         boot();
         load_piano("Concert Grand Piano");
@@ -1878,7 +1882,7 @@ mod tests {
     }
 
     fn underruns() -> u64 {
-        GRAPH.lock().unwrap().as_ref().map_or(0, |graph| graph.underruns())
+        GRAPH.lock().unwrap().as_ref().map_or(0, super::Graph::underruns)
     }
 
     /// What streaming costs on the real device: how long the Concert Grand takes to load now that

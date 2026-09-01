@@ -120,9 +120,8 @@ fn stamp(meta: &std::fs::Metadata) -> Stamp {
             .modified()
             .ok()
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0),
-        size: meta.len() as i64,
+            .map_or(0, |d| d.as_millis() as i64),
+        size: meta.len().cast_signed(),
     }
 }
 

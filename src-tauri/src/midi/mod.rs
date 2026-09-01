@@ -52,7 +52,7 @@ pub struct Pedal {
 }
 
 /// What one MIDI message turns into. Everything else the keyboard sends is dropped here.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Message {
     /// A key going down or coming up. Velocity is raw; the velocity offset is a grading
     /// calibration and stays on the webview side.
@@ -153,13 +153,15 @@ fn relisten(
 /// The listening rule the stored settings hold: the port pinned for good, and the ports put away.
 /// A value of another shape than the window writes is no rule at all.
 fn rule(device: Option<Value>, hidden: Option<Value>) -> (Option<String>, Vec<String>) {
-    let id = |value: &Value| value.as_str().map(str::to_string);
-    let hidden = hidden
-        .as_ref()
-        .and_then(Value::as_array)
-        .map(|ids| ids.iter().filter_map(id).collect())
-        .unwrap_or_default();
-    (device.as_ref().and_then(id), hidden)
+    let id = |value: Value| match value {
+        Value::String(id) => Some(id),
+        _ => None,
+    };
+    let hidden = match hidden {
+        Some(Value::Array(ids)) => ids.into_iter().filter_map(id).collect(),
+        _ => Vec::new(),
+    };
+    (device.and_then(id), hidden)
 }
 
 /// Opens the ports and keeps them open for as long as the app runs. Called once at setup, before

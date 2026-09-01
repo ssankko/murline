@@ -48,7 +48,7 @@ impl Head {
         match self {
             Head::Voices(voices) => voices.send(Command::NoteOn { note, velocity }),
             Head::Plugin(plugin) => unsafe {
-                plugin.unit.startNote_withVelocity_onChannel(note, velocity, CHANNEL)
+                plugin.unit.startNote_withVelocity_onChannel(note, velocity, CHANNEL);
             },
             #[cfg(test)]
             Head::Recorder(recorder) => recorder.write(Sent::NoteOn(note, velocity)),
@@ -66,21 +66,21 @@ impl Head {
 
     /// The sustain pedal. A note let go while it is down keeps sounding until it comes up.
     pub fn sustain(&self, down: bool) {
-        match self {
-            Head::Voices(voices) => voices.send(Command::Sustain(down)),
-            _ => self.controller(SUSTAIN, if down { 127 } else { 0 }),
+        if let Head::Voices(voices) = self {
+            voices.send(Command::Sustain(down));
+        } else {
+            self.controller(SUSTAIN, if down { 127 } else { 0 });
         }
     }
 
     /// Ends everything sounding, pedal included: what a stopped play and a lost MIDI port send.
     pub fn release_all(&self) {
-        match self {
-            Head::Voices(voices) => voices.send(Command::AllOff),
-            _ => {
-                self.controller(SUSTAIN, 0);
-                self.controller(ALL_NOTES_OFF, 0);
-                self.controller(ALL_SOUND_OFF, 0);
-            }
+        if let Head::Voices(voices) = self {
+            voices.send(Command::AllOff);
+        } else {
+            self.controller(SUSTAIN, 0);
+            self.controller(ALL_NOTES_OFF, 0);
+            self.controller(ALL_SOUND_OFF, 0);
         }
     }
 
@@ -93,7 +93,7 @@ impl Head {
                 }
             }
             Head::Plugin(plugin) => unsafe {
-                plugin.unit.sendController_withValue_onChannel(controller, value, CHANNEL)
+                plugin.unit.sendController_withValue_onChannel(controller, value, CHANNEL);
             },
             #[cfg(test)]
             Head::Recorder(recorder) => recorder.write(Sent::Controller(controller, value)),
@@ -114,10 +114,7 @@ impl Head {
     /// The Envelope this Instrument answers a key with, which is what the panel shows. Nothing for
     /// an Instrument that shapes its notes behind its own window, and nothing until a file is in.
     pub fn envelope(&self) -> Option<Envelope> {
-        match self {
-            Head::Voices(voices) => voices.envelope,
-            _ => None,
-        }
+        if let Head::Voices(voices) = self { voices.envelope } else { None }
     }
 
     /// Sets it, and remembers it so the panel shows what is playing. The voice engine takes it at
@@ -137,10 +134,7 @@ impl Head {
     /// The Roles beside the tone this Instrument has samples for, which is what the panel offers a
     /// level for. Empty for a plugin and for a file with none of them.
     pub fn roles(&self) -> &[sampler::Role] {
-        match self {
-            Head::Voices(voices) => &voices.roles,
-            _ => &[],
-        }
+        if let Head::Voices(voices) = self { &voices.roles } else { &[] }
     }
 
     /// How loud one of the noises around the tone sounds, as a percent of the sample.
@@ -157,19 +151,13 @@ impl Head {
 
     /// The hosted plugin, the one Instrument with a window of its own.
     pub fn plugin(&self) -> Option<&AVAudioUnitMIDIInstrument> {
-        match self {
-            Head::Plugin(plugin) => Some(&plugin.unit),
-            _ => None,
-        }
+        if let Head::Plugin(plugin) = self { Some(&plugin.unit) } else { None }
     }
 
     /// The unit an Instrument leaving the head takes with it, which the graph detaches and hands
     /// to the main thread.
     pub fn into_plugin(self) -> Option<Retained<AVAudioUnitMIDIInstrument>> {
-        match self {
-            Head::Plugin(plugin) => Some(plugin.unit),
-            _ => None,
-        }
+        if let Head::Plugin(plugin) = self { Some(plugin.unit) } else { None }
     }
 }
 

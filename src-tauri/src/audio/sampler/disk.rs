@@ -68,7 +68,7 @@ fn build(zones: Vec<Zone>, files: &[SampleRef], slots: usize) -> Result<Instrume
     let watch = Arc::downgrade(&stream);
     thread::Builder::new()
         .name("sample reader".into())
-        .spawn(move || serve(watch, readers))
+        .spawn(move || serve(&watch, readers))
         .map_err(|e| format!("the sample reader would not start: {e}"))?;
     Ok(Instrument::new(zones, samples, heads, Some(stream)))
 }
@@ -76,7 +76,7 @@ fn build(zones: Vec<Zone>, files: &[SampleRef], slots: usize) -> Result<Instrume
 /// The reader thread. It serves every voice waiting on it a chunk at a time, round after round, so
 /// a note struck while another is filling waits at most one chunk. It ends when the instrument is
 /// dropped and the last strong reference to the stream goes with it.
-fn serve(stream: Weak<Stream>, mut readers: Vec<Reader>) {
+fn serve(stream: &Weak<Stream>, mut readers: Vec<Reader>) {
     let mut jobs: Vec<Option<super::Fill>> = Vec::new();
     let mut chunk = vec![0i16; CHUNK * 2];
     loop {
@@ -213,7 +213,8 @@ impl Reader {
             return Ok(0);
         }
         if self.at != from {
-            ck(unsafe { ExtAudioFileSeek(self.file, from as i64) }, &"seeking")?;
+            let at = i64::try_from(from).unwrap_or(i64::MAX);
+            ck(unsafe { ExtAudioFileSeek(self.file, at) }, &"seeking")?;
             self.at = from;
         }
         let mut frames = (out.len() / 2) as u32;
@@ -288,7 +289,7 @@ mod tests {
     #[test]
     fn a_load_keeps_the_head_and_the_reader_brings_the_rest() {
         let frames = RATE as usize / 2;
-        let pcm: Vec<i16> = (0..frames as i16).flat_map(|i| [i, -i]).collect();
+        let pcm: Vec<i16> = (0..i16::try_from(frames).unwrap()).flat_map(|i| [i, -i]).collect();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("head-and-tail.wav");
         std::fs::write(&path, wav(&pcm, RATE)).unwrap();
@@ -309,8 +310,8 @@ mod tests {
         };
         let instrument = build(vec![zone], &[SampleRef { path: path.clone(), frames }], 4).unwrap();
 
-        let head = (HEAD * RATE as f64) as usize;
-        assert_eq!(instrument.samples[0].rate, RATE as f64);
+        let head = (HEAD * f64::from(RATE)) as usize;
+        assert_eq!(instrument.samples[0].rate, f64::from(RATE));
         assert!(instrument.samples[0].data.is_none(), "nothing but the head is held");
         assert_eq!(instrument.heads[0], pcm[..head * 2], "and the head is the front of the file");
 
@@ -348,12 +349,12 @@ mod tests {
         let started = Instant::now();
         let instrument = load(&exs, 128).unwrap();
         let took = started.elapsed();
-        let held: usize = instrument.heads.iter().map(|head| head.len() * 2).sum();
+        let kept: usize = instrument.heads.iter().map(|head| head.len() * 2).sum();
         println!(
             "{} zones over {} files in {took:?}, {} MB of heads",
             instrument.zones.len(),
             instrument.samples.len(),
-            held / 1_000_000
+            kept / 1_000_000
         );
         assert!(took < Duration::from_secs(3), "loaded in {took:?}");
 
@@ -361,7 +362,7 @@ mod tests {
         let at = exs
             .zones
             .iter()
-            .position(|zone| zone.start == 405875712)
+            .position(|zone| zone.start == 405_875_712)
             .expect("the zone middle C at velocity 127 plays");
         let head = &instrument.heads[at];
         println!("zone {at} covers keys {}..{}", exs.zones[at].key_lo, exs.zones[at].key_hi);

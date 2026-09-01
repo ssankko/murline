@@ -68,7 +68,7 @@ fn parse(bytes: &[u8]) -> Result<Instrument, String> {
         pdta.iter()
             .find(|(each, _)| each == tag)
             .map(|(_, data)| *data)
-            .ok_or_else(|| format!("That SoundFont has no {} chunk", text(tag)))
+            .ok_or_else(|| format!("That SoundFont has no {} chunk", text(*tag)))
     };
     let (phdr, inst, shdr) = (named(b"phdr")?, named(b"inst")?, named(b"shdr")?);
     let (pbag, ibag) = (bags(named(b"pbag")?), bags(named(b"ibag")?));
@@ -105,14 +105,10 @@ fn parse(bytes: &[u8]) -> Result<Instrument, String> {
             else {
                 continue;
             };
-            let at = match made.get(&id) {
-                Some(&at) => at,
-                None => {
-                    samples.push(sample(header, smpl));
-                    made.insert(id, samples.len() - 1);
-                    samples.len() - 1
-                }
-            };
+            let at = *made.entry(id).or_insert_with(|| {
+                samples.push(sample(header, smpl));
+                samples.len() - 1
+            });
             if let Some(zone) = build(&zone, &preset_zone, header, samples[at].frames, at) {
                 zones.push(zone);
             }
@@ -162,7 +158,7 @@ fn build(
             Some(key @ 0..=127) => key as u8,
             _ => header[40],
         },
-        tune_cents: added(COARSE_TUNE) * 100 + added(FINE_TUNE) + i32::from(header[41] as i8),
+        tune_cents: added(COARSE_TUNE) * 100 + added(FINE_TUNE) + i32::from(header[41].cast_signed()),
         // Attenuation runs the other way from gain, in tenths of a decibel.
         gain_db: -(added(ATTENUATION) as f32) / 10.0,
         sample,
@@ -236,7 +232,7 @@ fn bags(data: &[u8]) -> Vec<usize> {
 }
 
 fn gens(data: &[u8]) -> Vec<(u16, i16)> {
-    data.chunks_exact(GEN).map(|record| (le16(record, 0), le16(record, 2) as i16)).collect()
+    data.chunks_exact(GEN).map(|record| (le16(record, 0), le16(record, 2).cast_signed())).collect()
 }
 
 /// The value a generator was last given, which is the zone's own where it set one and its global
@@ -263,8 +259,8 @@ fn le32(record: &[u8], at: usize) -> u32 {
     record.get(at..at + 4).and_then(|four| four.try_into().ok()).map_or(0, u32::from_le_bytes)
 }
 
-fn text(tag: &[u8; 4]) -> String {
-    String::from_utf8_lossy(tag).into_owned()
+fn text(tag: [u8; 4]) -> String {
+    String::from_utf8_lossy(&tag).into_owned()
 }
 
 #[cfg(test)]

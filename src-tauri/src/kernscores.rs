@@ -390,7 +390,7 @@ fn text_of(el: &Elem) -> String {
         .iter()
         .filter_map(|n| match n {
             Node::Text(t) => Some(t.as_str()),
-            _ => None,
+            Node::Elem(_) => None,
         })
         .collect()
 }
@@ -514,7 +514,7 @@ fn write(el: &Elem, w: &mut Writer<Vec<u8>>) -> std::io::Result<()> {
         match node {
             Node::Elem(child) => write(child, w)?,
             Node::Text(t) => {
-                w.write_event(Event::Text(BytesText::from_escaped(partial_escape(t))))?
+                w.write_event(Event::Text(BytesText::from_escaped(partial_escape(t))))?;
             }
         }
     }

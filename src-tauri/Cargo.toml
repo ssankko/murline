@@ -10,6 +10,17 @@ rust-version = "1.96"
 name = "murline_lib"
 crate-type = ["rlib"]
 
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# The voice engine casts between sample counts, frames and floats on purpose, hundreds of times.
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+# The docs are prose, not identifier lists.
+doc_markdown = "allow"
+# The tests compare exact floats they set themselves.
+float_cmp = "allow"
+
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }
 

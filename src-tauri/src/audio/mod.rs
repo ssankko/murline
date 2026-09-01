@@ -65,6 +65,8 @@ pub fn progress(seconds: f64, playing: bool) {
 /// What the render block last cost, emitted as `audio-load`: the voices sounding, the most it may
 /// hold at once, and the block's own time as a percent of the time the buffer it filled plays for.
 #[derive(Clone, Serialize)]
+// The webview reads the event's fields by name, `load` among them.
+#[allow(clippy::struct_field_names)]
 pub struct Load {
     pub voices: u32,
     pub limit: u32,
@@ -266,7 +268,7 @@ pub fn audio_status() -> Status {
 /// One metronome click, at a volume of 0 to 100. A no-op where there is no engine, so the
 /// metronome is simply silent there.
 #[tauri::command]
-pub fn audio_click(strength: String, volume: u32) {
+pub fn audio_click(strength: &str, volume: u32) {
     if let Some(graph) = engine::graph() {
         graph.click(strength == "strong", volume);
     }
@@ -310,8 +312,8 @@ pub fn audio_output_devices() -> Vec<OutputDevice> {
 /// Every instrument the engine can play: Logic's pianos, the files in the folder the webview
 /// names, and the installed Audio Unit instruments.
 #[tauri::command]
-pub fn audio_instruments(folder: String) -> Vec<Instrument> {
-    engine::instruments(&folder)
+pub fn audio_instruments(folder: &str) -> Vec<Instrument> {
+    engine::instruments(folder)
 }
 
 /// Loads one of them, with the state a plugin was last left in, the Envelope kept for it and the

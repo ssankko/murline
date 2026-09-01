@@ -7,6 +7,8 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 
 /// The version this build was made as, which the status bar shows.
 #[tauri::command]
+// Tauri hands a command its AppHandle by value; the trait it looks for has no reference form.
+#[allow(clippy::needless_pass_by_value)]
 pub fn app_version(app: AppHandle) -> String {
     app.package_info().version.to_string()
 }
@@ -30,6 +32,8 @@ pub async fn update_install(app: AppHandle) -> Result<(), Refusal> {
 /// Starts the app again, which is how a version already on disk takes over. This never returns:
 /// the process is replaced by a fresh one.
 #[tauri::command]
+// Tauri hands a command its AppHandle by value; the trait it looks for has no reference form.
+#[allow(clippy::needless_pass_by_value)]
 pub fn update_restart(app: AppHandle) {
     app.restart();
 }

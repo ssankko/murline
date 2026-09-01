@@ -192,9 +192,9 @@ impl Voice {
             let a = (self.pos as usize).min(last) * 2;
             let b = (self.pos as usize + 1).min(last) * 2;
             let frac = (self.pos - self.pos.floor()) as f32;
-            let (al, ar) = (data[a] as f32, data[a + 1] as f32);
-            left[i] += (al + (data[b] as f32 - al) * frac) * gain;
-            right[i] += (ar + (data[b + 1] as f32 - ar) * frac) * gain;
+            let (al, ar) = (f32::from(data[a]), f32::from(data[a + 1]));
+            left[i] += (al + (f32::from(data[b]) - al) * frac) * gain;
+            right[i] += (ar + (f32::from(data[b + 1]) - ar) * frac) * gain;
             self.advance();
             if !self.active {
                 return;
@@ -237,9 +237,9 @@ impl Voice {
             }
             let gain = self.amp * self.level * self.fade_gain() * self.cut / 32768.0;
             let frac = (self.pos - self.pos.floor()) as f32;
-            let (nl, nr) = (self.now[0] as f32, self.now[1] as f32);
-            left[i] += (nl + (self.next[0] as f32 - nl) * frac) * gain;
-            right[i] += (nr + (self.next[1] as f32 - nr) * frac) * gain;
+            let (nl, nr) = (f32::from(self.now[0]), f32::from(self.now[1]));
+            left[i] += (nl + (f32::from(self.next[0]) - nl) * frac) * gain;
+            right[i] += (nr + (f32::from(self.next[1]) - nr) * frac) * gain;
             self.advance();
             if !self.active {
                 return;
@@ -512,11 +512,11 @@ impl Sampler {
             (sample.frames, sample.rate, sample.data.is_none());
         let (rate, envelope) = (self.rate, self.envelope);
 
-        let semitones = note as f64 - zone.root as f64 + zone.tune_cents as f64 / 100.0;
+        let semitones = f64::from(note) - f64::from(zone.root) + f64::from(zone.tune_cents) / 100.0;
         let step = (semitones / 12.0).exp2() * sample_rate / rate;
         // ponytail: velocity reads straight as amplitude; a per-instrument curve if the touch of a
         // real piano wants one.
-        let amp = 10f32.powf(zone.gain_db / 20.0) * velocity as f32 / 127.0 * self.level(role);
+        let amp = 10f32.powf(zone.gain_db / 20.0) * f32::from(velocity) / 127.0 * self.level(role);
         let attack = envelope.attack > 0.0;
 
         self.age += 1;
@@ -797,7 +797,7 @@ mod tests {
             s.apply(Command::Load(instrument(20.0)));
             s.apply(Command::NoteOn { note, velocity: 100 });
             let out = render(&mut s, 0.5);
-            out.windows(2).filter(|w| (w[0] < 0.0) != (w[1] < 0.0)).count() as i32
+            i32::try_from(out.windows(2).filter(|w| (w[0] < 0.0) != (w[1] < 0.0)).count()).unwrap()
         };
         let (root, octave) = (crossings(60), crossings(72));
         assert!((octave - 2 * root).abs() <= 2, "{octave} against {root}");
@@ -1126,7 +1126,7 @@ mod tests {
         for _ in 0..passes {
             s.render(&mut l, &mut r);
         }
-        let per = started.elapsed().as_secs_f64() / passes as f64;
+        let per = started.elapsed().as_secs_f64() / f64::from(passes);
         println!(
             "{label}: {} voices, {:.0} us per {BUFFER}-frame render, {:.0}% load, \
              {:.0} ns per voice-frame",
@@ -1175,7 +1175,7 @@ mod tests {
                     }
                 }
                 let mut worked = false;
-                for fill in jobs.iter_mut() {
+                for fill in &mut jobs {
                     if stream.stale(fill) || fill.from >= fill.to || stream.room(fill.slot) < 8192 {
                         continue;
                     }

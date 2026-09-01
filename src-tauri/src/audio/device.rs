@@ -441,7 +441,7 @@ fn latency_of(device: u32, safety: u32, stream: u32, frames: u32, rate: f64) -> 
     if rate <= 0.0 {
         return 0.0;
     }
-    (device + safety + stream + frames) as f64 * 1000.0 / rate
+    f64::from(device + safety + stream + frames) * 1000.0 / rate
 }
 
 /// What to call when CoreAudio's device list changes, kept for as long as the app runs.

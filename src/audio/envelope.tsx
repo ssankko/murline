@@ -23,13 +23,11 @@ import { useEffect, useRef, useState } from 'react';
  * how long one of them takes to die away.
  */
 export function EnvelopeSection({
-  marked,
   sounding = [],
   onRelease,
   instrument,
   round = 0,
 }: {
-  marked?: string | null | undefined;
   sounding?: Sounding[];
   onRelease?: (seconds: number) => void;
   instrument?: string | null;
@@ -82,8 +80,6 @@ export function EnvelopeSection({
         <div className="flex min-w-0 flex-1 flex-col">
           <Knob
             id="envelope_attack"
-            marked={marked}
-            label="Attack"
             hint="How fast a note comes in."
             lo={0}
             hi={2000}
@@ -93,8 +89,6 @@ export function EnvelopeSection({
           />
           <Knob
             id="envelope_decay"
-            marked={marked}
-            label="Decay"
             hint="The fall to the sustain."
             lo={0}
             hi={4000}
@@ -104,8 +98,6 @@ export function EnvelopeSection({
           />
           <Knob
             id="envelope_sustain"
-            marked={marked}
-            label="Sustain"
             hint="The level a held key holds at."
             lo={0}
             hi={100}
@@ -115,8 +107,6 @@ export function EnvelopeSection({
           />
           <Knob
             id="envelope_release"
-            marked={marked}
-            label="Release"
             hint="How long a note dies away."
             lo={0}
             hi={4000}

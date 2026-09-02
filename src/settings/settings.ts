@@ -13,7 +13,7 @@ import {
   type PlaySettings,
 } from '@/play/settings';
 import { commands, type EffectSlot, type Envelope, type Role } from '@/bindings';
-import type { SettingsTab } from '@/screens/settings';
+import type { SettingsTab } from '@/settings/rows';
 import { DEFAULT_SPACING } from '@/sheet/pinch';
 import { useSyncExternalStore } from 'react';
 

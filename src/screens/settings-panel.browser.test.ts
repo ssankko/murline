@@ -2,6 +2,7 @@ import { type Role } from '@/bindings';
 import { NO_STATUS } from '@/audio/sound-tab';
 import { fakeRust, fakeSettings } from '@/rust.fake';
 import { SettingsPanel } from '@/screens/settings';
+import { rowId, SETTING_ROWS } from '@/settings/rows';
 import { load } from '@/settings/settings';
 import { userEvent } from 'vitest/browser';
 import { createElement } from 'react';
@@ -279,6 +280,23 @@ test('the search names no row the panel does not render', async () => {
       const results = await search(query);
       await userEvent.click(results.find((each) => each.textContent!.startsWith(label))!);
       expect(document.body.textContent, `${query} → ${label}`).toContain(label);
+    }
+  }
+});
+
+// The catalogue is declared apart from the tabs, so this is what fails when an entry names a row
+// no tab renders. The engine here offers an envelope and every role, so every entry is due.
+test('every row the catalogue names for a tab is on that tab', async () => {
+  await open();
+  for (const [tab, label] of [
+    ['sound', 'Sound'],
+    ['look', 'Look'],
+    ['playing', 'Playing'],
+    ['library', 'Library'],
+  ] as const) {
+    await openTab(label);
+    for (const row of SETTING_ROWS.filter((each) => each.tab === tab)) {
+      await vi.waitFor(() => expect(document.getElementById(rowId(row.id)), row.id).toBeTruthy());
     }
   }
 });

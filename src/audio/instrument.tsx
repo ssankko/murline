@@ -65,11 +65,9 @@ export async function restoreInstrument(): Promise<string | null> {
 }
 
 export function InstrumentSection({
-  marked,
   folder: showFolder = true,
   onChanged,
 }: {
-  marked?: string | null | undefined;
   /** The instruments folder row, which the status bar's sound popover leaves out. */
   folder?: boolean;
   onChanged?: (() => void) | undefined;
@@ -186,8 +184,6 @@ export function InstrumentSection({
 
       <Row
         id="instrument_id"
-        marked={marked === "instrument_id"}
-        label="Instrument"
         hint="What the keyboard and the Preview play."
       >
         <div className="flex min-w-0 items-center gap-2">
@@ -253,8 +249,6 @@ export function InstrumentSection({
 
       <Row
         id="audio_sample_rate"
-        marked={marked === "audio_sample_rate"}
-        label="Sample rate (Hz)"
         hint="Higher costs render load: 96 kHz is twice 48 kHz."
       >
         <Segmented
@@ -270,8 +264,6 @@ export function InstrumentSection({
       {showFolder && (
         <Row
           id="instruments_folder"
-          marked={marked === "instruments_folder"}
-          label="Instruments folder"
           hint="Every .sf2 and .exs file in it is listed above."
         >
           <div className="flex min-w-0 items-center gap-2">

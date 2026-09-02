@@ -58,7 +58,6 @@ export function Mixer({
       <PopoverContent side="top" align="end" className={`${PANEL} w-96`}>
         <Knob
           id="keyboard_volume"
-          label="Keyboard"
           hint="100% is the instrument's own; a limiter stops clipping."
           lo={0}
           hi={200}
@@ -68,7 +67,6 @@ export function Mixer({
         />
         <Knob
           id="click_volume"
-          label="Metronome"
           hint="Past the effects and the keyboard fader."
           lo={0}
           hi={100}

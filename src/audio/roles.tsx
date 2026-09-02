@@ -8,18 +8,10 @@
 
 import { Knob } from '@/audio/knob';
 import { set, setting } from '@/settings/settings';
+import { type SettingRowId } from '@/settings/rows';
 import { sticky } from '@/lib/utils';
 import { commands, type Role } from '@/bindings';
 import { useEffect, useState } from 'react';
-
-/** What each role is called on screen, in the words a player would use for the sound. The tone
- * itself carries no level, so no section ever asks for its label. */
-const LABELS: Partial<Record<Role, string>> = {
-  release: 'Release samples',
-  key_off: 'Key-off noise',
-  sympathetic: 'Sympathetic resonance',
-  pedal_noise: 'Pedal noise',
-};
 
 /** What a role is the sound of, where its label does not already say. */
 const HINTS: Partial<Record<Role, string>> = {
@@ -42,18 +34,18 @@ function keptLevels(instrument: string | null): Levels {
 
 const at = (levels: Levels, role: Role): number => levels[role] ?? 100;
 
+/** The tone itself carries no level, so the engine never names it among the roles it offers. */
+const rowOfRole = (role: Role): SettingRowId => `role_${role}` as SettingRowId;
+
 /**
  * `roles` is what the loaded instrument offers, from the engine's status, and `round` goes up
  * whenever the instrument changed, which is when the sliders have new levels to show.
  */
 export function RolesSection({
-  marked,
   roles = [],
   instrument,
   round = 0,
 }: {
-  /** The row a search result jumped to, which each level row tints itself for. */
-  marked?: string | null | undefined;
   roles?: Role[] | undefined;
   instrument?: string | null;
   round?: number;
@@ -86,9 +78,7 @@ export function RolesSection({
       {roles.map((role) => (
         <Knob
           key={role}
-          id={`role_${role}`}
-          marked={marked}
-          label={LABELS[role] ?? role}
+          id={rowOfRole(role)}
           hint={HINTS[role]}
           lo={0}
           hi={100}

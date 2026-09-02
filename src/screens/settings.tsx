@@ -18,7 +18,19 @@ import {
   progressLabel,
   usePdmxDownload,
 } from "@/library/pdmx";
-import { clamp, rowId } from "@/lib/utils";
+import { clamp } from "@/lib/utils";
+import {
+  GRADE_KNOBS,
+  markedRow,
+  rowId,
+  rowOf,
+  SETTING_ROWS,
+  type Offered,
+  type SearchWhere,
+  type SettingRow,
+  type SettingRowId,
+  type SettingsTab,
+} from "@/settings/rows";
 import { noteName } from "@/score/pitch";
 import { Loading } from "@/look/loading";
 import { Row, Rows, Segmented, Toggle } from "@/look/rows";
@@ -34,7 +46,7 @@ import { commands } from "@/bindings";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Search } from "lucide-react";
 import { Tabs } from "radix-ui";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 /** The whole keyboard, the span both note dropdowns offer. */
 const NOTES = Array.from({ length: 88 }, (_, at) => 21 + at);
@@ -66,31 +78,7 @@ const PRESETS: [KeyboardPreset, string][] = [
   ["custom", "Custom"],
 ];
 
-/**
- * The eleven knobs that shape a Grade, each with the span and the step its slider takes.
- * Uncalibrated, so they ship only in a dev build.
- */
-const GRADE_KNOBS: [
-  key: keyof Settings,
-  label: string,
-  min: number,
-  max: number,
-  step: number,
-][] = [
-  ["grade_weight_timing", "Timing weight", 0, 1, 0.01],
-  ["grade_weight_velocity", "Velocity weight", 0, 1, 0.01],
-  ["grade_weight_release", "Release weight", 0, 1, 0.01],
-  ["grade_timing_flat_ms", "Timing full marks (ms)", 0, 500, 1],
-  ["grade_timing_zero_ms", "Timing zero (ms)", 1, 2000, 1],
-  ["grade_velocity_flat", "Velocity full marks", 0, 127, 1],
-  ["grade_velocity_zero", "Velocity zero", 1, 127, 1],
-  ["grade_release_flat_lo", "Release full marks from", 0, 10, 0.01],
-  ["grade_release_flat_hi", "Release full marks to", 0, 10, 0.01],
-  ["grade_release_zero_lo", "Release zero below", 0, 10, 0.01],
-  ["grade_release_zero_hi", "Release zero above", 0, 10, 0.01],
-];
-
-export type SettingsTab = "sound" | "look" | "playing" | "library";
+export type { SettingsTab };
 
 const TAB_LABELS: Record<SettingsTab, string> = {
   sound: "Sound",
@@ -100,11 +88,6 @@ const TAB_LABELS: Record<SettingsTab, string> = {
 };
 
 const TABS = Object.entries(TAB_LABELS) as [SettingsTab, string][];
-
-/** Where a search result lives. The mixer and the MIDI devices are not tabs: they are the popovers
- * behind the bar's volume and MIDI buttons, and a result naming one of their controls opens that
- * popover instead of switching tab. */
-type SearchWhere = SettingsTab | "mixer" | "midi";
 
 const WHERE_LABELS: Record<SearchWhere, string> = {
   ...TAB_LABELS,
@@ -118,396 +101,25 @@ function isTab(where: SearchWhere): where is SettingsTab {
 }
 
 /**
- * Every row the search box can reach, declared here rather than read off the page, so a row on a
- * tab that is not open is still findable. `words` holds what a player types instead of the label,
- * seeded from the _Avoid_ lines of `CONTEXT.md`.
- *
- * A row belongs here only once the panel renders it. An entry for a row that is not on screen
- * sends the search to a tab with nothing on it, which is worse than finding nothing at all.
- *
- * `group` names the heading a row sits under, which the Look tab needs: its two Harmony rows and
- * its two Pitch colours rows are told apart by their heading and by nothing else.
+ * The rows whose label, tab name or one of their words holds what was typed, and that the panel
+ * is showing for what the instrument playing offers.
  */
-const SEARCH_ROWS: {
-  id: string;
-  tab: SearchWhere;
-  label: string;
-  group?: string;
-  words: string[];
-}[] = [
-  {
-    id: "keyboard_volume",
-    tab: "mixer",
-    label: "Keyboard",
-    words: ["volume", "loudness", "gain", "level", "quiet", "night", "master"],
-  },
-  {
-    id: "click_volume",
-    tab: "mixer",
-    label: "Metronome",
-    words: ["volume", "loudness", "click", "beat", "level"],
-  },
-  {
-    id: "audio_output_device",
-    tab: "sound",
-    label: "Output device",
-    group: "Output",
-    words: [
-      "speakers",
-      "headphones",
-      "interface",
-      "sound card",
-      "playback engine",
-    ],
-  },
-  {
-    id: "audio_buffer_frames",
-    tab: "sound",
-    label: "Buffer (frames)",
-    group: "Output",
-    words: ["latency", "delay", "lag", "block size", "samples"],
-  },
-  {
-    id: "audio_sample_rate",
-    tab: "sound",
-    label: "Sample rate (Hz)",
-    group: "Instrument",
-    words: [
-      "khz",
-      "44.1",
-      "48",
-      "96",
-      "resample",
-      "quality",
-      "render load",
-      "cpu",
-    ],
-  },
-  {
-    id: "audio_voices",
-    tab: "sound",
-    label: "Voices",
-    group: "Output",
-    words: ["polyphony", "notes at once", "voice limit", "memory", "streaming"],
-  },
-  {
-    id: "instrument_id",
-    tab: "sound",
-    label: "Instrument",
-    group: "Instrument",
-    words: ["patch", "preset", "voice", "sound font", "synth", "piano sound"],
-  },
-  {
-    id: "instruments_folder",
-    tab: "sound",
-    label: "Instruments folder",
-    group: "Instrument",
-    words: ["sf2", "exs", "sound fonts", "samples"],
-  },
-  {
-    id: "role_release",
-    tab: "sound",
-    label: "Release samples",
-    group: "Roles",
-    words: ["damper", "key up", "noise", "level"],
-  },
-  {
-    id: "role_key_off",
-    tab: "sound",
-    label: "Key-off noise",
-    group: "Roles",
-    words: ["key up", "mechanism", "noise", "level"],
-  },
-  {
-    id: "role_sympathetic",
-    tab: "sound",
-    label: "Sympathetic resonance",
-    group: "Roles",
-    words: ["strings", "ringing", "pedal", "noise", "level"],
-  },
-  {
-    id: "role_pedal_noise",
-    tab: "sound",
-    label: "Pedal noise",
-    group: "Roles",
-    words: ["sustain pedal", "thump", "noise", "level"],
-  },
-  {
-    id: "velocity_min",
-    tab: "sound",
-    label: "Minimum velocity",
-    group: "Touch",
-    words: ["quiet", "floor", "softest", "soft", "dynamics", "touch"],
-  },
-  {
-    id: "velocity_max",
-    tab: "sound",
-    label: "Maximum velocity",
-    group: "Touch",
-    words: ["loud", "ceiling", "hardest", "top", "dynamics", "touch"],
-  },
-  {
-    id: "velocity_curve",
-    tab: "sound",
-    label: "Velocity curve",
-    group: "Touch",
-    words: [
-      "touch",
-      "response",
-      "sensitivity",
-      "dynamics",
-      "strike",
-      "force",
-      "exponent",
-    ],
-  },
-  {
-    id: "envelope_attack",
-    tab: "sound",
-    label: "Attack",
-    group: "Envelope",
-    words: ["envelope", "adsr", "onset", "fade in", "swell"],
-  },
-  {
-    id: "envelope_decay",
-    tab: "sound",
-    label: "Decay",
-    group: "Envelope",
-    words: ["envelope", "adsr", "fall", "settle"],
-  },
-  {
-    id: "envelope_sustain",
-    tab: "sound",
-    label: "Sustain",
-    group: "Envelope",
-    words: ["envelope", "adsr", "hold", "level", "body"],
-  },
-  {
-    id: "envelope_release",
-    tab: "sound",
-    label: "Release",
-    group: "Envelope",
-    words: [
-      "envelope",
-      "adsr",
-      "tail",
-      "ring",
-      "decay after",
-      "fade out",
-      "abrupt",
-      "cut off",
-    ],
-  },
-  {
-    id: "effect_chain",
-    tab: "sound",
-    label: "Effect chain",
-    words: [
-      "reverb",
-      "fx chain",
-      "rack",
-      "inserts",
-      "effects bus",
-      "plugin",
-      "audio unit",
-    ],
-  },
-  {
-    id: "theme",
-    tab: "look",
-    label: "Theme",
-    words: ["dark", "light", "appearance", "colour scheme"],
-  },
-  {
-    id: "sheet_proportional",
-    tab: "look",
-    label: "Space notes by time",
-    group: "Sheet",
-    words: ["proportional", "even", "rhythm"],
-  },
-  {
-    id: "sheet_spacing",
-    tab: "look",
-    label: "Spacing",
-    group: "Sheet",
-    words: ["zoom", "pinch", "width", "stretch"],
-  },
-  {
-    id: "sheet_harmony",
-    tab: "look",
-    label: "Harmony",
-    group: "Sheet",
-    words: ["chords", "chord track", "roman numerals"],
-  },
-  {
-    id: "sheet_colour",
-    tab: "look",
-    label: "Pitch colours",
-    group: "Sheet",
-    words: ["color", "rainbow", "notes"],
-  },
-  {
-    id: "lane_lookahead",
-    tab: "look",
-    label: "Lookahead",
-    group: "Falling notes",
-    words: ["zoom", "pinch", "speed", "ahead"],
-  },
-  {
-    id: "lane_note_width",
-    tab: "look",
-    label: "Note width",
-    group: "Falling notes",
-    words: ["block", "bar", "thickness"],
-  },
-  {
-    id: "lane_gap",
-    tab: "look",
-    label: "Gap",
-    group: "Falling notes",
-    words: ["block", "space", "padding"],
-  },
-  {
-    id: "lane_names",
-    tab: "look",
-    label: "Note names on blocks",
-    group: "Falling notes",
-    words: ["letters", "labels", "pitch"],
-  },
-  {
-    id: "lane_harmony",
-    tab: "look",
-    label: "Harmony",
-    group: "Falling notes",
-    words: [
-      "chords",
-      "chord track",
-      "roman numerals",
-      "wheel",
-      "circle of fifths",
-    ],
-  },
-  {
-    id: "keyboard_scale_marks",
-    tab: "look",
-    label: "Mark keys off the scale",
-    group: "Keyboard",
-    words: ["out of scale", "scale marks", "scale keyboard", "restrict"],
-  },
-  {
-    id: "lane_colour",
-    tab: "look",
-    label: "Pitch colours",
-    group: "Falling notes",
-    words: ["color", "rainbow", "notes"],
-  },
-  {
-    id: "keyboard_labels",
-    tab: "look",
-    label: "Note names on keys",
-    group: "Keyboard",
-    words: ["letters", "labels", "piano"],
-  },
-  {
-    id: "keyboard_size",
-    tab: "look",
-    label: "Keyboard size",
-    group: "Keyboard",
-    words: ["keys", "range", "octaves", "88", "width", "custom"],
-  },
-  {
-    id: "midi_device",
-    tab: "midi",
-    label: "Input device",
-    words: ["midi", "keyboard", "piano", "port", "hidden", "bluetooth"],
-  },
-  {
-    id: "matching_window_ms",
-    tab: "playing",
-    label: "Matching window",
-    group: "Timing",
-    words: ["hit window", "tolerance", "timing"],
-  },
-  {
-    id: "togetherness_ms",
-    tab: "playing",
-    label: "Togetherness window",
-    group: "Timing",
-    words: ["chord", "spread", "together"],
-  },
-  {
-    id: "play_inactive_hand",
-    tab: "playing",
-    label: "Inactive hand sounds",
-    group: "Inactive hand",
-    words: ["other hand", "ghost", "left", "right", "accompaniment"],
-  },
-  {
-    id: "play_inactive_hand_velocity",
-    tab: "playing",
-    label: "Inactive hand velocity",
-    group: "Inactive hand",
-    words: ["other hand", "ghost", "dynamics", "follow", "loudness"],
-  },
-  {
-    id: "play_inactive_hand_level",
-    tab: "playing",
-    label: "Inactive hand level",
-    group: "Inactive hand",
-    words: ["other hand", "ghost", "loudness", "softer"],
-  },
-  ...(import.meta.env.DEV
-    ? [
-        {
-          id: "grade_tuning",
-          tab: "playing" as const,
-          label: "Grade tuning",
-          words: ["score", "rating", "karaoke", "weight", "release"],
-        },
-        ...GRADE_KNOBS.map(([key, label]) => ({
-          id: key as string,
-          tab: "playing" as const,
-          label,
-          group: "Grade tuning",
-          words: ["grade", "score", "rating", "karaoke", "tuning"],
-        })),
-      ]
-    : []),
-  {
-    id: "library_folder",
-    tab: "library",
-    label: "Library folder",
-    words: ["storage", "data directory", "scores", "files"],
-  },
-  {
-    id: "pdmx_scores",
-    tab: "library",
-    label: "PDMX scores",
-    words: ["download", "catalogue", "source", "provider"],
-  },
-];
-
-/**
- * The rows whose label, tab name or one of their words holds what was typed. `envelope` says
- * whether the instrument playing has an envelope to shape and `roles` whether it offers any of the
- * noises around its tone; a hosted plugin has neither, and the search must not offer rows the panel
- * is not showing.
- */
-function searchRows(
-  query: string,
-  envelope: boolean,
-  roles: boolean,
-): typeof SEARCH_ROWS {
+function searchRows(query: string, has: Offered): SettingRow[] {
   const needle = query.trim().toLowerCase();
   if (!needle) return [];
-  return SEARCH_ROWS.filter(
-    (row) =>
-      (envelope || !row.id.startsWith("envelope_")) &&
-      (roles || !row.id.startsWith("role_")) &&
+  return SETTING_ROWS.filter(
+    (row: SettingRow) =>
+      (row.shows?.(has) ?? true) &&
       [row.label, WHERE_LABELS[row.tab], row.group ?? "", ...row.words].some(
         (word) => word.toLowerCase().includes(needle),
       ),
   );
+}
+
+/** The row an element carrying the row prefix stands for: every such element took its id from the
+ * table. */
+function idOf(row: Element): SettingRowId {
+  return row.id.slice(rowId("").length) as SettingRowId;
 }
 
 /**
@@ -543,7 +155,7 @@ export function SettingsPanel({
   /** Which search result the arrow keys are on. */
   const [sel, setSel] = useState(0);
   /** The row a search result jumped to, held until the next jump or the next open. */
-  const [marked, setMarked] = useState<string | null>(null);
+  const marked = useSyncExternalStore(markedRow.subscribe, markedRow.get);
   /** Whether the instrument playing has an envelope, which is what puts its rows in the search. */
   const [envelope, setEnvelope] = useState(false);
   /** Whether it offers any role beyond the tone, which is what puts the four level rows there. */
@@ -566,7 +178,7 @@ export function SettingsPanel({
   // engine is putting on the page now.
   useEffect(() => {
     if (!open) {
-      setMarked(null);
+      markedRow.set(null);
       setQuery("");
       setSel(0);
     }
@@ -585,10 +197,10 @@ export function SettingsPanel({
   // The tab and the mark land in one render, as they do for a search result, so the scroll effect
   // below finds the row on the page.
   useEffect(() => {
-    const row = jumpTo && SEARCH_ROWS.find((each) => each.id === jumpTo);
+    const row = jumpTo && SETTING_ROWS.find((each) => each.id === jumpTo);
     if (!open || !row || !isTab(row.tab)) return;
     setTab(row.tab);
-    setMarked(row.id);
+    markedRow.set(row.id);
   }, [open, jumpTo]);
 
   // Where the panel was left, taken up at every open. A `jumpTo` names the place instead, so the
@@ -607,8 +219,14 @@ export function SettingsPanel({
     }
   }, [opensAt]);
 
-  // Nothing of this panel writes once it is gone.
-  useEffect(() => () => clearTimeout(scrollWrite.current), []);
+  // Nothing of this panel writes once it is gone, and no row of a popover keeps its mark.
+  useEffect(
+    () => () => {
+      clearTimeout(scrollWrite.current);
+      markedRow.set(null);
+    },
+    [],
+  );
 
   // Whether the tarball is unpacked. Rust answers off the disk and owns the folder it looks in,
   // so the answer is asked for once per open of the panel.
@@ -623,16 +241,15 @@ export function SettingsPanel({
     };
   }, [open]);
 
-  // The tab switch and the mark land in one render, so a mark set as the panel opens is scrolled
-  // to once the row is on the page. A row on a tab nobody has built yet is not in `SEARCH_ROWS`,
-  // so there is nothing to miss.
+  // The mark lands in its own render and the tab switch may follow in another, so the scroll runs
+  // on either, and finds the row once its tab is on the page.
   useEffect(() => {
     if (marked)
       document
         .getElementById(rowId(marked))
         ?.scrollIntoView({ block: markScroll.current });
     markScroll.current = "center";
-  }, [marked]);
+  }, [marked, tab]);
 
   useEffect(() => {
     list.current
@@ -645,7 +262,7 @@ export function SettingsPanel({
   function chooseTab(next: SettingsTab): void {
     clearTimeout(scrollWrite.current);
     setTab(next);
-    setMarked(null);
+    markedRow.set(null);
     setOpensAt(null);
     if (column.current) column.current.scrollTop = 0;
     void set("settings_tab", next);
@@ -677,10 +294,10 @@ export function SettingsPanel({
     if (typeof picked === "string") void set(key, picked);
   }
 
-  const results = searchRows(query, envelope, roles);
+  const results = searchRows(query, { envelope, roles });
   const selected = results[Math.min(sel, results.length - 1)] ?? null;
 
-  function pick(row: (typeof SEARCH_ROWS)[number]): void {
+  function pick(row: SettingRow): void {
     setQuery("");
     setSel(0);
     // A popover's control is not a row here, so the result hands the player to the popover rather
@@ -691,7 +308,7 @@ export function SettingsPanel({
       return;
     }
     chooseTab(row.tab);
-    setMarked(row.id);
+    markedRow.set(row.id);
   }
 
   // The arrows belong to the results list alone: every slider, select and toggle on the tabs below
@@ -736,7 +353,7 @@ export function SettingsPanel({
     ]
       // A row of a tab that is not open is on the page but out of the walk.
       .filter((row) => row.offsetParent !== null);
-    const at = rows.findIndex((row) => row.id === rowId(marked ?? ""));
+    const at = rows.findIndex((row) => idOf(row) === marked);
 
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
@@ -746,7 +363,7 @@ export function SettingsPanel({
         ];
       if (!next) return;
       markScroll.current = "nearest";
-      setMarked(next.id.slice(rowId("").length));
+      markedRow.set(idOf(next));
       return;
     }
 
@@ -763,11 +380,8 @@ export function SettingsPanel({
     const row = (event.target as HTMLElement).closest('[id^="setting-row-"]');
     if (!row) return;
     markScroll.current = "nearest";
-    setMarked(row.id.slice(rowId("").length));
+    markedRow.set(idOf(row));
   }
-
-  /** The `id` and `marked` every `Row` takes, spread instead of repeated at each call site. */
-  const markRow = (id: string) => ({ id, marked: marked === id });
 
   /** The `value` and `onChange` every control writing straight to one setting takes. */
   function bind<K extends keyof Settings>(key: K) {
@@ -872,7 +486,7 @@ export function SettingsPanel({
               tabIndex={undefined}
             >
               {/* The two volumes are not here at all; they are the mixer's two faders. */}
-              <SoundTab marked={marked} />
+              <SoundTab />
             </Tabs.Content>
 
             <Tabs.Content
@@ -881,7 +495,7 @@ export function SettingsPanel({
               tabIndex={undefined}
             >
               <Rows>
-                <Row {...markRow("theme")} label="Theme">
+                <Row id="theme">
                   <Segmented options={THEMES} {...bind("theme")} />
                 </Row>
               </Rows>
@@ -891,15 +505,13 @@ export function SettingsPanel({
               <Section title="Sheet">
                 <Rows>
                   <Row
-                    {...markRow("sheet_proportional")}
-                    label="Space notes by time"
+                    id="sheet_proportional"
                     hint="Off keeps the engraving's own spacing."
                   >
                     <Toggle {...bind("sheet_proportional")} />
                   </Row>
                   <Row
-                    {...markRow("sheet_spacing")}
-                    label="Spacing"
+                    id="sheet_spacing"
                     hint="A pinch on the sheet moves it too."
                   >
                     <Slider
@@ -913,13 +525,12 @@ export function SettingsPanel({
                     />
                   </Row>
                   <Row
-                    {...markRow("sheet_harmony")}
-                    label="Harmony"
+                    id="sheet_harmony"
                     hint="Names the chord at the cursor and the two after it."
                   >
                     <Toggle {...bind("sheet_harmony")} />
                   </Row>
-                  <Row {...markRow("sheet_colour")} label="Pitch colours">
+                  <Row id="sheet_colour">
                     <Toggle {...bind("sheet_colour")} />
                   </Row>
                 </Rows>
@@ -928,8 +539,7 @@ export function SettingsPanel({
               <Section title="Falling notes">
                 <Rows>
                   <Row
-                    {...markRow("lane_lookahead")}
-                    label="Lookahead"
+                    id="lane_lookahead"
                     hint="How many beats are in view at once."
                   >
                     <Slider
@@ -942,8 +552,7 @@ export function SettingsPanel({
                     />
                   </Row>
                   <Row
-                    {...markRow("lane_note_width")}
-                    label="Note width"
+                    id="lane_note_width"
                     hint="Part of its key's width."
                   >
                     <Slider
@@ -956,8 +565,7 @@ export function SettingsPanel({
                     />
                   </Row>
                   <Row
-                    {...markRow("lane_gap")}
-                    label="Gap"
+                    id="lane_gap"
                     hint="Cut between two blocks that follow each other."
                   >
                     <Slider
@@ -970,19 +578,17 @@ export function SettingsPanel({
                     />
                   </Row>
                   <Row
-                    {...markRow("lane_names")}
-                    label="Note names on blocks"
+                    id="lane_names"
                   >
                     <Toggle {...bind("lane_names")} />
                   </Row>
                   <Row
-                    {...markRow("lane_harmony")}
-                    label="Harmony"
+                    id="lane_harmony"
                     hint="Chord names at the lane's top right."
                   >
                     <Segmented options={HARMONY} {...bind("lane_harmony")} />
                   </Row>
-                  <Row {...markRow("lane_colour")} label="Pitch colours">
+                  <Row id="lane_colour">
                     <Toggle {...bind("lane_colour")} />
                   </Row>
                 </Rows>
@@ -992,21 +598,18 @@ export function SettingsPanel({
               <Section title="Keyboard">
                 <Rows>
                   <Row
-                    {...markRow("keyboard_labels")}
-                    label="Note names on keys"
+                    id="keyboard_labels"
                   >
                     <Toggle {...bind("keyboard_labels")} />
                   </Row>
                   <Row
-                    {...markRow("keyboard_scale_marks")}
-                    label="Mark keys off the scale"
+                    id="keyboard_scale_marks"
                     hint="Ghosts what the key in force does not hold."
                   >
                     <Toggle {...bind("keyboard_scale_marks")} />
                   </Row>
                   <Row
-                    {...markRow("keyboard_size")}
-                    label="Keyboard size"
+                    id="keyboard_size"
                     hint="Keys the lane draws under the falling notes."
                   >
                     <Segmented options={PRESETS} {...bind("keyboard_preset")} />
@@ -1035,8 +638,7 @@ export function SettingsPanel({
               <Section title="Timing">
                 <Rows>
                   <Row
-                    {...markRow("matching_window_ms")}
-                    label="Matching window"
+                    id="matching_window_ms"
                     hint="How far off the beat a strike still counts."
                   >
                     <Slider
@@ -1049,8 +651,7 @@ export function SettingsPanel({
                     />
                   </Row>
                   <Row
-                    {...markRow("togetherness_ms")}
-                    label="Togetherness window"
+                    id="togetherness_ms"
                     hint="How far apart the notes of one chord may be struck."
                   >
                     <Slider
@@ -1070,15 +671,13 @@ export function SettingsPanel({
               <Section title="Inactive hand">
                 <Rows>
                   <Row
-                    {...markRow("play_inactive_hand")}
-                    label="Inactive hand sounds"
+                    id="play_inactive_hand"
                     hint="Played as the clock passes it."
                   >
                     <Toggle {...bind("play_inactive_hand")} />
                   </Row>
                   <Row
-                    {...markRow("play_inactive_hand_velocity")}
-                    label="Inactive hand velocity"
+                    id="play_inactive_hand_velocity"
                     hint="Loudness from the written dynamics, or from your strikes."
                   >
                     <Segmented
@@ -1088,8 +687,7 @@ export function SettingsPanel({
                     />
                   </Row>
                   <Row
-                    {...markRow("play_inactive_hand_level")}
-                    label="Inactive hand level"
+                    id="play_inactive_hand_level"
                     hint="Part of that loudness it sounds at."
                   >
                     <Slider
@@ -1119,7 +717,7 @@ export function SettingsPanel({
                   <div className="mt-3">
                     <Rows>
                       {GRADE_KNOBS.map(([key, label, min, max, step]) => (
-                        <Row key={key} {...markRow(key)} label={label}>
+                        <Row key={key} id={key}>
                           <Slider
                             label={label}
                             value={values[key] as number}
@@ -1146,8 +744,7 @@ export function SettingsPanel({
               </p>
               <Rows>
                 <Row
-                  {...markRow("library_folder")}
-                  label="Library folder"
+                  id="library_folder"
                 >
                   <Path
                     value={values.library_folder}
@@ -1157,8 +754,7 @@ export function SettingsPanel({
                   />
                 </Row>
                 <Row
-                  {...markRow("pdmx_scores")}
-                  label="PDMX scores"
+                  id="pdmx_scores"
                   hint="The score finder needs them to offer PDMX rows."
                 >
                   <span className="flex flex-none flex-col items-end gap-0.5">
@@ -1234,8 +830,8 @@ function press(row: HTMLElement): boolean {
 
 /**
  * Left and Right on a row: a twentieth of the slider's span, rounded to its step and never under
- * one step, or one step exactly when Shift is down and on the envelope and touch rows, whose every
- * step is worth hearing. False for a row with no slider to move.
+ * one step, or one step exactly when Shift is down and on a row whose descriptor says it steps
+ * finely. False for a row with no slider to move.
  */
 function slide(row: HTMLElement, way: 1 | -1, fine: boolean): boolean {
   const input = row.querySelector<HTMLInputElement>('input[type="range"]');
@@ -1246,7 +842,7 @@ function slide(row: HTMLElement, way: 1 | -1, fine: boolean): boolean {
   const max = Number(input.max);
   const step = Number(input.step) || 1;
   const jump =
-    fine || /^setting-row-(envelope|velocity)_/.test(row.id)
+    fine || rowOf(idOf(row)).fine
       ? step
       : Math.max(step, Math.round(((max - min) * 0.05) / step) * step);
   const next = clamp(Number(input.value) + way * jump, min, max);

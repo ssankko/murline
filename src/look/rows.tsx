@@ -2,7 +2,7 @@
 // labelled row with an optional hint under the label, and the segmented control a choice of a few
 // takes. The Sound tab's sections and the panel's own tabs draw from here alike.
 
-import { rowId } from '@/lib/utils';
+import { rowId, rowOf, useMarked, type SettingRowId } from '@/settings/rows';
 
 /** The divided list the rows sit in. */
 export function Rows({ children }: { children: React.ReactNode }) {
@@ -10,23 +10,21 @@ export function Rows({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * One setting: its label on the left, its control on the right. `id` is the settings id the search
- * catalogue knows, which is what a search result marks and scrolls to. `hint` is one short line
- * under the label saying what the setting does.
+ * One setting: its label on the left, its control on the right. `id` names the row's descriptor,
+ * which gives the label and is what a search result marks and scrolls to. A row that only shows a
+ * value, such as the latency, has no descriptor and carries its own `label` instead. `hint` is one
+ * short line under the label saying what the setting does.
  */
 export function Row({
   id,
   label,
   hint,
-  marked,
   children,
-}: {
-  id?: string;
-  label: string;
+}: ({ id: SettingRowId; label?: undefined } | { id?: undefined; label: string }) & {
   hint?: string;
-  marked?: boolean;
   children: React.ReactNode;
 }) {
+  const marked = useMarked(id);
   return (
     <div
       id={id && rowId(id)}
@@ -34,7 +32,7 @@ export function Row({
       className={`flex min-h-8 items-center justify-between gap-3 py-1 text-[12px] ${marked ? 'bg-ink/8' : ''}`}
     >
       <span className={hint ? 'flex min-w-0 flex-col gap-0.5' : 'flex-none'}>
-        {label}
+        {id ? rowOf(id).label : label}
         {hint && <span className="text-muted-ink text-[11px] leading-snug">{hint}</span>}
       </span>
       {children}

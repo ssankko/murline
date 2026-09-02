@@ -11,8 +11,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { set, setting } from '@/settings/settings';
-import { rowId } from '@/lib/utils';
 import { Toggle } from '@/look/rows';
+import { rowId, useMarked } from '@/settings/rows';
 import { commands, type Effect, type EffectSlot } from '@/bindings';
 import { on } from '@/rust';
 import { Plus } from 'lucide-react';
@@ -28,7 +28,8 @@ function stored(slot: EffectSlot): EffectSlot {
   };
 }
 
-export function EffectsSection({ marked }: { marked?: string | null | undefined }) {
+export function EffectsSection() {
+  const marked = useMarked('effect_chain');
   const [slots, setSlots] = useState<EffectSlot[]>([]);
   const [available, setAvailable] = useState<Effect[]>([]);
   const [dragging, setDragging] = useState<number | null>(null);
@@ -79,8 +80,8 @@ export function EffectsSection({ marked }: { marked?: string | null | undefined 
   return (
     <section
       id={rowId('effect_chain')}
-      data-marked={marked === 'effect_chain' || undefined}
-      className={`flex flex-col gap-2 ${marked === 'effect_chain' ? 'bg-ink/8' : ''}`}
+      data-marked={marked || undefined}
+      className={`flex flex-col gap-2 ${marked ? 'bg-ink/8' : ''}`}
     >
       <h3 className="text-[13px] font-semibold">Effect chain</h3>
       <p className="text-muted-ink text-[11px] leading-snug">

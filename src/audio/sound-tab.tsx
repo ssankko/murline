@@ -70,15 +70,12 @@ export function useAudioStatus(round = 0): AudioStatus | null {
 /**
  * What makes and shapes the sound: the instrument, its roles, the touch, the envelope and the
  * effect chain. Shared whole by the Sound tab and the status bar's sound popover. The sections come
- * out as a fragment, so whichever holds them sets the space between them. `marked` is the row a
- * search result jumped to, handed down so each section can mark its own.
+ * out as a fragment, so whichever holds them sets the space between them.
  */
 export function SoundControls({
-  marked,
   folder = true,
   onChanged,
 }: {
-  marked?: string | null | undefined;
   /** The instruments folder row, which the sound popover leaves out. */
   folder?: boolean;
   /** A new instrument, for whatever reads the sound line outside these sections. */
@@ -95,7 +92,6 @@ export function SoundControls({
   return (
     <>
       <InstrumentSection
-        marked={marked}
         folder={folder}
         onChanged={() => {
           setRound((round) => round + 1);
@@ -103,20 +99,18 @@ export function SoundControls({
         }}
       />
       <RolesSection
-        marked={marked}
         roles={status?.roles}
         instrument={instrument}
         round={round}
       />
-      <VelocitySection marked={marked} sounding={sounding.keys} />
+      <VelocitySection sounding={sounding.keys} />
       <EnvelopeSection
-        marked={marked}
         sounding={sounding.keys}
         onRelease={sounding.dieAfter}
         instrument={instrument}
         round={round}
       />
-      <EffectsSection marked={marked} />
+      <EffectsSection />
     </>
   );
 }
@@ -125,16 +119,15 @@ export function SoundControls({
  * The sound engine's own settings, under the panel's Sound tab: where the sound goes out, what
  * makes it, and the one line saying what is wrong with it.
  */
-export function SoundTab({ marked }: { marked?: string | null | undefined }) {
+export function SoundTab() {
   // The trouble line follows the instrument, which only the sections below can change.
   const [round, setRound] = useState(0);
   const status = useAudioStatus(round);
 
   return (
     <div className="flex min-w-0 flex-col gap-7">
-      <OutputSection marked={marked} />
+      <OutputSection />
       <SoundControls
-        marked={marked}
         onChanged={() => setRound((round) => round + 1)}
       />
       {trouble(status) && (

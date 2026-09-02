@@ -21,10 +21,8 @@ import { useState } from 'react';
  * can still press.
  */
 export function VelocitySection({
-  marked,
   sounding = [],
 }: {
-  marked?: string | null | undefined;
   sounding?: Sounding[];
 }) {
   const min = useSetting('velocity_min');
@@ -51,8 +49,6 @@ export function VelocitySection({
         <div className="flex min-w-0 flex-1 flex-col">
           <Knob
             id="velocity_min"
-            marked={marked}
-            label="Minimum velocity"
             hint="Velocity 1 lands here."
             lo={1}
             hi={127}
@@ -62,8 +58,6 @@ export function VelocitySection({
           />
           <Knob
             id="velocity_max"
-            marked={marked}
-            label="Maximum velocity"
             hint="Velocity 127 lands here."
             lo={1}
             hi={127}
@@ -73,8 +67,6 @@ export function VelocitySection({
           />
           <Knob
             id="velocity_curve"
-            marked={marked}
-            label="Velocity curve"
             hint="Over 1.00 makes soft playing softer."
             lo={0}
             hi={100}

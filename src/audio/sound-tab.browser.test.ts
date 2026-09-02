@@ -2,6 +2,7 @@ import { NO_STATUS, SoundTab } from '@/audio/sound-tab';
 import type { StrikeEvent } from '@/play/engine';
 import type { AudioStatus, Envelope } from '@/bindings';
 import { fakeRust } from '@/rust.fake';
+import { markedRow } from '@/settings/rows';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -92,8 +93,10 @@ test('a search result marks the row it named, wherever in the tab it lives', asy
   const host = document.createElement('div');
   document.body.append(host);
   const root = createRoot(host);
-  root.render(createElement(SoundTab, { marked: 'audio_buffer_frames' }));
+  markedRow.set('audio_buffer_frames');
+  root.render(createElement(SoundTab, {}));
   close = () => {
+    markedRow.set(null);
     root.unmount();
     host.remove();
   };

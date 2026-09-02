@@ -26,7 +26,7 @@ const FRAME_CHOICES = [32, 64, 128, 256, 512];
 /** The voice limits the engine takes. 512 voices cost 256 MB of streaming buffers for an EXS. */
 const VOICE_CHOICES = [128, 256, 512];
 
-export function OutputSection({ marked }: { marked?: string | null | undefined }) {
+export function OutputSection() {
   const [devices, setDevices] = useState<OutputDevice[]>([]);
   const [status, setStatus] = useState<AudioStatus | null>(null);
   const chosen = useSetting("audio_output_device");
@@ -87,8 +87,6 @@ export function OutputSection({ marked }: { marked?: string | null | undefined }
 
       <Row
         id="audio_output_device"
-        marked={marked === "audio_output_device"}
-        label="Output device"
       >
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -130,8 +128,6 @@ export function OutputSection({ marked }: { marked?: string | null | undefined }
 
       <Row
         id="audio_buffer_frames"
-        marked={marked === "audio_buffer_frames"}
-        label="Buffer (frames)"
         hint={
           running === frames
             ? "Smaller is quicker; too small crackles."
@@ -148,8 +144,6 @@ export function OutputSection({ marked }: { marked?: string | null | undefined }
 
       <Row
         id="audio_voices"
-        marked={marked === "audio_voices"}
-        label="Voices"
         hint="Most notes sounding at once; more costs memory."
       >
         <Segmented

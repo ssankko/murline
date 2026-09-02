@@ -1,4 +1,4 @@
-import { arrowBack, stepTarget } from '@/play/step';
+import { arrowBack, nearestTick, playedTicksOf, stepTarget } from '@/play/step';
 import { TICKS_PER_QUARTER, type Measure, type Onset, type Score } from '@/score/types';
 import { describe, expect, test } from 'vitest';
 
@@ -95,5 +95,29 @@ describe('which arrows', () => {
     expect(arrowBack('ArrowDown', null)).toBe(true);
     expect(arrowBack('ArrowRight', null)).toBe(false);
     expect(arrowBack('Escape', null)).toBeNull();
+  });
+});
+
+describe('where a seek target stands', () => {
+  test('a bar in a repeat stands once per pass, and the pass nearest the clock wins', () => {
+    const ticks = playedTicksOf(score, score.playOrder, { measure: 0 });
+    expect(ticks).toEqual([0, 2 * BAR]);
+    expect(nearestTick(ticks, BAR + TICKS_PER_QUARTER)).toBe(2 * BAR);
+    expect(nearestTick(ticks, TICKS_PER_QUARTER)).toBe(0);
+  });
+
+  test('a moment into a bar keeps its distance from the bar line', () => {
+    expect(playedTicksOf(score, score.playOrder, { measure: 1, into: TICKS_PER_QUARTER })).toEqual([
+      BAR + TICKS_PER_QUARTER,
+    ]);
+  });
+
+  test('an Onset stands at its played tick in every pass; a list of none leaves the clock where it is', () => {
+    expect(playedTicksOf(score, score.playOrder, { onset: 1 })).toEqual([
+      TICKS_PER_QUARTER,
+      2 * BAR + TICKS_PER_QUARTER,
+    ]);
+    expect(playedTicksOf(score, score.playOrder, { onset: 5 })).toEqual([BAR + TICKS_PER_QUARTER]);
+    expect(nearestTick([], 7)).toBe(7);
   });
 });

@@ -5,6 +5,7 @@ import type { ClickStrength } from '@/play/click';
 import { playGrade, type NoteStrike, type PlayGrade } from '@/play/grade';
 import { clampSection, type Section } from '@/play/section';
 import { isInactiveHand, type HandsSetting, type PlaySettings, type TempoMode } from '@/play/settings';
+import { nearestTick, playedTicksOf } from '@/play/step';
 import { WaitState } from '@/play/wait';
 import { barsOfWalk, barTickOf, beatOf } from '@/score/beat';
 import {
@@ -471,11 +472,11 @@ export class Engine {
   seek(target: SeekTarget): void {
     // A performance is one clean run: it takes no seek, and no Section has force during it.
     if (this.kind !== 'practice') return;
-    const ticks = this.playedTicksOf(target);
+    const ticks = playedTicksOf(this.score, this.walk, target);
     if (ticks.length === 0) return;
     // A played tick names its pass itself; a bar or an Onset stands in every pass, so the clock
     // says which of them the click meant.
-    const to = this.nearestTick(ticks, 'tick' in target ? target.tick : this.tick);
+    const to = nearestTick(ticks, 'tick' in target ? target.tick : this.tick);
     this.moveTo(to);
     if (this.state === 'counting-in') this.beginMotion(to);
     else if (this.state !== 'running') this.startTick = to;
@@ -577,7 +578,7 @@ export class Engine {
    * A moment between two Onsets keeps its distance from the Onset before it.
    */
   private replay(at: { onsetIndex: number; past: number }, was: number): number {
-    return this.nearestTick(this.playedTicksOf({ onset: at.onsetIndex }), was - at.past) + at.past;
+    return nearestTick(playedTicksOf(this.score, this.walk, { onset: at.onsetIndex }), was - at.past) + at.past;
   }
 
   /** Takes the clock to a played tick: everything behind it is skipped, everything from it open. */
@@ -613,36 +614,6 @@ export class Engine {
    */
   private absorbHeld(): void {
     for (const midi of this.held.keys()) this.held.set(midi, ABSORBED);
-  }
-
-  /** Every played tick a seek target stands at: once per pass through it. */
-  private playedTicksOf(target: SeekTarget): number[] {
-    // A played tick lands on the step nearest it, wherever in the play order that step falls.
-    if ('tick' in target) return this.walk.map((step) => step.tick);
-    const ticks: number[] = [];
-    for (let i = 0; i < this.walk.length; i++) {
-      const step = this.walk[i]!;
-      const onset = this.score.onsets[step.onsetIndex];
-      if (!onset) continue;
-      if ('onset' in target) {
-        if (step.onsetIndex === target.onset) ticks.push(step.tick);
-        continue;
-      }
-      if (onset.measureIndex !== target.measure) continue;
-      // One candidate per pass: the bar line before the bar's first Onset in this run.
-      const before = this.walk[i - 1];
-      const previous = before ? this.score.onsets[before.onsetIndex] : undefined;
-      if (previous?.measureIndex === target.measure) continue;
-      const measure = this.score.measures[target.measure]!;
-      ticks.push(barTickOf(step, onset, measure) + (target.into ?? 0));
-    }
-    return ticks;
-  }
-
-  /** The tick of the list nearest a played tick, the first of them on a tie; `to` itself for none. */
-  private nearestTick(ticks: number[], to: number): number {
-    if (ticks.length === 0) return to;
-    return ticks.reduce((best, tick) => (Math.abs(tick - to) < Math.abs(best - to) ? tick : best));
   }
 
   /**

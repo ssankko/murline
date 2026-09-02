@@ -1,4 +1,4 @@
-import { stepTempo } from '@/play/settings';
+import { convertTempo, stepTempo } from '@/play/settings';
 import { describe, expect, test } from 'vitest';
 
 describe('the tempo one key press away', () => {
@@ -27,5 +27,15 @@ describe('the tempo one key press away', () => {
   test('reads the BPM number in BPM mode', () => {
     expect(stepTempo(72, 1, false, 'bpm')).toBe(75);
     expect(stepTempo(72, -1, false, 'bpm')).toBe(70);
+  });
+});
+
+describe('the same speed in the other tempo mode', () => {
+  test('reads through the written BPM, rounds, and holds inside the other range', () => {
+    expect(convertTempo(50, 'percent', 'bpm', 120)).toBe(60);
+    expect(convertTempo(90, 'bpm', 'percent', 120)).toBe(75);
+    expect(convertTempo(33, 'percent', 'bpm', 100)).toBe(40);
+    expect(convertTempo(200, 'percent', 'bpm', 180)).toBe(240);
+    expect(convertTempo(77, 'bpm', 'bpm', 120)).toBe(77);
   });
 });

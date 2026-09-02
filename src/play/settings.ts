@@ -46,6 +46,16 @@ export function stepTempo(
   return clamp(next, ...TEMPO_RANGE[mode]);
 }
 
+/**
+ * The same speed read in the other tempo mode, rounded and held inside that mode's range: the two
+ * modes read the same piece at the same speed, so a switch carries the value over.
+ */
+export function convertTempo(value: number, from: TempoMode, to: TempoMode, writtenBpm: number): number {
+  if (from === to) return value;
+  const converted = to === 'bpm' ? (writtenBpm * value) / 100 : (value / writtenBpm) * 100;
+  return clamp(Math.round(converted), ...TEMPO_RANGE[to]);
+}
+
 /** Flow runs the cursor at tempo whatever the player does; Wait stops it at every unsatisfied Onset. */
 export type PlayMode = 'flow' | 'wait';
 

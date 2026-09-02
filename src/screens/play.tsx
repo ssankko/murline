@@ -15,6 +15,7 @@ import type { PerformanceRecord, PlayKind } from '@/play/engine';
 import { Play as PlayOne } from '@/play/play';
 import { sectionLabel } from '@/play/section';
 import {
+  convertTempo,
   type HandsSetting,
   stepTempo,
   TEMPO_KEYS,
@@ -207,12 +208,8 @@ export function PlayScreen({
   /** The two modes read the same piece at the same speed, so a switch carries the value over. */
   function switchMode(next: TempoMode): void {
     if (next === settings.tempoMode) return;
-    const [min, max] = TEMPO_RANGE[next];
-    const value =
-      next === 'bpm'
-        ? (written.bpm * settings.tempoValue) / 100
-        : (settings.tempoValue / written.bpm) * 100;
-    play?.set({ tempoMode: next, tempoValue: clamp(Math.round(value), min, max) });
+    const value = convertTempo(settings.tempoValue, settings.tempoMode, next, written.bpm);
+    play?.set({ tempoMode: next, tempoValue: value });
   }
 
   return (

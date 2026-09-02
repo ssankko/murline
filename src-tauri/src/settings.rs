@@ -34,11 +34,10 @@ static MAP: Mutex<Option<Stored>> = Mutex::new(None);
 
 /// Every stored row. A value that is not JSON is passed over: the window holds a default for every
 /// key and a row nobody can read is one of them.
-async fn read(pool: &SqlitePool) -> Result<Stored, String> {
+async fn read(pool: &SqlitePool) -> Result<Stored, sqlx::Error> {
     let rows = sqlx::query("SELECT key, value FROM setting")
         .fetch_all(pool)
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
     Ok(rows
         .iter()
         .filter_map(|row| {
@@ -50,7 +49,7 @@ async fn read(pool: &SqlitePool) -> Result<Stored, String> {
 
 /// The map, reading the table into it the first time it is asked for. The lock is taken twice and
 /// held over neither the query nor the caller's work.
-async fn loaded(pool: &SqlitePool) -> Result<Stored, String> {
+async fn loaded(pool: &SqlitePool) -> Result<Stored, sqlx::Error> {
     if let Some(map) = MAP.lock().unwrap().as_ref() {
         return Ok(map.clone());
     }
@@ -58,14 +57,13 @@ async fn loaded(pool: &SqlitePool) -> Result<Stored, String> {
     Ok(MAP.lock().unwrap().get_or_insert(stored).clone())
 }
 
-async fn store(pool: &SqlitePool, key: &str, value: &Value) -> Result<(), String> {
+async fn store(pool: &SqlitePool, key: &str, value: &Value) -> Result<(), sqlx::Error> {
     sqlx::query("INSERT INTO setting (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2")
         .bind(key)
         .bind(value.to_string())
         .execute(pool)
         .await
         .map(|_| ())
-        .map_err(|e| e.to_string())
 }
 
 /// Every setting the window starts from, in one read.
@@ -80,10 +78,10 @@ pub async fn settings_read(app: AppHandle) -> Result<HashMap<String, Json>, Refu
 #[tauri::command]
 #[specta::specta]
 pub async fn settings_write(app: AppHandle, key: String, value: Json) -> Result<(), Refusal> {
-    Ok(write_one(pool(&app)?, &key, value.0).await?)
+    write_one(pool(&app)?, &key, value.0).await
 }
 
-async fn write_one(pool: &SqlitePool, key: &str, value: Value) -> Result<(), String> {
+async fn write_one(pool: &SqlitePool, key: &str, value: Value) -> Result<(), Refusal> {
     let mut all = loaded(pool).await?;
     all.insert(key.to_string(), value.clone());
     audio::apply(key, &all)?;
@@ -93,8 +91,8 @@ async fn write_one(pool: &SqlitePool, key: &str, value: Value) -> Result<(), Str
 }
 
 /// Every setting, for the sound engine's own restore at start.
-pub async fn all(app: &AppHandle) -> Result<Stored, String> {
-    loaded(pool(app)?).await
+pub async fn all(app: &AppHandle) -> Result<Stored, Refusal> {
+    Ok(loaded(pool(app)?).await?)
 }
 
 /// One setting, for a reader inside the Rust side. It blocks while the table is read, which

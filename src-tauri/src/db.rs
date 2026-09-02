@@ -4,6 +4,7 @@
 use sqlx::migrate::Migrator;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
+use crate::refusal::Refusal;
 use std::sync::OnceLock;
 use tauri::{AppHandle, Manager};
 
@@ -11,12 +12,12 @@ static POOL: OnceLock<SqlitePool> = OnceLock::new();
 
 /// `murline.db` in the app config directory. The pool connects on first use, so nothing waits for
 /// a connection here.
-pub fn pool(app: &AppHandle) -> Result<&'static SqlitePool, String> {
+pub fn pool(app: &AppHandle) -> Result<&'static SqlitePool, Refusal> {
     if let Some(pool) = POOL.get() {
         return Ok(pool);
     }
-    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let dir = app.path().app_config_dir().map_err(|e| Refusal::failed(e.to_string()))?;
+    std::fs::create_dir_all(&dir)?;
     let options = SqliteConnectOptions::new()
         .filename(dir.join("murline.db"))
         .create_if_missing(true);
@@ -32,9 +33,9 @@ static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 /// Brings the file up to the current shape. Runs before the window exists, so every read after it
 /// meets the tables the window expects. The pool is built inside the runtime because it keeps a
 /// task of its own that has to be spawned somewhere.
-pub fn migrate(app: &AppHandle) -> Result<(), String> {
+pub fn migrate(app: &AppHandle) -> Result<(), Refusal> {
     tauri::async_runtime::block_on(async {
-        MIGRATOR.run(pool(app)?).await.map_err(|e| e.to_string())
+        MIGRATOR.run(pool(app)?).await.map_err(|e| Refusal::failed(e.to_string()))
     })
 }
 

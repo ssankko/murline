@@ -145,13 +145,13 @@ pub async fn piece_list(app: AppHandle, sort: String) -> Result<Vec<PieceRow>, R
     Ok(list(pool(&app)?, &sort).await?)
 }
 
-async fn list(pool: &SqlitePool, sort: &str) -> Result<Vec<PieceRow>, String> {
+async fn list(pool: &SqlitePool, sort: &str) -> Result<Vec<PieceRow>, sqlx::Error> {
     let favorites = if sort == "favorites" { "AND favorite = 1" } else { "" };
     let sql = format!(
         "SELECT piece.*,{HISTORY} FROM piece WHERE present = 1 {favorites} ORDER BY {}",
         ordering(sort)
     );
-    sqlx::query_as(&sql).fetch_all(pool).await.map_err(|e| e.to_string())
+    sqlx::query_as(&sql).fetch_all(pool).await
 }
 
 /// The path of every piece whose file is in the folder, whatever the list pane is filtered to. The
@@ -162,11 +162,10 @@ pub async fn piece_paths(app: AppHandle) -> Result<Vec<String>, Refusal> {
     Ok(paths(pool(&app)?).await?)
 }
 
-async fn paths(pool: &SqlitePool) -> Result<Vec<String>, String> {
+async fn paths(pool: &SqlitePool) -> Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar("SELECT path FROM piece WHERE present = 1")
         .fetch_all(pool)
         .await
-        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -175,12 +174,11 @@ pub async fn piece_get(app: AppHandle, path: String) -> Result<Option<PieceRow>,
     Ok(get(pool(&app)?, &path).await?)
 }
 
-async fn get(pool: &SqlitePool, path: &str) -> Result<Option<PieceRow>, String> {
+async fn get(pool: &SqlitePool, path: &str) -> Result<Option<PieceRow>, sqlx::Error> {
     sqlx::query_as(&format!("SELECT piece.*,{HISTORY} FROM piece WHERE path = ?1"))
         .bind(path)
         .fetch_optional(pool)
         .await
-        .map_err(|e| e.to_string())
 }
 
 /// The `piece` columns the play toolbar writes. A key outside this list is passed over, so the SET
@@ -227,7 +225,7 @@ async fn update_settings(
     pool: &SqlitePool,
     path: &str,
     values: &Map<String, Value>,
-) -> Result<(), String> {
+) -> Result<(), sqlx::Error> {
     let columns: Vec<&str> = SETTINGS
         .iter()
         .copied()
@@ -247,7 +245,7 @@ async fn update_settings(
     for column in &columns {
         query = bind_json(query, &values[*column]);
     }
-    query.execute(pool).await.map(|_| ()).map_err(|e| e.to_string())
+    query.execute(pool).await.map(|_| ())
 }
 
 /// Stores where the play screen left the cursor, in played ticks. It is state of the piece rather
@@ -262,7 +260,7 @@ pub async fn piece_update_position(
     Ok(update_position(pool(&app)?, &path, tick).await?)
 }
 
-async fn update_position(pool: &SqlitePool, path: &str, tick: i64) -> Result<(), String> {
+async fn update_position(pool: &SqlitePool, path: &str, tick: i64) -> Result<(), sqlx::Error> {
     run(pool, "UPDATE piece SET position_tick = ?2 WHERE path = ?1", |q| {
         q.bind(path.to_string()).bind(tick)
     })
@@ -280,7 +278,7 @@ pub async fn piece_set_favorite(
     Ok(set_favorite(pool(&app)?, &path, favorite).await?)
 }
 
-async fn set_favorite(pool: &SqlitePool, path: &str, favorite: bool) -> Result<(), String> {
+async fn set_favorite(pool: &SqlitePool, path: &str, favorite: bool) -> Result<(), sqlx::Error> {
     run(pool, "UPDATE piece SET favorite = ?2 WHERE path = ?1", |q| {
         q.bind(path.to_string()).bind(i64::from(favorite))
     })
@@ -298,7 +296,11 @@ pub async fn piece_recent_plays(
     Ok(recent_plays(pool(&app)?, &path, limit).await?)
 }
 
-async fn recent_plays(pool: &SqlitePool, path: &str, limit: i64) -> Result<Vec<PlayRow>, String> {
+async fn recent_plays(
+    pool: &SqlitePool,
+    path: &str,
+    limit: i64,
+) -> Result<Vec<PlayRow>, sqlx::Error> {
     sqlx::query_as(
         "SELECT id, kind, started_at, duration_s, tempo_mode, tempo_value, hands, grade
          FROM play WHERE piece_path = ?1 ORDER BY started_at DESC LIMIT ?2",
@@ -307,7 +309,6 @@ async fn recent_plays(pool: &SqlitePool, path: &str, limit: i64) -> Result<Vec<P
     .bind(limit)
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())
 }
 
 /// Stores one finished play. Nothing on screen announces it.
@@ -329,7 +330,7 @@ async fn insert_play(
     kind: &str,
     started_at: f64,
     duration_s: f64,
-) -> Result<(), String> {
+) -> Result<(), sqlx::Error> {
     run(
         pool,
         "INSERT INTO play (piece_path, kind, started_at, duration_s) VALUES (?1, ?2, ?3, ?4)",
@@ -358,7 +359,7 @@ async fn insert_performance(
     pool: &SqlitePool,
     path: &str,
     performance: &Performance,
-) -> Result<(), String> {
+) -> Result<(), sqlx::Error> {
     let grade = performance.grade.as_ref();
     run(
         pool,
@@ -395,17 +396,17 @@ pub async fn index_plan(
     folder: String,
     path: Option<String>,
 ) -> Result<Vec<FileEntry>, Refusal> {
-    Ok(plan(pool(&app)?, Path::new(&folder), path.as_deref()).await?)
+    plan(pool(&app)?, Path::new(&folder), path.as_deref()).await
 }
 
 async fn plan(
     pool: &SqlitePool,
     folder: &Path,
     only: Option<&str>,
-) -> Result<Vec<FileEntry>, String> {
+) -> Result<Vec<FileEntry>, Refusal> {
     let files = match only {
         Some(rel) => entry(folder, rel).into_iter().collect(),
-        None => list_dir(folder).map_err(|e| e.to_string())?,
+        None => list_dir(folder)?,
     };
     // One path asks about one row, so a piece open never reads the whole table.
     let rows: Vec<(String, i64, i64, i64)> = match only {
@@ -416,8 +417,7 @@ async fn plan(
         None => {
             sqlx::query_as("SELECT path, mtime, size, present FROM piece").fetch_all(pool).await
         }
-    }
-    .map_err(|e| e.to_string())?;
+    }?;
 
     let on_disk: HashSet<&str> = files.iter().map(|file| file.rel_path.as_str()).collect();
     for (path, .., present) in &rows {
@@ -462,7 +462,7 @@ async fn upsert_index(
     index: &PieceIndex,
     mtime: i64,
     size: i64,
-) -> Result<(), String> {
+) -> Result<(), sqlx::Error> {
     run(
         pool,
         "INSERT INTO piece (path, title, composer, measure_count, duration_s, midi_lo, midi_hi,
@@ -514,7 +514,7 @@ async fn mark_error(
     error: &str,
     mtime: i64,
     size: i64,
-) -> Result<(), String> {
+) -> Result<(), sqlx::Error> {
     run(
         pool,
         "INSERT INTO piece (path, mtime, size, present, imported_at, error)
@@ -532,7 +532,7 @@ async fn mark_error(
 }
 
 /// Whether the file is in the folder. A row absent from it keeps its history and leaves the list.
-async fn set_present(pool: &SqlitePool, path: &str, present: bool) -> Result<(), String> {
+async fn set_present(pool: &SqlitePool, path: &str, present: bool) -> Result<(), sqlx::Error> {
     run(pool, "UPDATE piece SET present = ?2 WHERE path = ?1", |q| {
         q.bind(path.to_string()).bind(i64::from(present))
     })
@@ -546,7 +546,7 @@ pub async fn piece_delete(app: AppHandle, path: String) -> Result<(), Refusal> {
     Ok(delete(pool(&app)?, &path).await?)
 }
 
-async fn delete(pool: &SqlitePool, path: &str) -> Result<(), String> {
+async fn delete(pool: &SqlitePool, path: &str) -> Result<(), sqlx::Error> {
     run(pool, "DELETE FROM piece WHERE path = ?1", |q| {
         q.bind(path.to_string())
     })
@@ -554,7 +554,7 @@ async fn delete(pool: &SqlitePool, path: &str) -> Result<(), String> {
 }
 
 /// One statement with its values bound, answering with nothing but whether it ran.
-async fn run<'q, F>(pool: &SqlitePool, sql: &'q str, bind: F) -> Result<(), String>
+async fn run<'q, F>(pool: &SqlitePool, sql: &'q str, bind: F) -> Result<(), sqlx::Error>
 where
     F: FnOnce(Query<'q, Sqlite, SqliteArguments<'q>>) -> Query<'q, Sqlite, SqliteArguments<'q>>,
 {
@@ -562,13 +562,13 @@ where
         .execute(pool)
         .await
         .map(|_| ())
-        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::tests::{migrate_to, open};
+    use crate::refusal::Kind;
     use serde_json::json;
 
     /// A database with every migration applied and one indexed piece in it.
@@ -580,6 +580,17 @@ mod tests {
             .await
             .unwrap();
         (dir, pool)
+    }
+
+    /// The kind is read off the error's type: a database failure is one the window can only report,
+    /// and a string is a reason a rule or the sound engine gave.
+    #[tokio::test]
+    async fn a_database_failure_crosses_as_failed_and_a_reason_as_refused() {
+        let (_dir, pool) = library().await;
+        pool.close().await;
+        let error = paths(&pool).await.unwrap_err();
+        assert_eq!(Refusal::from(error).kind, Kind::Failed);
+        assert_eq!(Refusal::from(String::from("x")).kind, Kind::Refused);
     }
 
     /// A library folder holding the seeded piece's file, with the row's stamp made to match it.

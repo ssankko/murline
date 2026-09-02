@@ -147,7 +147,7 @@ pub fn run() {
             builder.mount_events(app);
             // The library's rows and the global settings share one SQLite file; it reaches the
             // current shape before anything reads it.
-            db::migrate(app.handle())?;
+            db::migrate(app.handle()).map_err(|refusal| refusal.text)?;
             // The engine sends its device-list and Preview-progress events from its own threads,
             // so it needs a handle.
             audio::remember(app.handle().clone());

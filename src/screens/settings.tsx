@@ -3,24 +3,12 @@
 // change; there is no Save.
 
 import { SoundTab } from "@/audio/sound-tab";
-import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import {
-  set,
-  setting,
-  useSettings,
-  type Settings,
-} from "@/settings/settings";
-import { type LaneHarmony, LOOKAHEAD_MAX, LOOKAHEAD_MIN } from "@/lane/lane";
-import {
-  cancelPdmx,
-  downloadPdmx,
-  progressLabel,
-  usePdmxDownload,
-} from "@/library/pdmx";
 import { clamp } from "@/lib/utils";
+import { LibraryTab } from "@/settings/library-tab";
+import { LookTab } from "@/settings/look-tab";
+import { PlayingTab } from "@/settings/playing-tab";
 import {
-  GRADE_KNOBS,
   markedRow,
   rowId,
   rowOf,
@@ -31,52 +19,12 @@ import {
   type SettingRowId,
   type SettingsTab,
 } from "@/settings/rows";
-import { noteName } from "@/score/pitch";
-import { Loading } from "@/look/loading";
-import { Row, Rows, Segmented, Toggle } from "@/look/rows";
-import type { Theme } from "@/look/use-dark";
-import { useMidiStatus } from "@/midi/use-midi-status";
-import {
-  INACTIVE_HAND_LEVEL,
-  type InactiveHandVelocity,
-  type KeyboardPreset,
-} from "@/play/settings";
+import { set, setting } from "@/settings/settings";
 import { SPACING_MAX, SPACING_MIN, type Pinch } from "@/sheet/sheet";
 import { commands } from "@/bindings";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Search } from "lucide-react";
 import { Tabs } from "radix-ui";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-
-/** The whole keyboard, the span both note dropdowns offer. */
-const NOTES = Array.from({ length: 88 }, (_, at) => 21 + at);
-
-const THEMES: [Theme, string][] = [
-  ["system", "System"],
-  ["light", "Light"],
-  ["dark", "Dark"],
-];
-
-const HARMONY: [LaneHarmony, string][] = [
-  ["panels", "Panels"],
-  ["wheel", "Wheel"],
-  ["off", "Off"],
-];
-
-const INACTIVE_HAND_VELOCITIES: [InactiveHandVelocity, string][] = [
-  ["score", "From the score"],
-  ["follow", "Follows you"],
-];
-
-const PRESETS: [KeyboardPreset, string][] = [
-  ["piece", "Piece"],
-  [25, "25"],
-  [49, "49"],
-  [61, "61"],
-  [76, "76"],
-  [88, "88"],
-  ["custom", "Custom"],
-];
 
 export type { SettingsTab };
 
@@ -149,7 +97,6 @@ export function SettingsPanel({
    * open the panel at one row rather than at the top. */
   jumpTo?: string | null;
 }) {
-  const values = useSettings();
   const [tab, setTab] = useState<SettingsTab>("sound");
   const [query, setQuery] = useState("");
   /** Which search result the arrow keys are on. */
@@ -160,7 +107,6 @@ export function SettingsPanel({
   const [envelope, setEnvelope] = useState(false);
   /** Whether it offers any role beyond the tone, which is what puts the four level rows there. */
   const [roles, setRoles] = useState(false);
-  const [pdmxReady, setPdmxReady] = useState<boolean | null>(null);
   const list = useRef<HTMLUListElement>(null);
   const column = useRef<HTMLDivElement>(null);
   /** The search box, whose keys are its own while its results stand and the marked row's after. */
@@ -171,8 +117,6 @@ export function SettingsPanel({
   /** The stored offset waiting for the column to have rows to scroll; null once placed. */
   const [opensAt, setOpensAt] = useState<number | null>(null);
   const scrollWrite = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const pdmx = usePdmxDownload();
-  const downloading = pdmx.progress !== null;
 
   // What the loaded instrument offers is asked at every open, so the search reaches the rows the
   // engine is putting on the page now.
@@ -192,7 +136,7 @@ export function SettingsPanel({
         () => setRoles(false),
       );
     }
-  }, [open, downloading]);
+  }, [open]);
 
   // The tab and the mark land in one render, as they do for a search result, so the scroll effect
   // below finds the row on the page.
@@ -227,19 +171,6 @@ export function SettingsPanel({
     },
     [],
   );
-
-  // Whether the tarball is unpacked. Rust answers off the disk and owns the folder it looks in,
-  // so the answer is asked for once per open of the panel.
-  useEffect(() => {
-    let live = true;
-    const hold = (ready: boolean) => {
-      if (live) setPdmxReady(ready);
-    };
-    commands.pdmxStatus().then(hold, () => hold(false));
-    return () => {
-      live = false;
-    };
-  }, [open]);
 
   // The mark lands in its own render and the tab switch may follow in another, so the scroll runs
   // on either, and finds the row once its tab is on the page.
@@ -277,21 +208,6 @@ export function SettingsPanel({
     scrollWrite.current = setTimeout(() => {
       void set("settings_scroll", top);
     }, 300);
-  }
-
-  /** One line for the PDMX row: how far the download has got, or what is on disk. */
-  const pdmxStatus = pdmx.progress
-    ? progressLabel(pdmx.progress)
-    : pdmxReady === null
-      ? ""
-      : pdmxReady
-        ? "Ready"
-        : "Not downloaded";
-
-  async function chooseFolder(key: "library_folder"): Promise<void> {
-    const at = values[key];
-    const picked = await openDialog({ directory: true, ...(at ? { defaultPath: at } : {}) });
-    if (typeof picked === "string") void set(key, picked);
   }
 
   const results = searchRows(query, { envelope, roles });
@@ -381,11 +297,6 @@ export function SettingsPanel({
     if (!row) return;
     markScroll.current = "nearest";
     markedRow.set(idOf(row));
-  }
-
-  /** The `value` and `onChange` every control writing straight to one setting takes. */
-  function bind<K extends keyof Settings>(key: K) {
-    return { value: values[key], onChange: (value: Settings[K]) => void set(key, value) };
   }
 
   return (
@@ -494,140 +405,7 @@ export function SettingsPanel({
               className="flex flex-col gap-6"
               tabIndex={undefined}
             >
-              <Rows>
-                <Row id="theme">
-                  <Segmented options={THEMES} {...bind("theme")} />
-                </Row>
-              </Rows>
-
-              {/* Sheet and falling notes each carry their own harmony and their own colours, so
-                each heading names the view its rows move and nothing else. */}
-              <Section title="Sheet">
-                <Rows>
-                  <Row
-                    id="sheet_proportional"
-                    hint="Off keeps the engraving's own spacing."
-                  >
-                    <Toggle {...bind("sheet_proportional")} />
-                  </Row>
-                  <Row
-                    id="sheet_spacing"
-                    hint="A pinch on the sheet moves it too."
-                  >
-                    <Slider
-                      label="Sheet spacing in percent"
-                      unit="%"
-                      min={SPACING_MIN}
-                      max={SPACING_MAX}
-                      step={5}
-                      disabled={!values.sheet_proportional}
-                      {...bind("sheet_spacing")}
-                    />
-                  </Row>
-                  <Row
-                    id="sheet_harmony"
-                    hint="Names the chord at the cursor and the two after it."
-                  >
-                    <Toggle {...bind("sheet_harmony")} />
-                  </Row>
-                  <Row id="sheet_colour">
-                    <Toggle {...bind("sheet_colour")} />
-                  </Row>
-                </Rows>
-              </Section>
-
-              <Section title="Falling notes">
-                <Rows>
-                  <Row
-                    id="lane_lookahead"
-                    hint="How many beats are in view at once."
-                  >
-                    <Slider
-                      label="Lane lookahead in beats"
-                      unit=" beats"
-                      min={LOOKAHEAD_MIN}
-                      max={LOOKAHEAD_MAX}
-                      step={0.1}
-                      {...bind("lane_lookahead")}
-                    />
-                  </Row>
-                  <Row
-                    id="lane_note_width"
-                    hint="Part of its key's width."
-                  >
-                    <Slider
-                      label="Note width in percent"
-                      unit="%"
-                      min={10}
-                      max={100}
-                      step={1}
-                      {...bind("lane_note_width")}
-                    />
-                  </Row>
-                  <Row
-                    id="lane_gap"
-                    hint="Cut between two blocks that follow each other."
-                  >
-                    <Slider
-                      label="Gap in pixels"
-                      unit=" px"
-                      min={0}
-                      max={20}
-                      step={1}
-                      {...bind("lane_gap")}
-                    />
-                  </Row>
-                  <Row
-                    id="lane_names"
-                  >
-                    <Toggle {...bind("lane_names")} />
-                  </Row>
-                  <Row
-                    id="lane_harmony"
-                    hint="Chord names at the lane's top right."
-                  >
-                    <Segmented options={HARMONY} {...bind("lane_harmony")} />
-                  </Row>
-                  <Row id="lane_colour">
-                    <Toggle {...bind("lane_colour")} />
-                  </Row>
-                </Rows>
-              </Section>
-
-              {/* The keys drawn under the falling notes, which the sheet knows nothing of. */}
-              <Section title="Keyboard">
-                <Rows>
-                  <Row
-                    id="keyboard_labels"
-                  >
-                    <Toggle {...bind("keyboard_labels")} />
-                  </Row>
-                  <Row
-                    id="keyboard_scale_marks"
-                    hint="Ghosts what the key in force does not hold."
-                  >
-                    <Toggle {...bind("keyboard_scale_marks")} />
-                  </Row>
-                  <Row
-                    id="keyboard_size"
-                    hint="Keys the lane draws under the falling notes."
-                  >
-                    <Segmented options={PRESETS} {...bind("keyboard_preset")} />
-                  </Row>
-                  {values.keyboard_preset === "custom" && (
-                    <Row label="Custom range">
-                      <CustomRange
-                        lo={values.keyboard_lo}
-                        hi={values.keyboard_hi}
-                        onChange={(lo, hi) => {
-                          void set("keyboard_lo", lo);
-                          void set("keyboard_hi", hi);
-                        }}
-                      />
-                    </Row>
-                  )}
-                </Rows>
-              </Section>
+              <LookTab />
             </Tabs.Content>
 
             <Tabs.Content
@@ -635,103 +413,7 @@ export function SettingsPanel({
               className="flex flex-col gap-7"
               tabIndex={undefined}
             >
-              <Section title="Timing">
-                <Rows>
-                  <Row
-                    id="matching_window_ms"
-                    hint="How far off the beat a strike still counts."
-                  >
-                    <Slider
-                      label="Matching window in milliseconds"
-                      unit=" ms"
-                      min={1}
-                      max={1000}
-                      step={1}
-                      {...bind("matching_window_ms")}
-                    />
-                  </Row>
-                  <Row
-                    id="togetherness_ms"
-                    hint="How far apart the notes of one chord may be struck."
-                  >
-                    <Slider
-                      label="Togetherness window in milliseconds"
-                      unit=" ms"
-                      min={1}
-                      max={1000}
-                      step={1}
-                      {...bind("togetherness_ms")}
-                    />
-                  </Row>
-                </Rows>
-              </Section>
-
-              {/* The velocity and the level shape a sound nothing makes while the first row is
-                off, so both stand dead until it is on. */}
-              <Section title="Inactive hand">
-                <Rows>
-                  <Row
-                    id="play_inactive_hand"
-                    hint="Played as the clock passes it."
-                  >
-                    <Toggle {...bind("play_inactive_hand")} />
-                  </Row>
-                  <Row
-                    id="play_inactive_hand_velocity"
-                    hint="Loudness from the written dynamics, or from your strikes."
-                  >
-                    <Segmented
-                      options={INACTIVE_HAND_VELOCITIES}
-                      disabled={!values.play_inactive_hand}
-                      {...bind("play_inactive_hand_velocity")}
-                    />
-                  </Row>
-                  <Row
-                    id="play_inactive_hand_level"
-                    hint="Part of that loudness it sounds at."
-                  >
-                    <Slider
-                      label="Inactive hand level in percent"
-                      unit="%"
-                      min={INACTIVE_HAND_LEVEL[0]}
-                      max={INACTIVE_HAND_LEVEL[1]}
-                      step={5}
-                      disabled={!values.play_inactive_hand}
-                      {...bind("play_inactive_hand_level")}
-                    />
-                  </Row>
-                </Rows>
-              </Section>
-
-              {import.meta.env.DEV && (
-                <details
-                  id={rowId("grade_tuning")}
-                  open={!!marked?.startsWith("grade_")}
-                >
-                  <summary className="cursor-pointer text-[13px] font-semibold">
-                    Grade tuning
-                  </summary>
-                  <p className="text-muted-ink mt-1 text-[11.5px]">
-                    Grade normalises the three weights whatever they hold.
-                  </p>
-                  <div className="mt-3">
-                    <Rows>
-                      {GRADE_KNOBS.map(([key, label, min, max, step]) => (
-                        <Row key={key} id={key}>
-                          <Slider
-                            label={label}
-                            value={values[key] as number}
-                            min={min}
-                            max={max}
-                            step={step}
-                            onChange={(value) => void set(key, value as never)}
-                          />
-                        </Row>
-                      ))}
-                    </Rows>
-                  </div>
-                </details>
-              )}
+              <PlayingTab />
             </Tabs.Content>
 
             <Tabs.Content
@@ -739,53 +421,7 @@ export function SettingsPanel({
               className="flex flex-col gap-2"
               tabIndex={undefined}
             >
-              <p className="text-muted-ink text-[11.5px]">
-                A new library folder re-points the app. No file is moved.
-              </p>
-              <Rows>
-                <Row
-                  id="library_folder"
-                >
-                  <Path
-                    value={values.library_folder}
-                    onChoose={() =>
-                      chooseFolder("library_folder").catch(console.error)
-                    }
-                  />
-                </Row>
-                <Row
-                  id="pdmx_scores"
-                  hint="The score finder needs them to offer PDMX rows."
-                >
-                  <span className="flex flex-none flex-col items-end gap-0.5">
-                    <span className="flex items-center gap-3">
-                      <span className="text-muted-ink flex items-center gap-2 text-[12px] tabular-nums">
-                        {pdmxStatus}
-                        <Loading
-                          on={downloading}
-                          label="Downloading the PDMX scores"
-                        />
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 flex-none"
-                        onClick={() => {
-                          if (downloading) cancelPdmx();
-                          else void downloadPdmx();
-                        }}
-                      >
-                        {downloading ? "Cancel" : "Download (1.9 GB)"}
-                      </Button>
-                    </span>
-                    {pdmx.error && (
-                      <span className="text-[11px] text-red-600 dark:text-red-400">
-                        {pdmx.error}
-                      </span>
-                    )}
-                  </span>
-                </Row>
-              </Rows>
+              <LibraryTab />
             </Tabs.Content>
           </div>
         </Tabs.Root>
@@ -857,23 +493,6 @@ function slide(row: HTMLElement, way: 1 | -1, fine: boolean): boolean {
   return true;
 }
 
-/** One heading over one group of rows, on the Look and Playing tabs. */
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="flex flex-col gap-1.5">
-      <h3 className="text-[13px] font-semibold">{title}</h3>
-      {children}
-    </section>
-  );
-}
-
-/** Paper kept between the fingers and the panel a pinch raises, and from the window's edges. */
 const PINCH_GAP = 12;
 const PINCH_W = 200;
 const PINCH_H = 40;
@@ -933,151 +552,5 @@ export function SpacingPopup({ pinch }: { pinch: Pinch | null }) {
         {held.spacing}%
       </span>
     </div>
-  );
-}
-
-function Path({ value, onChoose }: { value: string; onChoose: () => void }) {
-  return (
-    <div className="flex min-w-0 items-center gap-2">
-      <code className="text-muted-ink truncate text-[11.5px] select-text">
-        {value || "not set"}
-      </code>
-      <Button
-        variant="outline"
-        size="sm"
-        className="h-7 flex-none"
-        onClick={onChoose}
-      >
-        Choose…
-      </Button>
-    </div>
-  );
-}
-
-/**
- * A number dragged rather than typed, with its value beside it. A pinch moves one of these. `unit`
- * is appended to the readout as it is written, so a per cent carries no space and a millisecond
- * does.
- */
-function Slider({
-  label,
-  value,
-  unit = "",
-  min,
-  max,
-  step,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  unit?: string;
-  min: number;
-  max: number;
-  step: number;
-  disabled?: boolean;
-  onChange: (value: number) => void;
-}) {
-  return (
-    <span className="flex flex-none items-center gap-2">
-      <input
-        type="range"
-        aria-label={label}
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        disabled={disabled}
-        onChange={(event) => onChange(Number(event.target.value))}
-        className="accent-ink w-24 disabled:opacity-30"
-      />
-      <span className="text-muted-ink w-14 flex-none text-right text-[11px] whitespace-nowrap tabular-nums">
-        {value}
-        {unit}
-      </span>
-    </span>
-  );
-}
-
-/**
- * A custom keyboard range: the two ends, and the two strikes that read them off the keyboard. The
- * next strike is the low end, the one after it the high end, in whichever order they come.
- */
-function CustomRange({
-  lo,
-  hi,
-  onChange,
-}: {
-  lo: number;
-  hi: number;
-  onChange: (lo: number, hi: number) => void;
-}) {
-  /** The first of the two strikes "Detect from keyboard" is waiting for, if it has come. */
-  const [detecting, setDetecting] = useState<{ first: number | null } | null>(
-    null,
-  );
-
-  useMidiStatus((event) => {
-    if (!detecting || !event.on) return;
-    if (detecting.first === null) return setDetecting({ first: event.midi });
-    setDetecting(null);
-    onChange(
-      Math.min(detecting.first, event.midi),
-      Math.max(detecting.first, event.midi),
-    );
-  });
-
-  return (
-    <div className="flex flex-none flex-col items-start gap-1.5">
-      {/* The low end never passes the high one. */}
-      <div className="flex flex-none items-center gap-1.5">
-        <NoteSelect
-          label="Lowest key"
-          value={lo}
-          onChange={(next) => onChange(next, Math.max(next, hi))}
-        />
-        <span className="text-muted-ink text-[12px]">to</span>
-        <NoteSelect
-          label="Highest key"
-          value={hi}
-          onChange={(next) => onChange(Math.min(lo, next), next)}
-        />
-      </div>
-      <button
-        onClick={() => setDetecting({ first: null })}
-        className="text-muted-ink hover:text-ink text-[12px] underline underline-offset-2"
-      >
-        {detecting
-          ? detecting.first === null
-            ? "Strike the lowest and the highest key…"
-            : "Now the other end…"
-          : "Detect from keyboard"}
-      </button>
-    </div>
-  );
-}
-
-function NoteSelect({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  onChange: (value: number) => void;
-}) {
-  return (
-    <select
-      aria-label={label}
-      value={value}
-      onChange={(event) => onChange(Number(event.target.value))}
-      className="border-edge h-7 border bg-transparent px-1.5 text-[12px]"
-    >
-      {NOTES.map((midi) => (
-        <option key={midi} value={midi}>
-          {noteName(midi)}
-        </option>
-      ))}
-    </select>
   );
 }

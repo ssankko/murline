@@ -14,7 +14,7 @@ const EXTENSIONS: [&str; 3] = ["musicxml", "xml", "mxl"];
 
 /// One score file of the library folder. `rel_path` is the piece's identity, `mtime` (milliseconds)
 /// and `size` say whether it changed since it was indexed.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct FileEntry {
     pub rel_path: String,
@@ -23,7 +23,7 @@ pub struct FileEntry {
 }
 
 /// What a file was when it was last read: enough to tell whether it changed.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Stamp {
     pub mtime: i64,
@@ -32,19 +32,39 @@ pub struct Stamp {
 
 /// Every score file under the library folder, at any depth, in no particular order.
 #[tauri::command]
+#[specta::specta]
 pub async fn list_library(folder: String) -> Result<Vec<FileEntry>, Refusal> {
     Ok(list_dir(Path::new(&folder))?)
 }
 
-/// The bytes of one file, sent raw so a megabyte of MusicXML does not travel as a JSON number array.
+/// A file's bytes as they leave the Rust side: the raw body of the answer, so a megabyte of
+/// MusicXML does not travel as a JSON number array. Nothing describes their shape, so the window
+/// is handed them as `unknown` and reads them as the ArrayBuffer they arrive as.
+pub struct Bytes(Vec<u8>);
+
+impl tauri::ipc::IpcResponse for Bytes {
+    fn body(self) -> tauri::Result<tauri::ipc::InvokeResponseBody> {
+        tauri::ipc::Response::new(self.0).body()
+    }
+}
+
+impl specta::Type for Bytes {
+    fn definition(types: &mut specta::Types) -> specta::datatype::DataType {
+        <specta_typescript::Unknown as specta::Type>::definition(types)
+    }
+}
+
+/// The bytes of one file.
 #[tauri::command]
-pub async fn read_file(path: String) -> Result<tauri::ipc::Response, Refusal> {
-    Ok(tauri::ipc::Response::new(std::fs::read(&path)?))
+#[specta::specta]
+pub async fn read_file(path: String) -> Result<Bytes, Refusal> {
+    Ok(Bytes(std::fs::read(&path)?))
 }
 
 /// Copies an imported file into the library folder, overwriting whatever is at `dst`. The stamp of
 /// the written file goes back so the caller can index it without listing the folder again.
 #[tauri::command]
+#[specta::specta]
 pub async fn copy_file(src: String, dst: String) -> Result<Stamp, Refusal> {
     Ok(copy(Path::new(&src), Path::new(&dst))?)
 }
@@ -53,6 +73,7 @@ pub async fn copy_file(src: String, dst: String) -> Result<Stamp, Refusal> {
 /// belong in the Trash. Nothing outside the OS temp directory is deleted, so the Trash stays the
 /// only way a file of the library folder goes.
 #[tauri::command]
+#[specta::specta]
 pub async fn remove_temp_file(path: String) -> Result<(), Refusal> {
     let path = Path::new(&path);
     let inside = path.starts_with(std::env::temp_dir())
@@ -66,6 +87,7 @@ pub async fn remove_temp_file(path: String) -> Result<(), Refusal> {
 /// Opens the file's folder in the Finder with the file selected. A file that has gone since the
 /// last scan is a reason the caller shows, not a silent no-op.
 #[tauri::command]
+#[specta::specta]
 pub async fn reveal_in_finder(path: String) -> Result<(), Refusal> {
     if !Path::new(&path).exists() {
         return Err(Refusal::gone("file not found"));
@@ -84,6 +106,7 @@ pub async fn reveal_in_finder(path: String) -> Result<(), Refusal> {
 /// A file that is already gone is answered as gone: the trash crate words that failure the way it
 /// words every other one, and the library page drops the piece row on this kind alone.
 #[tauri::command]
+#[specta::specta]
 pub async fn trash_file(path: String) -> Result<(), Refusal> {
     if !Path::new(&path).exists() {
         return Err(Refusal::gone("file not found"));

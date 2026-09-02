@@ -8,14 +8,9 @@ import { Mixer, SoundPopover } from '@/audio/mixer';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { MidiLight } from '@/midi/midi-light';
 import { useMidiStatus } from '@/midi/use-midi-status';
-import {
-  call,
-  on,
-  NO_STATUS,
-  type AudioStatus,
-  type EffectSlot,
-  type Meter,
-} from '@/rust';
+import { commands, type AudioStatus, type EffectSlot, type Meter } from '@/bindings';
+import { on } from '@/rust';
+import { NO_STATUS } from '@/audio/sound-tab';
 import { useSetting } from '@/settings/settings';
 import { checkUpdate, restartApp, takeUpdate, updateLabel, useVersions } from '@/update';
 import { AudioLines, Check, Cpu, Download, Gauge, Metronome, Piano, Settings } from 'lucide-react';
@@ -109,15 +104,15 @@ export function StatusBar({
     let live = true;
     const read = async () => {
       const [status, chain] = await Promise.all([
-        call('audio_status').catch(() => NO_STATUS),
-        call('audio_chain').catch(() => []),
+        commands.audioStatus().catch(() => NO_STATUS),
+        commands.audioChain().catch(() => []),
       ]);
       if (live) setEngine({ status, chain });
     };
     reread.current = () => void read();
     void read();
     const timer = setInterval(() => void read(), READ_MS);
-    const stop = on('audio-devices-changed', () => void read());
+    const stop = on('audioDevicesChanged', () => void read());
     return () => {
       live = false;
       clearInterval(timer);
@@ -126,7 +121,7 @@ export function StatusBar({
   }, []);
 
   // Four a second while a graph is playing, and nothing at all while there is none.
-  useEffect(() => on('audio-load', setMeter), []);
+  useEffect(() => on('audioLoad', setMeter), []);
 
   const settings = useRef(onOpenSettings);
   settings.current = onOpenSettings;

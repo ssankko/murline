@@ -12,7 +12,7 @@ import {
   type KeyboardPreset,
   type PlaySettings,
 } from '@/play/settings';
-import { call, type EffectSlot, type Envelope, type Role } from '@/rust';
+import { commands, type EffectSlot, type Envelope, type Role } from '@/bindings';
 import type { SettingsTab } from '@/screens/settings';
 import { DEFAULT_SPACING } from '@/sheet/pinch';
 import { useSyncExternalStore } from 'react';
@@ -243,7 +243,7 @@ const everyKey = new Set<() => void>();
 
 /** Reads every setting the Rust side holds. Called once at start, before the first screen. */
 export async function load(): Promise<void> {
-  values = { ...SETTING_DEFAULTS, ...kept(await call('settings_read')) };
+  values = { ...SETTING_DEFAULTS, ...kept(await commands.settingsRead()) };
   for (const key of Object.keys(values) as SettingKey[]) notify(key);
 }
 
@@ -300,7 +300,7 @@ export async function set<K extends SettingKey>(key: K, value: Settings[K]): Pro
   const before = values[key];
   hold(key, value);
   try {
-    await call('settings_write', { key, value });
+    await commands.settingsWrite(key, value);
     return '';
   } catch (error) {
     hold(key, before);

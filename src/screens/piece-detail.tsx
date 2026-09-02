@@ -4,7 +4,6 @@
 import { Button } from '@/components/ui/button';
 import { pathOf } from '@/library/index-file';
 import { reasonOf, setNotice } from '@/library/notice';
-import { recentPlays, type PieceRow, type PlayRow } from '@/library/queries';
 import { splitError } from '@/library/scan';
 import { colorOf } from '@/look/color';
 import { noteName } from '@/score/pitch';
@@ -12,7 +11,7 @@ import { useDark } from '@/look/use-dark';
 import { tempoLabel } from '@/play/settings';
 import { keyOf, modeOf, type Key } from '@/score/key';
 import { RangeStrip } from '@/screens/range-strip';
-import { call } from '@/rust';
+import { commands, type PieceRow, type PlayRow } from '@/bindings';
 import { useEffect, useState } from 'react';
 
 /** Title, facts, the keys the piece uses, the buttons that open it and its history. */
@@ -73,7 +72,7 @@ export function Detail({
           <code className="min-w-0 truncate text-[11.5px]">{fullPath}</code>
           <button
             onClick={() =>
-              void call('reveal_in_finder', { path: fullPath }).catch((error) =>
+              void commands.revealInFinder(fullPath).catch((error) =>
                 setNotice(`Could not reveal ${piece.title ?? piece.path}: ${reasonOf(error)}`),
               )
             }
@@ -149,7 +148,7 @@ function History({ piece }: { piece: PieceRow }) {
 
   useEffect(() => {
     let live = true;
-    void recentPlays(piece.path).then((rows) => {
+    void commands.pieceRecentPlays(piece.path, 6).then((rows) => {
       if (live) setPlays(rows);
     });
     return () => {

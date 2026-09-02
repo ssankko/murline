@@ -45,6 +45,7 @@ fn unpacked(folder: &Path) -> bool {
 
 /// Whether the tarball is unpacked, which is the one thing the finder needs to deliver a PDMX row.
 #[tauri::command]
+#[specta::specta]
 // Tauri hands a command its AppHandle by value; the trait it looks for has no reference form.
 #[allow(clippy::needless_pass_by_value)]
 pub fn pdmx_status(app: tauri::AppHandle) -> bool {
@@ -52,8 +53,9 @@ pub fn pdmx_status(app: tauri::AppHandle) -> bool {
 }
 
 /// How far the download has come; `total` is absent when the server sends no `Content-Length`.
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
+#[serde(rename = "PdmxProgress")]
 pub struct Progress {
     done: u64,
     total: Option<u64>,
@@ -66,6 +68,7 @@ pub struct Progress {
 /// `no data folder`, `no connection`, `Zenodo answered <status>`, `not enough disk space`,
 /// `download stopped`, or `cancelled` when the user stopped it.
 #[tauri::command]
+#[specta::specta]
 pub async fn pdmx_fetch(
     app: tauri::AppHandle,
     progress: Channel<Progress>,
@@ -82,6 +85,7 @@ pub async fn pdmx_fetch(
 
 /// Stops the running fetch, which then removes what it had unpacked.
 #[tauri::command]
+#[specta::specta]
 pub fn pdmx_cancel() {
     CANCEL.store(true, Ordering::SeqCst);
 }

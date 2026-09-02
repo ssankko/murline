@@ -1,5 +1,5 @@
 import { EffectsSection } from '@/audio/effects';
-import type { EffectSlot } from '@/rust';
+import type { EffectSlot } from '@/bindings';
 import { fakeRust, fakeSettings, type FakeRust } from '@/rust.fake';
 import { load } from '@/settings/settings';
 import { createElement } from 'react';

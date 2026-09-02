@@ -3,7 +3,7 @@
 // fetched for the rest of the run.
 
 import { reasonOf } from '@/library/notice';
-import { call } from '@/rust';
+import { commands } from '@/bindings';
 import { useSyncExternalStore } from 'react';
 
 /** Where the update stands. `ready` is a version on disk, waiting for the next launch. */
@@ -48,8 +48,8 @@ export async function checkUpdate(): Promise<void> {
   if (before.kind === 'checking' || before.kind === 'taking') return;
   set({ ...held, update: { kind: 'checking' } });
   try {
-    const current = held.current || (await call('app_version'));
-    const waiting = await call('update_check');
+    const current = held.current || (await commands.appVersion());
+    const waiting = await commands.updateCheck();
     if (before.kind === 'ready' && before.version === waiting) set({ current, update: before });
     else if (waiting) set({ current, update: { kind: 'found', version: waiting } });
     else set({ current, update: { kind: 'idle' } });
@@ -64,7 +64,7 @@ export async function takeUpdate(): Promise<void> {
   if (waiting.kind !== 'found') return;
   set({ ...held, update: { kind: 'taking', version: waiting.version } });
   try {
-    await call('update_install');
+    await commands.updateInstall();
     set({ ...held, update: { kind: 'ready', version: waiting.version } });
   } catch (error) {
     set({ ...held, update: { kind: 'failed', why: reasonOf(error) } });
@@ -74,7 +74,7 @@ export async function takeUpdate(): Promise<void> {
 /** Starts the app again, which is how a version already on disk takes over. Nothing comes back:
  * this window goes down with the process it belongs to. */
 export function restartApp(): void {
-  call('update_restart').catch(() => {});
+  commands.updateRestart().catch(() => {});
 }
 
 /** The version running and the update as it stands, as one value. */

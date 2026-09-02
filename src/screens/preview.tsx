@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/button';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { baseNameOf } from '@/library/index-file';
 import { reasonOf, setNotice } from '@/library/notice';
-import { getPiece, updatePieceSettings } from '@/library/queries';
 import { openPiece } from '@/library/open-piece';
 import { clamp } from '@/lib/utils';
 import { Opening } from '@/look/loading';
@@ -30,7 +29,8 @@ import { StatusBar } from '@/screens/status-bar';
 import { useFullscreen } from '@/screens/use-fullscreen';
 import type { Pinch } from '@/sheet/pinch';
 import { PreviewSheet, windowTicksOf } from '@/sheet/preview-sheet';
-import { call, on } from '@/rust';
+import { commands } from '@/bindings';
+import { on } from '@/rust';
 import { set, setting, subscribe } from '@/settings/settings';
 import { ArrowLeft, Minus, Pause, Play, Plus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -132,8 +132,8 @@ export function PreviewScreen({
   const load = async (): Promise<void> => {
     if (loadedRef.current) return;
     loadedRef.current = true;
-    await call('preview_load', { notes: notesRef.current });
-    await call('preview_rate', { percent });
+    await commands.previewLoad(notesRef.current);
+    await commands.previewRate(percent);
   };
 
   const toggle = async (): Promise<void> => {
@@ -141,13 +141,13 @@ export function PreviewScreen({
     if (playing) {
       setPlaying(false);
       restartClock(secondsNow(), false);
-      await call('preview_pause');
+      await commands.previewPause();
       return;
     }
     setPlaying(true);
     restartClock(secondsNow(), true);
     await load();
-    await call('preview_play');
+    await commands.previewPlay();
   };
 
   /** Back to the start, with the note list gone from Rust: the next play loads it again. */
@@ -155,7 +155,7 @@ export function PreviewScreen({
     setPlaying(false);
     restartClock(0, false);
     loadedRef.current = false;
-    void call('preview_stop');
+    void commands.previewStop();
   };
 
   const seek = async (target: SeekTarget, near = 0): Promise<void> => {
@@ -167,7 +167,7 @@ export function PreviewScreen({
     // for the engine to report back.
     restartClock(seconds);
     await load();
-    await call('preview_seek', { seconds });
+    await commands.previewSeek(seconds);
   };
   seekRef.current = (target) => void seek(target);
 
@@ -177,7 +177,7 @@ export function PreviewScreen({
   /** Every tempo change goes to the piece row, so the piece reopens at the tempo it was left at. */
   function changeTempo(value: number): void {
     setTempo(value);
-    updatePieceSettings(path, { tempo_value: value }).catch(console.error);
+    commands.pieceUpdateSettings(path, { tempo_value: value }).catch(console.error);
   }
 
   /** The two modes read the same piece at the same speed, so a switch carries the value over. */
@@ -188,7 +188,7 @@ export function PreviewScreen({
     const value = clamp(Math.round(written100), min, max);
     setTempoMode(next);
     setTempo(value);
-    updatePieceSettings(path, { tempo_mode: next, tempo_value: value }).catch(console.error);
+    commands.pieceUpdateSettings(path, { tempo_mode: next, tempo_value: value }).catch(console.error);
   }
 
   // The four Look settings the page draws, on the sheet already on screen the moment one of them
@@ -212,7 +212,7 @@ export function PreviewScreen({
   }, []);
 
   useEffect(() => {
-    call('audio_status')
+    commands.audioStatus()
       .then((status) => setReason(status.available ? '' : status.reason))
       .catch((error: unknown) => setReason(String(error)));
   }, []);
@@ -223,14 +223,14 @@ export function PreviewScreen({
     const sheet = sheetRef.current;
     if (sheet) sheet.windowTicks = windowTicksOf(sheet.score, percent);
     restartClock();
-    if (loadedRef.current) void call('preview_rate', { percent });
+    if (loadedRef.current) void commands.previewRate(percent);
     // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [percent]);
 
   // Where the playback stands, about thirty times a second. The end of the piece arrives as one
   // more report with the time back at zero and nothing playing.
   useEffect(() => {
-    return on('preview-progress', (at) => {
+    return on('previewProgress', (at) => {
       clockRef.current = { ...clockRef.current, ...at, at: performance.now() };
       if (at.playing) return;
       if (at.seconds === 0) sheetRef.current?.finish();
@@ -250,7 +250,7 @@ export function PreviewScreen({
   useEffect(
     () => () => {
       loadedRef.current = false;
-      void call('preview_stop');
+      void commands.previewStop();
     },
     [],
   );
@@ -296,7 +296,7 @@ export function PreviewScreen({
         // only a failure while the screen still stands is worth a notice.
         if (!live) return;
         const reason = error instanceof ScoreError ? error.reason : reasonOf(error);
-        const row = await getPiece(path).catch(() => null);
+        const row = await commands.pieceGet(path).catch(() => null);
         if (!live) return;
         setNotice(`Could not open ${row?.title ?? fileName}: ${reason}`);
         setOpening(false);

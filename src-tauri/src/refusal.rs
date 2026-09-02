@@ -4,7 +4,7 @@
 use serde::Serialize;
 
 /// What happened, as far as the window may act on it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
     /// The file the command was asked about is no longer there.
@@ -16,7 +16,7 @@ pub enum Kind {
 }
 
 /// The window switches on the kind and shows the text; it never reads the text to decide anything.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
 pub struct Refusal {
     pub kind: Kind,
     pub text: String,

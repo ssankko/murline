@@ -8,7 +8,7 @@ import { importFiles } from '@/library/import';
 import { reasonOf } from '@/library/notice';
 import { Collapse } from '@/look/collapse';
 import { Loading } from '@/look/loading';
-import { call, type FinderRow, type SearchResult } from '@/rust';
+import { commands, type FinderRow, type SearchResult } from '@/bindings';
 import { Download, Search } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
@@ -79,7 +79,7 @@ export function Finder({
 
   // Whether the tarball is unpacked; Rust answers off the disk, and owns the folder it looks in.
   useEffect(() => {
-    void call('pdmx_status').catch(() => false).then(setPdmx);
+    void commands.pdmxStatus().catch(() => false).then(setPdmx);
   }, []);
 
   // Every keystroke searches; Rust answers in under 20 ms. A late answer to an older query is
@@ -91,7 +91,7 @@ export function Finder({
       return;
     }
     let live = true;
-    void call('finder_search', { query, pdmx }).then(
+    void commands.finderSearch(query, pdmx).then(
       (r) => {
         if (!live) return;
         setResult(r);
@@ -130,7 +130,7 @@ export function Finder({
     setDl({ state: 'downloading' });
     let tempPath: string | null = null;
     try {
-      tempPath = await call('finder_download', { row });
+      tempPath = await commands.finderDownload(row);
       // The name is free: an owned row never gets here. Keep both covers a file the index missed.
       const { imported, failures } = await importFiles(folder, [tempPath], async () => 'keep-both');
       if (failures.length || !imported[0]) throw new Error(failures[0]?.reason ?? 'Import failed');
@@ -138,7 +138,7 @@ export function Finder({
     } catch (error) {
       setDl({ state: 'failed', provider: row.provider, reason: reasonOf(error) });
     } finally {
-      if (tempPath) await call('remove_temp_file', { path: tempPath }).catch(() => {});
+      if (tempPath) await commands.removeTempFile(tempPath).catch(() => {});
     }
   }
 

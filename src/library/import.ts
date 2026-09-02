@@ -1,10 +1,9 @@
 // Import: a file from anywhere on disk becomes a piece of the library folder. Every check runs
 // before the copy, so a file the app cannot read never lands in the folder.
 
-import { call } from '@/rust';
+import { commands } from '@/bindings';
 import { ScoreError } from '@/score/types';
 import { baseNameOf, indexBytes, listLibrary, pathOf, readScoreFile } from './index-file';
-import { upsertIndex } from './queries';
 
 /** The extensions the app reads, as the file picker and the drop handler both filter on. */
 export const SCORE_EXTENSIONS = ['musicxml', 'xml', 'mxl'];
@@ -81,11 +80,8 @@ async function importOne(
       choice === 'keep-both' ? freeName(fileName, isTaken) : taken.get(fileName.toLowerCase())!;
   }
 
-  const stamp = await call('copy_file', {
-    src: path,
-    dst: pathOf(folder, relPath),
-  });
-  await upsertIndex(relPath, index, stamp.mtime, stamp.size);
+  const stamp = await commands.copyFile(path, pathOf(folder, relPath));
+  await commands.indexUpsert(relPath, index, stamp.mtime, stamp.size);
   return relPath;
 }
 

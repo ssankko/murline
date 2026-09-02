@@ -1,5 +1,6 @@
 import { OutputSection } from "@/audio/output";
-import { NO_STATUS, type AudioStatus, type OutputDevice } from "@/rust";
+import type { AudioStatus, OutputDevice } from "@/bindings";
+import { NO_STATUS } from "@/audio/sound-tab";
 import { fakeRust, fakeSettings, type FakeRust } from "@/rust.fake";
 import { load } from "@/settings/settings";
 import { createElement } from "react";
@@ -107,7 +108,7 @@ test("a device plugged in while the tab is open appears in the picker", async ()
   await vi.waitFor(() => expect(text()).toContain("Scarlett 2i2"));
 
   devices = [...devices, { id: "Headphones", name: "External Headphones" }];
-  rust.emit("audio-devices-changed", undefined);
+  rust.emit("audioDevicesChanged", undefined);
 
   openPicker();
   await vi.waitFor(() => expect(text()).toContain("External Headphones"));
@@ -201,7 +202,7 @@ test("a chosen device that is not connected reads as the system default until it
 
   // The setting kept the choice, so plugging the device back in shows its name again.
   devices = [...devices, { id: "Scarlett", name: "Scarlett 2i2" }];
-  rust.emit("audio-devices-changed", undefined);
+  rust.emit("audioDevicesChanged", undefined);
 
   await vi.waitFor(() => expect(checkedRow()).toBe("Scarlett 2i2"));
 });

@@ -1,5 +1,6 @@
 import { Mixer } from '@/audio/mixer';
-import { NO_STATUS, type AudioStatus } from '@/rust';
+import type { AudioStatus } from '@/bindings';
+import { NO_STATUS } from '@/audio/sound-tab';
 import { fakeRust, fakeSettings, type FakeRust } from '@/rust.fake';
 import { load } from '@/settings/settings';
 import { createElement, useState } from 'react';

@@ -25,7 +25,7 @@ pub fn warm() {
     std::thread::spawn(|| LazyLock::force(&INDEX));
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, specta::Type)]
 pub enum Provider {
     KernScores,
     #[serde(rename = "PDMX")]
@@ -33,8 +33,9 @@ pub enum Provider {
 }
 
 /// One search hit, with everything the finder's two lines show and the name the file lands under.
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, specta::Type)]
 #[serde(rename_all = "camelCase")]
+#[serde(rename = "FinderRow")]
 pub struct Row {
     pub provider: Provider,
     /// Composer heading, shared by both providers after normalisation ("Frédéric Chopin").
@@ -55,7 +56,7 @@ pub struct Row {
     pub file_name: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchResult {
     pub rows: Vec<Row>,
@@ -371,6 +372,7 @@ fn has_word(s: &str, t: &str, whole: bool) -> bool {
 /// The scan is one blocking pass over the whole index, and the first call waits for `warm()` to
 /// finish building it, so it runs on a blocking thread and leaves the runtime to the file commands.
 #[tauri::command]
+#[specta::specta]
 pub async fn finder_search(query: String, pdmx: bool) -> Result<SearchResult, Refusal> {
     tauri::async_runtime::spawn_blocking(move || search(&INDEX, &query, pdmx))
         .await
@@ -406,6 +408,7 @@ fn addressable(row: &Row) -> bool {
 /// Fetches or unzips one row into a temp file and answers with its path. Nothing reaches the
 /// library folder from here; the import path a dropped file takes does that.
 #[tauri::command]
+#[specta::specta]
 pub async fn finder_download(app: tauri::AppHandle, row: Row) -> Result<String, Refusal> {
     // A machine with no data folder has no unpacked tarball either, so the row is not on disk.
     download(row, crate::pdmx::folder(&app).unwrap_or_default()).await

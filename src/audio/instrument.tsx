@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { reasonOf } from "@/library/notice";
 import { Loading } from "@/look/loading";
-import { call, type AudioStatus, type Instrument } from "@/rust";
+import { commands, type AudioStatus, type Instrument } from "@/bindings";
 import { set, setting, useSetting } from "@/settings/settings";
 import { open } from "@tauri-apps/plugin-dialog";
 import { ChevronDown } from "lucide-react";
@@ -38,7 +38,7 @@ function allowedRates(status: AudioStatus | null): number[] {
 const DEFAULT_NAME = "Concert Grand Piano";
 
 function listInstruments(folder: string): Promise<Instrument[]> {
-  return call("audio_instruments", { folder });
+  return commands.audioInstruments(folder);
 }
 
 /**
@@ -60,7 +60,7 @@ export async function restoreInstrument(): Promise<string | null> {
     await set("instrument_id", chosen);
     await set("instrument_state", null);
   }
-  await call("audio_load_instrument", { id: chosen });
+  await commands.audioLoadInstrument(chosen);
   return all.find((one) => one.id === chosen)?.name ?? null;
 }
 
@@ -84,7 +84,7 @@ export function InstrumentSection({
   const [status, setStatus] = useState<AudioStatus | null>(null);
 
   const readEngine = () =>
-    call("audio_status").then(setStatus, console.error);
+    commands.audioStatus().then(setStatus, console.error);
 
   useEffect(() => {
     void readEngine();
@@ -125,8 +125,8 @@ export function InstrumentSection({
     try {
       setStatus(
         id
-          ? await call("audio_load_instrument", { id })
-          : await call("audio_unload_instrument"),
+          ? await commands.audioLoadInstrument(id)
+          : await commands.audioUnloadInstrument(),
       );
     } catch (error) {
       setFailure(reasonOf(error));
@@ -154,7 +154,7 @@ export function InstrumentSection({
 
   /** The plugin's own window, which hands back the state it was left in when the user closes it. */
   async function show(): Promise<void> {
-    const state = await call("audio_show_instrument");
+    const state = await commands.audioShowInstrument();
     await set("instrument_state", state);
   }
 

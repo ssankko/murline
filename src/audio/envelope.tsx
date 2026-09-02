@@ -13,7 +13,7 @@ import type { Sounding } from '@/audio/sounding';
 import { set, setting } from '@/settings/settings';
 import { colorOf } from '@/look/color';
 import { useDark } from '@/look/use-dark';
-import { call, type Envelope } from '@/rust';
+import { commands, type Envelope } from '@/bindings';
 import { useEffect, useRef, useState } from 'react';
 
 /**
@@ -43,7 +43,7 @@ export function EnvelopeSection({
   // Null is the answer for a plugin and for no instrument at all, and it is what hides the section.
   useEffect(() => {
     let live = true;
-    call('audio_envelope').then(
+    commands.audioEnvelope().then(
       (answer) => live && setValues(answer),
       () => live && setValues(null),
     );
@@ -67,7 +67,7 @@ export function EnvelopeSection({
     frame.current = requestAnimationFrame(() => {
       frame.current = 0;
       const envelope = next.current!;
-      void call('audio_apply_envelope', { envelope }).catch(console.error);
+      void commands.audioApplyEnvelope(envelope).catch(console.error);
       if (instrument) void keep(instrument, envelope).catch(console.error);
     });
   }

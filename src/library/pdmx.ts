@@ -4,7 +4,8 @@
 
 import { reasonOf } from '@/library/notice';
 import { makeStore } from '@/lib/store';
-import { call, type PdmxProgress } from '@/rust';
+import { commands, type PdmxProgress } from '@/bindings';
+import { Channel } from '@tauri-apps/api/core';
 import { useSyncExternalStore } from 'react';
 
 export interface PdmxDownload {
@@ -33,9 +34,9 @@ export async function downloadPdmx(): Promise<void> {
   if (download.get().progress) return;
   download.set({ progress: { done: 0, total: null }, error: null });
   try {
-    await call('pdmx_fetch', {
-      progress: (at) => download.set({ progress: at, error: null }),
-    });
+    const progress = new Channel<PdmxProgress>();
+    progress.onmessage = (at) => download.set({ progress: at, error: null });
+    await commands.pdmxFetch(progress);
     download.set({ progress: null, error: null });
   } catch (error) {
     const reason = reasonOf(error);
@@ -46,7 +47,7 @@ export async function downloadPdmx(): Promise<void> {
 
 /** Asks Rust to stop; the download then rejects with "cancelled". */
 export function cancelPdmx(): void {
-  call('pdmx_cancel').catch(() => {});
+  commands.pdmxCancel().catch(() => {});
 }
 
 /** The download as it stands, for as long as the component asking is on screen. */

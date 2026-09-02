@@ -5,7 +5,7 @@
 import type { GhostEvent } from '@/play/engine';
 import type { PlaySettings } from '@/play/settings';
 import { clamp } from '@/lib/utils';
-import { call } from '@/rust';
+import { commands } from '@/bindings';
 
 /** Weight of the newest strike in `recent`: about eight strikes for the loudness to settle. */
 const FOLLOW_WEIGHT = 1 / 8;
@@ -33,14 +33,13 @@ export class Ghosts {
     const level = clamp(Math.round(((player ?? velocity) * settings.inactiveHandLevel) / 100), 1, 127);
     if (on) this.held.add(midi);
     else this.held.delete(midi);
-    const sent = { midi, velocity: on ? level : 0, on, raw: on && player !== null };
-    call('audio_note', sent).catch(console.error);
+    commands.audioNote(midi, on ? level : 0, on, on && player !== null).catch(console.error);
   }
 
   /** Lets go of every note still sounding, at once, and forgets how hard the player was striking. */
   silence(): void {
     for (const midi of this.held) {
-      call('audio_note', { midi, velocity: 0, on: false, raw: false }).catch(console.error);
+      commands.audioNote(midi, 0, false, false).catch(console.error);
     }
     this.held.clear();
     this.recent = null;

@@ -6,6 +6,7 @@
 use crate::audio;
 use crate::db::pool;
 use crate::refusal::Refusal;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
@@ -15,6 +16,18 @@ use tauri::AppHandle;
 /// Every stored setting, by key. A key never written is simply absent, and the window holds the
 /// default for it.
 pub type Stored = HashMap<String, Value>;
+
+/// One value as it crosses the seam. The window wrote it and the window reads it, so nothing on
+/// this side describes its shape and the bindings hand it over as `unknown`.
+#[derive(Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Json(pub Value);
+
+impl specta::Type for Json {
+    fn definition(types: &mut specta::Types) -> specta::datatype::DataType {
+        <specta_typescript::Unknown as specta::Type>::definition(types)
+    }
+}
 
 /// The table in memory, empty until the first read fills it.
 static MAP: Mutex<Option<Stored>> = Mutex::new(None);
@@ -57,15 +70,17 @@ async fn store(pool: &SqlitePool, key: &str, value: &Value) -> Result<(), String
 
 /// Every setting the window starts from, in one read.
 #[tauri::command]
-pub async fn settings_read(app: AppHandle) -> Result<Stored, Refusal> {
-    Ok(all(&app).await?)
+#[specta::specta]
+pub async fn settings_read(app: AppHandle) -> Result<HashMap<String, Json>, Refusal> {
+    Ok(all(&app).await?.into_iter().map(|(key, value)| (key, Json(value))).collect())
 }
 
 /// One setting. A key the sound engine owns goes on the running engine first, so a value the
 /// engine refuses is answered with its reason and never stored.
 #[tauri::command]
-pub async fn settings_write(app: AppHandle, key: String, value: Value) -> Result<(), Refusal> {
-    Ok(write_one(pool(&app)?, &key, value).await?)
+#[specta::specta]
+pub async fn settings_write(app: AppHandle, key: String, value: Json) -> Result<(), Refusal> {
+    Ok(write_one(pool(&app)?, &key, value.0).await?)
 }
 
 async fn write_one(pool: &SqlitePool, key: &str, value: Value) -> Result<(), String> {

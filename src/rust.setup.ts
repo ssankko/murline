@@ -4,6 +4,9 @@
 import { fakeRust } from '@/rust.fake';
 import { beforeEach } from 'vitest';
 
+// Tauri's IPC and its mock both reach for `window`, which the node project does not have.
+(globalThis as { window?: unknown }).window ??= globalThis;
+
 beforeEach(() => {
   fakeRust();
 });

@@ -3,7 +3,7 @@
 // play screen and the Preview both start here.
 
 import { baseNameOf, pathOf, readScoreFile } from '@/library/index-file';
-import { getPiece, type PieceRow } from '@/library/queries';
+import { commands, type PieceRow } from '@/bindings';
 import { reindexIfChanged } from '@/library/scan';
 import { resolvePlaySettings, UNSET_PIECE_SETTINGS, type PieceSettings } from '@/play/resolve';
 
@@ -21,7 +21,7 @@ export interface OpenedPiece {
 export async function openPiece(folder: string, path: string): Promise<OpenedPiece> {
   await reindexIfChanged(folder, path);
   const bytes = await readScoreFile(pathOf(folder, path));
-  const row = await getPiece(path).catch(() => null);
+  const row = await commands.pieceGet(path).catch(() => null);
   return {
     bytes,
     fileName: baseNameOf(path),

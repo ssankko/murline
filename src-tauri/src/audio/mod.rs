@@ -6,7 +6,8 @@ use crate::refusal::Refusal;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::OnceLock;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
+use tauri_specta::Event;
 
 #[cfg(target_os = "macos")]
 pub mod device;
@@ -30,9 +31,15 @@ pub(crate) use stub as engine;
 
 use preview::PreviewNote;
 
-/// The event the webview listens for to know its device list is stale. Sent when CoreAudio reports
-/// a device plugged in or unplugged, so the picker follows the hardware without a restart.
-pub const DEVICES_CHANGED: &str = "audio-devices-changed";
+/// Tells the webview its device list is stale. Sent when CoreAudio reports a device plugged in or
+/// unplugged, so the picker follows the hardware without a restart.
+#[derive(Clone, Serialize, specta::Type, Event)]
+pub struct AudioDevicesChanged;
+
+/// Carries the whole effect chain, as `audio_chain` would answer it, whenever the engine changes
+/// it: what the webview writes back to the setting it keeps.
+#[derive(Clone, Serialize, specta::Type, Event)]
+pub struct AudioChainChanged(pub Vec<Slot>);
 
 /// The running app, so the engine can send events from its own threads. Set once at start-up.
 static APP: OnceLock<AppHandle> = OnceLock::new();
@@ -43,14 +50,18 @@ pub fn remember(app: AppHandle) {
 
 pub(crate) fn tell_devices_changed() {
     if let Some(app) = APP.get() {
-        let _ = app.emit(DEVICES_CHANGED, ());
+        let _ = AudioDevicesChanged.emit(app);
     }
 }
 
-/// Where Preview playback stands, emitted as `preview-progress` about thirty times a second and
-/// once more when the piece ends, with `playing` false and the time back at zero.
-#[derive(Clone, Serialize)]
+/// Where Preview playback stands, sent about thirty times a second and once more when the piece
+/// ends, with `playing` false and the time back at zero.
+#[derive(Clone, Serialize, specta::Type, Event)]
+#[tauri_specta(event_name = "preview-progress")]
+#[serde(rename = "PreviewProgress")]
 pub struct Progress {
+    // Never NaN, so it crosses as a plain number and not as specta's `number | null` for an f64.
+    #[specta(type = specta_typescript::Number)]
     pub seconds: f64,
     pub playing: bool,
 }
@@ -58,13 +69,15 @@ pub struct Progress {
 /// Called from the engine's pump. Before the app has a handle, and in the tests, it does nothing.
 pub fn progress(seconds: f64, playing: bool) {
     if let Some(app) = APP.get() {
-        let _ = app.emit("preview-progress", Progress { seconds, playing });
+        let _ = Progress { seconds, playing }.emit(app);
     }
 }
 
-/// What the render block last cost, emitted as `audio-load`: the voices sounding, the most it may
-/// hold at once, and the block's own time as a percent of the time the buffer it filled plays for.
-#[derive(Clone, Serialize)]
+/// What the render block last cost: the voices sounding, the most it may hold at once, and the
+/// block's own time as a percent of the time the buffer it filled plays for.
+#[derive(Clone, Serialize, specta::Type, Event)]
+#[tauri_specta(event_name = "audio-load")]
+#[serde(rename = "Meter")]
 // The webview reads the event's fields by name, `load` among them.
 #[allow(clippy::struct_field_names)]
 pub struct Load {
@@ -77,13 +90,14 @@ pub struct Load {
 /// nothing is sent at all while there is no graph to measure.
 pub fn load(voices: u32, limit: u32, load: u32) {
     if let Some(app) = APP.get() {
-        let _ = app.emit("audio-load", Load { voices, limit, load });
+        let _ = Load { voices, limit, load }.emit(app);
     }
 }
 
 /// What the Audio dialog reads: whether sound can come out of the app, the one line saying why not
 /// when it cannot, and the output the engine plays through.
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, specta::Type)]
+#[serde(rename = "AudioStatus")]
 pub struct Status {
     pub available: bool,
     pub reason: String,
@@ -99,12 +113,16 @@ pub struct Status {
     /// The buffer sizes the device playing takes, of the ones the dialog knows, ascending. Empty
     /// where there is no engine and no device.
     pub buffer_choices: Vec<u32>,
+    // Never NaN, so it crosses as a plain number and not as specta's `number | null` for an f64.
+    #[specta(type = specta_typescript::Number)]
     pub sample_rate: f64,
     /// The rate the loaded instrument's samples were recorded at, which the engine plays them as
     /// they are at; 0 for a plugin, which renders at any rate, and while nothing is loaded.
+    #[specta(type = specta_typescript::Number)]
     pub instrument_rate: f64,
     /// What the device reports the buffer costs: its own latency, the safety offset, the stream
     /// and the buffer itself, at the rate the device runs.
+    #[specta(type = specta_typescript::Number)]
     pub latency_ms: f64,
     /// The noises around the tone the loaded instrument offers, each of them a toggle the webview
     /// keeps for it. Empty for a plugin and for a file that has none of them.
@@ -118,7 +136,7 @@ impl Status {
 }
 
 /// One effect the machine has installed, as the Add menu lists it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 pub struct Effect {
     /// Opaque to the webview, and the same string on every Mac that has the plugin.
     pub id: String,
@@ -128,7 +146,8 @@ pub struct Effect {
 
 /// One place in the effect chain. The webview keeps the whole list as one global setting and hands
 /// it back whole; `missing` is the engine's answer, not the webview's to send.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename = "EffectSlot")]
 pub struct Slot {
     pub id: String,
     /// What the plugin was called when it was last seen, which is how a missing slot is named.
@@ -148,17 +167,22 @@ pub struct Slot {
 /// How a sampler instrument's loudness answers a key: seconds to reach full loudness, seconds to
 /// fall from there, the fraction of full loudness a held note settles at, and seconds to fade once
 /// the key comes up. Only the sampler has one; a hosted plugin shapes its notes in its own window.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, specta::Type)]
 pub struct Envelope {
+    // Never NaN, so it crosses as a plain number and not as specta's `number | null` for an f64.
+    #[specta(type = specta_typescript::Number)]
     pub attack: f64,
+    #[specta(type = specta_typescript::Number)]
     pub decay: f64,
+    #[specta(type = specta_typescript::Number)]
     pub sustain: f64,
+    #[specta(type = specta_typescript::Number)]
     pub release: f64,
 }
 
 /// One output device as the picker lists it. The system default is not a row here; the dialog
 /// offers it as the choice of no device at all.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 pub struct OutputDevice {
     pub id: String,
     pub name: String,
@@ -176,7 +200,7 @@ pub struct Kept {
 
 /// One line of the instrument picker. The id is opaque: a file and an Audio Unit look the same
 /// from the webview, which only ever hands one back.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 pub struct Instrument {
     pub id: String,
     pub name: String,
@@ -250,6 +274,7 @@ pub fn apply(key: &str, all: &crate::settings::Stored) -> Result<(), String> {
 /// setting is applied whatever the one before it did, so an unplugged device does not cost the app
 /// its effect chain; only a failed start stops the rest.
 #[tauri::command]
+#[specta::specta]
 pub async fn audio_start(app: tauri::AppHandle) -> Result<(), Refusal> {
     engine::start()?;
     let all = crate::settings::all(&app).await?;
@@ -261,6 +286,7 @@ pub async fn audio_start(app: tauri::AppHandle) -> Result<(), Refusal> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn audio_status() -> Status {
     engine::graph().map_or_else(|| Status::unavailable(NO_ENGINE), |graph| graph.status())
 }
@@ -268,6 +294,7 @@ pub fn audio_status() -> Status {
 /// One metronome click, at a volume of 0 to 100. A no-op where there is no engine, so the
 /// metronome is simply silent there.
 #[tauri::command]
+#[specta::specta]
 pub fn audio_click(strength: &str, volume: u32) {
     if let Some(graph) = engine::graph() {
         graph.click(strength == "strong", volume);
@@ -278,6 +305,7 @@ pub fn audio_click(strength: &str, volume: u32) {
 /// same path a MIDI key takes, so the velocity curve is on it, unless `raw` says the caller already
 /// holds an output velocity. A no-op where there is no engine.
 #[tauri::command]
+#[specta::specta]
 pub fn audio_note(midi: u8, velocity: u8, on: bool, raw: bool) {
     if let Some(graph) = engine::graph() {
         graph.note(midi, velocity, on, raw);
@@ -286,11 +314,13 @@ pub fn audio_note(midi: u8, velocity: u8, on: bool, raw: bool) {
 
 /// Every Audio Unit effect installed on the machine, Apple's own included.
 #[tauri::command]
+#[specta::specta]
 pub fn audio_effects() -> Vec<Effect> {
     engine::effects()
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn audio_chain() -> Vec<Slot> {
     engine::chain()
 }
@@ -298,6 +328,7 @@ pub fn audio_chain() -> Vec<Slot> {
 /// Opens one slot's plugin window. Closing it emits `audio-chain-changed` with the whole chain,
 /// which is how the plugin's settings reach the setting the webview keeps.
 #[tauri::command]
+#[specta::specta]
 pub fn audio_show_effect(app: tauri::AppHandle, index: usize) -> Result<(), Refusal> {
     Ok(engine::show_effect(app, index)?)
 }
@@ -305,6 +336,7 @@ pub fn audio_show_effect(app: tauri::AppHandle, index: usize) -> Result<(), Refu
 /// Every device the app can play through, newest list each call. The webview reads it again on
 /// every `audio-devices-changed`.
 #[tauri::command]
+#[specta::specta]
 pub fn audio_output_devices() -> Vec<OutputDevice> {
     engine::output_devices()
 }
@@ -312,6 +344,7 @@ pub fn audio_output_devices() -> Vec<OutputDevice> {
 /// Every instrument the engine can play: Logic's pianos, the files in the folder the webview
 /// names, and the installed Audio Unit instruments.
 #[tauri::command]
+#[specta::specta]
 pub fn audio_instruments(folder: &str) -> Vec<Instrument> {
     engine::instruments(folder)
 }
@@ -320,6 +353,7 @@ pub fn audio_instruments(folder: &str) -> Vec<Instrument> {
 /// level of every Role that was moved, and answers the engine's status. The engine builds the
 /// instrument with nothing locked, so a key pressed meanwhile plays on the one still in.
 #[tauri::command]
+#[specta::specta]
 pub async fn audio_load_instrument(app: tauri::AppHandle, id: String) -> Result<Status, Refusal> {
     let all = crate::settings::all(&app).await?;
     Ok(engine::load_instrument(&id, &kept_for(&id, &all))?)
@@ -328,6 +362,7 @@ pub async fn audio_load_instrument(app: tauri::AppHandle, id: String) -> Result<
 /// Takes the loaded instrument out, so the app makes no sound until one is chosen again, and
 /// answers the engine's status, which now names no instrument.
 #[tauri::command]
+#[specta::specta]
 pub fn audio_unload_instrument() -> Result<Status, Refusal> {
     Ok(engine::unload_instrument()?)
 }
@@ -362,6 +397,7 @@ fn role_levels(kept: Option<&Value>) -> Vec<(sampler::Role, u32)> {
 
 /// Opens the instrument's own window, and answers with its state when the user closes it again.
 #[tauri::command]
+#[specta::specta]
 pub async fn audio_show_instrument(app: tauri::AppHandle) -> Result<Option<String>, Refusal> {
     Ok(engine::show_instrument(app).await?)
 }
@@ -369,6 +405,7 @@ pub async fn audio_show_instrument(app: tauri::AppHandle) -> Result<Option<Strin
 /// The envelope the loaded instrument answers a key with now. Null when a plugin is playing, which
 /// is how the webview knows to offer no envelope for it, and null where there is no engine.
 #[tauri::command]
+#[specta::specta]
 pub fn audio_envelope() -> Option<Envelope> {
     engine::graph().and_then(|graph| graph.envelope())
 }
@@ -376,6 +413,7 @@ pub fn audio_envelope() -> Option<Envelope> {
 /// Replaces it. The voice engine has it at the next buffer, and every note struck from there on
 /// follows it; whatever is already sounding plays on unchanged.
 #[tauri::command]
+#[specta::specta]
 pub fn audio_apply_envelope(envelope: Envelope) {
     if let Some(mut graph) = engine::graph() {
         graph.set_envelope(envelope);
@@ -387,6 +425,7 @@ pub fn audio_apply_envelope(envelope: Envelope) {
 /// itself has no level, and a role the loaded instrument has no samples for is simply silent. What
 /// a slider sends as it moves; a load puts the kept levels on by itself.
 #[tauri::command]
+#[specta::specta]
 pub fn audio_apply_role_level(role: sampler::Role, percent: u32) {
     if let Some(graph) = engine::graph() {
         graph.set_role_level(role, percent);
@@ -395,6 +434,7 @@ pub fn audio_apply_role_level(role: sampler::Role, percent: u32) {
 
 /// The Preview's note list, in seconds at the score's own tempo. Replaces whatever was loaded.
 #[tauri::command]
+#[specta::specta]
 pub fn preview_load(notes: Vec<PreviewNote>) {
     if let Some(graph) = engine::graph() {
         graph.preview_load(notes);
@@ -402,6 +442,7 @@ pub fn preview_load(notes: Vec<PreviewNote>) {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn preview_play() {
     if let Some(graph) = engine::graph() {
         graph.preview_play();
@@ -409,6 +450,7 @@ pub fn preview_play() {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn preview_pause() {
     if let Some(graph) = engine::graph() {
         graph.preview_pause();
@@ -417,6 +459,7 @@ pub fn preview_pause() {
 
 /// Jumps to a time in the piece's own seconds, tempo percent aside.
 #[tauri::command]
+#[specta::specta]
 pub fn preview_seek(seconds: f64) {
     if let Some(graph) = engine::graph() {
         graph.preview_seek(seconds);
@@ -425,6 +468,7 @@ pub fn preview_seek(seconds: f64) {
 
 /// The tempo as a percent of the score's own: 50 makes the piece take twice as long.
 #[tauri::command]
+#[specta::specta]
 pub fn preview_rate(percent: u32) {
     if let Some(graph) = engine::graph() {
         graph.preview_rate(percent);
@@ -433,6 +477,7 @@ pub fn preview_rate(percent: u32) {
 
 /// Stops, forgets the note list and returns to the start. What leaving the Preview sends.
 #[tauri::command]
+#[specta::specta]
 pub fn preview_stop() {
     if let Some(graph) = engine::graph() {
         graph.preview_stop();

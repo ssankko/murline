@@ -9,7 +9,7 @@
 use crate::audio::instruments::{apply_state, state_of};
 use crate::audio::mac::{GRAPH, Graph, release_on_main};
 use crate::audio::window::{cocoa_view, generic_view};
-use crate::audio::{Effect, Slot};
+use crate::audio::{AudioChainChanged, Effect, Slot};
 use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
@@ -27,16 +27,14 @@ use objc2_foundation::{
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
+use tauri_specta::Event;
 
 /// Audio Unit effects, the two component types this chain hosts: the plain effect, and the music
 /// effect, which is an effect that also takes MIDI. Both are hosted the same way, and a plugin's
 /// maker chooses between them: FabFilter registers its reverbs and EQs as music effects.
 const EFFECT: u32 = u32::from_be_bytes(*b"aufx");
 const MIDI_EFFECT: u32 = u32::from_be_bytes(*b"aumf");
-/// The event the webview listens on to write the chain back to its setting, carrying the whole
-/// chain as `audio_chain` would answer it.
-const CHANGED: &str = "audio-chain-changed";
 
 /// One slot of the chain as the engine holds it: what the webview asked for, plus the node playing
 /// it when the plugin is installed.
@@ -414,7 +412,7 @@ fn watch_close(app: AppHandle, key: usize, window: &NSWindow) {
         if let Some(token) = held.borrow_mut().take() {
             unsafe { NSNotificationCenter::defaultCenter().removeObserver(&token) };
         }
-        app.emit(CHANGED, chain()).ok();
+        AudioChainChanged(chain()).emit(&app).ok();
     });
     let observer = unsafe {
         centre.addObserverForName_object_queue_usingBlock(

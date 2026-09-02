@@ -1,28 +1,52 @@
 // The in-memory Rust side. Every test runs against it, and so does the app when the address
 // carries `?mocktauri`. Its default answers are a working studio, so a test only writes the
-// answers it is about.
+// answers it is about. It stands behind Tauri's own IPC mock, so the window calls `src/bindings.ts`
+// exactly as it does against the real Rust side.
 
-import type { PieceRow, PlayRow, SortOrder } from '@/library/queries';
 import {
-  setRust,
+  commands,
+  events,
   type AudioStatus,
   type FileEntry,
-  type CommandName,
-  type Commands,
-  type EventName,
-  type Events,
+  type PieceRow,
+  type PlayRow,
   type Refusal,
-  type Rust,
-} from '@/rust';
+} from '@/bindings';
+import type { SortOrder } from '@/library/queries';
+import { mockIPC } from '@tauri-apps/api/mocks';
+import type { EventName, EventPayload } from '@/rust';
 
-/** One answer per command, as a function so an override can count calls or refuse. */
+/** The camelCase name the bindings give a command, back as the snake_case name it is invoked
+ * under, which is the name a test writes. */
+type Snake<S extends string> = S extends `${infer Head}${infer Rest}`
+  ? `${Head extends Lowercase<Head> ? Head : `_${Lowercase<Head>}`}${Snake<Rest>}`
+  : S;
+
+/** What one command answers with. A command the Rust side answers nothing with answers `null`,
+ * which is what the window's `invoke` sees for it. */
+type Answer<K extends keyof typeof commands> =
+  Awaited<ReturnType<(typeof commands)[K]>> extends void
+    ? null
+    : Awaited<ReturnType<(typeof commands)[K]>>;
+
+/**
+ * What the window sent with a command: one key per Rust parameter, in camelCase. Only the Rust
+ * signature knows their shapes, so an answer reads the ones it needs and is trusted about them.
+ */
+type Args = Record<string, any>;
+
+/** One answer per command, as a function so an override can count calls or refuse. A command
+ * without one here does not compile. */
 export type Answers = {
-  [K in CommandName]: (
-    args: Commands[K]['args'],
-  ) => Commands[K]['result'] | Promise<Commands[K]['result']>;
+  [K in keyof typeof commands as Snake<K & string>]: (
+    args: Args,
+  ) => Answer<K> | Promise<Answer<K>>;
 };
 
-const nothing = () => {};
+/** Every command the Rust side registers, by the name the window invokes it under. */
+export type CommandName = keyof Answers;
+
+const nothing = () => null;
 
 /** What an answer throws to refuse the way the Rust side does. */
 export function refusal(kind: Refusal['kind'], text: string): Refusal {
@@ -147,6 +171,7 @@ export const DEFAULT_ANSWERS: Answers = {
   settings_read: () => Object.fromEntries(fakeSettings),
   settings_write: ({ key, value }) => {
     fakeSettings.set(key, value);
+    return null;
   },
   piece_list: ({ sort }) =>
     ordered(
@@ -163,19 +188,22 @@ export const DEFAULT_ANSWERS: Answers = {
   },
   piece_update_settings: ({ path, values }) => {
     Object.assign(fakePieces.get(path) ?? {}, values);
+    return null;
   },
   piece_update_position: ({ path, tick }) => {
     Object.assign(fakePieces.get(path) ?? {}, { position_tick: tick });
+    return null;
   },
   piece_set_favorite: ({ path, favorite }) => {
     Object.assign(fakePieces.get(path) ?? {}, { favorite: favorite ? 1 : 0 });
+    return null;
   },
   piece_recent_plays: ({ path, limit }) =>
     fakePlays
       .filter((row) => row.piece_path === path)
       .sort((a, b) => b.started_at - a.started_at)
       .slice(0, limit),
-  play_insert: ({ path, kind, startedAt, durationS }) =>
+  play_insert: ({ path, kind, startedAt, durationS }) => {
     play(path, {
       kind,
       started_at: Math.round(startedAt),
@@ -184,8 +212,10 @@ export const DEFAULT_ANSWERS: Answers = {
       tempo_value: null,
       hands: null,
       grade: null,
-    }),
-  performance_insert: ({ path, run }) =>
+    });
+    return null;
+  },
+  performance_insert: ({ path, run }) => {
     play(path, {
       kind: 'performance',
       started_at: Math.round(run.startedAt),
@@ -194,7 +224,9 @@ export const DEFAULT_ANSWERS: Answers = {
       tempo_value: run.tempoValue,
       hands: run.hands,
       grade: run.grade?.grade ?? null,
-    }),
+    });
+    return null;
+  },
   index_plan: ({ path }) => {
     const files = fakeFiles.filter((file) => path === null || file.relPath === path);
     const rows = [...fakePieces.values()].filter((row) => path === null || row.path === path);
@@ -227,6 +259,7 @@ export const DEFAULT_ANSWERS: Answers = {
       present: 1,
       error: null,
     });
+    return null;
   },
   index_mark_error: ({ path, error, mtime, size }) => {
     fakePieces.set(path, {
@@ -236,6 +269,7 @@ export const DEFAULT_ANSWERS: Answers = {
       present: 1,
       error,
     });
+    return null;
   },
   piece_delete: ({ path }) => {
     fakePieces.delete(path);
@@ -243,6 +277,7 @@ export const DEFAULT_ANSWERS: Answers = {
     const kept = fakePlays.filter((row) => row.piece_path !== path);
     fakePlays.length = 0;
     fakePlays.push(...kept);
+    return null;
   },
   audio_start: nothing,
   audio_status: running,
@@ -296,7 +331,37 @@ export const DEFAULT_ANSWERS: Answers = {
 /** One command the window asked for, in the order it asked. */
 interface Called {
   name: CommandName;
-  args: unknown;
+  args: Record<string, unknown>;
+}
+
+/** One fake's own answers and the calls they have taken. */
+interface Stand {
+  answers: Answers;
+  calls: Called[];
+}
+
+/** The fake answering the window now: whichever `fakeRust` or `install` put there last. */
+let standing: Stand = { answers: DEFAULT_ANSWERS, calls: [] };
+let mocked = false;
+
+/** Puts the fake behind Tauri's own IPC, once. The listeners `listen` registers live in that mock,
+ * so they outlast a fake, which is what a module that subscribes once needs. */
+function mock(): void {
+  if (mocked) return;
+  mocked = true;
+  mockIPC((name, args) => {
+    // Tauri's own plugins knock at the same door. Nothing here runs them, and `null` is the answer
+    // every one of them reads as nothing: no window, no chosen file, not fullscreen.
+    if (name.startsWith('plugin:')) return null;
+    const called: Called = {
+      name: name as CommandName,
+      args: (args ?? {}) as Record<string, unknown>,
+    };
+    standing.calls.push(called);
+    const answer = standing.answers[called.name] as ((args: Args) => unknown) | undefined;
+    if (!answer) throw new Error(`the fake was asked for ${name}, which is not a command`);
+    return answer(called.args);
+  }, { shouldMockEvents: true });
 }
 
 /** The handle a test holds on the fake it installed. */
@@ -304,18 +369,18 @@ export interface FakeRust {
   /** Every command call so far, oldest first. */
   calls: Called[];
   /** The arguments of every call of one command. */
-  argsOf<K extends CommandName>(name: K): Commands[K]['args'][];
+  argsOf(name: CommandName): Args[];
   /** Every setting written so far, oldest first, in the shape the store sent it. */
   written(): [string, unknown][];
-  /** Sends an event, as the Rust side would. */
-  emit<K extends EventName>(name: K, payload: Events[K]): void;
+  /** Sends an event, as the Rust side would. Its listeners run before this returns. */
+  emit<K extends EventName>(name: K, payload: EventPayload<K>): void;
   /** Puts this fake back behind the door, for a test file whose module under test subscribes to
    * events once and keeps the handlers it registered. */
   install(): void;
 }
 
 /**
- * Puts a fresh fake behind `src/rust.ts` and hands back the handle on it. Calling it again
+ * Puts a fresh fake behind `src/bindings.ts` and hands back the handle on it. Calling it again
  * replaces the one before, so a `beforeEach` can start every test from the same studio.
  */
 export function fakeRust(overrides: Partial<Answers> = {}): FakeRust {
@@ -323,35 +388,23 @@ export function fakeRust(overrides: Partial<Answers> = {}): FakeRust {
   fakePieces.clear();
   fakePlays.length = 0;
   fakeFiles.length = 0;
-  const answers = { ...DEFAULT_ANSWERS, ...overrides } as Answers;
-  const calls: Called[] = [];
-  const handlers = new Map<EventName, Set<(payload: unknown) => void>>();
-
-  const rust: Rust = {
-    call: async (name, args) => {
-      calls.push({ name, args });
-      return (answers[name] as (args: unknown) => unknown)(args);
-    },
-    on: (name, handler) => {
-      const set = handlers.get(name) ?? new Set();
-      handlers.set(name, set);
-      set.add(handler as (payload: unknown) => void);
-      return () => set.delete(handler as (payload: unknown) => void);
-    },
-  };
-  setRust(rust);
+  const stand: Stand = { answers: { ...DEFAULT_ANSWERS, ...overrides }, calls: [] };
+  standing = stand;
+  mock();
 
   return {
-    calls,
-    argsOf: (name) => calls.filter((c) => c.name === name).map((c) => c.args) as never,
+    calls: stand.calls,
+    argsOf: (name) => stand.calls.filter((one) => one.name === name).map((one) => one.args),
     written: () =>
-      calls
-        .filter((c) => c.name === 'settings_write')
-        .map((c) => c.args as { key: string; value: unknown })
+      stand.calls
+        .filter((one) => one.name === 'settings_write')
+        .map((one) => one.args as { key: string; value: unknown })
         .map(({ key, value }) => [key, value]),
     emit: (name, payload) => {
-      for (const handler of handlers.get(name) ?? []) handler(payload);
+      void (events[name].emit as (payload: unknown) => Promise<void>)(payload);
     },
-    install: () => setRust(rust),
+    install: () => {
+      standing = stand;
+    },
   };
 }

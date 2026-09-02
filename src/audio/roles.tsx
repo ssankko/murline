@@ -9,11 +9,12 @@
 import { Knob } from '@/audio/knob';
 import { set, setting } from '@/settings/settings';
 import { sticky } from '@/lib/utils';
-import { call, type Role } from '@/rust';
+import { commands, type Role } from '@/bindings';
 import { useEffect, useState } from 'react';
 
-/** What each role is called on screen, in the words a player would use for the sound. */
-const LABELS: Record<Role, string> = {
+/** What each role is called on screen, in the words a player would use for the sound. The tone
+ * itself carries no level, so no section ever asks for its label. */
+const LABELS: Partial<Record<Role, string>> = {
   release: 'Release samples',
   key_off: 'Key-off noise',
   sympathetic: 'Sympathetic resonance',
@@ -74,7 +75,7 @@ export function RolesSection({
     if (instrument) {
       await set('instrument_roles', { ...setting('instrument_roles'), [instrument]: next });
     }
-    await call('audio_apply_role_level', { role, percent });
+    await commands.audioApplyRoleLevel(role, percent);
   }
 
   if (!roles.length) return null;
@@ -87,7 +88,7 @@ export function RolesSection({
           key={role}
           id={`role_${role}`}
           marked={marked}
-          label={LABELS[role]}
+          label={LABELS[role] ?? role}
           hint={HINTS[role]}
           lo={0}
           hi={100}

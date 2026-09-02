@@ -14,6 +14,10 @@ _Avoid_: Backend, native side, core, IPC
 The one shape every command of the Rust side answers with when it cannot do what it was asked: a kind the window may act on (`gone` when the file is no longer there, `refused` when a rule or the sound engine said no, `failed` for anything else) and a sentence that is only ever shown. The window never reads the sentence to decide anything.
 _Avoid_: Error string, exception, error message (the sentence is one part of it)
 
+**Bindings**:
+The window's half of the seam, `src/bindings.ts`: every command it may call, every event it may listen to and every shape either carries, written out of the Rust source itself. Nothing in it is written by hand, so the two halves cannot drift apart.
+_Avoid_: API client, generated code, stubs, glue
+
 ### Library
 
 **Piece**:

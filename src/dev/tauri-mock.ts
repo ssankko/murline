@@ -17,13 +17,7 @@ import {
   refusal,
   type FakeRust,
 } from '@/rust.fake';
-
-type TauriMock = {
-  invoke: () => Promise<unknown>;
-  transformCallback: (cb: unknown) => unknown;
-  metadata: { currentWebview: { label: string }; currentWindow: { label: string } };
-  isTauri: boolean;
-};
+import { mockWindows } from '@tauri-apps/api/mocks';
 
 export function installTauriMock(): void {
   const params = new URLSearchParams(location.search);
@@ -31,6 +25,8 @@ export function installTauriMock(): void {
   const columns = Object.fromEntries(
     [...params].filter(([key]) => key.startsWith('p.')).map(([key, value]) => [key.slice(2), JSON.parse(value)]),
   );
+  // The window the drag-and-drop and the fullscreen toggle ask for.
+  mockWindows('main');
   const fake = fakeRust({
     piece_get: (args) => {
       const row = DEFAULT_ANSWERS.piece_get(args);
@@ -51,13 +47,5 @@ export function installTauriMock(): void {
     if (key.startsWith('s.')) fakeSettings.set(key.slice(2), JSON.parse(value));
   }
   // The fake's handle on the window, so the console can send events: `__MURLINE_FAKE__.emit(...)`.
-  const w = window as unknown as { __TAURI_INTERNALS__?: TauriMock; __MURLINE_FAKE__?: FakeRust };
-  w.__MURLINE_FAKE__ = fake;
-  if (w.__TAURI_INTERNALS__) return;
-  w.__TAURI_INTERNALS__ = {
-    metadata: { currentWebview: { label: 'main' }, currentWindow: { label: 'main' } },
-    transformCallback: (cb) => cb,
-    isTauri: true,
-    invoke: async () => 0,
-  };
+  (window as unknown as { __MURLINE_FAKE__?: FakeRust }).__MURLINE_FAKE__ = fake;
 }

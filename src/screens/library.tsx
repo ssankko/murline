@@ -23,15 +23,7 @@ import {
   type ImportFailure,
 } from '@/library/import';
 import { reasonOf, setNotice, useNotice } from '@/library/notice';
-import {
-  allPiecePaths,
-  deletePiece,
-  listPieces,
-  matches,
-  setFavorite,
-  type PieceRow,
-  type SortOrder,
-} from '@/library/queries';
+import { matches, type SortOrder } from '@/library/queries';
 import { scanLibrary, splitError } from '@/library/scan';
 import { clamp } from '@/lib/utils';
 import { Collapse } from '@/look/collapse';
@@ -40,7 +32,7 @@ import { Detail } from '@/screens/piece-detail';
 import { SettingsPanel } from '@/screens/settings';
 import { StatusBar } from '@/screens/status-bar';
 import { useFullscreen } from '@/screens/use-fullscreen';
-import { call } from '@/rust';
+import { commands, type PieceRow } from '@/bindings';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open } from '@tauri-apps/plugin-dialog';
 import { ArrowUpDown, Search } from 'lucide-react';
@@ -127,7 +119,7 @@ export function Library({
         if (live) setFolderGone(true);
       }
       try {
-        const rows = await listPieces(sort);
+        const rows = await commands.pieceList(sort);
         if (live) setPieces(rows);
       } catch (error) {
         if (live) setNotice(`Could not read the library: ${reasonOf(error)}`);
@@ -155,8 +147,8 @@ export function Library({
 
   // Favorites filters, so a toggle can add or remove a row: re-read rather than patch one.
   async function toggleFavorite(row: PieceRow) {
-    await setFavorite(row.path, !row.favorite);
-    setPieces(await listPieces(sort));
+    await commands.pieceSetFavorite(row.path, !row.favorite);
+    setPieces(await commands.pieceList(sort));
   }
 
   const sortLabel = `Sort: ${SORTS.find(([key]) => key === sort)![1]}`;
@@ -207,7 +199,7 @@ export function Library({
   async function runImport(paths: string[]): Promise<void> {
     if (!folder) return;
     const { imported, failures } = await importFiles(folder, paths, askClash);
-    setPieces(await listPieces(sort));
+    setPieces(await commands.pieceList(sort));
     if (imported.length) setSelected(imported[imported.length - 1]!);
     // Successes are silent, and they leave a notice about something else where it is.
     if (failures.length) setNotice(failureNotice(failures));
@@ -215,7 +207,7 @@ export function Library({
 
   /** "In library" answers for the whole folder, not for the rows the current sort shows. */
   async function openFinder(): Promise<void> {
-    const paths = await allPiecePaths();
+    const paths = await commands.piecePaths();
     setFinding(new Set(paths.map((path) => path.toLowerCase().normalize('NFC'))));
   }
 
@@ -231,7 +223,7 @@ export function Library({
   async function remove(target: PieceRow): Promise<void> {
     if (!folder) return;
     try {
-      await call('trash_file', { path: pathOf(folder, target.path) });
+      await commands.trashFile(pathOf(folder, target.path));
     } catch (error) {
       // A file already gone from disk still drops its piece; any other refusal keeps the row.
       if (!isMissingFile(error)) {
@@ -239,9 +231,9 @@ export function Library({
         return;
       }
     }
-    await deletePiece(target.path);
+    await commands.pieceDelete(target.path);
     const at = pieces.findIndex((row) => row.path === target.path);
-    const rows = await listPieces(sort);
+    const rows = await commands.pieceList(sort);
     setPieces(rows);
     setSelected((rows[at] ?? rows[rows.length - 1])?.path ?? null);
   }
@@ -420,7 +412,7 @@ export function Library({
           onImported={async (relPath) => {
             // The re-list runs first: a failure then throws back into the finder's red bar
             // instead of leaving the modal closed over a library that never changed.
-            const rows = await listPieces(sort);
+            const rows = await commands.pieceList(sort);
             setFinding(null);
             setPieces(rows);
             setSelected(relPath);

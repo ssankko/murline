@@ -74,12 +74,12 @@ test('the ports and every strike come off the Rust events in the shape they alwa
   expect(shown.defaultId).toBe('1');
 
   const strike: StrikeEvent = { midi: 60, velocity: 100, time: 1735689600123.5, on: true };
-  rust.emit('midi-strike', strike);
-  rust.emit('midi-strike', { ...strike, velocity: 0, on: false });
+  rust.emit('midiStrike', strike);
+  rust.emit('midiStrike', { ...strike, velocity: 0, on: false });
   expect(struck).toEqual([strike, { ...strike, velocity: 0, on: false }]);
 
   // A keyboard unplugged: Rust re-lists and says so, and the popover's list follows without asking.
-  rust.emit('midi-ports', {
+  rust.emit('midiPorts', {
     devices: [],
     ports: [{ id: '2', name: 'IAC' }],
     pinned: '1',

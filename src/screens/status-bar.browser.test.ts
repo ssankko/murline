@@ -1,4 +1,4 @@
-import { NO_STATUS } from "@/rust";
+import { NO_STATUS } from "@/audio/sound-tab";
 import { fakeRust, fakeSettings, type FakeRust } from "@/rust.fake";
 import {
   audioDot,
@@ -249,12 +249,12 @@ test("the meters stand at a dash until the engine reports, and the load reddens 
   expect(num(3).textContent).toBe("—");
   expect(num(4).textContent).toBe("—");
 
-  rust.emit("audio-load", { voices: 41, limit: 128, load: 12 });
+  rust.emit("audioLoad", { voices: 41, limit: 128, load: 12 });
   await vi.waitFor(() => expect(num(4).textContent).toBe("12%"));
   expect(num(3).textContent).toBe("41 / 128");
   expect(num(4).className).not.toContain("red");
 
-  rust.emit("audio-load", { voices: 40, limit: 128, load: 94 });
+  rust.emit("audioLoad", { voices: 40, limit: 128, load: 94 });
   await vi.waitFor(() => expect(num(4).className).toContain("red"));
 });
 

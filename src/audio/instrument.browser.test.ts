@@ -1,5 +1,6 @@
 import { InstrumentSection, restoreInstrument } from '@/audio/instrument';
-import { NO_STATUS, type AudioStatus } from '@/rust';
+import type { AudioStatus } from '@/bindings';
+import { NO_STATUS } from '@/audio/sound-tab';
 import { fakeRust, fakeSettings, refusal, type FakeRust } from '@/rust.fake';
 import { load, type Settings } from '@/settings/settings';
 import { createElement } from 'react';

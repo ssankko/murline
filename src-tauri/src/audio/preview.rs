@@ -5,7 +5,7 @@
 use serde::Deserialize;
 
 /// One note of the Preview, as the webview built it from the Score.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, specta::Type)]
 pub struct PreviewNote {
     pub midi: u8,
     pub velocity: u8,

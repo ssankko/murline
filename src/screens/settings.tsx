@@ -30,7 +30,7 @@ import {
   type KeyboardPreset,
 } from "@/play/settings";
 import { SPACING_MAX, SPACING_MIN, type Pinch } from "@/sheet/sheet";
-import { call } from "@/rust";
+import { commands } from "@/bindings";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Search } from "lucide-react";
 import { Tabs } from "radix-ui";
@@ -571,11 +571,11 @@ export function SettingsPanel({
       setSel(0);
     }
     if (open) {
-      call("audio_envelope").then(
+      commands.audioEnvelope().then(
         (one) => setEnvelope(one !== null),
         () => setEnvelope(false),
       );
-      call("audio_status").then(
+      commands.audioStatus().then(
         (status) => setRoles(status.roles.length > 0),
         () => setRoles(false),
       );
@@ -617,7 +617,7 @@ export function SettingsPanel({
     const hold = (ready: boolean) => {
       if (live) setPdmxReady(ready);
     };
-    call("pdmx_status").then(hold, () => hold(false));
+    commands.pdmxStatus().then(hold, () => hold(false));
     return () => {
       live = false;
     };

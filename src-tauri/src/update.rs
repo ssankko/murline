@@ -7,6 +7,7 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 
 /// The version this build was made as, which the status bar shows.
 #[tauri::command]
+#[specta::specta]
 // Tauri hands a command its AppHandle by value; the trait it looks for has no reference form.
 #[allow(clippy::needless_pass_by_value)]
 pub fn app_version(app: AppHandle) -> String {
@@ -15,6 +16,7 @@ pub fn app_version(app: AppHandle) -> String {
 
 /// The version waiting on the release page, or nothing when this build is the newest.
 #[tauri::command]
+#[specta::specta]
 pub async fn update_check(app: AppHandle) -> Result<Option<String>, Refusal> {
     Ok(waiting(&app).await?.map(|update| update.version))
 }
@@ -22,6 +24,7 @@ pub async fn update_check(app: AppHandle) -> Result<Option<String>, Refusal> {
 /// Fetches the newer bundle and swaps the app on disk. Nothing restarts, so the new version starts
 /// at the next launch and a practice session is never cut short.
 #[tauri::command]
+#[specta::specta]
 pub async fn update_install(app: AppHandle) -> Result<(), Refusal> {
     let Some(update) = waiting(&app).await? else {
         return Ok(());
@@ -32,6 +35,7 @@ pub async fn update_install(app: AppHandle) -> Result<(), Refusal> {
 /// Starts the app again, which is how a version already on disk takes over. This never returns:
 /// the process is replaced by a fresh one.
 #[tauri::command]
+#[specta::specta]
 // Tauri hands a command its AppHandle by value; the trait it looks for has no reference form.
 #[allow(clippy::needless_pass_by_value)]
 pub fn update_restart(app: AppHandle) {

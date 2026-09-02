@@ -48,7 +48,7 @@ function button(label: string): HTMLButtonElement {
 
 /** Rust answering the last change: what it opened, and the pin it opened on. */
 function relisted(devices: string[], pinned: string | null): void {
-  rust.emit('midi-ports', { ...connected, devices, pinned });
+  rust.emit('midiPorts', { ...connected, devices, pinned });
 }
 
 function Screen() {
@@ -128,7 +128,7 @@ function disclosure(): HTMLElement {
 }
 
 test('an error from Rust is what the light and the popover both say', async () => {
-  rust.emit('midi-ports', { ...connected, devices: [], error: 'CoreMIDI is down' });
+  rust.emit('midiPorts', { ...connected, devices: [], error: 'CoreMIDI is down' });
   await vi.waitFor(() =>
     expect(document.querySelector('button')!.getAttribute('aria-label')).toBe('CoreMIDI is down'),
   );

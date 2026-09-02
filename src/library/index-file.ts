@@ -2,7 +2,8 @@
 
 import { buildScore } from '@/score/build';
 import { loadSheet } from '@/score/load';
-import { call, isRefusal, type FileEntry } from '@/rust';
+import { commands, type FileEntry } from '@/bindings';
+import { isRefusal } from '@/rust';
 import { reasonOf } from '@/library/notice';
 import { summarize, type PieceIndex } from '@/score/summarize';
 import { ScoreError } from '@/score/types';
@@ -24,12 +25,13 @@ export function pathOf(folder: string, relPath: string): string {
 
 /** Every score file under the library folder, at any depth, in no particular order. */
 export function listLibrary(folder: string): Promise<FileEntry[]> {
-  return call('list_library', { folder });
+  return commands.listLibrary(folder);
 }
 
 export async function readScoreFile(path: string): Promise<Uint8Array> {
   try {
-    return new Uint8Array(await call('read_file', { path }));
+    // The bytes come back as the raw body of the answer, which nothing on the Rust side types.
+    return new Uint8Array((await commands.readFile(path)) as ArrayBuffer);
   } catch (error) {
     const reason = isMissingFile(error) ? 'File not found' : 'Could not read the file';
     throw new ScoreError(reason, reasonOf(error));

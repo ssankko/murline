@@ -1,5 +1,6 @@
 import { RolesSection } from '@/audio/roles';
-import { NO_STATUS, type Role } from '@/rust';
+import type { Role } from '@/bindings';
+import { NO_STATUS } from '@/audio/sound-tab';
 import { fakeRust, fakeSettings, type FakeRust } from '@/rust.fake';
 import { load } from '@/settings/settings';
 import { createElement } from 'react';

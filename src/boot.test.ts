@@ -1,5 +1,11 @@
-import type { CommandName } from '@/rust';
-import { DEFAULT_ANSWERS, fakeRust, fakeSettings, refusal, type Answers } from '@/rust.fake';
+import {
+  DEFAULT_ANSWERS,
+  fakeRust,
+  fakeSettings,
+  refusal,
+  type Answers,
+  type CommandName,
+} from '@/rust.fake';
 import { beforeEach, expect, test, vi } from 'vitest';
 import type { BootLine } from './boot';
 

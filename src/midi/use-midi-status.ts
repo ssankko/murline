@@ -1,7 +1,8 @@
 import { makeStore } from '@/lib/store';
 import { set, setting } from '@/settings/settings';
 import type { StrikeEvent } from '@/play/engine';
-import { call, on, type MidiPorts } from '@/rust';
+import { commands, type MidiPorts } from '@/bindings';
+import { on } from '@/rust';
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 
 /** What the MIDI popover shows: the Rust side's ports, and the two rules the window keeps. */
@@ -93,7 +94,7 @@ function publish(next: Partial<MidiStatus>): void {
 function send(): Promise<void> {
   const status = store.get();
   const pinned = session === undefined ? status.defaultId : session;
-  return call('midi_listen', { pinned, hidden: status.hidden }).catch((error: unknown) =>
+  return commands.midiListen(pinned, status.hidden).catch((error: unknown) =>
     publish({ error: String(error) }),
   );
 }
@@ -108,13 +109,13 @@ function start(): void {
   if (started) return;
   started = true;
   void (async () => {
-    on('midi-strike', (strike) => {
+    on('midiStrike', (strike) => {
       for (const handler of strikes) handler(strike);
     });
-    on('midi-ports', publish);
+    on('midiPorts', publish);
     publish({ defaultId: setting('midi_device'), hidden: setting('midi_hidden') });
     // The rule goes out before the first look at the ports, so what comes back is the rule's.
     await send();
-    publish(await call('midi_status'));
+    publish(await commands.midiStatus());
   })().catch((error: unknown) => publish({ error: String(error) }));
 }

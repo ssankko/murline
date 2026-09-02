@@ -2,10 +2,9 @@
 // Runs once at launch and again for one piece when it opens. No watcher.
 
 import { reasonOf } from '@/library/notice';
-import type { FileEntry } from '@/rust';
+import { commands, type FileEntry } from '@/bindings';
 import { ScoreError } from '@/score/types';
 import { baseNameOf, indexBytes, pathOf, readScoreFile } from './index-file';
-import { markError, planIndex, upsertIndex } from './queries';
 
 /** The folder whose scan has finished. A folder that failed is not remembered, so it is retried. */
 let scanned: string | null = null;
@@ -16,24 +15,24 @@ let scanned: string | null = null;
  */
 export async function scanLibrary(folder: string): Promise<void> {
   if (scanned === folder) return;
-  for (const file of await planIndex(folder)) await index(folder, file);
+  for (const file of await commands.indexPlan(folder, null)) await index(folder, file);
   scanned = folder;
 }
 
 /** Brings one piece up to date before it opens, in case the file changed under the app. */
 export async function reindexIfChanged(folder: string, relPath: string): Promise<void> {
-  for (const file of await planIndex(folder, relPath)) await index(folder, file);
+  for (const file of await commands.indexPlan(folder, relPath)) await index(folder, file);
 }
 
 async function index(folder: string, file: FileEntry): Promise<void> {
   try {
     const path = pathOf(folder, file.relPath);
     const summary = await indexBytes(await readScoreFile(path), baseNameOf(path));
-    await upsertIndex(file.relPath, summary, file.mtime, file.size);
+    await commands.indexUpsert(file.relPath, summary, file.mtime, file.size);
   } catch (error) {
     const reason =
       error instanceof ScoreError ? error.message : `Could not read the file: ${reasonOf(error)}`;
-    await markError(file.relPath, reason, file.mtime, file.size);
+    await commands.indexMarkError(file.relPath, reason, file.mtime, file.size);
   }
 }
 

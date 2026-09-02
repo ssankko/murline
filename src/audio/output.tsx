@@ -14,7 +14,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { numbered, Row, Segmented } from "@/look/rows";
-import { call, on, type AudioStatus, type OutputDevice } from "@/rust";
+import { commands, type AudioStatus, type OutputDevice } from "@/bindings";
+import { on } from "@/rust";
 import { set, useSetting } from "@/settings/settings";
 import { ChevronDown } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -36,8 +37,8 @@ export function OutputSection({ marked }: { marked?: string | null | undefined }
 
   const readEngine = useCallback(async () => {
     const [list, answer] = await Promise.all([
-      call("audio_output_devices"),
-      call("audio_status"),
+      commands.audioOutputDevices(),
+      commands.audioStatus(),
     ]);
     setDevices(list);
     setStatus(answer);
@@ -45,7 +46,7 @@ export function OutputSection({ marked }: { marked?: string | null | undefined }
 
   useEffect(() => {
     void readEngine();
-    return on("audio-devices-changed", () => void readEngine());
+    return on("audioDevicesChanged", () => void readEngine());
   }, [readEngine]);
 
   /** Writes the setting, which is what applies it to the engine, and reads the device back. */

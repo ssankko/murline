@@ -1,4 +1,5 @@
-import { NO_STATUS, type Role } from '@/rust';
+import { type Role } from '@/bindings';
+import { NO_STATUS } from '@/audio/sound-tab';
 import { fakeRust, fakeSettings } from '@/rust.fake';
 import { SettingsPanel } from '@/screens/settings';
 import { load } from '@/settings/settings';
@@ -18,6 +19,7 @@ beforeEach(async () => {
   fakeRust({
     pdmx_fetch: async () => {
       await fetching?.promise;
+      return null;
     },
     // `roles` is what the loaded instrument offers beyond its tone, which is what puts the four
     // level rows on the Sound tab.

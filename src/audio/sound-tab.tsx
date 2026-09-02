@@ -11,8 +11,25 @@ import { sounded, type Sounding } from "@/audio/sounding";
 import { VelocitySection } from "@/audio/velocity";
 import { useSetting } from "@/settings/settings";
 import { useMidiStatus } from "@/midi/use-midi-status";
-import { call, on, NO_STATUS, type AudioStatus } from "@/rust";
+import { commands, type AudioStatus } from "@/bindings";
+import { on } from "@/rust";
 import { useEffect, useState } from "react";
+
+/** A status with nothing in it, which is what an engine that cannot even be asked answers. */
+export const NO_STATUS: AudioStatus = {
+  available: false,
+  reason: "",
+  device: null,
+  device_name: "",
+  instrument: "",
+  fallback: "",
+  buffer_frames: 0,
+  sample_rate: 0,
+  buffer_choices: [],
+  instrument_rate: 0,
+  latency_ms: 0,
+  roles: [],
+};
 
 /** The one line the tab says about the engine: why there is no sound at all, or where the sound
  * had to go when the chosen device was not there. Never both, because silence is the bigger thing
@@ -33,14 +50,14 @@ export function useAudioStatus(round = 0): AudioStatus | null {
   useEffect(() => {
     let live = true;
     const read = () =>
-      call("audio_status").then(
+      commands.audioStatus().then(
         (answer) => live && setStatus(answer),
         (error: unknown) =>
           live && setStatus({ ...NO_STATUS, reason: String(error) }),
       );
     void read();
     // Unplugging the chosen device is the other way the answer changes while nothing is touched.
-    const stop = on("audio-devices-changed", () => void read());
+    const stop = on("audioDevicesChanged", () => void read());
     return () => {
       live = false;
       stop();

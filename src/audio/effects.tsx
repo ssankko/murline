@@ -13,13 +13,19 @@ import {
 import { set, setting } from '@/settings/settings';
 import { rowId } from '@/lib/utils';
 import { Toggle } from '@/look/rows';
-import { call, on, type Effect, type EffectSlot } from '@/rust';
+import { commands, type Effect, type EffectSlot } from '@/bindings';
+import { on } from '@/rust';
 import { Plus } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 /** A slot as it is stored: what the user chose, without the engine's word about it. */
 function stored(slot: EffectSlot): EffectSlot {
-  return { id: slot.id, name: slot.name, bypass: slot.bypass, state: slot.state };
+  return {
+    id: slot.id,
+    name: slot.name ?? '',
+    bypass: slot.bypass ?? false,
+    state: slot.state ?? '',
+  };
 }
 
 export function EffectsSection({ marked }: { marked?: string | null | undefined }) {
@@ -30,7 +36,7 @@ export function EffectsSection({ marked }: { marked?: string | null | undefined 
   /** What the engine made of the chain: the plugin names and the slots it could not load. An
    * engine with nothing in it leaves the user's own chain on the page. */
   async function readEngine(chain: EffectSlot[]): Promise<void> {
-    const made = await call('audio_chain').catch(() => []);
+    const made = await commands.audioChain().catch(() => []);
     setSlots(made.length ? made : chain);
   }
 
@@ -45,14 +51,14 @@ export function EffectsSection({ marked }: { marked?: string | null | undefined 
     const kept = setting('effect_chain');
     setSlots(kept);
     void readEngine(kept);
-    call('audio_effects').then(setAvailable, () => setAvailable([]));
+    commands.audioEffects().then(setAvailable, () => setAvailable([]));
   }, []);
 
   // Closing a plugin's window is the other way the chain changes: the engine has read the plugin's
   // settings out of it and hands the whole chain back to be written.
   useEffect(
     () =>
-      on('audio-chain-changed', (chain) => {
+      on('audioChainChanged', (chain) => {
         change(chain).catch(console.error);
       }),
     [],
@@ -106,7 +112,7 @@ export function EffectsSection({ marked }: { marked?: string | null | undefined 
             size="sm"
             className="h-6 flex-none px-2 text-[11.5px]"
             disabled={slot.missing}
-            onClick={() => void call('audio_show_effect', { index: at }).catch(console.error)}
+            onClick={() => void commands.audioShowEffect(at).catch(console.error)}
           >
             Show
           </Button>

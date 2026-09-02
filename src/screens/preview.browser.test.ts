@@ -1,4 +1,5 @@
-import { NO_STATUS, type AudioStatus } from '@/rust';
+import { type AudioStatus } from '@/bindings';
+import { NO_STATUS } from '@/audio/sound-tab';
 import { fakeRust, type FakeRust } from '@/rust.fake';
 import { PreviewScreen } from '@/screens/preview';
 import { createElement } from 'react';
@@ -117,7 +118,7 @@ test('play hands the engine the note list and starts it', async () => {
   await vi.waitFor(() => expect(commands()).toContain('preview_play'));
 
   expect(commands()).toEqual(['preview_load', 'preview_rate', 'preview_play']);
-  const notes = rust.argsOf('preview_load')[0]!.notes as {
+  const notes = rust.argsOf('preview_load')[0]!['notes'] as {
     midi: number;
     on: number;
     off: number;
@@ -150,16 +151,16 @@ test('a click seeks to the Onset the progress event then puts the band back on',
   );
 
   await vi.waitFor(() => expect(commands()).toContain('preview_seek'));
-  const seconds = rust.argsOf('preview_seek')[0]!.seconds;
+  const seconds = rust.argsOf('preview_seek')[0]!['seconds'];
   expect(seconds).toBeGreaterThan(0);
   const clicked = band();
 
   // The engine reports the start of the piece, then the time the click sought to: the band leaves
   // the clicked Onset on the next frame and comes back to it on the frame after.
-  rust.emit('preview-progress', { seconds: 0, playing: false });
+  rust.emit('previewProgress', { seconds: 0, playing: false });
   await vi.waitFor(() => expect(band().x).not.toBeCloseTo(clicked.x, 0));
 
-  rust.emit('preview-progress', { seconds, playing: false });
+  rust.emit('previewProgress', { seconds, playing: false });
   await vi.waitFor(() => expect(band().x).toBeCloseTo(clicked.x, 0));
   expect(band().top).toBe(clicked.top);
 }, 60_000);

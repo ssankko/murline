@@ -4,15 +4,7 @@
 
 import { Lane } from '@/lane/lane';
 import { openPiece } from '@/library/open-piece';
-import {
-  getPiece,
-  insertPerformance,
-  insertPlay,
-  PIECE_SETTING_COLUMNS,
-  updatePiecePosition,
-  updatePieceSettings,
-  type PieceSettingValues,
-} from '@/library/queries';
+import { PIECE_SETTING_COLUMNS, type PieceSettingValues } from '@/library/queries';
 import { Click } from '@/play/click';
 import {
   Engine,
@@ -40,6 +32,7 @@ import {
 } from '@/settings/settings';
 import { Sheet } from '@/sheet/sheet';
 import type { Pinch } from '@/sheet/pinch';
+import { commands } from '@/bindings';
 
 /** Every global setting a play already on screen answers to. */
 const WATCHED = [
@@ -314,7 +307,7 @@ export class Play {
     const columns = columnsOf(values);
     if (Object.keys(columns).length === 0) return;
     if (this.engine.kind === 'practice') {
-      updatePieceSettings(this.path, columns).catch(console.error);
+      commands.pieceUpdateSettings(this.path, columns).catch(console.error);
     }
     this.show({ settings: this.pieceSettings(), section: this.engine.section });
   }
@@ -392,7 +385,7 @@ export class Play {
   private async savePractice(): Promise<void> {
     const done = this.engine.takePractice();
     if (!done) return;
-    await insertPlay(this.path, 'practice', done.startedAt, done.seconds).catch(console.error);
+    await commands.playInsert(this.path, 'practice', done.startedAt, done.seconds).catch(console.error);
   }
 
   /**
@@ -404,7 +397,7 @@ export class Play {
     // A count-in stands before the tick it leads to, and that tick is where the user was.
     const { state, playedTick, countInTo } = this.engine.snapshot();
     const tick = Math.round(state === 'counting-in' ? countInTo : playedTick);
-    await updatePiecePosition(this.path, tick).catch(console.error);
+    await commands.pieceUpdatePosition(this.path, tick).catch(console.error);
   }
 
   /** A complete performance leaves a row, and the card that says what it earned. */
@@ -413,12 +406,12 @@ export class Play {
     if (!done) return;
     void (async () => {
       // The best is read before the row goes in, so the card holds this run against the ones before.
-      const best = await getPiece(this.path).then(
+      const best = await commands.pieceGet(this.path).then(
         (row) => row?.best_grade ?? null,
         () => null,
       );
       if (this.live) this.show({ summary: { record: done, best } });
-      await insertPerformance(this.path, done);
+      await commands.performanceInsert(this.path, done);
     })().catch(console.error);
   }
 

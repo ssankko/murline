@@ -3,7 +3,7 @@
 // loud. The play engine decides which beats those are.
 
 import { clamp } from '@/lib/utils';
-import { call } from '@/rust';
+import { commands } from '@/bindings';
 
 /** The two clicks: strong on the beat a bar opens with, weak on every other. */
 export type ClickStrength = 'strong' | 'weak';
@@ -23,6 +23,6 @@ export class Click {
   /** One click now. Silent at volume 0, and on a build without a sound engine. */
   play(strength: ClickStrength): void {
     if (this.volume === 0) return;
-    call('audio_click', { strength, volume: this.volume }).catch(console.error);
+    commands.audioClick(strength, this.volume).catch(console.error);
   }
 }

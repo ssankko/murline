@@ -5,6 +5,7 @@
 use crate::db::pool;
 use crate::refusal::Refusal;
 use crate::library::{entry, list_dir, FileEntry};
+use crate::settings::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sqlx::query::Query;
@@ -16,7 +17,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 
 /// A piece as the library page reads it: its index columns, its file facts and its history.
-#[derive(Debug, Serialize, FromRow)]
+#[derive(Debug, Serialize, FromRow, specta::Type)]
 pub struct PieceRow {
     path: String,
     title: Option<String>,
@@ -53,11 +54,13 @@ pub struct PieceRow {
 }
 
 /// One play of a piece, as the History ledger reads it. A practice leaves the last columns NULL.
-#[derive(Debug, Serialize, FromRow)]
+#[derive(Debug, Serialize, FromRow, specta::Type)]
 pub struct PlayRow {
     id: i64,
     kind: String,
     started_at: i64,
+    // Never NaN, so it crosses as a plain number and not as specta's `number | null` for an f64.
+    #[specta(type = specta_typescript::Number)]
     duration_s: f64,
     tempo_mode: Option<String>,
     tempo_value: Option<f64>,
@@ -66,7 +69,7 @@ pub struct PlayRow {
 }
 
 /// A piece's summary as indexing produced it.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PieceIndex {
     title: String,
@@ -84,7 +87,7 @@ pub struct PieceIndex {
 }
 
 /// One complete performance: what it ran at, then what it earned.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Performance {
     started_at: f64,
@@ -96,7 +99,7 @@ pub struct Performance {
     grade: Option<Grade>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 // The webview sends the fields by name, `grade` among them.
 #[allow(clippy::struct_field_names)]
@@ -137,6 +140,7 @@ fn now_ms() -> i64 {
 
 /// Every piece whose file is in the folder. A missing file hides its piece until it is back.
 #[tauri::command]
+#[specta::specta]
 pub async fn piece_list(app: AppHandle, sort: String) -> Result<Vec<PieceRow>, Refusal> {
     Ok(list(pool(&app)?, &sort).await?)
 }
@@ -153,6 +157,7 @@ async fn list(pool: &SqlitePool, sort: &str) -> Result<Vec<PieceRow>, String> {
 /// The path of every piece whose file is in the folder, whatever the list pane is filtered to. The
 /// finder reads it to know which of its rows are already downloaded.
 #[tauri::command]
+#[specta::specta]
 pub async fn piece_paths(app: AppHandle) -> Result<Vec<String>, Refusal> {
     Ok(paths(pool(&app)?).await?)
 }
@@ -165,6 +170,7 @@ async fn paths(pool: &SqlitePool) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn piece_get(app: AppHandle, path: String) -> Result<Option<PieceRow>, Refusal> {
     Ok(get(pool(&app)?, &path).await?)
 }
@@ -207,11 +213,13 @@ fn bind_json<'q>(
 
 /// Stores what the play screen just changed.
 #[tauri::command]
+#[specta::specta]
 pub async fn piece_update_settings(
     app: AppHandle,
     path: String,
-    values: Map<String, Value>,
+    values: HashMap<String, Json>,
 ) -> Result<(), Refusal> {
+    let values = values.into_iter().map(|(column, value)| (column, value.0)).collect();
     Ok(update_settings(pool(&app)?, &path, &values).await?)
 }
 
@@ -245,6 +253,7 @@ async fn update_settings(
 /// Stores where the play screen left the cursor, in played ticks. It is state of the piece rather
 /// than a setting: no control shows it and no play reads it out of its settings.
 #[tauri::command]
+#[specta::specta]
 pub async fn piece_update_position(
     app: AppHandle,
     path: String,
@@ -262,6 +271,7 @@ async fn update_position(pool: &SqlitePool, path: &str, tick: i64) -> Result<(),
 
 /// The one thing the library writes about a piece.
 #[tauri::command]
+#[specta::specta]
 pub async fn piece_set_favorite(
     app: AppHandle,
     path: String,
@@ -279,6 +289,7 @@ async fn set_favorite(pool: &SqlitePool, path: &str, favorite: bool) -> Result<(
 
 /// The last plays of a piece, newest first: the History ledger of the detail pane.
 #[tauri::command]
+#[specta::specta]
 pub async fn piece_recent_plays(
     app: AppHandle,
     path: String,
@@ -301,6 +312,7 @@ async fn recent_plays(pool: &SqlitePool, path: &str, limit: i64) -> Result<Vec<P
 
 /// Stores one finished play. Nothing on screen announces it.
 #[tauri::command]
+#[specta::specta]
 pub async fn play_insert(
     app: AppHandle,
     path: String,
@@ -333,6 +345,7 @@ async fn insert_play(
 
 /// Stores one complete performance. A run with nothing to grade leaves the grade columns empty.
 #[tauri::command]
+#[specta::specta]
 pub async fn performance_insert(
     app: AppHandle,
     path: String,
@@ -376,6 +389,7 @@ async fn insert_performance(
 /// `path` looked at, against the rows. A row whose file came back untouched is restored here and a
 /// row whose file is gone is hidden here, so the window is left with the parsing alone.
 #[tauri::command]
+#[specta::specta]
 pub async fn index_plan(
     app: AppHandle,
     folder: String,
@@ -431,6 +445,7 @@ async fn plan(
 
 /// Writes a fresh index. The row's favorite, settings and history survive, and any error clears.
 #[tauri::command]
+#[specta::specta]
 pub async fn index_upsert(
     app: AppHandle,
     path: String,
@@ -482,6 +497,7 @@ async fn upsert_index(
 
 /// A file the app cannot read stays a piece: it gains the reason and keeps its old index columns.
 #[tauri::command]
+#[specta::specta]
 pub async fn index_mark_error(
     app: AppHandle,
     path: String,
@@ -525,6 +541,7 @@ async fn set_present(pool: &SqlitePool, path: &str, present: bool) -> Result<(),
 
 /// Drops the piece, and its plays with it through the foreign key that cascades.
 #[tauri::command]
+#[specta::specta]
 pub async fn piece_delete(app: AppHandle, path: String) -> Result<(), Refusal> {
     Ok(delete(pool(&app)?, &path).await?)
 }

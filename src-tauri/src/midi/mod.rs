@@ -19,7 +19,8 @@ const PEDAL_DOWN: u8 = 64;
 
 /// One MIDI input port as the settings dialog lists it. The id is stable across a re-plug, so a
 /// pinned keyboard is the same keyboard when it comes back.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, specta::Type)]
+#[serde(rename = "MidiPort")]
 pub struct Port {
     pub id: String,
     pub name: String,
@@ -27,7 +28,9 @@ pub struct Port {
 
 /// What the webview's MIDI module shows: the ports being listened to, every port the machine has,
 /// the one port pinned if there is one, and the one line saying why there is no MIDI at all.
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, specta::Type, tauri_specta::Event)]
+#[tauri_specta(event_name = "midi-ports")]
+#[serde(rename = "MidiPorts")]
 pub struct Status {
     pub devices: Vec<String>,
     pub ports: Vec<Port>,
@@ -36,17 +39,22 @@ pub struct Status {
 }
 
 /// One strike as the play engine reads it, and as the webview has always received it.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, specta::Type, tauri_specta::Event)]
+#[tauri_specta(event_name = "midi-strike")]
+#[serde(rename = "StrikeEvent")]
 pub struct Strike {
     pub midi: u8,
     pub velocity: u8,
     /// Unix milliseconds, the timeline `performance.timeOrigin + performance.now()` runs on.
+    // Never NaN, so it crosses as a plain number and not as specta's `number | null` for an f64.
+    #[specta(type = specta_typescript::Number)]
     pub time: f64,
     pub on: bool,
 }
 
 /// A sustain pedal move, 0 to 127 as the pedal sent it.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, specta::Type, tauri_specta::Event)]
+#[tauri_specta(event_name = "midi-pedal")]
 pub struct Pedal {
     pub value: u8,
 }
@@ -174,6 +182,7 @@ pub fn start(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn midi_status() -> Status {
     input::status()
 }
@@ -182,6 +191,7 @@ pub fn midi_status() -> Status {
 /// list when nothing is pinned. The webview owns both, out of the session and the settings, and
 /// sends them whole at every change.
 #[tauri::command]
+#[specta::specta]
 pub fn midi_listen(pinned: Option<String>, hidden: Vec<String>) {
     input::listen(pinned, hidden);
 }

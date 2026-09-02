@@ -1,6 +1,6 @@
-import { SoundTab } from '@/audio/sound-tab';
+import { NO_STATUS, SoundTab } from '@/audio/sound-tab';
 import type { StrikeEvent } from '@/play/engine';
-import { NO_STATUS, type AudioStatus, type Envelope } from '@/rust';
+import type { AudioStatus, Envelope } from '@/bindings';
 import { fakeRust } from '@/rust.fake';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';

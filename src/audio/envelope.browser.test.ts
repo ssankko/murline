@@ -1,5 +1,5 @@
 import { EnvelopeSection, travelled } from '@/audio/envelope';
-import type { Envelope } from '@/rust';
+import type { Envelope } from '@/bindings';
 import { fakeRust, fakeSettings, type FakeRust } from '@/rust.fake';
 import { load } from '@/settings/settings';
 import type { Sounding } from '@/audio/sounding';

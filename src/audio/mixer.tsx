@@ -6,7 +6,7 @@ import { Knob } from '@/audio/knob';
 import { SoundControls, useAudioStatus } from '@/audio/sound-tab';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { sticky } from '@/lib/utils';
-import { type AudioStatus } from '@/rust';
+import type { AudioStatus } from '@/bindings';
 import { set, useSetting } from '@/settings/settings';
 import { useState } from 'react';
 

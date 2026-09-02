@@ -5,7 +5,7 @@
 import { restoreInstrument } from "@/audio/instrument";
 import { reasonOf } from "@/library/notice";
 import { scanLibrary } from "@/library/scan";
-import { call } from "@/rust";
+import { commands } from "@/bindings";
 import { load, setting } from "@/settings/settings";
 
 /** One line of the boot log. */
@@ -76,7 +76,7 @@ export async function boot(print: (lines: BootLine[]) => void): Promise<void> {
 
   // The engine puts the stored audio settings back on itself, so a device that has been unplugged
   // is the engine's own reason to report and costs the app none of the rest.
-  await step("starting sound engine", () => call("audio_start"));
+  await step("starting sound engine", () => commands.audioStart());
 
   await step("restoring instrument", async () => {
     // The engine puts the envelope and the role levels kept for it back inside the load. The

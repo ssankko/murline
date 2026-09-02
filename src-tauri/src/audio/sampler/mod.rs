@@ -36,7 +36,9 @@ impl Sample {
 
 /// What a zone is for: the tone a key-down sounds, or one of the noises a piano makes around it.
 /// Every role but `Sustain` sounds at a level the user sets, 0 being silent.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, specta::Type,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
     /// The tone itself, on key-down.

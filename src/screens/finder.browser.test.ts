@@ -1,5 +1,5 @@
 import { Finder } from '@/screens/finder';
-import type { FinderRow } from '@/rust';
+import type { FinderRow } from '@/bindings';
 import { fakeRust, refusal } from '@/rust.fake';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';

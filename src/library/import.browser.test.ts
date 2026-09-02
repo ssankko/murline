@@ -81,7 +81,7 @@ describe('a file the app can read', () => {
     folderFiles = ['Dynamics-And-Tempo.MUSICXML', 'dynamics-and-tempo (2).musicxml'];
     const result = await importOne('dynamics-and-tempo.musicxml');
     expect(result.imported).toEqual(['dynamics-and-tempo (3).musicxml']);
-    expect(copies()[0]!.dst).toBe('/library/dynamics-and-tempo (3).musicxml');
+    expect(copies()[0]!['dst']).toBe('/library/dynamics-and-tempo (3).musicxml');
   });
 
   test('Replace keeps the path, so the row and its history survive', async () => {
@@ -92,7 +92,7 @@ describe('a file the app can read', () => {
       async () => 'replace',
     );
     expect(result.imported).toEqual(['dynamics-and-tempo.musicxml']);
-    expect(copies()[0]!.dst).toBe('/library/dynamics-and-tempo.musicxml');
+    expect(copies()[0]!['dst']).toBe('/library/dynamics-and-tempo.musicxml');
   });
 
   test('Replace over a name that differs only in case keeps the folder\'s own name', async () => {
@@ -103,7 +103,7 @@ describe('a file the app can read', () => {
       async () => 'replace',
     );
     expect(result.imported).toEqual(['Dynamics-And-Tempo.MUSICXML']);
-    expect(copies()[0]!.dst).toBe('/library/Dynamics-And-Tempo.MUSICXML');
+    expect(copies()[0]!['dst']).toBe('/library/Dynamics-And-Tempo.MUSICXML');
     expect(indexed().map((row) => row.path)).toEqual(['Dynamics-And-Tempo.MUSICXML']);
   });
 

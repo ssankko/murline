@@ -11,12 +11,8 @@ use midir::{MidiInput, MidiInputConnection};
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter};
-
-/// Event names the webview listens on. The strike payload is the shape the play engine reads.
-const STRIKE: &str = "midi-strike";
-const PEDAL: &str = "midi-pedal";
-const PORTS: &str = "midi-ports";
+use tauri::AppHandle;
+use tauri_specta::Event;
 
 /// The name the MIDI system shows the app under to everything else on the machine.
 const CLIENT: &str = "murline";
@@ -92,7 +88,7 @@ impl Reader {
         self.listed = listed;
         let status = self.status();
         if let Some(app) = &self.app {
-            let _ = app.emit(PORTS, status);
+            let _ = status.emit(app);
         }
     }
 
@@ -151,7 +147,7 @@ fn play(app: Option<&AppHandle>, message: Message, time: f64) {
             let velocity =
                 engine::graph().map_or(velocity, |graph| graph.note(midi, velocity, on, false));
             if let Some(app) = app {
-                let _ = app.emit(STRIKE, Strike { midi, velocity, time, on });
+                let _ = Strike { midi, velocity, time, on }.emit(app);
             }
         }
         Message::Pedal { value } => {
@@ -159,7 +155,7 @@ fn play(app: Option<&AppHandle>, message: Message, time: f64) {
                 graph.sustain(Message::pedal_down(value));
             }
             if let Some(app) = app {
-                let _ = app.emit(PEDAL, Pedal { value });
+                let _ = Pedal { value }.emit(app);
             }
         }
     }

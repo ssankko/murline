@@ -1,6 +1,6 @@
 // Preview playback's note list: the Score as the sound engine wants it, in seconds along the
 // played timeline. Repeats are expanded through `playOrder`, so a bar that comes round again is a
-// second set of notes at a later second. Nothing here talks to Rust; the Preview screen does.
+// second set of notes at a later second. Nothing here talks to Rust; the Preview does.
 
 import { clamp } from '@/lib/utils';
 import { TICKS_PER_QUARTER, bpmAt, stepSeconds, type Score } from '@/score/types';

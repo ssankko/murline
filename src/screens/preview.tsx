@@ -1,67 +1,29 @@
 // The Preview: a piece's whole sheet as paper, read-only for input and grading, with a transport
-// that plays it through the sound engine. The notes are scheduled in Rust; this screen only builds
-// the note list, sends the transport commands and walks the band down the page at its clock.
+// that plays it through the sound engine. Everything about the piece is the Preview's; this screen
+// says where it draws, hands it the keys and the frames, and draws its snapshot with the chrome.
 
-import { previewNotes, secondsOf, tickAt } from '@/audio/preview';
 import { Button } from '@/components/ui/button';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { baseNameOf } from '@/library/index-file';
 import { reasonOf, setNotice } from '@/library/notice';
-import { openPiece } from '@/library/open-piece';
-import { clamp } from '@/lib/utils';
 import { Opening } from '@/look/loading';
 import { useDark } from '@/look/use-dark';
-import type { SeekTarget } from '@/play/engine';
-import {
-  DEFAULT_PLAY_SETTINGS,
-  stepTempo,
-  TEMPO_KEYS,
-  TEMPO_RANGE,
-  type TempoMode,
-} from '@/play/settings';
-import { arrowBack, stepTarget } from '@/play/step';
+import { stepTempo, TEMPO_KEYS } from '@/play/settings';
+import { arrowBack } from '@/play/step';
 import { useFrameLoop } from '@/play/use-frame-loop';
-import { barTickOf } from '@/score/beat';
-import { ScoreError, bpmAt, stepSeconds, type Score } from '@/score/types';
+import { NO_PREVIEW, Preview } from '@/preview/preview';
+import { usePreview } from '@/preview/use-preview';
+import { ScoreError } from '@/score/types';
 import { BarButton, ICON, TEMPO_STEP, TempoPopover } from '@/screens/bar';
 import { SettingsPanel, SpacingPopup } from '@/screens/settings';
 import { StatusBar } from '@/screens/status-bar';
 import { useFullscreen } from '@/screens/use-fullscreen';
-import type { Pinch } from '@/sheet/pinch';
-import { PreviewSheet, windowTicksOf } from '@/sheet/preview-sheet';
 import { commands } from '@/bindings';
-import { on } from '@/rust';
-import { set, setting, subscribe } from '@/settings/settings';
 import { ArrowLeft, Minus, Pause, Play, Plus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 /** A window drag fires the observer far faster than a whole sheet can be drawn again. */
 const REFIT_MS = 120;
-
-/**
- * The played tick a seek target names. A repeat gives it one tick per pass, so the pass nearest
- * `near` wins and a target read off the start of the piece lands on the first of them.
- */
-function tickOfTarget(score: Score, target: SeekTarget, near = 0): number {
-  if ('tick' in target) return target.tick;
-  let best = 0;
-  let distance = Infinity;
-  for (const step of score.playOrder) {
-    const onset = score.onsets[step.onsetIndex]!;
-    let tick: number;
-    if ('onset' in target) {
-      if (step.onsetIndex !== target.onset) continue;
-      tick = step.tick;
-    } else {
-      if (onset.measureIndex !== target.measure) continue;
-      tick = barTickOf(step, onset, score.measures[target.measure]!) + (target.into ?? 0);
-    }
-    if (Math.abs(tick - near) >= distance) continue;
-    distance = Math.abs(tick - near);
-    best = tick;
-  }
-  return best;
-}
 
 export function PreviewScreen({
   folder,
@@ -75,7 +37,10 @@ export function PreviewScreen({
   onPlay: (intent: 'practice' | 'performance') => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const sheetRef = useRef<PreviewSheet | null>(null);
+  /** The Preview the frames and the keys reach, whatever React has last drawn. */
+  const previewRef = useRef<Preview | null>(null);
+  const [preview, setPreview] = useState<Preview | null>(null);
+  const shown = usePreview(preview);
   const dark = useDark();
   const darkRef = useRef(dark);
   darkRef.current = dark;
@@ -83,213 +48,36 @@ export function PreviewScreen({
   backRef.current = onBack;
   const full = useFullscreen();
 
-  const [title, setTitle] = useState(baseNameOf(path));
   /** True from the start of the open until the page stands on the screen, and on a failure too. */
   const [opening, setOpening] = useState(true);
-  const [playing, setPlaying] = useState(false);
-  /** Why there is no sound, empty when there is; null until the engine has answered. */
-  const [reason, setReason] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsJump, setSettingsJump] = useState<string | null>(null);
   const [mixerOpen, setMixerOpen] = useState(false);
   const [midiOpen, setMidiOpen] = useState(false);
-  /** What a pinch on the page is choosing while it lasts, which the panel over the paper shows. */
-  const [pinch, setPinch] = useState<Pinch | null>(null);
 
-  // The tempo is the piece's own, kept as the play screen keeps it: a percent of the written marks
-  // or a flat quarter BPM, with the score's own tempo behind the conversion between the two.
-  const [tempoMode, setTempoMode] = useState<TempoMode>(DEFAULT_PLAY_SETTINGS.tempoMode);
-  const [tempo, setTempo] = useState(DEFAULT_PLAY_SETTINGS.tempoValue);
-  const [written, setWritten] = useState({ bpm: 120, constant: false });
+  const title = shown.title || baseNameOf(path);
+  const { playing, tempoMode, tempo, written, pinch, reason } = shown;
+  /** The transport is dead until the piece is open and the sound engine has said it can play. */
+  const off = !preview || reason !== '';
 
-  // The note list is the engine's business and never redraws anything, so it stays out of state.
-  const notesRef = useRef<ReturnType<typeof previewNotes>>([]);
-  /** The second each step of the play order opens at, which the engine's seconds are read against. */
-  const startsRef = useRef<number[]>([]);
-  /** Whether Rust holds this piece's note list, which is what makes resume a resume. */
-  const loadedRef = useRef(false);
-  /** The sheet keeps one click handler from the open; this is how it reaches the newest one. */
-  const seekRef = useRef((_target: SeekTarget) => {});
-  /** The engine's last report, when it landed and the rate it was running at. */
-  const clockRef = useRef({ seconds: 0, at: performance.now(), playing: false, rate: 1 });
-
-  const off = reason !== '';
-  /** Rust runs at a percent, so BPM mode is that BPM against the tempo the piece is written at. */
-  const percent = tempoMode === 'bpm' ? Math.round((100 * tempo) / written.bpm) : tempo;
-
-  /** Where the clock stands now: the last report, carried on at its rate for the time since. */
-  const secondsNow = (now = performance.now()): number => {
-    const clock = clockRef.current;
-    return clock.seconds + (clock.playing ? ((now - clock.at) / 1000) * clock.rate : 0);
-  };
-
-  /** Restarts the extrapolation from where the clock stands, which a new rate makes it do. */
-  const restartClock = (seconds = secondsNow(), playing = clockRef.current.playing): void => {
-    clockRef.current = { seconds, at: performance.now(), playing, rate: percent / 100 };
-  };
-
-  /** Hands the engine the piece, once per Preview. */
-  const load = async (): Promise<void> => {
-    if (loadedRef.current) return;
-    loadedRef.current = true;
-    await commands.previewLoad(notesRef.current);
-    await commands.previewRate(percent);
-  };
-
-  const toggle = async (): Promise<void> => {
-    if (off) return;
-    if (playing) {
-      setPlaying(false);
-      restartClock(secondsNow(), false);
-      await commands.previewPause();
-      return;
-    }
-    setPlaying(true);
-    restartClock(secondsNow(), true);
-    await load();
-    await commands.previewPlay();
-  };
-
-  /** Back to the start, with the note list gone from Rust: the next play loads it again. */
-  const rewind = (): void => {
-    setPlaying(false);
-    restartClock(0, false);
-    loadedRef.current = false;
-    void commands.previewStop();
-  };
-
-  const seek = async (target: SeekTarget, near = 0): Promise<void> => {
-    const sheet = sheetRef.current;
-    if (off || !sheet) return;
-    const tick = tickOfTarget(sheet.score, target, near);
-    const seconds = secondsOf(sheet.score, startsRef.current, tick);
-    // The local clock moves first, so the band stands on the click this frame rather than waiting
-    // for the engine to report back.
-    restartClock(seconds);
-    await load();
-    await commands.previewSeek(seconds);
-  };
-  seekRef.current = (target) => void seek(target);
-
-  const [tempoMin, tempoMax] = TEMPO_RANGE[tempoMode];
-  const nudgeTempo = (by: number): void => changeTempo(clamp(tempo + by, tempoMin, tempoMax));
-
-  /** Every tempo change goes to the piece row, so the piece reopens at the tempo it was left at. */
-  function changeTempo(value: number): void {
-    setTempo(value);
-    commands.pieceUpdateSettings(path, { tempo_value: value }).catch(console.error);
-  }
-
-  /** The two modes read the same piece at the same speed, so a switch carries the value over. */
-  function switchMode(next: TempoMode): void {
-    if (next === tempoMode) return;
-    const [min, max] = TEMPO_RANGE[next];
-    const written100 = next === 'bpm' ? (written.bpm * tempo) / 100 : (tempo / written.bpm) * 100;
-    const value = clamp(Math.round(written100), min, max);
-    setTempoMode(next);
-    setTempo(value);
-    commands.pieceUpdateSettings(path, { tempo_mode: next, tempo_value: value }).catch(console.error);
-  }
-
-  // The four Look settings the page draws, on the sheet already on screen the moment one of them
-  // is written, whether by the panel or by a pinch.
-  useEffect(() => {
-    const stops = [
-      subscribe('sheet_proportional', () =>
-        sheetRef.current?.setProportional(setting('sheet_proportional')),
-      ),
-      subscribe('sheet_spacing', () => sheetRef.current?.setSpacing(setting('sheet_spacing'))),
-      subscribe('sheet_harmony', () =>
-        sheetRef.current?.setLook({ harmony: setting('sheet_harmony') }),
-      ),
-      subscribe('sheet_colour', () =>
-        sheetRef.current?.setLook({ colour: setting('sheet_colour') }),
-      ),
-    ];
-    return () => {
-      for (const stop of stops) stop();
-    };
-  }, []);
-
-  useEffect(() => {
-    commands.audioStatus()
-      .then((status) => setReason(status.available ? '' : status.reason))
-      .catch((error: unknown) => setReason(String(error)));
-  }, []);
-
-  // A new rate widens or narrows the band and makes the engine's last report stale, so the
-  // extrapolation starts again from where the clock has reached.
-  useEffect(() => {
-    const sheet = sheetRef.current;
-    if (sheet) sheet.windowTicks = windowTicksOf(sheet.score, percent);
-    restartClock();
-    if (loadedRef.current) void commands.previewRate(percent);
-    // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [percent]);
-
-  // Where the playback stands, about thirty times a second. The end of the piece arrives as one
-  // more report with the time back at zero and nothing playing.
-  useEffect(() => {
-    return on('previewProgress', (at) => {
-      clockRef.current = { ...clockRef.current, ...at, at: performance.now() };
-      if (at.playing) return;
-      if (at.seconds === 0) sheetRef.current?.finish();
-      setPlaying(false);
-    });
-  }, []);
-
-  // One frame: the clock read on from the last report, and the band on the tick it names.
-  useFrameLoop((_delta, now) => {
-    const sheet = sheetRef.current;
-    if (!sheet) return;
-    const seconds = secondsNow(now);
-    sheet.frame(tickAt(sheet.score, startsRef.current, seconds), clockRef.current.playing, now);
-  });
-
-  // Leaving the screen silences the engine at once, whatever it was doing.
-  useEffect(
-    () => () => {
-      loadedRef.current = false;
-      void commands.previewStop();
-    },
-    [],
-  );
-
-  // Opening a piece: the bytes and the piece's own row, drawn with the Look settings and the
-  // piece's own tempo. Any failure goes back to the library, which says what went wrong.
+  // Opening a piece: everything about it is the Preview's, so the screen only says where it draws.
+  // Any failure goes back to the library, which says what went wrong.
   useEffect(() => {
     let live = true;
     const fileName = baseNameOf(path);
     setOpening(true);
     void (async () => {
       try {
-        const { bytes, resolved } = await openPiece(folder, path);
-        const sheet = await PreviewSheet.open(
-          hostRef.current!,
-          bytes,
-          fileName,
-          darkRef.current,
-          setting('sheet_proportional'),
-          setting('sheet_spacing'),
-        );
-        if (!live) return sheet.dispose();
-        sheetRef.current = sheet;
-        sheet.seekTo = (target) => seekRef.current(target);
-        // A pinch has already spaced the page; this only stores what it settled on.
-        sheet.spacedTo = (spacing) => {
-          void set('sheet_spacing', spacing);
-        };
-        sheet.pinching = (moving) => setPinch(moving);
-        sheet.setLook({ harmony: setting('sheet_harmony'), colour: setting('sheet_colour') });
-        notesRef.current = previewNotes(sheet.score);
-        startsRef.current = stepSeconds(sheet.score);
-        setWritten({
-          bpm: sheet.score.hasTempo ? Math.round(bpmAt(sheet.score, 0)) : 120,
-          constant: sheet.score.constantTempo,
+        const opened = await Preview.open({
+          folder,
+          path,
+          dark: darkRef.current,
+          host: hostRef.current!,
         });
-        setTempoMode(resolved.tempoMode);
-        setTempo(resolved.tempoValue);
-        setTitle(sheet.score.title || fileName);
+        // A piece the screen has already left behind opened for nothing, and leaves as it stands.
+        if (!live) return opened.dispose();
+        previewRef.current = opened;
+        setPreview(opened);
         setOpening(false);
       } catch (error) {
         // A Preview the user closed mid-load throws on the host the cleanup already released, so
@@ -305,20 +93,23 @@ export function PreviewScreen({
     })();
     return () => {
       live = false;
-      sheetRef.current?.dispose();
-      sheetRef.current = null;
+      previewRef.current?.dispose();
+      previewRef.current = null;
+      setPreview(null);
     };
   }, [folder, path]);
 
   useEffect(() => {
-    sheetRef.current?.setDark(dark);
-  }, [dark]);
+    preview?.setDark(dark);
+  }, [dark, preview]);
+
+  useFrameLoop((_delta, now) => previewRef.current?.frame(now));
 
   useEffect(() => {
     let timer = 0;
     const observer = new ResizeObserver(() => {
       clearTimeout(timer);
-      timer = window.setTimeout(() => sheetRef.current?.fit(), REFIT_MS);
+      timer = window.setTimeout(() => previewRef.current?.fit(), REFIT_MS);
     });
     observer.observe(hostRef.current!);
     return () => {
@@ -334,34 +125,31 @@ export function PreviewScreen({
       // The settings panel and every popover are `role="dialog"`: while one is open the keys are
       // its own and never reach the transport.
       if (document.querySelector('[role="dialog"][data-state="open"]')) return;
+      const preview = previewRef.current;
+      const { playing, tempo, tempoMode, reason } = preview?.snapshot() ?? NO_PREVIEW;
       const tempoStep = TEMPO_KEYS[event.code];
       if (event.key === ' ') {
         event.preventDefault();
-        void toggle();
-      } else if (tempoStep && !off) {
-        changeTempo(stepTempo(tempo, tempoStep, event.shiftKey, tempoMode));
+        void preview?.toggle();
+      } else if (event.key === 'Escape') {
+        // Escape off the start of the piece is a rewind; from the start it leaves.
+        if (preview && (playing || preview.seconds() > 0)) preview.rewind();
+        else backRef.current();
+      } else if (!preview || reason !== '') {
+        return;
+      } else if (tempoStep) {
+        preview.setTempo(stepTempo(tempo, tempoStep, event.shiftKey, tempoMode));
       } else if (event.key.startsWith('Arrow')) {
-        const sheet = sheetRef.current;
-        if (off || !sheet) return;
         // There is no lane here, so the pointer stands over the paper or away from it.
         const back = arrowBack(event.key, hostRef.current?.matches(':hover') ? 'sheet' : null);
         if (back === null) return;
         event.preventDefault();
-        // The clock reads back as a fraction of a tick, so a position on an Onset is rounded onto it.
-        const at = Math.round(tickAt(sheet.score, startsRef.current, secondsNow()));
-        const to = stepTarget(sheet.score, sheet.score.playOrder, at, back, event.shiftKey);
-        // The step was found in played ticks, so the seek keeps the pass the clock stands in.
-        if (to) void seek(to, at);
-      } else if (event.key === 'Escape') {
-        // Escape off the start of the piece is a rewind; from the start it leaves.
-        if (playing || secondsNow() > 0) rewind();
-        else backRef.current();
+        preview.step(back, event.shiftKey);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-    // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [playing, off, percent, tempo, tempoMode]);
+  }, []);
 
   return (
     <TooltipProvider>
@@ -383,7 +171,7 @@ export function PreviewScreen({
               label={playing ? 'Pause' : 'Play'}
               disc
               off={off}
-              onClick={() => void toggle()}
+              onClick={() => void preview?.toggle()}
             >
               {playing ? <Pause {...ICON} /> : <Play {...ICON} />}
             </BarButton>
@@ -391,17 +179,17 @@ export function PreviewScreen({
 
           <div className="ml-auto flex items-center gap-2.5">
             <div className="flex items-center" title={reason || undefined}>
-              <BarButton label="Slower" off={off} onClick={() => nudgeTempo(-TEMPO_STEP)}>
+              <BarButton label="Slower" off={off} onClick={() => preview?.nudgeTempo(-TEMPO_STEP)}>
                 <Minus {...ICON} />
               </BarButton>
               <TempoPopover
                 mode={tempoMode}
                 value={tempo}
                 constantTempo={written.constant}
-                onMode={switchMode}
-                onValue={changeTempo}
+                onMode={(mode) => preview?.switchMode(mode)}
+                onValue={(value) => preview?.setTempo(value)}
               />
-              <BarButton label="Faster" off={off} onClick={() => nudgeTempo(TEMPO_STEP)}>
+              <BarButton label="Faster" off={off} onClick={() => preview?.nudgeTempo(TEMPO_STEP)}>
                 <Plus {...ICON} />
               </BarButton>
             </div>

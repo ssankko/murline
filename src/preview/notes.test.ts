@@ -8,7 +8,7 @@ import {
   type Score,
 } from '@/score/types';
 import { expect, test } from 'vitest';
-import { previewNotes, secondsOf, tickAt } from './preview';
+import { previewNotes, secondsOf, tickAt } from './notes';
 
 const BAR = 4 * TICKS_PER_QUARTER;
 

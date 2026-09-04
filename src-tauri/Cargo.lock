@@ -2193,7 +2193,7 @@ dependencies = [
 
 [[package]]
 name = "murline"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "block2",
  "flate2",

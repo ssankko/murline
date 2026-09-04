@@ -29,6 +29,10 @@ impl specta::Type for Json {
     }
 }
 
+/// The key `mark_loading` writes: the id of the instrument a load is running on, and null between
+/// loads. The window reads it once at start, before it asks for a load of its own.
+pub const LOADING: &str = "instrument_loading";
+
 /// The table in memory, empty until the first read fills it.
 static MAP: Mutex<Option<Stored>> = Mutex::new(None);
 
@@ -90,6 +94,13 @@ async fn write_one(pool: &SqlitePool, key: &str, value: Value) -> Result<(), Ref
     Ok(())
 }
 
+/// Names the instrument a load is about to run on, and clears the name once that load has ended
+/// however it ended. A load that takes the app down with it never reaches the clear, so the name is
+/// still on disk at the next launch, which is what tells that launch to leave the instrument out.
+pub async fn mark_loading(pool: &SqlitePool, id: Option<&str>) -> Result<(), Refusal> {
+    write_one(pool, LOADING, id.map_or(Value::Null, |id| Value::String(id.into()))).await
+}
+
 /// Every setting, for the sound engine's own restore at start.
 pub async fn all(app: &AppHandle) -> Result<Stored, Refusal> {
     Ok(loaded(pool(app)?).await?)
@@ -104,14 +115,14 @@ pub fn one(app: &AppHandle, key: &str) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::tests::{migrate_to, open};
+    use crate::db::tests::{migrate_all, open};
     use serde_json::json;
 
     /// A migrated database file of this test's own, so the `setting` table is there to read.
     async fn table() -> (tempfile::TempDir, SqlitePool) {
         let dir = tempfile::tempdir().unwrap();
         let pool = open(&dir);
-        migrate_to(&pool, 6).await;
+        migrate_all(&pool).await;
         (dir, pool)
     }
 
@@ -143,6 +154,19 @@ mod tests {
         // A key the engine does not own is nobody's to refuse.
         write_one(&pool, "theme", json!("dark")).await.unwrap();
         assert_eq!(read(&pool).await.unwrap()["theme"], json!("dark"));
+    }
+
+    /// The name stands from before the engine is handed the instrument until after the load has
+    /// ended, so an app that goes down inside a load leaves that instrument named on disk.
+    #[tokio::test]
+    async fn the_instrument_a_load_runs_on_is_named_until_that_load_has_ended() {
+        let (_dir, pool) = table().await;
+        mark_loading(&pool, Some("plugin:Crasher")).await.unwrap();
+        assert_eq!(read(&pool).await.unwrap()[LOADING], json!("plugin:Crasher"));
+
+        // A load that has ended leaves no name, whether it worked or answered a reason.
+        mark_loading(&pool, None).await.unwrap();
+        assert!(read(&pool).await.unwrap()[LOADING].is_null());
     }
 
     /// The row behind the map is changed under it, so a read that went to the table would answer

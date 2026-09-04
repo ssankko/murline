@@ -2,7 +2,13 @@
 // writes; Favorite and Delete are the list pane's, handed down as callbacks.
 
 import { Button } from '@/components/ui/button';
-import { pathOf } from '@/library/index-file';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { baseNameOf, pathOf } from '@/library/index-file';
 import { reasonOf, setNotice } from '@/library/notice';
 import { splitError } from '@/library/scan';
 import { colorOf } from '@/look/color';
@@ -12,6 +18,7 @@ import { tempoLabel } from '@/play/settings';
 import { keyOf, modeOf, type Key } from '@/score/key';
 import { RangeStrip } from '@/screens/range-strip';
 import { commands, type PieceRow, type PlayRow } from '@/bindings';
+import { Ellipsis, Star } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 /** Title, facts, the keys the piece uses, the buttons that open it and its history. */
@@ -36,26 +43,73 @@ export function Detail({
   const fullPath = folder ? pathOf(folder, piece.path) : piece.path;
   return (
     <div className="flex-1 overflow-y-auto px-12 py-10">
-      <div className="flex max-w-[640px] flex-col select-text">
-        {/* The title line holds the title alone; the composer and the meta line span the column
-            under it, so the path has the whole width to be cut at. */}
+      <div className="flex max-w-[960px] flex-col select-text">
+        {/* The title line holds the title and everything that opens or changes the piece; the
+            composer and the meta line span the column under it. */}
         <div className="flex items-start justify-between gap-4">
           <h2 className="min-w-0 text-[28px] leading-tight font-semibold tracking-tight break-words">
             {piece.title ?? piece.path}
           </h2>
-          <div className="flex flex-none gap-1">
+          <div className="flex flex-none items-center gap-1.5 pt-0.5">
             <Button
-              variant={piece.favorite ? 'default' : 'outline'}
-              size="sm"
-              className="duration-100 motion-reduce:transition-none"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Favorite"
               aria-pressed={!!piece.favorite}
+              className={`duration-100 motion-reduce:transition-none ${piece.favorite ? '' : 'text-muted-ink'}`}
               onClick={onFavorite}
             >
-              Favorite
+              <Star className={piece.favorite ? 'fill-current' : ''} />
             </Button>
-            <Button variant="outline" size="sm" disabled={!folder} onClick={onDelete}>
-              Delete
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={broken || !folder}
+              onClick={() => onPreview(piece.path)}
+            >
+              Preview
             </Button>
+            {/* Practice is the filled one: a piece starts there, and a Performance is for when it
+                is ready. */}
+            <Button
+              size="sm"
+              disabled={broken || !folder}
+              onClick={() => onPlay(piece.path, 'practice')}
+            >
+              Practice
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={broken || !folder}
+              onClick={() => onPlay(piece.path, 'performance')}
+            >
+              Perform
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon-sm" aria-label="More">
+                  <Ellipsis />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {/* The whole path is here alone, as the tooltip of the one action that uses it. */}
+                <DropdownMenuItem
+                  className="text-[13px]"
+                  title={fullPath}
+                  onSelect={() =>
+                    void commands.revealInFinder(fullPath).catch((error) =>
+                      setNotice(`Could not reveal ${piece.title ?? piece.path}: ${reasonOf(error)}`),
+                    )
+                  }
+                >
+                  Reveal in Finder
+                </DropdownMenuItem>
+                <DropdownMenuItem className="text-[13px]" disabled={!folder} onSelect={onDelete}>
+                  Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
 
@@ -64,22 +118,8 @@ export function Detail({
         )}
 
         <div className="text-muted-ink mt-2 flex min-w-0 items-baseline gap-2.5 text-[12px]">
-          {(piece.part_count ?? 1) > 1 && (
-            <span className="flex-none">
-              {piece.part_name}, 1 of {piece.part_count} parts
-            </span>
-          )}
-          <code className="min-w-0 truncate text-[11.5px]">{fullPath}</code>
-          <button
-            onClick={() =>
-              void commands.revealInFinder(fullPath).catch((error) =>
-                setNotice(`Could not reveal ${piece.title ?? piece.path}: ${reasonOf(error)}`),
-              )
-            }
-            className="hover:text-ink flex-none whitespace-nowrap underline underline-offset-2"
-          >
-            Reveal in Finder
-          </button>
+          {partText(piece) && <span className="flex-none">{partText(piece)}</span>}
+          <span className="min-w-0 truncate">{baseNameOf(piece.path)}</span>
         </div>
 
         {broken ? (
@@ -94,7 +134,7 @@ export function Detail({
           </div>
         ) : (
           <>
-            <div className="mt-7">
+            <div className="mt-7 max-w-[640px]">
               <RangeStrip
                 lo={piece.midi_lo ?? 21}
                 hi={piece.midi_hi ?? 108}
@@ -105,33 +145,7 @@ export function Detail({
           </>
         )}
 
-        <div className="mt-8 flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={broken || !folder}
-            onClick={() => onPreview(piece.path)}
-          >
-            Preview
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={broken || !folder}
-            onClick={() => onPlay(piece.path, 'practice')}
-          >
-            Practice
-          </Button>
-          <Button
-            size="sm"
-            disabled={broken || !folder}
-            onClick={() => onPlay(piece.path, 'performance')}
-          >
-            Perform
-          </Button>
-        </div>
-
-        <div className="mt-12">
+        <div className="mt-12 max-w-[640px]">
           <History piece={piece} />
         </div>
       </div>
@@ -256,17 +270,44 @@ function TonicDot({ midi }: { midi: number }) {
   );
 }
 
+/** What the meta line says about the part: the name when the file gives a real one, the count alone
+ * when it gives a placeholder, and nothing for a piece of one part. */
+export function partText(piece: PieceRow): string {
+  if ((piece.part_count ?? 1) < 2) return '';
+  const parts = `1 of ${piece.part_count} parts`;
+  const name = piece.part_name ?? '';
+  return genericPart(name) ? parts : `${name}, ${parts}`;
+}
+
+/** One word a file writes in place of a part name: a bare number, or a label with an optional
+ * number after it, such as "P1", "Instr." or "Staff 2". */
+const GENERIC_WORD = /^(?:\d+|(?:musicxml|p|part|instr|instrument|staff|track)\.?\d*)$/i;
+
+/** Whether a part name is made of such words alone, however many, so "Instr. P1" is as made up as
+ * "P1" and "Piano right hand" is a real name. */
+export function genericPart(name: string): boolean {
+  return name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .every((word) => GENERIC_WORD.test(word));
+}
+
 /** The key of the index; a piece never indexed has none. */
 function pieceKey(piece: PieceRow): Key | null {
   if (piece.key_sharps === null || piece.key_mode === null) return null;
   return keyOf(piece.key_sharps, modeOf(piece.key_mode));
 }
 
-/** The index stores whether the piece has one tempo, not which; the number lives in the Score. */
-function tempoText(piece: PieceRow): string | null {
+/** The first tempo mark of the index, told apart from a tempo that goes on changing after it. */
+export function tempoText(
+  piece: Pick<PieceRow, 'has_tempo' | 'constant_tempo' | 'tempo_bpm'>,
+): string | null {
   if (piece.has_tempo === null) return null;
   if (!piece.has_tempo) return 'no tempo mark';
-  return piece.constant_tempo ? 'one tempo' : 'varies';
+  if (piece.tempo_bpm === null) return null;
+  const bpm = `♩ = ${Math.round(piece.tempo_bpm)}`;
+  return piece.constant_tempo ? bpm : `${bpm}, varies`;
 }
 
 function duration(seconds: number): string {

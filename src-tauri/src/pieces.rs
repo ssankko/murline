@@ -28,6 +28,7 @@ pub struct PieceRow {
     midi_hi: Option<i64>,
     has_tempo: Option<i64>,
     constant_tempo: Option<i64>,
+    tempo_bpm: Option<f64>,
     key_sharps: Option<i64>,
     key_mode: Option<String>,
     part_count: Option<i64>,
@@ -80,6 +81,8 @@ pub struct PieceIndex {
     midi_hi: i64,
     has_tempo: bool,
     constant_tempo: bool,
+    /// The first tempo mark's BPM, None where the file names no tempo.
+    tempo_bpm: Option<f64>,
     key_sharps: i64,
     key_mode: String,
     part_count: i64,
@@ -466,13 +469,14 @@ async fn upsert_index(
     run(
         pool,
         "INSERT INTO piece (path, title, composer, measure_count, duration_s, midi_lo, midi_hi,
-                            has_tempo, constant_tempo, key_sharps, key_mode, part_count, part_name,
-                            mtime, size, present, imported_at, error)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, 1, ?16, NULL)
+                            has_tempo, constant_tempo, tempo_bpm, key_sharps, key_mode, part_count,
+                            part_name, mtime, size, present, imported_at, error)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 1, ?17, NULL)
          ON CONFLICT(path) DO UPDATE SET
            title = ?2, composer = ?3, measure_count = ?4, duration_s = ?5, midi_lo = ?6,
-           midi_hi = ?7, has_tempo = ?8, constant_tempo = ?9, key_sharps = ?10, key_mode = ?11,
-           part_count = ?12, part_name = ?13, mtime = ?14, size = ?15, present = 1, error = NULL",
+           midi_hi = ?7, has_tempo = ?8, constant_tempo = ?9, tempo_bpm = ?10, key_sharps = ?11,
+           key_mode = ?12, part_count = ?13, part_name = ?14, mtime = ?15, size = ?16, present = 1,
+           error = NULL",
         |q| {
             q.bind(path.to_string())
                 .bind(index.title.clone())
@@ -483,6 +487,7 @@ async fn upsert_index(
                 .bind(index.midi_hi)
                 .bind(i64::from(index.has_tempo))
                 .bind(i64::from(index.constant_tempo))
+                .bind(index.tempo_bpm)
                 .bind(index.key_sharps)
                 .bind(index.key_mode.clone())
                 .bind(index.part_count)
@@ -567,7 +572,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::tests::{migrate_to, open};
+    use crate::db::tests::{migrate_all, open};
     use crate::refusal::Kind;
     use serde_json::json;
 
@@ -575,7 +580,7 @@ mod tests {
     async fn library() -> (tempfile::TempDir, SqlitePool) {
         let dir = tempfile::tempdir().unwrap();
         let pool = open(&dir);
-        migrate_to(&pool, 6).await;
+        migrate_all(&pool).await;
         upsert_index(&pool, "Bach.musicxml", &index("Prelude in C", "J. S. Bach"), 1, 2)
             .await
             .unwrap();
@@ -642,6 +647,7 @@ mod tests {
             "midiHi": 84,
             "hasTempo": true,
             "constantTempo": false,
+            "tempoBpm": 72.5,
             "keySharps": 0,
             "keyMode": "major",
             "partCount": 1,
@@ -658,6 +664,7 @@ mod tests {
         assert_eq!(row.duration_s, Some(61.5));
         assert_eq!(row.has_tempo, Some(1));
         assert_eq!(row.constant_tempo, Some(0));
+        assert_eq!(row.tempo_bpm, Some(72.5));
         assert_eq!(row.favorite, 0);
         // A piece never played has no history and no settings of its own.
         assert_eq!(row.best_grade, None);

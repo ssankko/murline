@@ -104,6 +104,10 @@ export type Settings = {
   instrument_id: string | null;
   /** What a plugin instrument's own window was last left set to. */
   instrument_state: string | null;
+  /** Id of the instrument a load is running on, written by the Rust side before it hands the
+   * instrument to the engine and cleared once the load has ended. A launch that finds one here
+   * knows the last load never ended, so it leaves that instrument out. */
+  instrument_loading: string | null;
   /** The envelope each sampler instrument has been given, under the instrument's own opaque id.
    * An instrument missing from here plays the envelope its file asks for, and a plugin never
    * appears because its own window holds that. */
@@ -230,6 +234,7 @@ export const SETTING_DEFAULTS: Settings = {
   audio_voices: 128,
   instrument_id: null,
   instrument_state: null,
+  instrument_loading: null,
   instrument_envelopes: {},
   instrument_roles: {},
   instruments_folder: '',
@@ -254,12 +259,18 @@ export async function load(): Promise<void> {
  */
 function kept(stored: Record<string, unknown>): Partial<Settings> {
   return Object.fromEntries(
-    Object.entries(stored).filter(([key, value]) => {
-      // A `KeyboardPreset` is a name or a count of keys, so both types are its own.
-      if (key === 'keyboard_preset') return typeof value === 'string' || typeof value === 'number';
-      const fallback = SETTING_DEFAULTS[key as SettingKey];
-      return fallback == null || typeof value === typeof fallback;
-    }),
+    Object.entries(stored)
+      .filter(([key, value]) => {
+        // A `KeyboardPreset` is a name or a count of keys, so both types are its own.
+        if (key === 'keyboard_preset') return typeof value === 'string' || typeof value === 'number';
+        const fallback = SETTING_DEFAULTS[key as SettingKey];
+        return fallback == null || typeof value === typeof fallback;
+      })
+      // The Library tab is Folders, so a panel last left on it opens on Folders rather than on the
+      // default tab.
+      .map(([key, value]) =>
+        key === 'settings_tab' && value === 'library' ? [key, 'folders'] : [key, value],
+      ),
   ) as Partial<Settings>;
 }
 

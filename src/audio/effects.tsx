@@ -1,7 +1,7 @@
 // The Sound tab's effect chain: the ordered chain of effects after the instrument. The whole
 // chain is one global setting; writing it is what hands it to the engine, and the engine's own
-// chain is read back after, for the names the plugins call themselves and the slots whose plugin
-// this Mac does not have.
+// chain is read back after, for the names the plugins call themselves and the reason beside every
+// slot the engine could not load. A slot that will not play is shown, never dropped.
 
 import { Button } from '@/components/ui/button';
 import {
@@ -34,24 +34,26 @@ export function EffectsSection() {
   const [available, setAvailable] = useState<Effect[]>([]);
   const [dragging, setDragging] = useState<number | null>(null);
 
-  /** What the engine made of the chain: the plugin names and the slots it could not load. An
-   * engine with nothing in it leaves the user's own chain on the page. */
+  /** What the engine made of the chain: the plugin names and the reason beside every slot it
+   * could not load. An engine with nothing in it leaves the user's own chain on the page. */
   async function readEngine(chain: EffectSlot[]): Promise<void> {
-    const made = await commands.audioChain().catch(() => []);
+    const made = await commands.audioChain();
     setSlots(made.length ? made : chain);
   }
 
-  /** Every change the user makes. The write is what puts the chain in the engine. */
+  /** Every change the user makes. The write is what puts the chain in the engine; a chain the
+   * engine refuses whole leaves every slot on the page carrying the one reason. */
   async function change(chain: EffectSlot[]): Promise<void> {
     setSlots(chain);
-    await set('effect_chain', chain.map(stored));
-    await readEngine(chain);
+    const refused = await set('effect_chain', chain.map(stored));
+    if (refused) setSlots(chain.map((slot) => ({ ...slot, reason: refused })));
+    else await readEngine(chain);
   }
 
   useEffect(() => {
     const kept = setting('effect_chain');
     setSlots(kept);
-    void readEngine(kept);
+    readEngine(kept).catch(console.error);
     commands.audioEffects().then(setAvailable, () => setAvailable([]));
   }, []);
 
@@ -99,20 +101,20 @@ export function EffectsSection() {
         >
           <span className="mr-auto min-w-0 truncate">
             {slot.name}
-            {slot.missing && <span className="text-muted-ink"> — not installed</span>}
+            {slot.reason && <span className="text-muted-ink"> — {slot.reason}</span>}
           </span>
           {/* On is the slot playing; Off is the plugin's own bypass, which keeps its place in the
               chain and its settings. */}
           <Toggle
             value={!slot.bypass}
-            disabled={slot.missing}
+            disabled={!!slot.reason}
             onChange={(on) => edit(at, { ...slot, bypass: !on })}
           />
           <Button
             variant="outline"
             size="sm"
             className="h-6 flex-none px-2 text-[11.5px]"
-            disabled={slot.missing}
+            disabled={!!slot.reason}
             onClick={() => void commands.audioShowEffect(at).catch(console.error)}
           >
             Show

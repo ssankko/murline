@@ -145,12 +145,13 @@ pub struct Effect {
 }
 
 /// One place in the effect chain. The webview keeps the whole list as one global setting and hands
-/// it back whole; `missing` is the engine's answer, not the webview's to send.
+/// it back whole; `reason` is the engine's answer, not the webview's to send.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename = "EffectSlot")]
 pub struct Slot {
     pub id: String,
-    /// What the plugin was called when it was last seen, which is how a missing slot is named.
+    /// What the plugin was called when it was last seen, which is how a slot that will not load
+    /// is named.
     #[serde(default)]
     pub name: String,
     #[serde(default)]
@@ -158,10 +159,10 @@ pub struct Slot {
     /// The plugin's own settings: its property list, base64 so it is a plain string in JSON.
     #[serde(default)]
     pub state: String,
-    /// Whether the plugin is not installed on this machine, in which case the slot keeps its place
-    /// and its state but makes no sound.
+    /// Why the engine does not play this slot: the plugin is not installed, or its load failed.
+    /// Empty while it plays. Either way the slot keeps its place and its state.
     #[serde(default)]
-    pub missing: bool,
+    pub reason: String,
 }
 
 /// How a sampler instrument's loudness answers a key: seconds to reach full loudness, seconds to
@@ -356,7 +357,13 @@ pub fn audio_instruments(folder: &str) -> Vec<Instrument> {
 #[specta::specta]
 pub async fn audio_load_instrument(app: tauri::AppHandle, id: String) -> Result<Status, Refusal> {
     let all = crate::settings::all(&app).await?;
-    Ok(engine::load_instrument(&id, &kept_for(&id, &all))?)
+    // The instrument is named on disk for as long as the load runs, so an instrument that takes the
+    // app down while it goes in is one the next launch finds named and leaves out.
+    let pool = crate::db::pool(&app)?;
+    crate::settings::mark_loading(pool, Some(&id)).await?;
+    let loaded = engine::load_instrument(&id, &kept_for(&id, &all));
+    crate::settings::mark_loading(pool, None).await?;
+    Ok(loaded?)
 }
 
 /// Takes the loaded instrument out, so the app makes no sound until one is chosen again, and

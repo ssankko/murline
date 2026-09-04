@@ -1,6 +1,5 @@
-// The controls the Look, Playing and Library tabs share: a heading over a group of rows, a slider
-// with its readout, a folder path with its chooser, and the two note dropdowns of a custom keyboard
-// range.
+// The controls the Look, Playing and Library tabs share: a heading over a group of rows, a folder
+// path with its chooser, and the two note dropdowns of a custom keyboard range.
 
 import { Button } from "@/components/ui/button";
 import { useMidiStatus } from "@/midi/use-midi-status";
@@ -47,51 +46,6 @@ export function Path({ value, onChoose }: { value: string; onChoose: () => void 
         Choose…
       </Button>
     </div>
-  );
-}
-
-/**
- * A number dragged rather than typed, with its value beside it. A pinch moves one of these. `unit`
- * is appended to the readout as it is written, so a per cent carries no space and a millisecond
- * does.
- */
-export function Slider({
-  label,
-  value,
-  unit = "",
-  min,
-  max,
-  step,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  unit?: string;
-  min: number;
-  max: number;
-  step: number;
-  disabled?: boolean;
-  onChange: (value: number) => void;
-}) {
-  return (
-    <span className="flex flex-none items-center gap-2">
-      <input
-        type="range"
-        aria-label={label}
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        disabled={disabled}
-        onChange={(event) => onChange(Number(event.target.value))}
-        className="accent-ink w-24 disabled:opacity-30"
-      />
-      <span className="text-muted-ink w-14 flex-none text-right text-[11px] whitespace-nowrap tabular-nums">
-        {value}
-        {unit}
-      </span>
-    </span>
   );
 }
 

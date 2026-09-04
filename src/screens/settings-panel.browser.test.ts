@@ -1,6 +1,6 @@
 import { type Role } from '@/bindings';
 import { NO_STATUS } from '@/audio/sound-tab';
-import { fakeRust, fakeSettings } from '@/rust.fake';
+import { fakeRust, fakeSettings, type FakeRust } from '@/rust.fake';
 import { SettingsPanel } from '@/screens/settings';
 import { rowId, SETTING_ROWS } from '@/settings/rows';
 import { load } from '@/settings/settings';
@@ -9,18 +9,22 @@ import { createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-/** Set by the PDMX test so the archive is still coming while it looks at the row. */
-let fetching: { promise: Promise<void>; release: () => void } | null = null;
+/** The PDMX job the fake answers with, which the PDMX test moves as the Rust side would. */
+let pdmx = { ready: false, running: false, done: 0, total: null, error: null };
+let rust: FakeRust;
 
 /** What the engine says the instrument offers: a sampled piano, until a test says otherwise. */
 const OFFERED: Role[] = ['release', 'key_off', 'sympathetic', 'pedal_noise'];
 let roles = [...OFFERED];
 
 beforeEach(async () => {
-  fakeRust({
-    pdmx_fetch: async () => {
-      await fetching?.promise;
-      return null;
+  pdmx = { ready: false, running: false, done: 0, total: null, error: null };
+  rust = fakeRust({
+    pdmx_status: () => pdmx,
+    // The Rust side answers the started job at once and reports its end by the event.
+    pdmx_fetch: () => {
+      pdmx = { ...pdmx, running: true };
+      return pdmx;
     },
     // `roles` is what the loaded instrument offers beyond its tone, which is what puts the four
     // level rows on the Sound tab.
@@ -99,8 +103,8 @@ test('a word from a row label finds it and jumps to its tab', async () => {
   expect(labels(await search('buffer'))).toContain('Buffer (frames)');
 
   // The panel opens on Sound, so the jump has to be seen coming back from another tab.
-  await openTab('Library');
-  expect(activeTab()).toBe('Library');
+  await openTab('Folders');
+  expect(activeTab()).toBe('Folders');
 
   const results = await search('buffer');
   await userEvent.click(results.find((each) => each.textContent!.startsWith('Buffer'))!);
@@ -167,7 +171,7 @@ test('a panel opened at a row lands on that row s tab with it marked', async () 
   root.render(
     createElement(SettingsPanel, { open: true, onClose: () => {}, jumpTo: 'library_folder' }),
   );
-  await vi.waitFor(() => expect(activeTab()).toBe('Library'));
+  await vi.waitFor(() => expect(activeTab()).toBe('Folders'));
   expect(marked('library_folder')).toBe(true);
 });
 
@@ -180,8 +184,20 @@ test('a word no label holds still finds the rows it names', async () => {
   expect(labels(results)).toEqual(['Library folder']);
 
   await userEvent.click(results[0]!);
-  expect(activeTab()).toBe('Library');
+  expect(activeTab()).toBe('Folders');
   expect(marked('library_folder')).toBe(true);
+});
+
+test('the instruments folder is found under Folders rather than under Sound', async () => {
+  await open();
+
+  const results = await search('instruments folder');
+  expect(labels(results)).toEqual(['Instruments folder']);
+  expect(wheres(results)).toEqual(['Folders']);
+
+  await userEvent.click(results[0]!);
+  expect(activeTab()).toBe('Folders');
+  expect(marked('instruments_folder')).toBe(true);
 });
 
 test('the sound engine rows are found and jumped to like any other', async () => {
@@ -191,7 +207,7 @@ test('the sound engine rows are found and jumped to like any other', async () =>
   const results = await search('reverb');
   expect(labels(results)).toEqual(['Effect chain']);
 
-  await openTab('Library');
+  await openTab('Folders');
   const again = await search('reverb');
   await userEvent.click(again[0]!);
   expect(activeTab()).toBe('Sound');
@@ -201,6 +217,15 @@ test('the sound engine rows are found and jumped to like any other', async () =>
 test('a tab name finds every row on that tab', async () => {
   await open();
   expect(labels(await search('playing'))).toContain('Matching window');
+});
+
+// A hint is not searched, so a row whose hint reads differently is only still reachable by the
+// wording it dropped if the descriptor carries that wording too.
+test('a row is found by the word its hint dropped and by the word that replaced it', async () => {
+  await open();
+  for (const word of ['ghost', 'dim']) {
+    expect(labels(await search(word)), word).toContain('Mark keys off the scale');
+  }
 });
 
 test('a word for the harmony display finds the sheet row and the falling-notes row', async () => {
@@ -292,7 +317,7 @@ test('every row the catalogue names for a tab is on that tab', async () => {
     ['sound', 'Sound'],
     ['look', 'Look'],
     ['playing', 'Playing'],
-    ['library', 'Library'],
+    ['folders', 'Folders'],
   ] as const) {
     await openTab(label);
     for (const row of SETTING_ROWS.filter((each) => each.tab === tab)) {
@@ -328,7 +353,8 @@ test('an open panel is a modal the play screen s keys stand back for', async () 
   // What `play.tsx` and `preview.tsx` look for before letting Space or Escape reach the clock.
   const panel = document.querySelector<HTMLElement>('[role="dialog"][data-state="open"]')!;
   expect(panel).toBeTruthy();
-  expect(panel.className).toContain('top-[12%]');
+  expect(panel.className).toContain('top-[8%]');
+  expect(panel.className).toContain('max-h-[80vh]');
   expect(panel.className).toContain('w-[640px]');
   // Lighter than the finder's overlay, so the sheet behind stays readable.
   expect(document.querySelector('[data-slot="dialog-overlay"]')!.className).toContain(
@@ -345,7 +371,7 @@ test('escape closes the modal', async () => {
 
 test('the arrows move the search selection and enter picks it', async () => {
   await open();
-  await openTab('Library');
+  await openTab('Folders');
 
   const results = await search('chords');
   expect(labels(results)).toEqual(['Harmony', 'Harmony']);
@@ -465,24 +491,31 @@ test('a query nothing matches says so', async () => {
   expect(document.querySelector('ul')!.textContent).toContain('Nothing matches');
 });
 
-test('the PDMX row beats while the archive is coming', async () => {
-  let release = (): void => {};
-  fetching = { promise: new Promise<void>((done) => (release = done)), release: () => release() };
+test('the PDMX row beats while the archive is coming and reads Ready once it is in', async () => {
   await open();
-  await openTab('Library');
+  await openTab('Folders');
 
-  const beating = () => document.querySelector('#setting-row-pdmx_scores [role="status"]');
-  expect(beating()).toBe(null);
+  const row = () => document.querySelector('#setting-row-pdmx_scores')!;
+  const beating = () => row().querySelector('[role="status"]');
+  await vi.waitFor(() => expect(row().textContent).toContain('Not downloaded'));
   await userEvent.click(
     [...document.querySelectorAll<HTMLElement>('button')].find(
       (each) => each.textContent === 'Download (1.9 GB)',
     )!,
   );
-
   await vi.waitFor(() => expect(beating()).not.toBe(null));
-  fetching.release();
+
+  // The job ends in the Rust side: the folder is in place, and the event says so.
+  pdmx = { ...pdmx, ready: true, running: false };
+  rust.emit('pdmxDone', pdmx);
+  await vi.waitFor(() => expect(row().textContent).toContain('Ready'));
+  // The row of marks leaves on its next beat, so it outlives the end of the job by one.
   await vi.waitFor(() => expect(beating()).toBe(null));
-  fetching = null;
+
+  // A tab left and come back to reads the same, because it rebuilds from the status.
+  await openTab('Look');
+  await openTab('Folders');
+  await vi.waitFor(() => expect(row().textContent).toContain('Ready'));
 });
 
 /** What inside the panel the browser holds as keyboard-focused. */
@@ -709,8 +742,18 @@ test('a row to open on wins over the place the panel was left', async () => {
   await load();
 
   await openAnyTab({ jumpTo: 'library_folder' });
-  await vi.waitFor(() => expect(activeTab()).toBe('Library'));
+  await vi.waitFor(() => expect(activeTab()).toBe('Folders'));
   expect(marked('library_folder')).toBe(true);
+});
+
+// The tab is stored by name, so a panel left on Library before the rename would otherwise open on
+// a tab that no longer exists.
+test('a panel last left on Library opens on Folders', async () => {
+  fakeSettings.set('settings_tab', 'library');
+  await load();
+
+  await openAnyTab();
+  await vi.waitFor(() => expect(activeTab()).toBe('Folders'));
 });
 
 // The write rests 300 ms behind the scrolling and a tab switch writes 0 at once, so what is left

@@ -64,7 +64,7 @@ The settings that apply to the whole app rather than to any one piece: sound, lo
 _Avoid_: Preferences, defaults
 
 **Settings panel**:
-The modal holding every global setting, grouped into Sound, Look, Playing and Library tabs with one search box reaching across all four. Opened by the status bar's gear or by ⌘, on every screen that has the bar, and while it is open it owns the whole screen's input. It opens on the tab and the scroll place it was last left at, unless the caller names a row to open on.
+The modal holding every global setting, grouped into Sound, Look, Playing and Folders tabs with one search box reaching across all four. Opened by the status bar's gear or by ⌘, on every screen that has the bar, and while it is open it owns the whole screen's input. It opens on the tab and the scroll place it was last left at, unless the caller names a row to open on.
 _Avoid_: Settings dialog, preferences, options
 
 **Status bar**:
@@ -72,7 +72,7 @@ The last row of the library, Preview and play screens, one line of small text hi
 _Avoid_: Footer, status line, taskbar
 
 **Version cell**:
-The far right of the status bar: the version running, and beside it a mark for what the release page holds. Number and mark are one button, and what it does is what the mark shows: an amber arrow fetches the version waiting and swaps the app on disk, a green check starts the app again so that version takes over, and a bare number asks the release page again. A version on disk that is not started stays for the next launch.
+The far right of the status bar: the version running, and beside it a mark for what the release page holds. Line and mark are one button, and what it does is what the mark shows: an amber arrow fetches the version waiting and swaps the app on disk, a green check starts the app again so that version takes over, and a bare number asks the release page again. While the bundle comes down the line reads the bytes done of the total, and a fetch that stopped leaves a red dot and its reason there, which a press asks the release page again after. Nothing is ever disabled, so the tooltip stays reachable throughout. The release page is asked once a launch and on a press, never on a screen change, and a version on disk that is not started stays for the next launch.
 _Avoid_: Updater, auto-update, upgrade button
 
 **Loading indicator**:
@@ -168,7 +168,7 @@ _Avoid_: Skipped note, error
 ### Sound
 
 **Sound engine**:
-The audio graph in the Rust side that turns keyboard and Preview notes into sound, through the instrument, the effect chain and the chosen output device. macOS only; everywhere else it reports itself unavailable and the app runs silently.
+The audio graph in the Rust side that turns keyboard and Preview notes into sound, through the instrument, the effect chain and the chosen output device. Every hosted Audio Unit, instrument and effect alike, plays inside Apple's hosting service and not in the app, so a plugin that crashes is a load that failed, named with the reason, and never a dead app. macOS only; everywhere else it reports itself unavailable and the app runs silently.
 _Avoid_: Synth, audio engine, playback engine
 
 **Instrument**:

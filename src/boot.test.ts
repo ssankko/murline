@@ -5,6 +5,7 @@ import {
   refusal,
   type Answers,
   type CommandName,
+  type FakeRust,
 } from '@/rust.fake';
 import { beforeEach, expect, test, vi } from 'vitest';
 import type { BootLine } from './boot';
@@ -51,8 +52,10 @@ const answers = Object.fromEntries(
     ]),
 ) as Partial<Answers>;
 
+let rust: FakeRust;
+
 beforeEach(() => {
-  fakeRust(answers);
+  rust = fakeRust(answers);
   for (const [key, value] of Object.entries(STORED)) fakeSettings.set(key, value);
 });
 
@@ -142,6 +145,22 @@ test('the line names the instrument the settings chose, when the list knows it',
     label: 'restoring Concert Grand Piano',
     state: 'ok',
   });
+  listed = [];
+});
+
+// The name the Rust side leaves behind when a load never comes back: the app went down inside it,
+// so this launch leaves that instrument out instead of going down the same way.
+test('an instrument the last load never came back from is left out, and the line says which', async () => {
+  listed = [{ id: 'grand', name: 'Concert Grand Piano' }];
+  fakeSettings.set('instrument_loading', 'grand');
+  const printed: BootLine[][] = [];
+  await boot((lines) => printed.push(lines));
+  const restoring = printed[printed.length - 1]![4]!;
+  expect(restoring.state).toBe('failed');
+  expect(restoring.reason).toContain('Concert Grand Piano');
+  expect(restoring.reason).toContain('did not finish loading last time');
+  // Nothing was handed to the engine, so the app is up with no instrument at all.
+  expect(rust.argsOf('audio_load_instrument')).toEqual([]);
   listed = [];
 });
 

@@ -5,7 +5,7 @@
 import { SoundTab } from "@/audio/sound-tab";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { clamp } from "@/lib/utils";
-import { LibraryTab } from "@/settings/library-tab";
+import { FoldersTab } from "@/settings/folders-tab";
 import { LookTab } from "@/settings/look-tab";
 import { PlayingTab } from "@/settings/playing-tab";
 import {
@@ -32,7 +32,7 @@ const TAB_LABELS: Record<SettingsTab, string> = {
   sound: "Sound",
   look: "Look",
   playing: "Playing",
-  library: "Library",
+  folders: "Folders",
 };
 
 const TABS = Object.entries(TAB_LABELS) as [SettingsTab, string][];
@@ -309,7 +309,7 @@ export function SettingsPanel({
         // Lighter than the finder's `bg-black/50`: the sheet and the lane behind have to stay
         // readable while a look setting is moved.
         overlayClassName="bg-black/20"
-        className="top-[12%] flex max-h-[70vh] w-[640px] translate-y-0 flex-col gap-0 p-0 sm:max-w-[640px]"
+        className="top-[8%] flex max-h-[80vh] w-[640px] translate-y-0 flex-col gap-0 p-0 sm:max-w-[640px]"
         // On the content rather than on each row, so the keys work wherever focus sits inside.
         onKeyDown={onPanelKey}
         onFocus={onPanelFocus}
@@ -417,11 +417,11 @@ export function SettingsPanel({
             </Tabs.Content>
 
             <Tabs.Content
-              value="library"
+              value="folders"
               className="flex flex-col gap-2"
               tabIndex={undefined}
             >
-              <LibraryTab />
+              <FoldersTab />
             </Tabs.Content>
           </div>
         </Tabs.Root>

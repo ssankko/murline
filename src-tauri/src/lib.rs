@@ -90,6 +90,7 @@ fn bindings() -> tauri_specta::Builder<tauri::Wry> {
             pdmx::pdmx_fetch,
             pdmx::pdmx_cancel,
             update::app_version,
+            update::update_status,
             update::update_check,
             update::update_install,
             update::update_restart,
@@ -102,6 +103,10 @@ fn bindings() -> tauri_specta::Builder<tauri::Wry> {
             midi::Pedal,
             midi::Status,
             midi::Strike,
+            pdmx::Done,
+            pdmx::Progress,
+            update::Done,
+            update::Progress,
         ])
         // A command that refuses rejects with its Refusal, which is what every catch site reads.
         .error_handling(tauri_specta::ErrorHandlingMode::Throw)

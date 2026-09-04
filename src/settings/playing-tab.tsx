@@ -1,9 +1,9 @@
 // The settings panel's Playing tab: the timing windows a strike is judged by, the inactive hand,
 // and in a dev build the knobs that shape a Grade.
 
-import { Row, Rows, Segmented, Toggle } from "@/look/rows";
+import { Row, Rows, Segmented, Slider, Toggle } from "@/look/rows";
 import { INACTIVE_HAND_LEVEL, type InactiveHandVelocity } from "@/play/settings";
-import { bind, Section, Slider } from "@/settings/controls";
+import { bind, Section } from "@/settings/controls";
 import { GRADE_KNOBS, markedRow, rowId } from "@/settings/rows";
 import { set, useSettings } from "@/settings/settings";
 import { useSyncExternalStore } from "react";
@@ -22,32 +22,22 @@ export function PlayingTab() {
     <>
       <Section title="Timing">
         <Rows>
-          <Row
+          <Slider
             id="matching_window_ms"
             hint="How far off the beat a strike still counts."
-          >
-            <Slider
-              label="Matching window in milliseconds"
-              unit=" ms"
-              min={1}
-              max={1000}
-              step={1}
-              {...bind(values, "matching_window_ms")}
-            />
-          </Row>
-          <Row
+            unit=" ms"
+            min={1}
+            max={1000}
+            {...bind(values, "matching_window_ms")}
+          />
+          <Slider
             id="togetherness_ms"
             hint="How far apart the notes of one chord may be struck."
-          >
-            <Slider
-              label="Togetherness window in milliseconds"
-              unit=" ms"
-              min={1}
-              max={1000}
-              step={1}
-              {...bind(values, "togetherness_ms")}
-            />
-          </Row>
+            unit=" ms"
+            min={1}
+            max={1000}
+            {...bind(values, "togetherness_ms")}
+          />
         </Rows>
       </Section>
 
@@ -57,13 +47,13 @@ export function PlayingTab() {
         <Rows>
           <Row
             id="play_inactive_hand"
-            hint="Played as the clock passes it."
+            hint="The app plays the hand you are not practising."
           >
             <Toggle {...bind(values, "play_inactive_hand")} />
           </Row>
           <Row
             id="play_inactive_hand_velocity"
-            hint="Loudness from the written dynamics, or from your strikes."
+            hint="Whether that hand takes its loudness from the score or from how hard you play."
           >
             <Segmented
               options={INACTIVE_HAND_VELOCITIES}
@@ -71,20 +61,16 @@ export function PlayingTab() {
               {...bind(values, "play_inactive_hand_velocity")}
             />
           </Row>
-          <Row
+          <Slider
             id="play_inactive_hand_level"
-            hint="Part of that loudness it sounds at."
-          >
-            <Slider
-              label="Inactive hand level in percent"
-              unit="%"
-              min={INACTIVE_HAND_LEVEL[0]}
-              max={INACTIVE_HAND_LEVEL[1]}
-              step={5}
-              disabled={!values.play_inactive_hand}
-              {...bind(values, "play_inactive_hand_level")}
-            />
-          </Row>
+            hint="How loud that hand plays."
+            unit="%"
+            min={INACTIVE_HAND_LEVEL[0]}
+            max={INACTIVE_HAND_LEVEL[1]}
+            step={5}
+            disabled={!values.play_inactive_hand}
+            {...bind(values, "play_inactive_hand_level")}
+          />
         </Rows>
       </Section>
 
@@ -101,17 +87,16 @@ export function PlayingTab() {
           </p>
           <div className="mt-3">
             <Rows>
-              {GRADE_KNOBS.map(([key, label, min, max, step]) => (
-                <Row key={key} id={key}>
-                  <Slider
-                    label={label}
-                    value={values[key] as number}
-                    min={min}
-                    max={max}
-                    step={step}
-                    onChange={(value) => void set(key, value as never)}
-                  />
-                </Row>
+              {GRADE_KNOBS.map(([key, , min, max, step]) => (
+                <Slider
+                  key={key}
+                  id={key}
+                  value={values[key] as number}
+                  min={min}
+                  max={max}
+                  step={step}
+                  onChange={(value) => void set(key, value as never)}
+                />
               ))}
             </Rows>
           </div>

@@ -2,10 +2,10 @@
 // under them each draw.
 
 import { type LaneHarmony, LOOKAHEAD_MAX, LOOKAHEAD_MIN } from "@/lane/lane";
-import { Row, Rows, Segmented, Toggle } from "@/look/rows";
+import { Row, Rows, Segmented, Slider, Toggle } from "@/look/rows";
 import type { Theme } from "@/look/use-dark";
 import type { KeyboardPreset } from "@/play/settings";
-import { bind, CustomRange, Section, Slider } from "@/settings/controls";
+import { bind, CustomRange, Section } from "@/settings/controls";
 import { set, useSettings } from "@/settings/settings";
 import { SPACING_MAX, SPACING_MIN } from "@/sheet/sheet";
 
@@ -36,7 +36,9 @@ export function LookTab() {
 
   return (
     <>
-      <Rows>
+      {/* The tab strip's own border stands right above this group, so the group leaves its top
+        hairline off. */}
+      <Rows top={false}>
         <Row id="theme">
           <Segmented options={THEMES} {...bind(values, "theme")} />
         </Row>
@@ -48,24 +50,20 @@ export function LookTab() {
         <Rows>
           <Row
             id="sheet_proportional"
-            hint="Off keeps the engraving's own spacing."
+            hint="Off keeps the spacing the score file was written with."
           >
             <Toggle {...bind(values, "sheet_proportional")} />
           </Row>
-          <Row
+          <Slider
             id="sheet_spacing"
-            hint="A pinch on the sheet moves it too."
-          >
-            <Slider
-              label="Sheet spacing in percent"
-              unit="%"
-              min={SPACING_MIN}
-              max={SPACING_MAX}
-              step={5}
-              disabled={!values.sheet_proportional}
-              {...bind(values, "sheet_spacing")}
-            />
-          </Row>
+            hint="How far apart the notes stand; a pinch does it too."
+            unit="%"
+            min={SPACING_MIN}
+            max={SPACING_MAX}
+            step={5}
+            disabled={!values.sheet_proportional}
+            {...bind(values, "sheet_spacing")}
+          />
           <Row
             id="sheet_harmony"
             hint="Names the chord at the cursor and the two after it."
@@ -80,51 +78,37 @@ export function LookTab() {
 
       <Section title="Falling notes">
         <Rows>
-          <Row
+          <Slider
             id="lane_lookahead"
             hint="How many beats are in view at once."
-          >
-            <Slider
-              label="Lane lookahead in beats"
-              unit=" beats"
-              min={LOOKAHEAD_MIN}
-              max={LOOKAHEAD_MAX}
-              step={0.1}
-              {...bind(values, "lane_lookahead")}
-            />
-          </Row>
-          <Row
+            unit=" beats"
+            min={LOOKAHEAD_MIN}
+            max={LOOKAHEAD_MAX}
+            step={0.1}
+            {...bind(values, "lane_lookahead")}
+          />
+          <Slider
             id="lane_note_width"
-            hint="Part of its key's width."
-          >
-            <Slider
-              label="Note width in percent"
-              unit="%"
-              min={10}
-              max={100}
-              step={1}
-              {...bind(values, "lane_note_width")}
-            />
-          </Row>
-          <Row
+            hint="How wide a note is against the key it lands on."
+            unit="%"
+            min={10}
+            max={100}
+            {...bind(values, "lane_note_width")}
+          />
+          <Slider
             id="lane_gap"
-            hint="Cut between two blocks that follow each other."
-          >
-            <Slider
-              label="Gap in pixels"
-              unit=" px"
-              min={0}
-              max={20}
-              step={1}
-              {...bind(values, "lane_gap")}
-            />
-          </Row>
+            hint="Space between two notes that follow on the same key."
+            unit=" px"
+            min={0}
+            max={20}
+            {...bind(values, "lane_gap")}
+          />
           <Row id="lane_names">
             <Toggle {...bind(values, "lane_names")} />
           </Row>
           <Row
             id="lane_harmony"
-            hint="Chord names at the lane's top right."
+            hint="Chord names at the top right of the falling notes."
           >
             <Segmented options={HARMONY} {...bind(values, "lane_harmony")} />
           </Row>
@@ -142,13 +126,13 @@ export function LookTab() {
           </Row>
           <Row
             id="keyboard_scale_marks"
-            hint="Ghosts what the key in force does not hold."
+            hint="Dims the keys that are not in the current key."
           >
             <Toggle {...bind(values, "keyboard_scale_marks")} />
           </Row>
           <Row
             id="keyboard_size"
-            hint="Keys the lane draws under the falling notes."
+            hint="How many keys are drawn under the falling notes."
           >
             <Segmented options={PRESETS} {...bind(values, "keyboard_preset")} />
           </Row>

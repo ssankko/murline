@@ -1,5 +1,6 @@
+import type { UpdateStatus } from "@/bindings";
 import { NO_STATUS } from "@/audio/sound-tab";
-import { fakeRust, fakeSettings, type FakeRust } from "@/rust.fake";
+import { fakeRust, fakeSettings, idleUpdate, type FakeRust } from "@/rust.fake";
 import {
   audioDot,
   latencyLabel,
@@ -98,6 +99,10 @@ test("the settings shortcut stands back for a text field and for an open dialog"
 let latencyMs = 12;
 /** What the release page holds, which one test fills to see the update button come up. */
 let waiting: string | null = null;
+/** Whether the release page has been asked, which the Rust job holds across screen changes. */
+let checked = false;
+/** What `update_check` answers, which a test sets to hold the check open or to refuse it. */
+let answerCheck: (() => Promise<UpdateStatus>) | null = null;
 let rust: FakeRust;
 
 beforeEach(async () => {
@@ -113,7 +118,19 @@ beforeEach(async () => {
       error: null,
     }),
     audio_effects: () => [],
-    update_check: () => waiting,
+    update_status: () => ({ ...idleUpdate(), checked, waiting }),
+    update_check: () => {
+      if (answerCheck) return answerCheck();
+      checked = true;
+      return { ...idleUpdate(), checked, waiting };
+    },
+    // The Rust side starts the fetch and answers at once; its two events carry the rest.
+    update_install: () => ({
+      ...idleUpdate(),
+      checked: true,
+      waiting,
+      running: true,
+    }),
     audio_envelope: () => ({
       attack: 0.01,
       decay: 0.2,
@@ -141,6 +158,8 @@ afterEach(() => {
   sound = 0;
   latencyMs = 12;
   waiting = null;
+  checked = false;
+  answerCheck = null;
 });
 
 /** The screen around the bar, which is what holds the two popovers open or shut. */
@@ -270,7 +289,7 @@ test("the cog and ⌘, both ask the screen to open the settings panel", async ()
   expect(opened).toBe(2);
 });
 
-test("the version cell names what runs, and one press on it fetches what waits", async () => {
+test("the version cell counts the fetch off, then asks to be restarted", async () => {
   waiting = "0.1.1";
   await mount();
   // The number and the amber mark are one button, which the waiting version renames.
@@ -281,10 +300,77 @@ test("the version cell names what runs, and one press on it fetches what waits",
   await userEvent.click(cell("Update"));
   await vi.waitFor(() => expect(rust.argsOf("update_install")).toHaveLength(1));
 
+  // The bytes stand in the cell while the bundle comes down, and move as more arrive.
+  rust.emit("updateProgress", { done: 12_000_000, total: 34_000_000 });
+  await vi.waitFor(() => expect(cell("Update").textContent).toBe("12 of 34 MB"));
+  rust.emit("updateProgress", { done: 30_000_000, total: 34_000_000 });
+  await vi.waitFor(() => expect(cell("Update").textContent).toBe("30 of 34 MB"));
+
   // With the version on disk the cell asks to be pressed again, and that press restarts the app.
-  await vi.waitFor(() => expect(cell("Restart").textContent).toBe("0.1.0"));
+  rust.emit("updateDone", {
+    ...idleUpdate(),
+    checked: true,
+    waiting,
+    installed: waiting,
+  });
+  await vi.waitFor(() => expect(cell("Restart").textContent).toBe("Restart"));
   await userEvent.click(cell("Restart"));
   await vi.waitFor(() => expect(rust.argsOf("update_restart")).toHaveLength(1));
+});
+
+test("a fetch that stopped shows a red dot and its reason, and a press asks again", async () => {
+  waiting = "0.1.1";
+  await mount();
+  await userEvent.click(cell("Update"));
+  await vi.waitFor(() => expect(rust.argsOf("update_install")).toHaveLength(1));
+
+  rust.emit("updateDone", {
+    ...idleUpdate(),
+    checked: true,
+    waiting,
+    error: "not enough disk space",
+  });
+  await vi.waitFor(() =>
+    expect(cell("Version").textContent).toBe("not enough disk space"),
+  );
+  expect(
+    cell("Version").querySelector("[data-dot]")!.getAttribute("data-dot"),
+  ).toBe("bad");
+
+  const asked = rust.argsOf("update_check").length;
+  await userEvent.click(cell("Version"));
+  await vi.waitFor(() =>
+    expect(rust.argsOf("update_check")).toHaveLength(asked + 1),
+  );
+});
+
+test("the cell says it is checking, with the beat beside it, while the check runs", async () => {
+  let answer: (status: UpdateStatus) => void = () => {};
+  answerCheck = () =>
+    new Promise((keep) => {
+      answer = keep;
+    });
+  await mount();
+  // A click is answered at once: the word and the beat beside it, before any release page has.
+  await vi.waitFor(() =>
+    expect(cell("Version").textContent).toContain("Checking"),
+  );
+  expect(cell("Version").querySelector('[role="status"]')).not.toBeNull();
+
+  answer({ ...idleUpdate(), checked: true });
+  await vi.waitFor(() => expect(cell("Version").textContent).toBe("0.1.0"));
+  expect(cell("Version").querySelector('[role="status"]')).toBeNull();
+});
+
+test("a check that cannot reach the release page shows a red dot and its reason", async () => {
+  answerCheck = () => Promise.reject("the release page is unreachable");
+  await mount();
+  await vi.waitFor(() =>
+    expect(cell("Version").textContent).toBe("the release page is unreachable"),
+  );
+  expect(
+    cell("Version").querySelector("[data-dot]")!.getAttribute("data-dot"),
+  ).toBe("bad");
 });
 
 test("clicking the version asks the release page again", async () => {
@@ -295,6 +381,20 @@ test("clicking the version asks the release page again", async () => {
 
   await userEvent.click(cell("Version"));
   await vi.waitFor(() => expect(rust.argsOf("update_check")).toHaveLength(2));
+});
+
+test("moving between screens asks the release page nothing more", async () => {
+  await mount();
+  await vi.waitFor(() => expect(rust.argsOf("update_check")).toHaveLength(1));
+
+  // A screen change builds the bar again, which reads the status and leaves the page alone.
+  root!.unmount();
+  host!.remove();
+  await mount();
+  await vi.waitFor(() =>
+    expect(rust.argsOf("update_status").length).toBeGreaterThan(1),
+  );
+  expect(rust.argsOf("update_check")).toHaveLength(1);
 });
 
 function slot(name: string) {

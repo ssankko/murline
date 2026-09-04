@@ -6,7 +6,7 @@
 // everything it has whole. It is the engine's to read: a load puts the kept levels on by itself,
 // so this section only shows and moves them.
 
-import { Knob } from '@/audio/knob';
+import { Slider } from '@/look/rows';
 import { set, setting } from '@/settings/settings';
 import { type SettingRowId } from '@/settings/rows';
 import { sticky } from '@/lib/utils';
@@ -17,7 +17,7 @@ import { useEffect, useState } from 'react';
 const HINTS: Partial<Record<Role, string>> = {
   release: 'The damper falling as a key comes up.',
   key_off: 'The key itself coming back up.',
-  sympathetic: 'Other strings ringing along, pedal down.',
+  sympathetic: 'Other strings ringing along while the pedal is down.',
 };
 
 /** The level per role, 0 to 100; a role the map misses sounds at 100. */
@@ -76,12 +76,12 @@ export function RolesSection({
     <section className="flex flex-col gap-2">
       <h3 className="text-[13px] font-semibold">Roles</h3>
       {roles.map((role) => (
-        <Knob
+        <Slider
           key={role}
           id={rowOfRole(role)}
           hint={HINTS[role]}
-          lo={0}
-          hi={100}
+          min={0}
+          max={100}
           value={at(levels, role)}
           readout={`${at(levels, role)}%`}
           onChange={(percent) => void move(role, sticky(percent)).catch(console.error)}

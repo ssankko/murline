@@ -1,56 +1,64 @@
-// The PDMX archive is fetched and unpacked by Rust, which keeps going after the settings dialog
-// closes. Its progress therefore lives here, outside React, so reopening the dialog picks the
-// running download back up.
+// The PDMX archive is fetched and unpacked by a job the Rust side owns, which keeps going after
+// the settings panel closes. Where that job stands is therefore read from Rust and never
+// remembered here: a mount asks for the status, and the job's two events keep the answer current.
 
-import { reasonOf } from '@/library/notice';
-import { makeStore } from '@/lib/store';
-import { commands, type PdmxProgress } from '@/bindings';
-import { Channel } from '@tauri-apps/api/core';
-import { useSyncExternalStore } from 'react';
-
-export interface PdmxDownload {
-  /** Non-null while the archive is downloading. */
-  progress: PdmxProgress | null;
-  /** Why the last download stopped, cleared by a new one. A cancel leaves it null. */
-  error: string | null;
-}
+import { commands, type PdmxStatus } from '@/bindings';
+import { on } from '@/rust';
+import { useEffect, useState } from 'react';
 
 const MB = 1e6;
 const GB = 1e9;
 
-/** The running download as one line: "0.8 of 1.9 GB", or "812 MB" when the size is not declared. */
-export function progressLabel({ done, total }: PdmxProgress): string {
-  // The unit comes from the whole archive, so the number climbs without the unit changing under it.
+/** A running download as one line: "0.8 of 1.9 GB", or "812 MB" when the size is not declared. */
+export function progressLabel({ done, total }: { done: number; total: number | null }): string {
+  // The unit comes from the whole download, so the number climbs without the unit changing under it.
   const gb = (total ?? done) >= GB;
   const amount = (bytes: number) => (gb ? (bytes / GB).toFixed(1) : String(Math.round(bytes / MB)));
   const unit = gb ? 'GB' : 'MB';
   return total === null ? `${amount(done)} ${unit}` : `${amount(done)} of ${amount(total)} ${unit}`;
 }
 
-const download = makeStore<PdmxDownload>({ progress: null, error: null });
-
-/** Downloads and unpacks the PDMX archive into the folder the Rust side keeps it in. */
-export async function downloadPdmx(): Promise<void> {
-  if (download.get().progress) return;
-  download.set({ progress: { done: 0, total: null }, error: null });
-  try {
-    const progress = new Channel<PdmxProgress>();
-    progress.onmessage = (at) => download.set({ progress: at, error: null });
-    await commands.pdmxFetch(progress);
-    download.set({ progress: null, error: null });
-  } catch (error) {
-    const reason = reasonOf(error);
-    // A cancel is the user's own doing, so it says nothing and returns to the idle state.
-    download.set({ progress: null, error: reason === 'cancelled' ? null : reason });
-  }
+/** The PDMX job as it stands, `null` until the Rust side has answered, and the two ways to move it. */
+export interface Pdmx {
+  status: PdmxStatus | null;
+  /** Downloads and unpacks the archive, or joins the download already running. */
+  start: () => void;
+  /** Asks Rust to stop the running fetch, whichever window started it. */
+  cancel: () => void;
 }
 
-/** Asks Rust to stop; the download then rejects with "cancelled". */
-export function cancelPdmx(): void {
-  commands.pdmxCancel().catch(() => {});
-}
+/** Rebuilds from the status on mount, and follows the job through its events while on screen. */
+export function usePdmx(): Pdmx {
+  const [status, setStatus] = useState<PdmxStatus | null>(null);
 
-/** The download as it stands, for as long as the component asking is on screen. */
-export function usePdmxDownload(): PdmxDownload {
-  return useSyncExternalStore(download.subscribe, download.get);
+  useEffect(() => {
+    let live = true;
+    const hold = (next: PdmxStatus) => {
+      if (live) setStatus(next);
+    };
+    void commands.pdmxStatus().then(hold, () => {});
+    // A progress message carries only the two numbers, so what is on disk is kept as it stood.
+    const stop = [
+      on('pdmxProgress', ({ done, total }) =>
+        setStatus((was) => ({
+          ready: was?.ready ?? false,
+          running: true,
+          done,
+          total,
+          error: null,
+        })),
+      ),
+      on('pdmxDone', hold),
+    ];
+    return () => {
+      live = false;
+      for (const one of stop) one();
+    };
+  }, []);
+
+  return {
+    status,
+    start: () => void commands.pdmxFetch().then(setStatus, () => {}),
+    cancel: () => void commands.pdmxCancel().catch(() => {}),
+  };
 }

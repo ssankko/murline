@@ -2,26 +2,24 @@
 //! windows their plugins draw for themselves.
 //!
 //! The chain the webview sends is the whole truth; `set_chain` diffs it against what is held, keeps
-//! every node it can, and rewires the path. A slot whose plugin is not installed keeps its place
-//! and its state blob and is simply left out of the wiring, as a bypassed one is, so nothing about
-//! the instrument stops when either changes.
+//! every node it can, and rewires the path. A slot the engine could not load keeps its place, its
+//! state blob and the reason, and is simply left out of the wiring, as a bypassed one is, so
+//! nothing about the instrument stops when either changes.
 
-use crate::audio::instruments::{apply_state, state_of};
+use crate::audio::instruments::{apply_state, instantiate, state_of};
 use crate::audio::mac::{GRAPH, Graph, release_on_main};
 use crate::audio::window::{cocoa_view, generic_view};
 use crate::audio::{AudioChainChanged, Effect, Slot};
 use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2::{AllocAnyThread, MainThreadMarker, MainThreadOnly, Message, msg_send, sel};
+use objc2::{MainThreadMarker, MainThreadOnly, Message, msg_send, sel};
 use objc2_app_kit::{
     NSBackingStoreType, NSViewController, NSWindow, NSWindowStyleMask,
     NSWindowWillCloseNotification,
 };
 use objc2_audio_toolbox::AudioComponentDescription;
-use objc2_avf_audio::{
-    AVAudioMixing, AVAudioNode, AVAudioUnitComponentManager, AVAudioUnitEffect,
-};
+use objc2_avf_audio::{AVAudioMixing, AVAudioNode, AVAudioUnit, AVAudioUnitComponentManager};
 use objc2_foundation::{
     NSNotificationCenter, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString,
 };
@@ -36,6 +34,10 @@ use tauri_specta::Event;
 const EFFECT: u32 = u32::from_be_bytes(*b"aufx");
 const MIDI_EFFECT: u32 = u32::from_be_bytes(*b"aumf");
 
+/// Why a slot no component on this Mac answers for does not play. The webview shows it beside the
+/// name the slot was stored under.
+const NOT_INSTALLED: &str = "not installed";
+
 /// One slot of the chain as the engine holds it: what the webview asked for, plus the node playing
 /// it when the plugin is installed.
 pub struct Held {
@@ -45,7 +47,10 @@ pub struct Held {
     /// The blob the slot came with, kept so a slot whose plugin is missing does not lose the
     /// settings it had when the plugin was still there.
     state: String,
-    unit: Option<Retained<AVAudioUnitEffect>>,
+    /// The node playing the plugin, as the class AVFoundation builds for the component: an
+    /// effect answers as `AVAudioUnitEffect`, a music effect as the plain `AVAudioUnit` both
+    /// share, so the chain holds the one they have in common.
+    unit: Option<Retained<AVAudioUnit>>,
 }
 
 // The plugin windows on screen, by the address of the unit each one edits, so a reorder never
@@ -57,7 +62,7 @@ thread_local! {
 }
 
 /// A plugin window and the unit it edits, which it keeps alive for as long as it is on screen.
-type Open = (Retained<NSWindow>, Retained<AVAudioUnitEffect>);
+type Open = (Retained<NSWindow>, Retained<AVAudioUnit>);
 
 /// Every installed Audio Unit effect, Apple's own included, by manufacturer and name.
 pub fn effects() -> Vec<Effect> {
@@ -93,8 +98,8 @@ pub fn chain() -> Vec<Slot> {
 
 /// Takes the whole chain and makes the graph match it, keeping every node whose plugin is still in
 /// the list so a reorder, a bypass or a removal never reloads a plugin or stops the instrument.
-/// Answers with the chain as it ended up: names as the plugins call themselves, and the slots whose
-/// plugin is not installed marked missing.
+/// Answers with the chain as it ended up: names as the plugins call themselves, and the reason
+/// beside every slot the engine could not load.
 pub fn set_chain(wanted: Vec<Slot>) -> Result<Vec<Slot>, String> {
     let mut held = GRAPH.lock().unwrap();
     let graph = held.as_mut().ok_or("The sound engine did not start")?;
@@ -113,8 +118,8 @@ pub fn apply(graph: &mut Graph, wanted: Vec<Slot>) -> Vec<Slot> {
     let mut spare = std::mem::take(&mut graph.chain);
 
     for slot in wanted {
-        // The plugin is asked for by name before it is built: a description no component answers to
-        // makes AVFoundation throw, and a slot for an uninstalled plugin is an ordinary thing.
+        // The plugin is asked for by name before it is built: a slot whose plugin is not on this
+        // machine is an ordinary thing, and the name it answers with is the one the slot shows.
         let installed = description_of(&slot.id).and_then(|desc| Some((desc, installed_name(desc)?)));
         let reused = spare
             .iter()
@@ -122,32 +127,27 @@ pub fn apply(graph: &mut Graph, wanted: Vec<Slot>) -> Vec<Slot> {
             .map(|at| spare.remove(at));
         let unit = match (reused, &installed) {
             (Some(old), _) => old.unit,
-            (None, Some((desc, _))) => {
-                let unit = unsafe {
-                    AVAudioUnitEffect::initWithAudioComponentDescription(
-                        AVAudioUnitEffect::alloc(),
-                        *desc,
-                    )
-                };
+            // Out of process, as the instrument is, so a plugin that crashes here leaves the app
+            // playing; one that will not build keeps its slot, as an uninstalled plugin does.
+            (None, Some((desc, _))) => instantiate::<AVAudioUnit>(*desc).ok().inspect(|unit| {
                 unsafe {
                     // Offline rendering asks for more frames in one pass than a device ever would,
                     // and a unit that was not told so refuses to render them.
                     if max_frames > 0 {
                         unit.AUAudioUnit().setMaximumFramesToRender(max_frames);
                     }
-                    engine.attachNode(&unit);
+                    engine.attachNode(unit);
                 }
                 if !slot.state.is_empty() {
-                    apply_state(&unit, &slot.state);
+                    apply_state(unit, &slot.state);
                 }
-                Some(unit)
-            }
+            }),
             (None, None) => None,
         };
         // The plugin's own bypass, not a hole in the wiring: switching it costs no reconnection, so
         // a note sounding while the user compares with and without it plays on.
         if let Some(unit) = &unit {
-            unsafe { unit.setBypass(slot.bypass) };
+            unsafe { unit.AUAudioUnit().setShouldBypassEffect(slot.bypass) };
         }
         graph.chain.push(Held {
             name: installed.map(|(_, name)| name).unwrap_or(slot.name),
@@ -207,13 +207,16 @@ fn slots(graph: &Graph) -> Vec<Slot> {
                 Some(unit) => state_of(unit).unwrap_or_else(|| held.state.clone()),
                 None => held.state.clone(),
             },
-            missing: held.unit.is_none(),
+            reason: match held.unit {
+                Some(_) => String::new(),
+                None => NOT_INSTALLED.into(),
+            },
         })
         .collect()
 }
 
-/// Connects the instrument through every installed plugin to the keyboard fader. A slot whose
-/// plugin is missing is left out; a bypassed one stays in the path and passes its sound through
+/// Connects the instrument through every installed plugin to the keyboard fader. A slot the engine
+/// could not load is left out; a bypassed one stays in the path and passes its sound through
 /// untouched. The head is whichever node the instrument sounds through, so a hosted plugin and the
 /// voice engine's source node each play through the chain the same way, and the one that is not
 /// playing is left connected to nothing.
@@ -348,7 +351,7 @@ fn open_window(app: AppHandle, index: usize) {
 
 /// The plugin's own view in the window: the AUv3 view controller when the plugin has one, else the
 /// Cocoa view an AUv2 publishes, else Apple's generic view of its parameters.
-fn fill(window: &NSWindow, unit: &AVAudioUnitEffect, mtm: MainThreadMarker) {
+fn fill(window: &NSWindow, unit: &AVAudioUnit, mtm: MainThreadMarker) {
     let audio_unit = unsafe { unit.AUAudioUnit() };
     let asks_a_view_controller =
         audio_unit.respondsToSelector(sel!(requestViewControllerWithCompletionHandler:));
@@ -380,7 +383,7 @@ fn fill(window: &NSWindow, unit: &AVAudioUnitEffect, mtm: MainThreadMarker) {
 
 /// The AUv2 paths: the Cocoa view the plugin publishes, and Apple's generic view of its parameters
 /// for the plugin that publishes none.
-fn cocoa_or_generic(window: &NSWindow, unit: &AVAudioUnitEffect, mtm: MainThreadMarker) {
+fn cocoa_or_generic(window: &NSWindow, unit: &AVAudioUnit, mtm: MainThreadMarker) {
     let view = unsafe {
         let raw = unit.audioUnit();
         cocoa_view(raw, mtm).or_else(|| generic_view(raw))
@@ -425,7 +428,7 @@ fn watch_close(app: AppHandle, key: usize, window: &NSWindow) {
     *token.borrow_mut() = unsafe { Retained::cast_unchecked::<AnyObject>(observer) }.into();
 }
 
-fn held_unit(index: usize) -> Option<Retained<AVAudioUnitEffect>> {
+fn held_unit(index: usize) -> Option<Retained<AVAudioUnit>> {
     GRAPH.lock().unwrap().as_ref()?.chain.get(index)?.unit.clone()
 }
 
@@ -472,7 +475,13 @@ mod tests {
     }
 
     fn slot(id: &str) -> Slot {
-        Slot { id: id.into(), name: id.into(), bypass: false, state: String::new(), missing: false }
+        Slot {
+            id: id.into(),
+            name: id.into(),
+            bypass: false,
+            state: String::new(),
+            reason: String::new(),
+        }
     }
 
     /// Sets one parameter of the effect at one place in the chain, which is what makes a reverb's
@@ -594,9 +603,9 @@ mod tests {
         let ghost = Slot { name: "Pro-R 2".into(), ..slot("aumf:zzzz:zzzz") };
         let chain = apply(&mut graph, vec![ghost, slot(REVERB)]);
 
-        assert!(chain[0].missing, "the plugin is gone");
+        assert_eq!(chain[0].reason, NOT_INSTALLED, "the plugin is gone");
         assert_eq!(chain[0].name, "Pro-R 2", "and is known by the name it had");
-        assert!(!chain[1].missing);
+        assert!(chain[1].reason.is_empty());
         param(&graph, 1, DRY_WET, 100.0);
         assert!(tail(&mut graph) > 0.0, "the reverb after it still plays");
     }

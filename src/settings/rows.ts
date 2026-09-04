@@ -7,7 +7,7 @@ import { makeStore } from "@/lib/store";
 import type { Settings } from "@/settings/settings";
 import { useSyncExternalStore } from "react";
 
-export type SettingsTab = "sound" | "look" | "playing" | "library";
+export type SettingsTab = "sound" | "look" | "playing" | "folders";
 
 /** Where a row lives. The mixer and the MIDI devices are not tabs: they are the popovers behind
  * the bar's volume and MIDI buttons, and a result naming one of their controls opens that popover
@@ -129,13 +129,6 @@ export const SETTING_ROWS = [
     label: "Instrument",
     group: "Instrument",
     words: ["patch", "preset", "voice", "sound font", "synth", "piano sound"],
-  },
-  {
-    id: "instruments_folder",
-    tab: "sound",
-    label: "Instruments folder",
-    group: "Instrument",
-    words: ["sf2", "exs", "sound fonts", "samples"],
   },
   {
     id: "role_release",
@@ -271,7 +264,7 @@ export const SETTING_ROWS = [
     tab: "look",
     label: "Space notes by time",
     group: "Sheet",
-    words: ["proportional", "even", "rhythm"],
+    words: ["proportional", "even", "rhythm", "engraving"],
   },
   {
     id: "sheet_spacing",
@@ -340,7 +333,14 @@ export const SETTING_ROWS = [
     tab: "look",
     label: "Mark keys off the scale",
     group: "Keyboard",
-    words: ["out of scale", "scale marks", "scale keyboard", "restrict"],
+    words: [
+      "out of scale",
+      "scale marks",
+      "scale keyboard",
+      "restrict",
+      "ghost",
+      "dim",
+    ],
   },
   {
     id: "lane_colour",
@@ -423,13 +423,19 @@ export const SETTING_ROWS = [
     : []),
   {
     id: "library_folder",
-    tab: "library",
+    tab: "folders",
     label: "Library folder",
     words: ["storage", "data directory", "scores", "files"],
   },
   {
+    id: "instruments_folder",
+    tab: "folders",
+    label: "Instruments folder",
+    words: ["sf2", "exs", "sound fonts", "samples"],
+  },
+  {
     id: "pdmx_scores",
-    tab: "library",
+    tab: "folders",
     label: "PDMX scores",
     words: ["download", "catalogue", "source", "provider"],
   },

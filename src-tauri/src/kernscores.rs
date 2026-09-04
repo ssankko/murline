@@ -12,7 +12,11 @@ use quick_xml::escape::{partial_escape, resolve_predefined_entity};
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::{Reader, Writer, XmlVersion};
 
-const TIMEOUT: Duration = Duration::from_secs(15);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+/// KernScores converts the kern file for each request and sends nothing until it is done, so a
+/// large score is a long silence on an open connection. The blocking client applies this to each
+/// single read, so it bounds the wait for the next bytes rather than the whole download.
+const READ_TIMEOUT: Duration = Duration::from_mins(2);
 /// Children a `<note>` writes after its `<staff>`.
 const AFTER_STAFF: [&str; 3] = ["beam", "notations", "play"];
 /// The words a KernScores lyric may spell that are dynamics, not text.
@@ -31,7 +35,8 @@ pub fn download(url: &str) -> Result<Vec<u8>, String> {
 
 fn fetch(url: &str) -> Result<Vec<u8>, String> {
     let client = reqwest::blocking::Client::builder()
-        .timeout(TIMEOUT)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(READ_TIMEOUT)
         .build()
         .map_err(|e| reason(e.to_string()))?;
     let response = client.get(url).send().map_err(|e| {

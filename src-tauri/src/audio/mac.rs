@@ -30,8 +30,9 @@ use objc2::rc::Retained;
 use objc2::runtime::Bool;
 use objc2_audio_toolbox::{
     AudioUnit, AudioUnitGetProperty, AudioUnitSetProperty, kAudioOutputUnitProperty_CurrentDevice,
-    kAudioUnitManufacturer_Apple, kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global,
-    kAudioUnitSubType_PeakLimiter, kAudioUnitType_Effect,
+    kAudioComponentInstanceInvalidationNotification, kAudioUnitManufacturer_Apple,
+    kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, kAudioUnitSubType_PeakLimiter,
+    kAudioUnitType_Effect,
 };
 use objc2_avf_audio::{
     AVAudioEngine, AVAudioEngineConfigurationChangeNotification, AVAudioEngineManualRenderingMode,
@@ -41,7 +42,7 @@ use objc2_avf_audio::{
 #[cfg(test)]
 use objc2_avf_audio::AVAudioEngineManualRenderingStatus;
 use objc2_core_audio_types::{AudioBuffer, AudioBufferList, AudioTimeStamp};
-use objc2_foundation::{NSError, NSNotification, NSNotificationCenter, NSOperationQueue};
+use objc2_foundation::{NSError, NSNotification, NSNotificationCenter, NSOperationQueue, NSString};
 use std::cell::RefCell;
 use std::path::Path;
 use std::ptr::{NonNull, from_ref};
@@ -65,6 +66,10 @@ const STRONG_HZ: f64 = 2400.0;
 /// Peak of a weak click at full volume, and the little extra a strong one gets.
 const WEAK_PEAK: f32 = 0.3;
 const STRONG_PEAK: f32 = 0.4;
+
+/// Why the instrument is silent when the hosting service holding its plugin has died: the plugin
+/// is gone until the user loads it again, and the status line says so beside its name.
+const PLUGIN_STOPPED: &str = "It stopped running";
 
 /// What a file instrument answers a key with until the webview sends the one kept for it: a plain
 /// hold, the recorded sample carrying its own decay, and a release short enough to read as a
@@ -534,6 +539,21 @@ impl Graph {
     /// The hosted plugin, which is the one instrument that has a window of its own.
     pub fn plugin(&self) -> Option<&AVAudioUnitMIDIInstrument> {
         self.head.plugin()
+    }
+
+    /// What a dead hosting service means here: when `unit` is the address of the AUAudioUnit of
+    /// the plugin at the head, the chosen instrument reads as failed from that moment, so the
+    /// status bar names the plugin that stopped instead of one that looks loaded and sounds
+    /// nothing. Any other unit, an effect's among them, leaves the instrument alone. Answers
+    /// whether the unit was this graph's instrument.
+    pub(super) fn plugin_stopped(&mut self, unit: usize) -> bool {
+        let ours = self
+            .plugin()
+            .is_some_and(|plugin| Retained::as_ptr(&unsafe { plugin.AUAudioUnit() }).addr() == unit);
+        if ours && let Some(chosen) = &mut self.chosen {
+            chosen.failure = Some(PLUGIN_STOPPED.into());
+        }
+        ours
     }
 
     pub fn chosen(&self) -> Option<&Chosen> {
@@ -1204,10 +1224,12 @@ pub fn graph() -> Option<Running> {
 
 pub fn start() -> Result<(), String> {
     static REPORTING: Once = Once::new();
+    static CRASHES: Once = Once::new();
     let mut graph = Graph::build()?;
     graph.start()?;
     graph.adopt();
     watch_configuration(&graph.engine);
+    CRASHES.call_once(watch_plugin_crashes);
     *GRAPH.lock().unwrap() = Some(graph);
     device::watch(devices_changed);
     REPORTING.call_once(|| {
@@ -1247,6 +1269,31 @@ fn watch_configuration(engine: &AVAudioEngine) {
             None,
             &follow,
         )
+    };
+    std::mem::forget(token);
+}
+
+/// A hosted plugin runs inside Apple's hosting service rather than in the app, so one that crashes
+/// posts this notification instead of taking the app down with it. The unit that died is read as
+/// an address alone, which is all it takes to tell the instrument at the head from an effect, and
+/// the graph is told on a thread of the app's own, as with every notification here: the lock may
+/// be held by the load that is running. Registered once, so the observer token is never dropped.
+fn watch_plugin_crashes() {
+    let name = NSString::from_str(
+        &unsafe { kAudioComponentInstanceInvalidationNotification }.to_string(),
+    );
+    let stopped = RcBlock::new(move |note: NonNull<NSNotification>| {
+        let Some(dead) = (unsafe { note.as_ref().object() }) else { return };
+        let dead = Retained::as_ptr(&dead).addr();
+        std::thread::spawn(move || {
+            if let Some(mut graph) = graph() {
+                graph.plugin_stopped(dead);
+            }
+        });
+    });
+    let token = unsafe {
+        NSNotificationCenter::defaultCenter()
+            .addObserverForName_object_queue_usingBlock(Some(&name), None, None, &stopped)
     };
     std::mem::forget(token);
 }
@@ -2056,7 +2103,7 @@ mod tests {
             name: String::new(),
             bypass: true,
             state: String::new(),
-            missing: false,
+            reason: String::new(),
         }]);
         assert!(note_peak(&mut graph) > 0.01, "and after the chain changed under it");
     }
@@ -2303,7 +2350,7 @@ mod idle {
         if reverb {
             let slot = serde_json::from_str(r#"{"id":"aumf:FR2p:FabF","name":"Pro-R 2"}"#).unwrap();
             let chain = effects::apply(&mut graph, vec![slot]);
-            assert!(chain.iter().all(|slot| !slot.missing), "Pro-R 2 is installed");
+            assert!(chain.iter().all(|slot| slot.reason.is_empty()), "Pro-R 2 is installed");
         }
         if grand {
             let path = std::path::PathBuf::from(std::env::var("HOME").unwrap()).join(
@@ -2556,7 +2603,7 @@ mod silence {
         graph.load_file(Path::new(FIXTURE)).unwrap();
         let slot = serde_json::from_str(r#"{"id":"aufx:mrev:appl","name":"Reverb"}"#).unwrap();
         let chain = effects::apply(&mut graph, vec![slot]);
-        assert!(chain.iter().all(|slot| !slot.missing), "Apple's reverb is installed");
+        assert!(chain.iter().all(|slot| slot.reason.is_empty()), "Apple's reverb is installed");
         graph.start_offline(4096).unwrap();
         graph.note_on(60, 100);
         graph.render_peak(8192).unwrap();

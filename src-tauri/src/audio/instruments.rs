@@ -99,7 +99,7 @@ fn build(id: &str, state: Option<&str>, voices: usize) -> (String, Result<Made, 
             None => (id.to_string(), Err("That instrument is not installed".into())),
             Some((desc, name)) => (
                 name,
-                instantiate(desc).map(|unit| {
+                instantiate::<AVAudioUnitMIDIInstrument>(desc).map(|unit| {
                     if let Some(state) = state {
                         apply_state(&unit, state);
                     }
@@ -223,25 +223,28 @@ fn component(wanted: AudioComponentDescription) -> Option<(AudioComponentDescrip
     }
 }
 
-/// Builds the Audio Unit behind a description. Apple hands the unit back on a queue of its own
+/// Builds the Audio Unit behind a description, instrument or effect, and hands it back as the
+/// class it is. Out of process, the way Logic hosts a plugin: the unit runs inside Apple's hosting
+/// service, so one that crashes costs that service and not the app, and the crash arrives here as
+/// a plain failure with the system's own words. Apple hands the unit back on a queue of its own
 /// choosing, so the load waits here for it.
-pub(in crate::audio) fn instantiate(
+pub(in crate::audio) fn instantiate<T: objc2::DowncastTarget>(
     desc: AudioComponentDescription,
-) -> Result<Retained<AVAudioUnitMIDIInstrument>, String> {
+) -> Result<Retained<T>, String> {
     /// The unit, already retained inside the completion handler, on its way to the waiting load.
-    struct Handoff(*mut AVAudioUnitMIDIInstrument, Option<String>);
+    struct Handoff<T>(*mut T, Option<String>);
     // Nothing else holds the unit while it travels, and only the receiver ever touches it.
-    unsafe impl Send for Handoff {}
+    unsafe impl<T> Send for Handoff<T> {}
 
-    let (post, wait) = std::sync::mpsc::channel::<Handoff>();
+    let (post, wait) = std::sync::mpsc::channel::<Handoff<T>>();
     let handler = RcBlock::new(move |unit: *mut AVAudioUnit, error: *mut NSError| {
         let handoff = unsafe {
-            match Retained::retain(unit).and_then(|unit| unit.downcast::<AVAudioUnitMIDIInstrument>().ok()) {
+            match Retained::retain(unit).and_then(|unit| unit.downcast::<T>().ok()) {
                 Some(unit) => Handoff(Retained::into_raw(unit), None),
                 None => Handoff(
                     std::ptr::null_mut(),
                     Some(Retained::retain(error).map_or_else(
-                        || "The instrument could not be built".to_string(),
+                        || "The plugin could not be built".to_string(),
                         |error| error.localizedDescription().to_string(),
                     )),
                 ),
@@ -252,14 +255,14 @@ pub(in crate::audio) fn instantiate(
     unsafe {
         AVAudioUnit::instantiateWithComponentDescription_options_completionHandler(
             desc,
-            AudioComponentInstantiationOptions::empty(),
+            AudioComponentInstantiationOptions::LoadOutOfProcess,
             &handler,
         );
     }
-    let handoff = wait.recv_timeout(PATIENCE).map_err(|_| "The instrument took too long to load")?;
+    let handoff = wait.recv_timeout(PATIENCE).map_err(|_| "The plugin took too long to load")?;
     match unsafe { Retained::from_raw(handoff.0) } {
         Some(unit) => Ok(unit),
-        None => Err(handoff.1.unwrap_or_else(|| "The instrument could not be built".into())),
+        None => Err(handoff.1.unwrap_or_else(|| "The plugin could not be built".into())),
     }
 }
 
@@ -547,6 +550,58 @@ mod tests {
         let fresh = hosted_instrument();
         apply_state(&fresh, &state);
         assert_eq!(state_of(&fresh).unwrap(), state);
+    }
+
+    /// Hosted the way Logic hosts a plugin: the unit runs inside Apple's hosting service, so the
+    /// app's process is not where a crash inside the plugin lands.
+    #[test]
+    fn a_hosted_unit_runs_outside_the_app() {
+        let unit = hosted_instrument();
+        assert!(!unsafe { unit.AUAudioUnit().isLoadedInProcess() });
+    }
+
+    /// A plugin that will not build is a load that failed and nothing more: the app is still
+    /// running to read the reason, and the reason is the system's own words. This is the path a
+    /// plugin that crashes inside its own load takes, the crash costing the hosting service.
+    #[test]
+    fn a_plugin_that_will_not_build_answers_the_systems_reason_and_takes_nothing_down() {
+        let nowhere = AudioComponentDescription {
+            componentSubType: u32::from_be_bytes(*b"zzzz"),
+            ..APPLE_INSTRUMENT
+        };
+        let why = instantiate::<AVAudioUnitMIDIInstrument>(nowhere).unwrap_err();
+        assert!(!why.is_empty(), "the system says why the plugin did not build: {why}");
+    }
+
+    /// A crash costs the plugin's own process and not the app's, so the death of the hosting
+    /// service arrives as an ordinary failure: the instrument reads as failed with its name and
+    /// the reason, which is the line the status bar shows, and the graph plays on.
+    #[test]
+    fn a_hosted_plugin_whose_process_dies_names_itself_in_the_status_and_the_graph_plays_on() {
+        let mut graph = Graph::build().unwrap();
+        graph.set_plugin(hosted_instrument());
+        graph.start_offline(4096).unwrap();
+        graph.choose(Chosen {
+            id: "au:00000000:00000000:00000000".into(),
+            name: "Apple DLSMusicDevice".into(),
+            failure: None,
+            kept: Kept::default(),
+        });
+        assert!(graph.status().available);
+
+        // Another unit's death is not this one's: an effect that stops leaves the instrument in.
+        let other = hosted_instrument();
+        let elsewhere = Retained::as_ptr(&unsafe { other.AUAudioUnit() }).addr();
+        assert!(!graph.plugin_stopped(elsewhere));
+        assert!(graph.status().available);
+
+        let mine = Retained::as_ptr(&unsafe { graph.plugin().unwrap().AUAudioUnit() }).addr();
+        assert!(graph.plugin_stopped(mine));
+        let said = graph.status();
+        assert!(!said.available);
+        assert_eq!(said.reason, "Apple DLSMusicDevice did not load: It stopped running");
+        assert_eq!(said.instrument, "");
+        graph.render_peak(4410).expect("the graph renders on without the plugin");
     }
 
     #[test]

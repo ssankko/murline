@@ -1,18 +1,18 @@
 //! The PDMX tarball: the app fetches and unpacks it, and opens one `.mxl` out of it for its
 //! MusicXML.
 
-use crate::refusal::Refusal;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 
-use quick_xml::events::Event;
+use quick_xml::events::Event as XmlEvent;
 use quick_xml::Reader;
 use serde::Serialize;
-use tauri::ipc::Channel;
 use tauri::Manager;
+use tauri_specta::Event;
 use zip::ZipArchive;
 
 /// The Zenodo record of the PDMX `.mxl` files, 1.89 GB gzipped.
@@ -24,8 +24,20 @@ const READ_TIMEOUT: Duration = Duration::from_mins(2);
 /// Downloaded bytes between progress messages.
 const STEP: u64 = 4 * 1024 * 1024;
 
-/// One fetch at a time, and the flag `pdmx_cancel` raises to stop it.
-static RUNNING: AtomicBool = AtomicBool::new(false);
+/// What the fetch has done so far. The job outlives the window that started it, so nothing the
+/// window drops, closes or reloads can lose track of a download.
+#[derive(Clone)]
+struct Job {
+    running: bool,
+    done: u64,
+    total: Option<u64>,
+    /// Why the last fetch stopped, or none after one that finished or was cancelled.
+    error: Option<String>,
+}
+
+const IDLE: Job = Job { running: false, done: 0, total: None, error: None };
+static JOB: Mutex<Job> = Mutex::new(IDLE);
+/// Raised by `pdmx_cancel` to stop the running fetch.
 static CANCEL: AtomicBool = AtomicBool::new(false);
 
 /// The most one member may expand to. The largest MusicXML scores run to a few megabytes, and
@@ -43,44 +55,85 @@ fn unpacked(folder: &Path) -> bool {
     folder.join("mxl").is_dir()
 }
 
-/// Whether the tarball is unpacked, which is the one thing the finder needs to deliver a PDMX row.
+/// Where the PDMX scores stand: what is on disk and how far the fetch job has come. One shape, so
+/// a window that has just opened knows as much as one that watched the whole download.
+#[derive(Clone, Serialize, specta::Type)]
+#[serde(rename = "PdmxStatus")]
+pub struct Status {
+    /// Whether the tarball is unpacked, which is what the finder needs to deliver a PDMX row.
+    ready: bool,
+    running: bool,
+    done: u64,
+    /// Absent while the server has declared no `Content-Length`.
+    total: Option<u64>,
+    /// Why the last fetch stopped, as one line for the settings panel to show: `no data folder`,
+    /// `no connection`, `Zenodo answered <status>`, `not enough disk space` or `download stopped`.
+    /// A cancel leaves none, being the user's own doing.
+    error: Option<String>,
+}
+
+fn status_of(app: &tauri::AppHandle) -> Status {
+    let job = JOB.lock().unwrap().clone();
+    Status {
+        ready: folder(app).is_ok_and(|folder| unpacked(&folder)),
+        running: job.running,
+        done: job.done,
+        total: job.total,
+        error: job.error,
+    }
+}
+
 #[tauri::command]
 #[specta::specta]
 // Tauri hands a command its AppHandle by value; the trait it looks for has no reference form.
 #[allow(clippy::needless_pass_by_value)]
-pub fn pdmx_status(app: tauri::AppHandle) -> bool {
-    folder(&app).is_ok_and(|folder| unpacked(&folder))
+pub fn pdmx_status(app: tauri::AppHandle) -> Status {
+    status_of(&app)
 }
 
-/// How far the download has come; `total` is absent when the server sends no `Content-Length`.
-#[derive(Serialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
+/// How far the download has come, sent every few megabytes.
+#[derive(Clone, Serialize, specta::Type, Event)]
+#[tauri_specta(event_name = "pdmx-progress")]
 #[serde(rename = "PdmxProgress")]
 pub struct Progress {
     done: u64,
     total: Option<u64>,
 }
 
-/// Downloads the tarball into the PDMX folder. The archive never reaches the disk: it is unpacked
-/// as it arrives.
-///
-/// The error is one short line for the settings dialog to show: `already downloading`,
-/// `no data folder`, `no connection`, `Zenodo answered <status>`, `not enough disk space`,
-/// `download stopped`, or `cancelled` when the user stopped it.
+/// The whole status once the job has ended, however it ended.
+#[derive(Clone, Serialize, specta::Type, Event)]
+#[tauri_specta(event_name = "pdmx-done")]
+#[serde(rename = "PdmxDone")]
+pub struct Done(pub Status);
+
+/// Starts the download of the tarball into the PDMX folder and answers the status at once; the
+/// archive never reaches the disk, being unpacked as it arrives. A call made while a fetch runs
+/// joins that one, so a second click and a re-sent invoke both leave the one job alone.
 #[tauri::command]
 #[specta::specta]
-pub async fn pdmx_fetch(
-    app: tauri::AppHandle,
-    progress: Channel<Progress>,
-) -> Result<(), Refusal> {
-    if RUNNING.swap(true, Ordering::SeqCst) {
-        return Err("already downloading".into());
+pub fn pdmx_fetch(app: tauri::AppHandle) -> Status {
+    let start = {
+        let mut job = JOB.lock().unwrap();
+        let idle = !job.running;
+        if idle {
+            *job = Job { running: true, ..IDLE };
+        }
+        idle
+    };
+    let status = status_of(&app);
+    if start {
+        CANCEL.store(false, Ordering::SeqCst);
+        tauri::async_runtime::spawn_blocking(move || {
+            let outcome = folder(&app).and_then(|home| fetch_into(&app, &home));
+            {
+                let mut job = JOB.lock().unwrap();
+                job.running = false;
+                job.error = outcome.err().filter(|reason| reason != "cancelled");
+            }
+            let _ = Done(status_of(&app)).emit(&app);
+        });
     }
-    CANCEL.store(false, Ordering::SeqCst);
-    let home = folder(&app);
-    let done = tauri::async_runtime::spawn_blocking(move || fetch_into(&home?, progress)).await;
-    RUNNING.store(false, Ordering::SeqCst);
-    Ok(done.unwrap_or_else(|_| Err("download stopped".to_string()))?)
+    status
 }
 
 /// Stops the running fetch, which then removes what it had unpacked.
@@ -100,34 +153,42 @@ fn client() -> Result<reqwest::blocking::Client, String> {
         .map_err(|_| "no connection".to_string())
 }
 
-fn fetch_into(folder: &Path, progress: Channel<Progress>) -> Result<(), String> {
+fn fetch_into(app: &tauri::AppHandle, folder: &Path) -> Result<(), String> {
     let response = client()?.get(ARCHIVE).send().map_err(|_| "no connection".to_string())?;
     if !response.status().is_success() {
         return Err(format!("Zenodo answered {}", response.status().as_u16()));
     }
     let total = response.content_length();
-    let mut body = Counting { inner: response, done: 0, sent: 0, total, progress };
-    unpack(&mut body, folder, &CANCEL)?;
-    let _ = body.progress.send(Progress { done: body.done, total });
-    Ok(())
+    // The job holds the same numbers the event carries, so a window that missed the event and
+    // asks for the status reads the download at the same place.
+    let report = |done, total| {
+        {
+            let mut job = JOB.lock().unwrap();
+            job.done = done;
+            job.total = total;
+        }
+        let _ = Progress { done, total }.emit(app);
+    };
+    let mut body = Counting { inner: response, done: 0, sent: 0, total, report };
+    unpack(&mut body, folder, &CANCEL)
 }
 
 /// Reports the bytes read from the body about every `STEP` of them.
-struct Counting<R> {
+struct Counting<R, F> {
     inner: R,
     done: u64,
     sent: u64,
     total: Option<u64>,
-    progress: Channel<Progress>,
+    report: F,
 }
 
-impl<R: Read> Read for Counting<R> {
+impl<R: Read, F: Fn(u64, Option<u64>)> Read for Counting<R, F> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let n = self.inner.read(buf)?;
         self.done += n as u64;
         if self.done - self.sent >= STEP {
             self.sent = self.done;
-            let _ = self.progress.send(Progress { done: self.done, total: self.total });
+            (self.report)(self.done, self.total);
         }
         Ok(n)
     }
@@ -197,12 +258,12 @@ fn root_file(zip: &mut ZipArchive<File>) -> Option<String> {
     let mut buf = Vec::new();
     loop {
         let named = match reader.read_event_into(&mut buf).ok()? {
-            Event::Start(e) | Event::Empty(e) if e.name().as_ref() == "rootfile" => e
+            XmlEvent::Start(e) | XmlEvent::Empty(e) if e.name().as_ref() == "rootfile" => e
                 .attributes()
                 .flatten()
                 .find(|a| a.key.as_ref() == "full-path")
                 .map(|a| a.value.into_owned()),
-            Event::Eof => return None,
+            XmlEvent::Eof => return None,
             _ => None,
         };
         if let Some(name) = named
@@ -273,13 +334,7 @@ mod tests {
     fn the_archive_starts_with_the_mxl_tree() {
         let response = client().unwrap().get(ARCHIVE).send().unwrap();
         let total = response.content_length();
-        let counting = Counting {
-            inner: response,
-            done: 0,
-            sent: 0,
-            total,
-            progress: Channel::new(|_| Ok(())),
-        };
+        let counting = Counting { inner: response, done: 0, sent: 0, total, report: |_, _| {} };
         let mut archive =
             tar::Archive::new(flate2::read::GzDecoder::new(counting.take(2 * 1024 * 1024)));
         let first = archive.entries().unwrap().next().unwrap().unwrap();

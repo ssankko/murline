@@ -27,6 +27,7 @@ import { matches, type SortOrder } from '@/library/queries';
 import { scanLibrary, splitError } from '@/library/scan';
 import { clamp } from '@/lib/utils';
 import { Collapse } from '@/look/collapse';
+import { Loading } from '@/look/loading';
 import { Finder } from '@/screens/finder';
 import { Detail } from '@/screens/piece-detail';
 import { SettingsPanel } from '@/screens/settings';
@@ -35,8 +36,8 @@ import { useFullscreen } from '@/screens/use-fullscreen';
 import { commands, type PieceRow } from '@/bindings';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open } from '@tauri-apps/plugin-dialog';
-import { ArrowUpDown, Search } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { ChevronDown, Search, Star } from 'lucide-react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
 const SORTS: [SortOrder, string][] = [
   ['recent', 'Recently played'],
@@ -70,9 +71,15 @@ export function Library({
   /** Whether the stored sort and selection have arrived; the list waits on them. */
   const [restored, setRestored] = useState(false);
   const [folderGone, setFolderGone] = useState(false);
+  /** The folder the rows on the page came from. It lags behind `folder` for as long as a newly
+   * chosen folder is being indexed, which is what the list shows the loading indicator for. */
+  const [listed, setListed] = useState<string | null>(null);
   const [notice, dismissNotice] = useNotice();
   const [dragging, setDragging] = useState(false);
   const [clash, setClash] = useState<Clash | null>(null);
+  /** How many imports are running or waiting their turn. The title bar's buttons stand down while
+   * any is, and a drop meanwhile joins the queue rather than starting beside it. */
+  const [importing, setImporting] = useState(0);
   /** The lower-cased, NFC folder-relative paths of every present piece, read when the finder opens. */
   const [finding, setFinding] = useState<Set<string> | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -124,6 +131,7 @@ export function Library({
       } catch (error) {
         if (live) setNotice(`Could not read the library: ${reasonOf(error)}`);
       }
+      if (live) setListed(folder);
     })();
     return () => {
       live = false;
@@ -145,13 +153,23 @@ export function Library({
     };
   }, []);
 
+  /** Held still, so walking the list re-renders the two rows that change rather than all of them. */
+  const preview = useCallback(
+    (path: string) => {
+      if (folder) onPreview(path);
+    },
+    [folder, onPreview],
+  );
+
   // Favorites filters, so a toggle can add or remove a row: re-read rather than patch one.
   async function toggleFavorite(row: PieceRow) {
     await commands.pieceSetFavorite(row.path, !row.favorite);
     setPieces(await commands.pieceList(sort));
   }
 
-  const sortLabel = `Sort: ${SORTS.find(([key]) => key === sort)![1]}`;
+  /** Whether the rows of the folder now chosen are still being indexed. */
+  const indexing = folder !== null && folder !== listed;
+  const sortName = SORTS.find(([key]) => key === sort)![1];
   /** The rows the search field leaves. The detail pane reads `pieces`, so a hidden row stays picked. */
   const shown = pieces.filter((row) => matches(row, query));
   const piece = pieces.find((p) => p.path === selected) ?? pieces[0];
@@ -198,11 +216,19 @@ export function Library({
 
   async function runImport(paths: string[]): Promise<void> {
     if (!folder) return;
-    const { imported, failures } = await importFiles(folder, paths, askClash);
-    setPieces(await commands.pieceList(sort));
-    if (imported.length) setSelected(imported[imported.length - 1]!);
-    // Successes are silent, and they leave a notice about something else where it is.
-    if (failures.length) setNotice(failureNotice(failures));
+    setImporting((running) => running + 1);
+    try {
+      // `importFiles` holds the queue, so this waits its turn before it asks about a clash.
+      const { imported, failures } = await importFiles(folder, paths, askClash);
+      setPieces(await commands.pieceList(sort));
+      if (imported.length) setSelected(imported[imported.length - 1]!);
+      // Successes are silent, and they leave a notice about something else where it is.
+      if (failures.length) setNotice(failureNotice(failures));
+    } catch (error) {
+      setNotice(`Could not read the library: ${reasonOf(error)}`);
+    } finally {
+      setImporting((running) => running - 1);
+    }
   }
 
   /** "In library" answers for the whole folder, not for the rows the current sort shows. */
@@ -246,6 +272,25 @@ export function Library({
         data-tauri-drag-region
       >
         <h1 className="pointer-events-none text-[15px] font-semibold">Library</h1>
+        <div className="ml-auto flex items-center gap-2">
+          <Loading on={importing > 0} label="Importing" />
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!folder || importing > 0}
+            onClick={() => void pickFiles()}
+          >
+            Import
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!folder || importing > 0}
+            onClick={() => void openFinder()}
+          >
+            Find online
+          </Button>
+        </div>
       </div>
 
       <div className="flex min-h-0 flex-1">
@@ -262,6 +307,12 @@ export function Library({
                 onChange={(event) => setQuery(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Escape') return setQuery('');
+                  // The list's own key: the row the detail pane stands on goes straight to a
+                  // Practice, while a piece the app could not read has nothing to play.
+                  if (event.key === 'Enter') {
+                    if (piece && !piece.error && folder) onPlay(piece.path, 'practice');
+                    return;
+                  }
                   const step = ARROWS[event.key];
                   if (!step || shown.length === 0) return;
                   // The caret stays where it is: the arrows belong to the list while the field
@@ -276,11 +327,11 @@ export function Library({
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
-                  aria-label={sortLabel}
-                  title={sortLabel}
-                  className="hover:bg-ink/8 flex size-7 flex-none items-center justify-center rounded-md transition-colors duration-150"
+                  aria-label={`Sort: ${sortName}`}
+                  className="text-muted-ink hover:bg-ink/8 hover:text-ink flex h-7 flex-none items-center gap-1 rounded-md px-2 text-[12px] transition-colors duration-150"
                 >
-                  <ArrowUpDown className="size-3.5" />
+                  {sortName}
+                  <ChevronDown className="size-3" />
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
@@ -330,38 +381,34 @@ export function Library({
             </div>
           </Collapse>
 
+          {/* A folder being indexed has neither rows nor an empty library to speak of yet, so the
+              wait stands in place of both, in the pane the rows will land in. */}
           <div ref={list} className="flex-1 overflow-y-auto">
-            {shown.map((row) => (
-              <Row
-                key={row.path}
-                row={row}
-                selected={row === piece}
-                onSelect={() => setSelected(row.path)}
-                onOpen={() => !row.error && folder && onPreview(row.path)}
-              />
-            ))}
-            {pieces.length === 0 && (
-              <p className="text-muted-ink px-4 py-6 text-center text-[12px]">No pieces yet.</p>
+            {indexing ? (
+              <div className="flex justify-center px-4 py-6">
+                <Loading label={`Indexing ${folder}`} />
+              </div>
+            ) : (
+              <>
+                {shown.map((row) => (
+                  <Row
+                    key={row.path}
+                    row={row}
+                    selected={row === piece}
+                    onSelect={setSelected}
+                    onOpen={preview}
+                  />
+                ))}
+                {pieces.length === 0 && (
+                  <p className="text-muted-ink px-4 py-6 text-center text-[12px]">No pieces yet.</p>
+                )}
+                {pieces.length > 0 && shown.length === 0 && (
+                  <p className="text-muted-ink px-4 py-6 text-center text-[12px]">
+                    Nothing matches “{query.trim()}”.
+                  </p>
+                )}
+              </>
             )}
-            {pieces.length > 0 && shown.length === 0 && (
-              <p className="text-muted-ink px-4 py-6 text-center text-[12px]">
-                Nothing matches “{query.trim()}”.
-              </p>
-            )}
-          </div>
-
-          <div className="border-edge-soft flex gap-2 border-t px-3 py-2.5">
-            <Button variant="outline" size="sm" disabled={!folder} onClick={() => void pickFiles()}>
-              Import
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!folder}
-              onClick={() => void openFinder()}
-            >
-              Find online
-            </Button>
           </div>
         </div>
 
@@ -377,7 +424,9 @@ export function Library({
         ) : (
           <div className="flex flex-1 items-center justify-center px-12">
             <div className="flex max-w-[420px] flex-col gap-2 text-center">
-              <p className="text-[13px]">Copy a MusicXML file into the folder to add a piece.</p>
+              <p className="text-[13px]">
+                Drop a MusicXML file here, or use Import or Find online above.
+              </p>
               <p className="text-muted-ink text-[12px]">{folder ?? 'No library folder set'}</p>
             </div>
           </div>
@@ -487,8 +536,11 @@ function failureNotice(failures: ImportFailure[]): string {
   return [head, ...failures.map((f) => `${f.fileName} — ${f.reason}`)].join('\n');
 }
 
-/** Two lines and a grade. A piece the app could not read shows its reason in place of the composer. */
-function Row({
+/**
+ * Two lines, the keys the piece uses, a star for a favorite and the best grade. A piece the app
+ * could not read shows its reason in place of the composer and has no keys to draw.
+ */
+const Row = memo(function Row({
   row,
   selected,
   onSelect,
@@ -496,25 +548,20 @@ function Row({
 }: {
   row: PieceRow;
   selected: boolean;
-  onSelect: () => void;
+  onSelect: (path: string) => void;
   /** A double-click reads the piece through: the same Preview the detail's button opens. */
-  onOpen: () => void;
+  onOpen: (path: string) => void;
 }) {
   return (
     <button
       data-selected={selected || undefined}
-      onClick={onSelect}
-      onDoubleClick={onOpen}
-      className={`relative flex w-full items-center gap-3 px-4 py-2 text-left transition-colors duration-[120ms] motion-reduce:transition-none ${
+      onClick={() => onSelect(row.path)}
+      onDoubleClick={() => !row.error && onOpen(row.path)}
+      className={`flex w-full items-center gap-3 px-4 py-2 text-left transition-colors duration-[120ms] motion-reduce:transition-none ${
         selected ? 'bg-(--fill-selected)' : 'hover:bg-(--fill-hover)'
       }`}
     >
-      <i
-        className={`bg-ink absolute top-2 bottom-2 left-0 w-[2px] transition-opacity duration-100 motion-reduce:transition-none ${
-          row.favorite ? 'opacity-100' : 'opacity-0'
-        }`}
-      />
-      <span className="flex min-w-0 flex-col gap-px select-text">
+      <span className="flex min-w-0 flex-1 flex-col gap-px select-text">
         <b className={`truncate text-[13px] font-medium ${row.error ? 'text-muted-ink' : ''}`}>
           {row.title ?? row.path}
         </b>
@@ -522,9 +569,23 @@ function Row({
           {row.error ? splitError(row.error).reason : (row.composer ?? ' ')}
         </span>
       </span>
-      <span className="ml-auto text-[13px] font-medium tabular-nums">
-        {row.best_grade ?? <span className="text-edge">—</span>}
+      <i
+        className={`flex-none transition-opacity duration-100 motion-reduce:transition-none ${
+          row.favorite ? 'opacity-100' : 'opacity-0'
+        }`}
+      >
+        <Star className="size-3.5 fill-current" />
+      </i>
+      {/* One width for every grade, held whether or not the piece has one, so the stars stand
+        in one column. */}
+      <span className="w-16 flex-none text-right text-[13px] tabular-nums">
+        {row.best_grade !== null && (
+          <>
+            <span className="text-muted-ink">best </span>
+            <span className="font-medium">{row.best_grade}</span>
+          </>
+        )}
       </span>
     </button>
   );
-}
+});

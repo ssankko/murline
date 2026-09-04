@@ -73,11 +73,8 @@ export function useAudioStatus(round = 0): AudioStatus | null {
  * out as a fragment, so whichever holds them sets the space between them.
  */
 export function SoundControls({
-  folder = true,
   onChanged,
 }: {
-  /** The instruments folder row, which the sound popover leaves out. */
-  folder?: boolean;
   /** A new instrument, for whatever reads the sound line outside these sections. */
   onChanged?: (() => void) | undefined;
 }) {
@@ -92,7 +89,6 @@ export function SoundControls({
   return (
     <>
       <InstrumentSection
-        folder={folder}
         onChanged={() => {
           setRound((round) => round + 1);
           onChanged?.();

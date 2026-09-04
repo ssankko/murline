@@ -5,11 +5,12 @@
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { importFiles } from '@/library/import';
-import { reasonOf } from '@/library/notice';
+import { reasonOf, setNotice } from '@/library/notice';
+import { usePdmx } from '@/library/pdmx';
 import { Collapse } from '@/look/collapse';
 import { Loading } from '@/look/loading';
 import { commands, type FinderRow, type SearchResult } from '@/bindings';
-import { Download, Search } from 'lucide-react';
+import { Download, Search, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 const norm = (s: string) => s.toLowerCase().replace(/[.,\s]/g, '');
@@ -48,7 +49,7 @@ export function metaLine(r: FinderRow): string {
 type DownloadState =
   | { state: 'idle' }
   | { state: 'downloading' }
-  | { state: 'failed'; provider: string; reason: string };
+  | { state: 'failed'; text: string };
 
 /**
  * The finder modal. `libraryPaths` are the lower-cased, NFC folder-relative paths of every piece,
@@ -72,15 +73,11 @@ export function Finder({
   const [result, setResult] = useState<SearchResult>({ rows: [], more: 0 });
   const [sel, setSel] = useState(0);
   const [dl, setDl] = useState<DownloadState>({ state: 'idle' });
-  /** Whether the PDMX tarball is unpacked, and so whether a PDMX row can be delivered. */
-  const [pdmx, setPdmx] = useState<boolean | null>(null);
+  /** Whether the PDMX tarball is unpacked, and so whether a PDMX row can be delivered. Null until
+   * the Rust side, which owns both the folder and the download, has answered. */
+  const pdmx = usePdmx().status?.ready ?? null;
   const [searchError, setSearchError] = useState<string | null>(null);
   const list = useRef<HTMLDivElement>(null);
-
-  // Whether the tarball is unpacked; Rust answers off the disk, and owns the folder it looks in.
-  useEffect(() => {
-    void commands.pdmxStatus().catch(() => false).then(setPdmx);
-  }, []);
 
   // Every keystroke searches; Rust answers in under 20 ms. A late answer to an older query is
   // dropped. Nothing is asked for until the PDMX status is in, which decides what the answer holds.
@@ -114,9 +111,23 @@ export function Finder({
   // sides of the comparison are lowercased and composed. `libraryPaths` arrives that way.
   const owned = (r: FinderRow) => libraryPaths.has(r.fileName.toLowerCase().normalize('NFC'));
 
-  /** The reason outlives its failure by one collapse, so the red bar has words to show as it closes. */
-  const lastFailure = useRef({ provider: '', reason: '' });
-  if (dl.state === 'failed') lastFailure.current = dl;
+  /** The text outlives its failure by one collapse, so the red bar has words to show as it closes. */
+  const lastFailure = useRef('');
+  if (dl.state === 'failed') lastFailure.current = dl.text;
+
+  /**
+   * The download the window is still waiting on. Cancel and a second download both raise it, and a
+   * run that is no longer the current one finishes into nothing.
+   */
+  const run = useRef(0);
+  /** Whether the finder is still on the screen; a failure after it closes belongs to the library. */
+  const shown = useRef(true);
+  useEffect(
+    () => () => {
+      shown.current = false;
+    },
+    [],
+  );
 
   useEffect(() => {
     list.current
@@ -127,19 +138,33 @@ export function Finder({
   async function download(): Promise<void> {
     if (!selected || dl.state === 'downloading' || owned(selected)) return;
     const row = selected;
+    const mine = ++run.current;
     setDl({ state: 'downloading' });
     let tempPath: string | null = null;
     try {
       tempPath = await commands.finderDownload(row);
+      if (run.current !== mine) return;
       // The name is free: an owned row never gets here. Keep both covers a file the index missed.
       const { imported, failures } = await importFiles(folder, [tempPath], async () => 'keep-both');
       if (failures.length || !imported[0]) throw new Error(failures[0]?.reason ?? 'Import failed');
       await onImported(imported[0]);
     } catch (error) {
-      setDl({ state: 'failed', provider: row.provider, reason: reasonOf(error) });
+      if (run.current !== mine) return;
+      const text = `Could not download from ${row.provider}: ${reasonOf(error)}.`;
+      // The finder may have been closed over the download; the reason then lands in the library.
+      if (shown.current) setDl({ state: 'failed', text });
+      else setNotice(text);
     } finally {
       if (tempPath) await commands.removeTempFile(tempPath).catch(() => {});
     }
+  }
+
+  /** Frees the row for another download and drops whatever the running one brings back. */
+  // ponytail: the request in Rust runs to its end and its temp file is removed on arrival; give
+  // the Rust side a cancel of its own if a provider ever holds a connection long enough to matter.
+  function cancel(): void {
+    run.current++;
+    setDl({ state: 'idle' });
   }
 
   function onKeyDown(event: React.KeyboardEvent): void {
@@ -215,11 +240,13 @@ export function Finder({
                       <Button
                         variant="outline"
                         size="sm"
-                        disabled={dl.state === 'downloading'}
-                        onClick={() => void download()}
+                        onClick={() => {
+                          if (dl.state === 'downloading') cancel();
+                          else void download();
+                        }}
                       >
-                        <Download />
-                        {dl.state === 'downloading' ? 'Downloading…' : 'Download'}
+                        {dl.state === 'downloading' ? <X /> : <Download />}
+                        {dl.state === 'downloading' ? 'Cancel' : 'Download'}
                         <Loading on={dl.state === 'downloading'} label="Downloading the score" />
                       </Button>
                     )
@@ -236,9 +263,7 @@ export function Finder({
             role="alert"
             className="flex items-center gap-3 border-t border-red-500/40 bg-red-500/10 px-4 py-2 text-[12px] text-red-600 dark:text-red-400"
           >
-            <span>
-              Could not download from {lastFailure.current.provider}: {lastFailure.current.reason}.
-            </span>
+            <span>{lastFailure.current}</span>
             <button onClick={() => void download()} className="underline underline-offset-2">
               Retry
             </button>

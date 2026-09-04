@@ -15,7 +15,6 @@ import { reasonOf } from "@/library/notice";
 import { Loading } from "@/look/loading";
 import { commands, type AudioStatus, type Instrument } from "@/bindings";
 import { set, setting, useSetting } from "@/settings/settings";
-import { open } from "@tauri-apps/plugin-dialog";
 import { ChevronDown } from "lucide-react";
 import { Fragment, useEffect, useState } from "react";
 
@@ -42,10 +41,22 @@ function listInstruments(folder: string): Promise<Instrument[]> {
 }
 
 /**
+ * Why an instrument is left out of the engine: the Rust side names it while a load runs on it and
+ * clears the name when that load ends, so a name still there names a load that took the app down
+ * with it. Empty for every instrument the last load did not run on.
+ */
+function skippedReason(all: Instrument[], id: string): string {
+  if (!id || setting("instrument_loading") !== id) return "";
+  const name = all.find((one) => one.id === id)?.name ?? id;
+  return `${name} did not finish loading last time, so it was left out. Choose it again to try once more.`;
+}
+
+/**
  * Puts the chosen instrument back into the engine at boot, choosing Logic's Concert Grand the
  * first time, and answers with its name, or null when there was none to put back. A choice the
  * engine can no longer find still goes in, so its reason reaches the status line instead of
- * silence with no explanation.
+ * silence with no explanation. An instrument the last load never came back from is refused
+ * instead, which starts the app on no instrument at all.
  */
 export async function restoreInstrument(): Promise<string | null> {
   const kept = setting("instrument_id");
@@ -55,6 +66,8 @@ export async function restoreInstrument(): Promise<string | null> {
   const all = await listInstruments(setting("instruments_folder"));
   const chosen = kept ?? all.find((one) => one.name === DEFAULT_NAME)?.id ?? null;
   if (!chosen) return null;
+  const skipped = skippedReason(all, chosen);
+  if (skipped) throw new Error(skipped);
   if (chosen !== kept) {
     // The stored state belongs to the stored instrument, so a fresh default starts at its own.
     await set("instrument_id", chosen);
@@ -65,11 +78,8 @@ export async function restoreInstrument(): Promise<string | null> {
 }
 
 export function InstrumentSection({
-  folder: showFolder = true,
   onChanged,
 }: {
-  /** The instruments folder row, which the status bar's sound popover leaves out. */
-  folder?: boolean;
   onChanged?: (() => void) | undefined;
 }) {
   const [all, setAll] = useState<Instrument[]>([]);
@@ -91,7 +101,9 @@ export function InstrumentSection({
       .then((found) => {
         if (!live) return;
         setAll(found);
-        setFailure(found.find((one) => one.id === chosen)?.reason ?? "");
+        setFailure(
+          found.find((one) => one.id === chosen)?.reason || skippedReason(found, chosen),
+        );
       })
       .catch((error: unknown) => live && setFailure(reasonOf(error)));
     return () => {
@@ -131,6 +143,9 @@ export function InstrumentSection({
       await readEngine();
     } finally {
       setLoading(false);
+      // The Rust side clears the name as the load ends however it ends; the window's copy of the
+      // settings follows it, so an instrument that has been through a load is no longer skipped.
+      if (id) await set("instrument_loading", null);
     }
     onChanged?.();
   }
@@ -141,13 +156,6 @@ export function InstrumentSection({
     setFailure(reason);
     await readEngine();
     onChanged?.();
-  }
-
-  async function chooseFolder(): Promise<void> {
-    const picked = await open({ directory: true, ...(folder ? { defaultPath: folder } : {}) });
-    if (typeof picked !== "string") return;
-    // The list follows the folder: the effect above reads it again.
-    await set("instruments_folder", picked);
   }
 
   /** The plugin's own window, which hands back the state it was left in when the user closes it. */
@@ -241,55 +249,27 @@ export function InstrumentSection({
         </div>
       </Row>
 
-      <Row label="Recommended sample rate">
-        <span className="text-muted-ink text-[12px] tabular-nums">
-          {recordedLine(status)}
-        </span>
-      </Row>
-
-      <Row
-        id="audio_sample_rate"
-        hint="Higher costs render load: 96 kHz is twice 48 kHz."
-      >
+      <Row id="audio_sample_rate" hint={rateHint(status)}>
         <Segmented
           options={numbered(RATE_CHOICES)}
           value={rate}
           allowed={allowedRates(status)}
+          best={status?.instrument_rate}
           onChange={(choice) => void chooseRate(choice)}
         />
       </Row>
 
       {failure && <p className="text-muted-ink text-[12px]">{failure}</p>}
-
-      {showFolder && (
-        <Row
-          id="instruments_folder"
-          hint="Every .sf2 and .exs file in it is listed above."
-        >
-          <div className="flex min-w-0 items-center gap-2">
-            <code className="text-muted-ink truncate text-[11.5px] select-text">
-              {folder || "not set"}
-            </code>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 flex-none"
-              onClick={() => void chooseFolder()}
-            >
-              Choose…
-            </Button>
-          </div>
-        </Row>
-      )}
     </section>
   );
 }
 
-/** The rate the loaded file was recorded at, which is the one that plays it without resampling;
- * a plugin renders at whatever rate it is given. */
-function recordedLine(status: AudioStatus | null): string {
-  if (!status?.instrument) return "—";
-  if (!status.instrument_rate)
-    return "any: a plugin renders at the rate it is given";
-  return `${(status.instrument_rate / 1000).toFixed(1)} kHz, the rate it was recorded at`;
+/** The line under the row's label: the rate the loaded file was recorded at, which is the one
+ * marked in the control and the one that plays it without resampling. A plugin has none and
+ * renders at whatever rate it is given. */
+function rateHint(status: AudioStatus | null): string {
+  if (!status?.instrument)
+    return "A higher rate costs the engine more work: 96 kHz is twice 48 kHz.";
+  if (!status.instrument_rate) return "A plugin renders at the rate it is given.";
+  return `Recorded at ${(status.instrument_rate / 1000).toFixed(1)} kHz; a higher rate only costs more work.`;
 }

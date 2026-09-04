@@ -26,11 +26,28 @@ export function isScoreFile(path: string): boolean {
   return SCORE_EXTENSIONS.includes(path.split('.').pop()?.toLowerCase() ?? '');
 }
 
+/** What the imports still to run wait on, so the folder takes one job at a time. */
+let queue: Promise<unknown> = Promise.resolve();
+
 /**
  * Imports every path into the library folder and indexes it. A file that fails is reported, never
  * copied, and never stops the files after it. A clash the user cancels is silent.
+ *
+ * A call made while another is still running waits for it, however the two were started: no two
+ * copies race for a name, and no two clash prompts ever stand at once.
  */
-export async function importFiles(
+export function importFiles(
+  folder: string,
+  paths: string[],
+  onClash: (fileName: string) => Promise<ClashChoice>,
+): Promise<ImportResult> {
+  const mine = queue.then(() => importEach(folder, paths, onClash));
+  // The one behind waits for this to be over, not for it to have gone well.
+  queue = mine.catch(() => {});
+  return mine;
+}
+
+async function importEach(
   folder: string,
   paths: string[],
   onClash: (fileName: string) => Promise<ClashChoice>,

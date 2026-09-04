@@ -8,7 +8,7 @@
 // grade reads the output velocity.
 
 import { curveOf, curved, positionOf } from '@/audio/curve';
-import { Knob } from '@/audio/knob';
+import { Slider } from '@/look/rows';
 import type { Sounding } from '@/audio/sounding';
 import { set, useSetting } from '@/settings/settings';
 import { colorOf } from '@/look/color';
@@ -47,29 +47,29 @@ export function VelocitySection({
 
       <div className="flex items-center gap-3">
         <div className="flex min-w-0 flex-1 flex-col">
-          <Knob
+          <Slider
             id="velocity_min"
-            hint="Velocity 1 lands here."
-            lo={1}
-            hi={127}
+            hint="How loud your softest press comes out."
+            min={1}
+            max={127}
             value={min}
             readout={`${min}`}
             onChange={writeMin}
           />
-          <Knob
+          <Slider
             id="velocity_max"
-            hint="Velocity 127 lands here."
-            lo={1}
-            hi={127}
+            hint="How loud your hardest press comes out."
+            min={1}
+            max={127}
             value={max}
             readout={`${max}`}
             onChange={writeMax}
           />
-          <Knob
+          <Slider
             id="velocity_curve"
             hint="Over 1.00 makes soft playing softer."
-            lo={0}
-            hi={100}
+            min={0}
+            max={100}
             value={positionOf(curve)}
             readout={curve.toFixed(2)}
             onChange={writeCurve}

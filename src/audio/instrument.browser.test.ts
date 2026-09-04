@@ -124,7 +124,7 @@ async function pick(name: string): Promise<void> {
   }
 }
 
-test('the picker groups what the engine found, and names the folder it read', async () => {
+test('the picker groups what the engine found', async () => {
   const [text] = await open();
   openPicker();
   await vi.waitFor(() => expect(rows().length).toBe(4));
@@ -137,7 +137,6 @@ test('the picker groups what the engine found, and names the folder it read', as
   // A hosted Audio Unit and a file on disk are two kinds of instrument, headed apart.
   expect(text()).toContain('Audio Unit instruments');
   expect(text()).toContain('Files');
-  expect(text()).toContain('/instruments');
 });
 
 test('choosing writes the setting, loads at once, and marks the row it is on', async () => {
@@ -205,7 +204,7 @@ function rateButtons(): HTMLButtonElement[] {
 
 test('an instrument recorded at 44.1 kHz leaves no higher rate to pick', async () => {
   status = { ...NO_STATUS, instrument: 'Concert Grand Piano', instrument_rate: 44100 };
-  await open();
+  const [text] = await open();
   await vi.waitFor(() =>
     expect(rateButtons().map((button) => [button.textContent, button.disabled])).toEqual([
       ['44100', false],
@@ -214,6 +213,13 @@ test('an instrument recorded at 44.1 kHz leaves no higher rate to pick', async (
       ['96000', true],
     ]),
   );
+
+  // The rate it was recorded at is the row's own hint and the dot on that choice, not a row of its
+  // own above it.
+  expect(text()).toContain('Recorded at 44.1 kHz');
+  expect(text()).not.toContain('Recommended sample rate');
+  expect(rateButtons().filter((button) => button.title === 'Recommended')).toHaveLength(1);
+  expect(rateButtons().find((button) => button.title === 'Recommended')!.textContent).toBe('44100');
 });
 
 test('an instrument recorded below the rate in force drags the rate down to its own', async () => {
@@ -240,6 +246,38 @@ test('a launch after a choice puts that one back, and writes nothing to do it', 
   // The engine reads the state, the envelope and the role levels kept for the id itself.
   expect(rust.argsOf('audio_load_instrument')).toEqual([{ id: BROKEN.id }]);
   expect(rust.written()).toEqual([]);
+});
+
+// The name the Rust side leaves behind when a load never comes back is the whole safety net: the
+// app went down inside that load, so this launch refuses the same instrument.
+test('a launch after a load that never came back leaves that instrument out, and says why', async () => {
+  await stored({ instrument_id: BROKEN.id, instrument_loading: BROKEN.id });
+  await expect(restoreInstrument()).rejects.toThrow('did not finish loading last time');
+  expect(rust.argsOf('audio_load_instrument')).toEqual([]);
+
+  // The picker names it as the one that was left out, so the reason is on screen beside the choice.
+  const [text] = await open('broken.sf2');
+  await vi.waitFor(() => expect(text()).toContain('broken.sf2 did not finish loading last time'));
+});
+
+test('choosing the left-out instrument by hand is allowed, and the load clears the name', async () => {
+  await stored({ instrument_id: BROKEN.id, instrument_loading: BROKEN.id });
+  const [text] = await open('broken.sf2');
+  await vi.waitFor(() => expect(text()).toContain('did not finish loading last time'));
+
+  await pick('broken.sf2');
+  await vi.waitFor(() => expect(rust.argsOf('audio_load_instrument')).toEqual([{ id: BROKEN.id }]));
+  await vi.waitFor(() => expect(rust.written()).toContainEqual(['instrument_loading', null]));
+  await vi.waitFor(() => expect(text()).not.toContain('did not finish loading last time'));
+});
+
+// A load that ends with a reason has ended, so nothing is left out at the next launch over it.
+test('a load that failed with a reason leaves no name behind', async () => {
+  reason = 'That file is not a SoundFont';
+  const [text] = await open();
+  await pick('broken.sf2');
+  await vi.waitFor(() => expect(text()).toContain('That file is not a SoundFont'));
+  expect(rust.written()).toContainEqual(['instrument_loading', null]);
 });
 
 test('a Mac with no instrument at all loads none', async () => {

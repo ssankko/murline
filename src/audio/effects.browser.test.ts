@@ -1,6 +1,6 @@
 import { EffectsSection } from '@/audio/effects';
 import type { EffectSlot } from '@/bindings';
-import { fakeRust, fakeSettings, type FakeRust } from '@/rust.fake';
+import { fakeRust, fakeSettings, refusal, type FakeRust } from '@/rust.fake';
 import { load } from '@/settings/settings';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -8,8 +8,20 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 const REVERB = 'aufx:rvb2:appl';
 const GONE = 'aumf:FR2p:FabF';
+/** A plugin this Mac has and the engine cannot open, which is the other way a slot stays silent. */
+const BROKEN = 'aufx:pq4x:FabF';
+const BROKEN_REASON = 'Pro-Q 4 would not open';
 
 let rust: FakeRust;
+
+/** What the engine says of one slot: empty while it plays. */
+function reasonOf(id: string): string {
+  if (id === GONE) return 'not installed';
+  return id === BROKEN ? BROKEN_REASON : '';
+}
+
+/** Set to refuse the next write of the chain, as an engine that is not running does. */
+let refuse = '';
 
 /** Every chain written so far, oldest first. */
 function chains(): EffectSlot[][] {
@@ -19,13 +31,22 @@ function chains(): EffectSlot[][] {
 let close: (() => void) | null = null;
 
 beforeEach(async () => {
+  refuse = '';
   rust = fakeRust({
-    audio_effects: () => [{ id: REVERB, name: 'AUReverb2', manufacturer: 'Apple' }],
-    // The engine holds the chain the setting put in it, and marks a plugin it does not have.
+    audio_effects: () => [
+      { id: REVERB, name: 'AUReverb2', manufacturer: 'Apple' },
+      { id: BROKEN, name: 'Pro-Q 4', manufacturer: 'FabFilter' },
+    ],
+    settings_write: ({ key, value }) => {
+      if (refuse) throw refusal('refused', refuse);
+      fakeSettings.set(key, value);
+      return null;
+    },
+    // The engine holds the chain the setting put in it, and says of each slot why it is silent.
     audio_chain: () =>
       ((fakeSettings.get('effect_chain') as EffectSlot[] | undefined) ?? []).map((slot) => ({
         ...slot,
-        missing: slot.id === GONE,
+        reason: reasonOf(slot.id),
       })),
   });
   fakeSettings.set('effect_chain', [
@@ -82,7 +103,7 @@ test('a slot switched off writes the whole chain and keeps every other slot as i
     { id: GONE, name: 'Pro-R 2', bypass: false, state: 'AAAA' },
   ]);
   // What is stored is the user's chain, never the engine's word about this Mac.
-  expect(chains()[0]![1]).not.toHaveProperty('missing');
+  expect(chains()[0]![1]).not.toHaveProperty('reason');
 });
 
 test('removing a slot writes the chain without it', async () => {
@@ -105,18 +126,40 @@ test('Show asks the engine for that slot, and a missing plugin has nothing to sh
   await vi.waitFor(() => expect(rust.argsOf('audio_show_effect')).toEqual([{ index: 0 }]));
 });
 
-test('an effect picked from the list lands at the end of the chain', async () => {
-  const text = await open();
-  const add = button('Add effect');
-  add.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }));
-  add.click();
+/** Adds one effect of the menu, named as the menu lists it. */
+async function add(maker: string, text: () => string): Promise<void> {
+  const trigger = button('Add effect');
+  trigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }));
+  trigger.click();
 
-  await vi.waitFor(() => expect(text()).toContain('Apple — AUReverb2'));
+  await vi.waitFor(() => expect(text()).toContain(`${maker} — `));
   const item = [...document.querySelectorAll('[role="menuitem"]')].find((each) =>
-    each.textContent?.includes('Apple'),
+    each.textContent?.startsWith(maker),
   )!;
   (item as HTMLElement).click();
+}
+
+test('an effect picked from the list lands at the end of the chain', async () => {
+  const text = await open();
+  await add('Apple', text);
 
   await vi.waitFor(() => expect(chains()).toHaveLength(1));
   expect(chains()[0]!.map((slot) => slot.id)).toEqual([REVERB, GONE, REVERB]);
+});
+
+test('an effect the engine cannot load keeps its slot and says why', async () => {
+  const text = await open();
+  await add('FabFilter', text);
+
+  await vi.waitFor(() => expect(text()).toContain(`Pro-Q 4 — ${BROKEN_REASON}`));
+  expect(chains()[0]!.map((slot) => slot.id)).toEqual([REVERB, GONE, BROKEN]);
+});
+
+test('a chain the engine refuses whole leaves the reason in every slot', async () => {
+  const text = await open();
+  refuse = 'The sound engine did not start';
+  await add('FabFilter', text);
+
+  await vi.waitFor(() => expect(text()).toContain(`Pro-Q 4 — ${refuse}`));
+  expect(text()).toContain(`AUReverb2 — ${refuse}`);
 });

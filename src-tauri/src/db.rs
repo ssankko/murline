@@ -64,6 +64,11 @@ pub mod tests {
         partial.run(pool).await.unwrap();
     }
 
+    /// Every migration applied, which is the shape the app reads and writes on.
+    pub async fn migrate_all(pool: &SqlitePool) {
+        MIGRATOR.run(pool).await.unwrap();
+    }
+
     /// Every migration applied, with `seed` run once `upto` of them are in and the rest are not.
     async fn migrated(pool: &SqlitePool, upto: usize, seed: &str) {
         migrate_to(pool, upto).await;
@@ -280,6 +285,23 @@ pub mod tests {
     }
 
     #[tokio::test]
+    async fn v0007_leaves_a_piece_indexed_before_it_with_no_tempo_and_an_mtime_no_file_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&dir);
+        migrated(
+            &pool,
+            6,
+            "INSERT INTO piece (path, mtime, size, imported_at, has_tempo, constant_tempo)
+             VALUES ('Bach.musicxml', 1, 2, 3, 1, 1);",
+        )
+        .await;
+        assert_eq!(number(&pool, "tempo_bpm").await, None);
+        // The scan plans the row again on the next launch, which is what fills the column.
+        assert_eq!(number(&pool, "mtime").await, Some(-1.0));
+        assert_eq!(number(&pool, "has_tempo").await, Some(1.0));
+    }
+
+    #[tokio::test]
     async fn a_database_that_was_never_opened_before_ends_with_every_table_and_no_row() {
         let dir = tempfile::tempdir().unwrap();
         let pool = open(&dir);
@@ -317,7 +339,7 @@ pub mod tests {
     async fn a_database_already_migrated_is_left_alone() {
         let dir = tempfile::tempdir().unwrap();
         let pool = open(&dir);
-        // The tables as the last migration leaves them, under a user's own version rows.
+        // The tables as the migrations the user has run leave them, under their own version rows.
         migrate_to(&pool, 6).await;
         sqlx::query("DELETE FROM _sqlx_migrations").execute(&pool).await.unwrap();
         for (version, description, checksum) in APPLIED {

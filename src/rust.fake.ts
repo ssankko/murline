@@ -8,9 +8,11 @@ import {
   events,
   type AudioStatus,
   type FileEntry,
+  type PdmxStatus,
   type PieceRow,
   type PlayRow,
   type Refusal,
+  type UpdateStatus,
 } from '@/bindings';
 import type { SortOrder } from '@/library/queries';
 import { mockIPC } from '@tauri-apps/api/mocks';
@@ -47,6 +49,26 @@ export type Answers = {
 export type CommandName = keyof Answers;
 
 const nothing = () => null;
+
+/** The PDMX job as a test finds it: nothing downloaded and nothing running. */
+const idlePdmx = (): PdmxStatus => ({
+  ready: false,
+  running: false,
+  done: 0,
+  total: null,
+  error: null,
+});
+
+/** The update job as a test finds it: the release page unasked and nothing waiting or fetched. */
+export const idleUpdate = (): UpdateStatus => ({
+  waiting: null,
+  checked: false,
+  installed: null,
+  running: false,
+  done: 0,
+  total: null,
+  error: null,
+});
 
 /** What an answer throws to refuse the way the Rust side does. */
 export function refusal(kind: Refusal['kind'], text: string): Refusal {
@@ -104,6 +126,7 @@ function blankPiece(path: string): FakePiece {
     midi_hi: null,
     has_tempo: null,
     constant_tempo: null,
+    tempo_bpm: null,
     key_sharps: null,
     key_mode: null,
     part_count: null,
@@ -250,6 +273,7 @@ export const DEFAULT_ANSWERS: Answers = {
       midi_hi: index.midiHi,
       has_tempo: index.hasTempo ? 1 : 0,
       constant_tempo: index.constantTempo ? 1 : 0,
+      tempo_bpm: index.tempoBpm,
       key_sharps: index.keySharps,
       key_mode: index.keyMode,
       part_count: index.partCount,
@@ -318,13 +342,15 @@ export const DEFAULT_ANSWERS: Answers = {
   trash_file: nothing,
   finder_search: () => ({ rows: [], more: 0 }),
   finder_download: () => '/tmp/score.mxl',
-  pdmx_status: () => false,
-  pdmx_fetch: nothing,
+  pdmx_status: idlePdmx,
+  pdmx_fetch: idlePdmx,
   pdmx_cancel: nothing,
   app_version: () => '0.1.0',
+  update_status: idleUpdate,
   // The newest build, until a test says another version waits.
-  update_check: () => null,
-  update_install: nothing,
+  update_check: () => ({ ...idleUpdate(), checked: true }),
+  // With nothing waiting there is nothing to install, which is the failure the Rust side reports.
+  update_install: () => ({ ...idleUpdate(), checked: true, error: 'no newer version is waiting' }),
   update_restart: nothing,
 };
 

@@ -69,11 +69,18 @@ test('the index carries every fact the piece row stores', () => {
     midiHi: 72,
     hasTempo: true,
     constantTempo: true,
+    tempoBpm: 60,
     keySharps: -3,
     keyMode: 'minor',
     partCount: 3,
     partName: 'Part 1',
   });
+});
+
+test('a score whose file names no tempo indexes no number', () => {
+  const score = { ...scoreOf([[note(60, 0)]]), hasTempo: false };
+
+  expect(summarize(score, 'x.musicxml').tempoBpm).toBeNull();
 });
 
 test('a dorian score indexes as dorian and reads back as its own mode', () => {

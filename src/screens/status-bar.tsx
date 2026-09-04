@@ -12,7 +12,15 @@ import { commands, type AudioStatus, type EffectSlot, type Meter } from '@/bindi
 import { on } from '@/rust';
 import { NO_STATUS } from '@/audio/sound-tab';
 import { useSetting } from '@/settings/settings';
-import { checkUpdate, restartApp, takeUpdate, updateLabel, useVersions } from '@/update';
+import {
+  checkUpdate,
+  restartApp,
+  takeUpdate,
+  updateLabel,
+  useVersions,
+  versionText,
+} from '@/update';
+import { Loading } from '@/look/loading';
 import { AudioLines, Check, Cpu, Download, Gauge, Metronome, Piano, Settings } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
@@ -253,21 +261,19 @@ export function StatusBar({
 
 /**
  * The far right of the bar: the version running, with the mark beside it saying what the release
- * page holds. Number and mark are one button, and what it does is what the mark shows: an amber
- * arrow fetches the version waiting, a green check starts the app again so that version takes
- * over, and a bare number asks the release page again.
+ * page holds. Line and mark are one button, and what it does is what the mark shows: an amber
+ * arrow fetches the version waiting and the line then counts the bytes off against the whole, a
+ * green check starts the app again so that version takes over, a red dot carries why the last
+ * fetch stopped, and a bare number asks the release page again. Nothing is ever disabled, so the
+ * tooltip stays reachable while the bundle comes down.
  */
 function Version() {
   const versions = useVersions();
-  const { current, update } = versions;
-
-  useEffect(() => {
-    void checkUpdate();
-  }, []);
+  const { update } = versions;
 
   // What the button is called and what it does both follow the mark it carries.
   const { name, press } =
-    update.kind === 'found'
+    update.kind === 'found' || update.kind === 'taking'
       ? { name: 'Update', press: takeUpdate }
       : update.kind === 'ready'
         ? { name: 'Restart', press: restartApp }
@@ -278,15 +284,13 @@ function Version() {
       <button
         aria-label={name}
         onClick={() => void press()}
-        disabled={update.kind === 'taking'}
-        className="hover:bg-ink/8 hover:text-ink -mr-4 -ml-1.5 flex h-full items-center gap-1 rounded-sm pr-4 pl-1.5 transition-colors duration-150"
+        className="hover:bg-ink/8 hover:text-ink -mr-4 -ml-1.5 flex h-full max-w-[220px] items-center gap-1 rounded-sm pr-4 pl-1.5 transition-colors duration-150"
       >
-        {current}
+        {update.kind === 'failed' && <Light dot="bad" />}
+        <span className="truncate">{versionText(versions)}</span>
+        {update.kind === 'checking' && <Loading label="Looking for a newer version" />}
         {(update.kind === 'found' || update.kind === 'taking') && (
-          <Download
-            {...ICON}
-            className={`text-amber-600 dark:text-amber-500 ${update.kind === 'taking' ? 'animate-pulse' : ''}`}
-          />
+          <Download {...ICON} className="text-amber-600 dark:text-amber-500" />
         )}
         {update.kind === 'ready' && (
           <Check {...ICON} className="text-green-600 dark:text-green-500" />

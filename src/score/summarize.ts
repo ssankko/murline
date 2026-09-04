@@ -2,7 +2,7 @@
 // the `piece` row so the page never opens a file.
 
 import { keyAt, modeName, type KeyMode } from './key';
-import { playedSeconds, ScoreError, type Score } from './types';
+import { bpmAt, playedSeconds, ScoreError, type Score } from './types';
 
 /** What OSMD titles a sheet that names no work: a Blob carries no file name to fall back on. */
 const NO_TITLE = 'Untitled Score';
@@ -16,6 +16,8 @@ export interface PieceIndex {
   midiHi: number;
   hasTempo: boolean;
   constantTempo: boolean;
+  /** The first tempo mark's BPM, null where the file names no tempo. */
+  tempoBpm: number | null;
   keySharps: number;
   keyMode: KeyMode;
   partCount: number;
@@ -53,6 +55,7 @@ export function summarize(score: Score, fileName: string): PieceIndex {
     midiHi,
     hasTempo: score.hasTempo,
     constantTempo: score.constantTempo,
+    tempoBpm: score.hasTempo ? bpmAt(score, 0) : null,
     keySharps: key.sharps,
     keyMode: modeName(key.mode),
     partCount: score.partCount,

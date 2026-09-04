@@ -106,9 +106,11 @@ test('a search result marks the row it named, wherever in the tab it lives', asy
       'true',
     ),
   );
-  for (const id of ['audio_output_device', 'instrument_id', 'instruments_folder', 'effect_chain']) {
+  for (const id of ['audio_output_device', 'instrument_id', 'effect_chain']) {
     expect(host.querySelector(`#setting-row-${id}`), id).toBeTruthy();
   }
+  // The instruments folder is the Folders tab's row.
+  expect(host.querySelector('#setting-row-instruments_folder')).toBe(null);
 });
 
 test('both plots let go of a key together, once the envelope has finished with it', async () => {

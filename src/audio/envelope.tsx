@@ -8,7 +8,7 @@
 // frame drawn. The setting is the engine's to read: a load puts the envelope kept for the
 // instrument on by itself, so this section only shows and moves it.
 
-import { Knob } from '@/audio/knob';
+import { Slider } from '@/look/rows';
 import type { Sounding } from '@/audio/sounding';
 import { set, setting } from '@/settings/settings';
 import { colorOf } from '@/look/color';
@@ -78,38 +78,38 @@ export function EnvelopeSection({
 
       <div className="flex items-center gap-3">
         <div className="flex min-w-0 flex-1 flex-col">
-          <Knob
+          <Slider
             id="envelope_attack"
             hint="How fast a note comes in."
-            lo={0}
-            hi={2000}
+            min={0}
+            max={2000}
             value={Math.round(values.attack * 1000)}
             readout={seconds(values.attack)}
             onChange={(ms) => write({ ...values, attack: ms / 1000 })}
           />
-          <Knob
+          <Slider
             id="envelope_decay"
-            hint="The fall to the sustain."
-            lo={0}
-            hi={4000}
+            hint="How fast a note falls to the level it holds."
+            min={0}
+            max={4000}
             value={Math.round(values.decay * 1000)}
             readout={seconds(values.decay)}
             onChange={(ms) => write({ ...values, decay: ms / 1000 })}
           />
-          <Knob
+          <Slider
             id="envelope_sustain"
-            hint="The level a held key holds at."
-            lo={0}
-            hi={100}
+            hint="How loud a note stays while the key is down."
+            min={0}
+            max={100}
             value={Math.round(values.sustain * 100)}
             readout={`${Math.round(values.sustain * 100)}%`}
             onChange={(percent) => write({ ...values, sustain: percent / 100 })}
           />
-          <Knob
+          <Slider
             id="envelope_release"
-            hint="How long a note dies away."
-            lo={0}
-            hi={4000}
+            hint="How long a note fades after the key comes up."
+            min={0}
+            max={4000}
             value={Math.round(values.release * 1000)}
             readout={seconds(values.release)}
             onChange={(ms) => write({ ...values, release: ms / 1000 })}

@@ -2,7 +2,7 @@
 // the sound popover behind the sound cell, with the Sound tab's own controls. Both name the sound's
 // way out and both hold the link into the rest of the Sound tab.
 
-import { Knob } from '@/audio/knob';
+import { Slider } from '@/look/rows';
 import { SoundControls, useAudioStatus } from '@/audio/sound-tab';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { sticky } from '@/lib/utils';
@@ -56,20 +56,20 @@ export function Mixer({
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       <PopoverContent side="top" align="end" className={`${PANEL} w-96`}>
-        <Knob
+        <Slider
           id="keyboard_volume"
           hint="100% is the instrument's own; a limiter stops clipping."
-          lo={0}
-          hi={200}
+          min={0}
+          max={200}
           value={keyboard}
           readout={`${keyboard}%`}
           onChange={(percent) => writeKeyboard(sticky(percent))}
         />
-        <Knob
+        <Slider
           id="click_volume"
           hint="Past the effects and the keyboard fader."
-          lo={0}
-          hi={100}
+          min={0}
+          max={100}
           value={click}
           readout={`${click}%`}
           onChange={(percent) => void set('click_volume', sticky(percent))}
@@ -109,7 +109,7 @@ export function SoundPopover({
       <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       <PopoverContent side="top" align="start" className={`${PANEL} w-[460px]`}>
         <div className="flex min-w-0 flex-col gap-7">
-          <SoundControls folder={false} onChanged={onChanged} />
+          <SoundControls onChanged={onChanged} />
         </div>
         <Foot status={status} onOpenChange={onOpenChange} onSoundSettings={onSoundSettings} />
       </PopoverContent>
